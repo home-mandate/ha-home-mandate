@@ -201,10 +201,21 @@ func plaintextDial(ctx context.Context, network, addr string) (net.Conn, error) 
 		return nil, err
 	}
 	var d net.Dialer
+	var errs []error
 	for _, ip := range ips {
-		if plaintextAllowed(host, ip.IP) {
-			return d.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+		if !plaintextAllowed(host, ip.IP) {
+			continue
 		}
+		// Try every allowed address, as net.Dialer does: "localhost" may resolve to ::1
+		// first while the server listens on 127.0.0.1 only.
+		conn, err := d.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
 	return nil, fmt.Errorf("%w: %s does not resolve to a local address", ErrInsecureURL, host)
 }

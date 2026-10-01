@@ -160,6 +160,24 @@ func TestPlaintextDialRefusesNonLocalAddresses(t *testing.T) {
 	if _, err := plaintextDial(context.Background(), "tcp", "192.0.2.1:8123"); !errors.Is(err, ErrInsecureURL) {
 		t.Errorf("plaintextDial = %v, want ErrInsecureURL", err)
 	}
+	// Both loopback addresses are tried; the listener only exists on 127.0.0.1.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	conn, err := plaintextDial(context.Background(), "tcp", net.JoinHostPort("localhost", port))
+	if err != nil {
+		t.Fatalf("plaintextDial(localhost) = %v", err)
+	}
+	conn.Close()
+	// Refused, or timed out where a firewall drops packets to closed ports (WSL).
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if _, err := plaintextDial(ctx, "tcp", "127.0.0.1:1"); err == nil || errors.Is(err, ErrInsecureURL) {
+		t.Errorf("plaintextDial to a closed local port = %v, want a connection error", err)
+	}
 	if _, err := plaintextDial(context.Background(), "tcp", "no-port"); err == nil {
 		t.Error("plaintextDial without port succeeded")
 	}
