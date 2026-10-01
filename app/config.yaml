@@ -1,0 +1,47 @@
+# Home Assistant App (früher „Add-on“) – Entwurf
+# Vor dem ersten Build gegen die aktuelle Entwicklerdoku prüfen:
+# https://developers.home-assistant.io/docs/apps/configuration/
+name: Home-Mandate
+version: "0.1.0"
+slug: home_mandate
+description: Mandate für KI-Agenten – erlauben, nachfragen, verbieten, protokollieren.
+url: https://home-mandate.com
+image: ghcr.io/OWNER/home-mandate-{arch}
+arch:
+  - amd64
+  - aarch64
+init: false
+startup: application
+boot: auto
+
+# Oberfläche über Ingress; Anmeldung übernimmt Home Assistant.
+# Sicherheit: Ingress-Anfragen kommen ausschließlich von 172.30.32.2 –
+# die UI muss alle anderen Quellen ablehnen.
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:shield-account
+panel_title: Home-Mandate
+
+# Zugriff auf die HA-API über den Supervisor (SUPERVISOR_TOKEN)
+homeassistant_api: true
+
+# MCP-Endpunkt für Agenten (TLS)
+ports:
+  8765/tcp: 8765
+ports_description:
+  8765/tcp: MCP-Endpunkt für KI-Agenten (HTTPS)
+
+# Zertifikate aus /ssl lesen (offene Entscheidung 1)
+map:
+  - ssl:ro
+
+options:
+  tls_certfile: fullchain.pem
+  tls_keyfile: privkey.pem
+  approval_timeout_seconds: 120
+  log_level: info
+schema:
+  tls_certfile: str
+  tls_keyfile: str
+  approval_timeout_seconds: int(30,600)
+  log_level: list(debug|info|warning|error)
