@@ -53,7 +53,7 @@ build:
 
 ## web-install: install the UI dependencies exactly as locked (no install scripts run)
 web-install:
-	cd web && pnpm install --frozen-lockfile
+	cd web && pnpm install --frozen-lockfile --ignore-scripts
 
 ## web-check: lint, type check, unit tests with coverage, i18n checks, build with dist
 ## check, audit

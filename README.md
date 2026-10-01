@@ -34,6 +34,11 @@ Checks run against the `mandate-spec` version pinned in `go.mod`. To develop aga
 local checkout, create an untracked `go.work` (`go work init . ../mandate-spec`) and pass
 `GOWORK=$PWD/go.work` to `make`.
 
+UI dependencies are installed from the lockfile without install scripts and only in
+versions published at least seven days ago (`web/pnpm-workspace.yaml`). Playwright's
+browsers are not npm packages: `pnpm exec playwright install chromium` downloads them
+from Playwright's CDN, for tests only.
+
 ## Home Assistant permissions
 
 In container mode, Home-Mandate uses a dedicated Home Assistant user with **admin rights**.

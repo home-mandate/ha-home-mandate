@@ -20,31 +20,54 @@ const TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
 };
 
-const dist = join(process.cwd(), 'dist');
-const prefix = process.env.INGRESS_PATH ?? '/';
-const port = Number(process.env.PORT ?? 4173);
+/** normalizePrefix requires an absolute path and makes it end with a slash. */
+export function normalizePrefix(prefix: string): string {
+  if (!prefix.startsWith('/') || prefix.startsWith('//') || prefix.includes('..')) {
+    throw new Error(`invalid INGRESS_PATH ${JSON.stringify(prefix)}`);
+  }
+  return prefix.endsWith('/') ? prefix : `${prefix}/`;
+}
 
-createServer(async (req, res) => {
-  const url = new URL(req.url ?? '/', 'http://localhost');
-  if (!url.pathname.startsWith(prefix)) {
-    res.writeHead(404).end();
-    return;
-  }
-  const rel = url.pathname.slice(prefix.length) || 'index.html';
-  const file = normalize(join(dist, rel));
-  if (!file.startsWith(dist + sep)) {
-    res.writeHead(404).end();
-    return;
-  }
-  try {
-    const body = await readFile(file);
-    res.writeHead(200, {
-      'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream',
-      'Content-Security-Policy': CSP,
-      'X-Content-Type-Options': 'nosniff',
-    });
-    res.end(body);
-  } catch {
-    res.writeHead(404).end();
-  }
-}).listen(port, '127.0.0.1', () => console.log(`serving ${dist} at http://127.0.0.1:${port}${prefix}`));
+export type Resolution = { status: 200; file: string } | { status: 400 | 404 | 405 };
+
+/** resolve maps a request to a file in dist, or to an error status. */
+export function resolve(method: string, target: string, prefix: string, dist: string): Resolution {
+  if (method !== 'GET' && method !== 'HEAD') return { status: 405 };
+  const path = target.split(/[?#]/, 1)[0] ?? '';
+  // Origin-form only: "/path". "//host/…" and absolute-form targets are rejected.
+  if (!path.startsWith('/') || path.startsWith('//')) return { status: 400 };
+  if (!path.startsWith(prefix)) return { status: 404 };
+  const file = normalize(join(dist, path.slice(prefix.length) || 'index.html'));
+  if (!file.startsWith(dist + sep)) return { status: 404 };
+  return { status: 200, file };
+}
+
+export function contentType(file: string): string {
+  return TYPES[extname(file)] ?? 'application/octet-stream';
+}
+
+if (import.meta.main) {
+  const dist = join(process.cwd(), 'dist');
+  const prefix = normalizePrefix(process.env.INGRESS_PATH ?? '/');
+  const port = Number(process.env.PORT ?? 4173);
+  createServer((req, res) => {
+    const r = resolve(req.method ?? '', req.url ?? '', prefix, dist);
+    if (r.status !== 200) {
+      res.writeHead(r.status).end();
+      return;
+    }
+    readFile(r.file).then(
+      (body) => {
+        res.writeHead(200, {
+          'Content-Type': contentType(r.file),
+          'Content-Security-Policy': CSP,
+          'X-Content-Type-Options': 'nosniff',
+          'Referrer-Policy': 'no-referrer',
+          'Cache-Control': 'no-store',
+        });
+        res.end(req.method === 'HEAD' ? undefined : body);
+      },
+      () => res.writeHead(404).end(),
+    );
+  }).listen(port, '127.0.0.1', () => console.log(`serving ${dist} at http://127.0.0.1:${port}${prefix}`));
+}

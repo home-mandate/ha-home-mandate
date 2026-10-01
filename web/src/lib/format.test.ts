@@ -60,6 +60,21 @@ describe('format', () => {
     expect(formatRelative(at(3 * 86_400_000), now, newYorkUS)).toBe('in 3 days');
   });
 
+  it('chooses the unit after rounding', () => {
+    const now = new Date('2026-10-01T12:00:00Z');
+    const at = (ms: number) => new Date(now.getTime() + ms);
+    expect(formatRelative(at(-59_600), now, newYorkUS)).toBe('1 minute ago');
+    expect(formatRelative(at(-(59 * 60_000 + 40_000)), now, newYorkUS)).toBe('1 hour ago');
+    expect(formatRelative(at(-(23 * 3_600_000 + 40 * 60_000)), now, berlinDE)).toBe('gestern');
+  });
+
+  it('counts calendar days in the household time zone across the DST change', () => {
+    // 2026-10-25 has 25 hours in Berlin: 00:10 CEST and 23:30 CET are the same day.
+    const now = new Date('2026-10-25T22:30:00Z');
+    expect(formatRelative(new Date('2026-10-24T22:10:00Z'), now, berlinDE)).toBe('heute');
+    expect(formatRelative(new Date('2026-10-24T21:50:00Z'), now, berlinDE)).toBe('gestern');
+  });
+
   it('rejects an invalid time zone instead of falling back silently', () => {
     expect(() => formatDate(new Date(), { locale: 'de', timeZone: 'Mars/Olympus' })).toThrow(RangeError);
   });

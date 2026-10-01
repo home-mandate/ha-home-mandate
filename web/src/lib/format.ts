@@ -35,13 +35,26 @@ const MINUTE = 60 * SECOND;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-/** formatRelative describes date relative to now, e.g. "3 minutes ago" or "in 2 days". */
+/**
+ * formatRelative describes date relative to now, e.g. "3 minutes ago" or "yesterday".
+ * The unit is chosen after rounding (59.6 s is "1 minute ago", not "60 seconds ago");
+ * days are calendar days in the household time zone, so a 25-hour DST day counts once.
+ */
 export function formatRelative(date: Date, now: Date, ctx: FormatContext): string {
   const diff = date.getTime() - now.getTime();
-  const abs = Math.abs(diff);
   const rtf = new Intl.RelativeTimeFormat(ctx.locale, { numeric: 'auto' });
-  if (abs < MINUTE) return rtf.format(Math.round(diff / SECOND), 'second');
-  if (abs < HOUR) return rtf.format(Math.round(diff / MINUTE), 'minute');
-  if (abs < DAY) return rtf.format(Math.round(diff / HOUR), 'hour');
-  return rtf.format(Math.round(diff / DAY), 'day');
+  const seconds = Math.round(diff / SECOND);
+  if (Math.abs(seconds) < 60) return rtf.format(seconds, 'second');
+  const minutes = Math.round(diff / MINUTE);
+  if (Math.abs(minutes) < 60) return rtf.format(minutes, 'minute');
+  const hours = Math.round(diff / HOUR);
+  if (Math.abs(hours) < 24) return rtf.format(hours, 'hour');
+  return rtf.format(dayNumber(date, ctx.timeZone) - dayNumber(now, ctx.timeZone), 'day');
+}
+
+/** dayNumber counts days since the epoch for the calendar date of d in timeZone. */
+function dayNumber(d: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: 'numeric', day: 'numeric' }).formatToParts(d);
+  const part = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === type)?.value);
+  return Date.UTC(part('year'), part('month') - 1, part('day')) / DAY;
 }

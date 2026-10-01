@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // i18n checks for every commit (docs/TESTING.md section 5): same keys in every catalog,
-// no orphaned or unknown keys, same placeholders, and no hard-coded visible text in
-// Svelte markup. Run with: node scripts/check-i18n.ts
+// no orphaned or unknown keys, same placeholders, no hard-coded visible text in Svelte
+// markup, and only logical CSS properties. Run with: node scripts/check-i18n.ts
+//
+// Limits: string literals in <script> blocks and .ts files are not checked; text built
+// there must come from a catalog by review.
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -10,8 +13,22 @@ import { parse } from 'svelte/compiler';
 
 export type Catalog = Record<string, unknown>;
 
-/** Attributes whose static values are shown to users or read by assistive technology. */
-const VISIBLE_ATTRIBUTES = new Set(['title', 'alt', 'placeholder', 'aria-label', 'aria-description', 'aria-placeholder', 'label']);
+/** Element attributes whose values are shown to users or read by assistive technology. */
+const VISIBLE_ATTRIBUTES = new Set([
+  'title',
+  'alt',
+  'placeholder',
+  'label',
+  'content',
+  'aria-label',
+  'aria-description',
+  'aria-placeholder',
+  'aria-roledescription',
+  'aria-valuetext',
+]);
+/** Component props that conventionally carry text. */
+const TEXT_PROPS = new Set(['text', 'label', 'heading', 'title', 'description', 'message', 'caption', 'placeholder']);
+const BUTTON_INPUT = /^(button|submit|reset)$/i;
 const LETTER = /\p{L}/u;
 
 /** compareKeys reports keys missing from a catalog compared to the union of all. */
@@ -66,43 +83,132 @@ export function compareUsage(catalog: Catalog, sources: Record<string, string>):
 /** usedKeys finds m.key(…) and m["key"](…) calls. */
 export function usedKeys(source: string): string[] {
   const keys: string[] = [];
-  for (const match of source.matchAll(/\bm\.([A-Za-z_$][\w$]*)\s*\(|\bm\[\s*['"]([^'"]+)['"]\s*\]/g)) {
+  for (const match of source.matchAll(/(?<![\w$.])m\.([A-Za-z_$][\w$]*)\s*\(|(?<![\w$.])m\[\s*['"]([^'"]+)['"]\s*\]/g)) {
     keys.push((match[1] ?? match[2]) as string);
   }
   return keys;
 }
 
-/** findHardcodedText reports visible text in Svelte markup that is not from a catalog. */
+type Node = Record<string, unknown>;
+
+const isNode = (v: unknown): v is Node => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** isMessageCall matches m.key(…); its arguments are interpolated values, not text. */
+function isMessageCall(n: Node): boolean {
+  const callee = n.callee;
+  return (
+    n.type === 'CallExpression' &&
+    isNode(callee) &&
+    callee.type === 'MemberExpression' &&
+    isNode(callee.object) &&
+    callee.object.type === 'Identifier' &&
+    callee.object.name === 'm'
+  );
+}
+
+/** stringsIn returns string literals and template text with letters in an expression. */
+function stringsIn(node: unknown): string[] {
+  if (Array.isArray(node)) return node.flatMap(stringsIn);
+  if (!isNode(node) || isMessageCall(node)) return [];
+  const found: string[] = [];
+  if (node.type === 'Literal' && typeof node.value === 'string' && LETTER.test(node.value)) found.push(node.value);
+  if (node.type === 'TemplateElement' && isNode(node.value)) {
+    const cooked = node.value.cooked;
+    if (typeof cooked === 'string' && LETTER.test(cooked)) found.push(cooked);
+  }
+  for (const [key, value] of Object.entries(node)) {
+    if (key !== 'parent' && key !== 'metadata' && key !== 'loc') found.push(...stringsIn(value));
+  }
+  return found;
+}
+
+function staticAttribute(element: Node, name: string): string | undefined {
+  const attrs = Array.isArray(element.attributes) ? (element.attributes as Node[]) : [];
+  const attr = attrs.find((a) => a.type === 'Attribute' && a.name === name);
+  const values = attr && Array.isArray(attr.value) ? (attr.value as Node[]) : [];
+  return values.length === 1 && values[0]?.type === 'Text' ? String(values[0].data) : undefined;
+}
+
+function isTextAttribute(element: Node, name: string): boolean {
+  if (VISIBLE_ATTRIBUTES.has(name)) return true;
+  if (element.type === 'Component' && TEXT_PROPS.has(name)) return true;
+  return name === 'value' && element.name === 'input' && BUTTON_INPUT.test(staticAttribute(element, 'type') ?? '');
+}
+
+/** attributeTexts returns hard-coded text in an attribute value, static or as expression. */
+function attributeTexts(attr: Node): string[] {
+  const values = Array.isArray(attr.value) ? (attr.value as Node[]) : isNode(attr.value) ? [attr.value] : [];
+  return values.flatMap((v) => {
+    if (v.type === 'Text' && typeof v.data === 'string' && LETTER.test(v.data)) return [v.data];
+    if (v.type === 'ExpressionTag') return stringsIn(v.expression);
+    return [];
+  });
+}
+
+/**
+ * findHardcodedText reports visible text in Svelte markup that is not from a catalog:
+ * text nodes, string literals in {…}, {@const} and {@render}, and text attributes on
+ * elements and components. Conditions, classes and other attributes are not text.
+ */
 export function findHardcodedText(source: string, file: string): string[] {
   const ast = parse(source, { modern: true, filename: file });
   const problems: string[] = [];
+  const report = (what: string, texts: string[]) => {
+    for (const t of texts) problems.push(`${file}: hard-coded ${what} "${t.trim()}"`);
+  };
   const visit = (node: unknown): void => {
-    if (!node || typeof node !== 'object') return;
     if (Array.isArray(node)) {
       node.forEach(visit);
       return;
     }
-    const n = node as Record<string, unknown>;
-    if (n.type === 'Text' && typeof n.data === 'string' && LETTER.test(n.data)) {
-      problems.push(`${file}: hard-coded text "${n.data.trim()}"`);
+    if (!isNode(node)) return;
+    switch (node.type) {
+      case 'Text':
+        if (typeof node.data === 'string' && LETTER.test(node.data)) report('text', [node.data]);
+        return;
+      case 'ExpressionTag':
+      case 'RenderTag':
+        report('text', stringsIn(node.expression));
+        return;
+      case 'ConstTag':
+        report('text', stringsIn(node.declaration));
+        return;
     }
-    if (n.type === 'Attribute') {
-      // Only visible attributes count; src, class, href and the like are not text.
-      if (typeof n.name !== 'string' || !VISIBLE_ATTRIBUTES.has(n.name)) return;
-      const values = Array.isArray(n.value) ? n.value : [];
-      for (const v of values as Record<string, unknown>[]) {
-        if (v.type === 'Text' && typeof v.data === 'string' && LETTER.test(v.data)) {
-          problems.push(`${file}: hard-coded ${n.name} "${v.data.trim()}"`);
+    if (Array.isArray(node.attributes)) {
+      for (const attr of node.attributes as Node[]) {
+        if (attr.type === 'Attribute' && typeof attr.name === 'string' && isTextAttribute(node, attr.name)) {
+          report(attr.name, attributeTexts(attr));
         }
       }
-      return;
     }
-    for (const [key, value] of Object.entries(n)) {
-      if (key !== 'parent' && key !== 'metadata') visit(value);
+    for (const [key, value] of Object.entries(node)) {
+      if (key !== 'attributes' && key !== 'parent' && key !== 'metadata') visit(value);
     }
   };
   visit(ast.fragment);
   return problems;
+}
+
+const PHYSICAL_CSS = [
+  /(?:^|[\s;{])((?:margin|padding|border)-(?:left|right)(?:-[a-z]+)?)\s*:/g,
+  /(?:^|[\s;{])((?:left|right))\s*:/g,
+  /(?:^|[\s;{])((?:text-align|float|clear)\s*:\s*(?:left|right))\b/g,
+];
+
+/**
+ * findPhysicalCss reports physical direction properties; only logical ones (inline/block)
+ * work for right-to-left languages (docs/ARCHITECTURE.md section 12).
+ */
+export function findPhysicalCss(css: string, file: string): string[] {
+  const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  return PHYSICAL_CSS.flatMap((re) =>
+    [...withoutComments.matchAll(re)].map((m) => `${file}: physical CSS "${m[1]}", use a logical property`),
+  );
+}
+
+function cssOf(file: string, source: string): string {
+  if (file.endsWith('.css')) return source;
+  return [...source.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n');
 }
 
 function messageKeys(catalog: Catalog): string[] {
@@ -139,7 +245,7 @@ export function run(root: string): string[] {
     catalogs[locale] = JSON.parse(readFileSync(join(root, 'messages', `${locale}.json`), 'utf8')) as Catalog;
   }
   const files = listFiles(join(root, 'src'), join(root, 'src/lib/paraglide')).filter(
-    (f) => /\.(svelte|ts)$/.test(f) && !f.endsWith('.test.ts'),
+    (f) => /\.(svelte|ts|css)$/.test(f) && !f.endsWith('.test.ts'),
   );
   const sources = Object.fromEntries(files.map((f) => [relative(root, f), readFileSync(f, 'utf8')]));
   return [
@@ -149,6 +255,7 @@ export function run(root: string): string[] {
     ...Object.entries(sources)
       .filter(([f]) => f.endsWith('.svelte'))
       .flatMap(([f, s]) => findHardcodedText(s, f)),
+    ...Object.entries(sources).flatMap(([f, s]) => findPhysicalCss(cssOf(f, s), f)),
   ];
 }
 

@@ -23,7 +23,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/lib/**/*.ts', 'scripts/**/*.ts'],
-      exclude: ['src/lib/paraglide/**', '**/*.test.ts', 'scripts/serve-ingress.ts'],
+      exclude: ['src/lib/paraglide/**', '**/*.test.ts'],
       thresholds: { lines: 85, statements: 85, functions: 85, branches: 85 },
     },
   },

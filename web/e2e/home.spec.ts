@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { expect, test, type Page } from '@playwright/test';
+import { CSP } from '../scripts/serve-ingress.ts';
 
 const text = {
   de: { heading: 'Mandate für deine KI-Agenten', release: '31. Oktober 2026', notFound: 'Seite nicht gefunden', back: 'Zurück zur Übersicht' },
@@ -24,8 +25,9 @@ test('overview under a random Ingress path', async ({ page }, testInfo) => {
     document.addEventListener('securitypolicyviolation', (e) => console.error(`CSP violation: ${e.violatedDirective} ${e.blockedURI}`));
   });
 
-  await page.goto('./');
+  const response = await page.goto('./');
 
+  expect(response?.headers()['content-security-policy']).toBe(CSP);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(t.heading);
   await expect(page.locator('html')).toHaveAttribute('lang', testInfo.project.name);
   await expect(page.getByText(t.release)).toBeVisible();
@@ -47,4 +49,19 @@ test('hash routing keeps the Ingress path', async ({ page }, testInfo) => {
 test('nothing is served outside the Ingress path', async ({ request }) => {
   const response = await request.get('/index.html');
   expect(response.status()).toBe(404);
+});
+
+test('the CSP blocks injected inline scripts', async ({ page }) => {
+  await page.goto('./');
+  const violation = page.evaluate(
+    () =>
+      new Promise<string>((resolve) => {
+        document.addEventListener('securitypolicyviolation', (e) => resolve(e.violatedDirective));
+        const script = document.createElement('script');
+        script.textContent = 'window.injected = true';
+        document.body.append(script);
+      }),
+  );
+  expect(await violation).toMatch(/^script-src/);
+  expect(await page.evaluate(() => 'injected' in window)).toBe(false);
 });

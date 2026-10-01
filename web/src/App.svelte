@@ -4,8 +4,9 @@
   import { parseHash, type Route } from './lib/router.ts';
   import { formatDate } from './lib/format.ts';
 
-  // Release date of v0.1; the household time zone comes from Home Assistant later.
-  const release = new Date('2026-10-31T12:00:00Z');
+  // Release of v0.1: 31 October, 00:30 in Berlin (still 30 October in New York).
+  // The household time zone comes from Home Assistant later.
+  const release = new Date('2026-10-30T23:30:00Z');
   const timeZone = 'Europe/Berlin';
 
   let route: Route = $state(parseHash(window.location.hash));

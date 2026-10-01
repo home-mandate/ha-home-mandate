@@ -11,7 +11,8 @@ export default defineConfig(
   js.configs.recommended,
   ts.configs.recommended,
   svelte.configs.recommended,
-  { languageOptions: { globals: { ...globals.browser, ...globals.node } } },
+  { files: ['src/**'], languageOptions: { globals: globals.browser } },
+  { files: ['scripts/**', 'e2e/**', '*.config.*'], languageOptions: { globals: globals.node } },
   {
     files: ['**/*.svelte', '**/*.svelte.ts'],
     languageOptions: { parserOptions: { parser: ts.parser } },

@@ -5,7 +5,7 @@
   "type": "module",
   "license": "AGPL-3.0-or-later",
   "engines": {
-    "node": ">=24"
+    "node": "^24"
   },
   "packageManager": "pnpm@12.8.1+sha512.f64ba907507f5ceafe06c8d38e6052d0179444580ec1279ddd5bfc11cb48aa8a2644b66598e07e761da84872a9fc57d5f902b87fa49d024198d558612aabbe45",
   "scripts": {
@@ -14,7 +14,7 @@
     "dev": "pnpm i18n:compile && vite",
     "build": "pnpm i18n:compile && vite build && node scripts/check-dist.ts",
     "lint": "pnpm i18n:compile && eslint .",
-    "typecheck": "pnpm i18n:compile && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+    "typecheck": "pnpm i18n:compile && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings && tsc -p tsconfig.node.json",
     "test": "pnpm i18n:compile && vitest run --coverage",
     "e2e": "pnpm build && playwright test"
   },

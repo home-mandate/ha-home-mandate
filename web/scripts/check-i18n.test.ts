@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import { compareKeys, comparePlaceholders, compareUsage, findHardcodedText, run, usedKeys } from './check-i18n.ts';
+import { compareKeys, comparePlaceholders, compareUsage, findHardcodedText, findPhysicalCss, run, usedKeys } from './check-i18n.ts';
 
 describe('compareKeys', () => {
   it('accepts identical key sets', () => {
@@ -42,6 +42,9 @@ describe('usedKeys and compareUsage', () => {
   it('finds m.key() and m["key"] references', () => {
     expect(usedKeys('m.home_heading() + m.a_b ( ) + m["x-y"]')).toEqual(['home_heading', 'a_b', 'x-y']);
   });
+  it('ignores other objects named like m', () => {
+    expect(usedKeys('foo.m.bar() + item.x() + $m.y()')).toEqual([]);
+  });
   it('reports orphaned and unknown keys', () => {
     const problems = compareUsage({ used: 'U', orphan: 'O' }, { 'App.svelte': '{m.used()} {m.missing()}' });
     expect(problems).toEqual(['orphaned key "orphan"', 'App.svelte: unknown key "missing"']);
@@ -49,17 +52,74 @@ describe('usedKeys and compareUsage', () => {
 });
 
 describe('findHardcodedText', () => {
-  it('accepts text from catalogs, punctuation and whitespace', () => {
-    const source = '<script>let x = "ignored in scripts";</script>\n<p>{m.a()}</p> · <span>{x}: 42</span>\n<style>p::after { content: "x"; }</style>';
-    expect(findHardcodedText(source, 'Ok.svelte')).toEqual([]);
+  const check = (source: string) => findHardcodedText(source, 'X.svelte');
+
+  it('accepts text from catalogs, punctuation, conditions, classes and non-text attributes', () => {
+    const source = [
+      '<script>let x = "ignored in scripts";</script>',
+      '<p>{m.a()}</p> · <span>{x}: 42</span>',
+      '<p>{m.release({ date: format(d, "de") })}</p>',
+      '{#if role === "admin"}<b class={on ? "active" : "idle"}>{m.b()}</b>{/if}',
+      '<a href="#/agents" rel="noopener" target="_self">{m.c()}</a>',
+      '<input type="text" value="ignored" autocomplete="off" />',
+      '<Button variant="primary" label={m.d()} />',
+      '<style>p::after { content: "x"; }</style>',
+    ].join('\n');
+    expect(check(source)).toEqual([]);
   });
-  it('reports visible text in markup, blocks and visible attributes', () => {
-    const source = '<h1>Hello</h1>{#if a}<p>Größe</p>{/if}<img alt="Logo" src="x.svg" /><button aria-label="Close" class="big">{m.x()}</button>';
-    expect(findHardcodedText(source, 'Bad.svelte')).toEqual([
-      'Bad.svelte: hard-coded text "Hello"',
-      'Bad.svelte: hard-coded text "Größe"',
-      'Bad.svelte: hard-coded alt "Logo"',
-      'Bad.svelte: hard-coded aria-label "Close"',
+
+  it('reports text nodes in markup and blocks', () => {
+    expect(check('<h1>Hello</h1>{#if a}<p>Größe</p>{/if}{#each xs as x}<li>Item</li>{/each}')).toEqual([
+      'X.svelte: hard-coded text "Hello"',
+      'X.svelte: hard-coded text "Größe"',
+      'X.svelte: hard-coded text "Item"',
+    ]);
+  });
+
+  it('reports string literals in expressions', () => {
+    expect(check("<p>{'Hello'}</p><p>{`Hi ${name}`}</p><p>{ok ? 'Yes' : 'No'}</p>")).toEqual([
+      'X.svelte: hard-coded text "Hello"',
+      'X.svelte: hard-coded text "Hi"',
+      'X.svelte: hard-coded text "Yes"',
+      'X.svelte: hard-coded text "No"',
+    ]);
+    expect(check('{@const x = "Hello"}<p>{x}</p>')).toEqual(['X.svelte: hard-coded text "Hello"']);
+    expect(check('{@render row("Hello")}')).toEqual(['X.svelte: hard-coded text "Hello"']);
+  });
+
+  it('reports text attributes, static or as expression', () => {
+    expect(
+      check('<img alt="Logo" src="x.svg" /><button aria-label={"Close"} class="big">{m.x()}</button>'),
+    ).toEqual(['X.svelte: hard-coded alt "Logo"', 'X.svelte: hard-coded aria-label "Close"']);
+    expect(check('<div role="slider" aria-valuetext="Half" aria-roledescription="Dial"></div>')).toHaveLength(2);
+    expect(check('<input type="submit" value="Send" />')).toEqual(['X.svelte: hard-coded value "Send"']);
+  });
+
+  it('reports text props on components', () => {
+    expect(check('<Card heading="Hello" text={"World"} variant="primary" />')).toEqual([
+      'X.svelte: hard-coded heading "Hello"',
+      'X.svelte: hard-coded text "World"',
+    ]);
+  });
+
+  it('reports text in svelte:head', () => {
+    expect(check('<svelte:head><title>Home</title></svelte:head>')).toEqual(['X.svelte: hard-coded text "Home"']);
+  });
+});
+
+describe('findPhysicalCss', () => {
+  it('accepts logical properties', () => {
+    expect(findPhysicalCss('p { margin-inline-start: 1rem; inset-inline-end: 0; text-align: start; }', 'a.css')).toEqual([]);
+  });
+  it('reports physical properties outside comments', () => {
+    const css = '/* margin-left: 0 */ p { margin-left: 1rem; padding-right:0; border-left-width: 1px; left: 0; text-align: right; float: left }';
+    expect(findPhysicalCss(css, 'a.css')).toEqual([
+      'a.css: physical CSS "margin-left", use a logical property',
+      'a.css: physical CSS "padding-right", use a logical property',
+      'a.css: physical CSS "border-left-width", use a logical property',
+      'a.css: physical CSS "left", use a logical property',
+      'a.css: physical CSS "text-align: right", use a logical property',
+      'a.css: physical CSS "float: left", use a logical property',
     ]);
   });
 });
