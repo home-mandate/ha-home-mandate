@@ -15,7 +15,7 @@ COVER_MIN := 85
 VERSION ?= dev
 GOARCHES := amd64 arm64
 
-.PHONY: check test cover vet staticcheck vulncheck build
+.PHONY: check test cover vet staticcheck vulncheck build web-install web-check web-e2e
 
 ## check: everything that must be green before a commit
 check: vet staticcheck cover vulncheck
@@ -44,3 +44,16 @@ build:
 			-ldflags="-s -w -buildid= -X main.version=$(VERSION)" \
 			-o bin/home-mandate-linux-$$arch ./cmd/home-mandate || exit 1; \
 	done
+
+## web-install: install the UI dependencies exactly as locked (no install scripts run)
+web-install:
+	cd web && pnpm install --frozen-lockfile
+
+## web-check: lint, type check, unit tests with coverage, i18n checks, build with dist
+## check, audit
+web-check:
+	cd web && pnpm lint && pnpm typecheck && pnpm test && pnpm i18n:check && pnpm build && pnpm audit
+
+## web-e2e: Playwright in de and en under a random Ingress path
+web-e2e:
+	cd web && pnpm e2e

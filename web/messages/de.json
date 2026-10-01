@@ -1,0 +1,9 @@
+{
+  "app_title": "Home-Mandate",
+  "nav_overview": "Übersicht",
+  "home_heading": "Mandate für deine KI-Agenten",
+  "home_intro": "Jeder Agent bekommt eine eigene Identität und klare Grenzen: erlaubt, erst nachfragen oder verboten.",
+  "home_release": "Release v0.1 ist für {date} geplant.",
+  "not_found_heading": "Seite nicht gefunden",
+  "not_found_back": "Zurück zur Übersicht"
+}

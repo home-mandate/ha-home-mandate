@@ -1,0 +1,9 @@
+{
+  "app_title": "Home-Mandate",
+  "nav_overview": "Overview",
+  "home_heading": "Mandates for your AI agents",
+  "home_intro": "Every agent gets its own identity and clear limits: allowed, ask first, or denied.",
+  "home_release": "Release v0.1 is planned for {date}.",
+  "not_found_heading": "Page not found",
+  "not_found_back": "Back to the overview"
+}

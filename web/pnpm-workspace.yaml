@@ -1,0 +1,10 @@
+# Supply-chain hardening (docs/ARCHITECTURE.md section 12)
+# Only versions published at least 7 days ago are installed.
+minimumReleaseAge: 10080
+# Dependency install scripts never run; fail instead of silently skipping one.
+strictDepBuilds: true
+# Refuse a version whose publish provenance is weaker than an earlier one.
+trustPolicy: no-downgrade
+# No git or tarball URLs anywhere in the dependency tree.
+blockExoticSubdeps: true
+saveExact: true

@@ -2,7 +2,7 @@
 FROM node:24-alpine AS web
 WORKDIR /web
 RUN corepack enable
-COPY web/package.json web/pnpm-lock.yaml ./
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY web/ ./
 RUN pnpm run build            # produces /web/dist with relative paths (base: './')
