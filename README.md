@@ -20,6 +20,20 @@ logged.
 Planned code structure: `cmd/home-mandate` (gateway), `cmd/relay` (cloud relay, from 2027),
 `internal/…` (see architecture), `web/` (local UI, Svelte + Vite), `e2e/`.
 
+## Development
+
+Requirements: Go 1.27.1, Node 24 LTS with corepack (`corepack enable pnpm`).
+
+```bash
+make check                  # vet, staticcheck, race tests, coverage per package, govulncheck, actionlint
+make web-install web-check  # UI: lint, svelte-check, Vitest, i18n checks, build, pnpm audit
+make web-e2e                # Playwright in German and English under a random Ingress path
+```
+
+Checks run against the `mandate-spec` version pinned in `go.mod`. To develop against a
+local checkout, create an untracked `go.work` (`go work init . ../mandate-spec`) and pass
+`GOWORK=$PWD/go.work` to `make`.
+
 ## Home Assistant permissions
 
 In container mode, Home-Mandate uses a dedicated Home Assistant user with **admin rights**.

@@ -8,25 +8,28 @@ export GOWORK ?= off
 STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.1
 GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
-# Interim total threshold (docs/TESTING.md section 2: other Go packages ≥ 85 %).
-# Per-package thresholds follow with tools/covercheck.
-COVER_MIN := 85
+ACTIONLINT  := github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+# Coverage thresholds per package (docs/TESTING.md section 2). The strict packages are
+# enforced as soon as their directory exists.
+COVER_DEFAULT := 85
+STRICT_PKGS   := internal/pdp internal/oauth internal/approval internal/audit internal/api
+COVER_FLAGS   := -default $(COVER_DEFAULT) $(foreach p,$(STRICT_PKGS),$(if $(wildcard $(p)),-min $(p)=95))
 
 VERSION ?= dev
 GOARCHES := amd64 arm64
 
-.PHONY: check test cover vet staticcheck vulncheck build web-install web-check web-e2e
+.PHONY: check test cover vet staticcheck vulncheck actionlint build web-install web-check web-e2e
 
 ## check: everything that must be green before a commit
-check: vet staticcheck cover vulncheck
+check: vet staticcheck cover vulncheck actionlint
 
 test:
 	go test -race ./...
 
 cover:
 	go test -race -coverprofile=cover.out ./...
-	@go tool cover -func=cover.out | awk -v min=$(COVER_MIN) '/^total:/ { sub("%", "", $$3); \
-		if ($$3 + 0 < min) { print "Coverage " $$3 "% < " min "%"; exit 1 } else print "Coverage " $$3 "%" }'
+	go run ./tools/covercheck -profile cover.out $(COVER_FLAGS)
 
 vet:
 	go vet ./...
@@ -36,6 +39,9 @@ staticcheck:
 
 vulncheck:
 	go run $(GOVULNCHECK) ./...
+
+actionlint:
+	go run $(ACTIONLINT)
 
 ## build: static binaries for all release architectures in bin/
 build:
