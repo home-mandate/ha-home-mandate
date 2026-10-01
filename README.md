@@ -1,32 +1,40 @@
 # Home-Mandate
 
-Mandate für KI-Agenten in Home Assistant: Jeder Agent bekommt eine eigene Identität und klare
-Grenzen. Aktionen werden erlaubt, zur Bestätigung aufs Handy geschickt oder verboten, und jede
-Anfrage wird protokolliert.
+Mandates for AI agents in Home Assistant: every agent gets its own identity and clear limits.
+Actions are allowed, sent to your phone for confirmation, or forbidden, and every request is
+logged.
 
-**Status:** in Entwicklung, Release v0.1 geplant für den 31.10.2026.
+**Status:** in development, release v0.1 planned for 2026-10-31.
 
-## Aufbau dieses Repositorys
+## Repository layout
 
-| Pfad | Inhalt |
+| Path | Contents |
 |---|---|
-| `docs/ARCHITECTURE.md` | Architektur v0.1: Gateway, lokale Oberfläche, Abläufe, offene Entscheidungen |
-| `docs/TASKS-v0.1.md` | Wochenplan bis zum Release, Schnittlinien |
-| `docs/TESTING.md` | Teststrategie: Unit, Negativ, Fuzzing, E2E, Oberfläche, i18n, Abdeckungsschwellen |
-| `SECURITY.md` | Meldung von Sicherheitslücken, Bedrohungsmodell |
-| `app/config.yaml` | Entwurf der Home-Assistant-App-Konfiguration |
-| `Dockerfile` | Mehrstufiger Build: Oberfläche (Vite) → Go-Binary mit eingebetteter Oberfläche |
+| `docs/ARCHITECTURE.md` | Architecture v0.1: gateway, local UI, flows, decisions |
+| `docs/TASKS-v0.1.md` | Weekly plan up to the release, cut lines |
+| `docs/TESTING.md` | Test strategy: unit, negative, fuzzing, E2E, UI, i18n, coverage thresholds |
+| `SECURITY.md` | Reporting vulnerabilities, threat model |
+| `app/config.yaml` | Draft of the Home Assistant app configuration |
+| `Dockerfile` | Multi-stage build: UI (Vite) → Go binary with embedded UI |
 
-Geplante Code-Struktur: `cmd/home-mandate` (Gateway), `cmd/relay` (Cloud-Relay, ab 2027),
-`internal/…` (siehe Architektur), `web/` (lokale Oberfläche, Svelte + Vite), `e2e/`.
+Planned code structure: `cmd/home-mandate` (gateway), `cmd/relay` (cloud relay, from 2027),
+`internal/…` (see architecture), `web/` (local UI, Svelte + Vite), `e2e/`.
 
-## Zugehörige Repositorys
+## Home Assistant permissions
 
-| Repository | Inhalt | Lizenz |
+In container mode, Home-Mandate uses a dedicated Home Assistant user with **admin rights**.
+The only reason is that Home Assistant allows subscribing to the
+`mobile_app_notification_action` event, which carries the answers to approval requests, only
+for admins. Home-Mandate sends only a fixed, allowlisted set of WebSocket commands; see
+`docs/ARCHITECTURE.md`, section 11.
+
+## Related repositories
+
+| Repository | Contents | License |
 |---|---|---|
-| `mandate-spec` | Herstellerneutrale Spezifikation, Schema, Konformitätsfälle, Referenz-Auswertung, Prüfwerkzeug | CC BY 4.0 / Apache 2.0 |
-| `home-mandate` (dieses) | Gateway, lokale Oberfläche, Home-Assistant-App, Relay | AGPL-3.0 |
-| `home-mandate-cloud` (privat) | Portal, Webseite, Abrechnung, Betrieb | proprietär |
+| `mandate-spec` | Vendor-neutral specification, schema, conformance cases, reference evaluation, test tool | CC BY 4.0 / Apache 2.0 |
+| `home-mandate` (this one) | Gateway, local UI, Home Assistant app, relay | AGPL-3.0 |
+| `home-mandate-cloud` (private) | Portal, website, billing, operations | proprietary |
 
-Home-Mandate bindet die Referenz-Auswertung aus `mandate-spec` als Go-Modul ein und muss alle
-Konformitätsfälle bestehen.
+Home-Mandate embeds the reference evaluation from `mandate-spec` as a Go module and must pass
+all conformance cases.

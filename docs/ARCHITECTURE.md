@@ -1,219 +1,273 @@
-# Home-Mandate – Architektur v0.1
+# Home-Mandate – Architecture v0.1
 
-Stand: 28.09.2026 · Ziel: Release v0.1 am 31.10.2026
+As of: 2026-10-01 · Target: release v0.1 on 2026-10-31
 
-## 1. Zweck
+## 1. Purpose
 
-Home-Mandate sitzt zwischen KI-Agenten und Home Assistant. Jeder Agent bekommt eine eigene
-Identität und ein **Mandat**: welche Geräte er mit welchen Aktionen nutzen darf und ob das
-sofort erlaubt ist, eine Rückfrage beim Menschen braucht oder verboten ist. Jede Anfrage wird
-protokolliert.
+Home-Mandate sits between AI agents and Home Assistant. Every agent gets its own identity and
+a **mandate**: which devices it may use with which actions, and whether that is allowed
+immediately, needs a confirmation from a human, or is forbidden. Every request is logged.
 
-Grundsatz: **Die Entscheidung trifft ein festes Regelwerk außerhalb des Sprachmodells.**
-Kein Agent kann seine Rechte lesen, ändern oder sich „herbeireden“.
+Principle: **The decision is made by a fixed rule set outside the language model.**
+No agent can read or change its own permissions, or "talk itself into" more.
 
-## 2. Überblick
+## 2. Overview
 
 ```
- KI-Agent (Claude Code, lokales LLM, n8n, OpenClaw …)
-        │  MCP über HTTPS · OAuth-Token pro Agent
+ AI agent (Claude Code, local LLM, n8n, OpenClaw …)
+        │  MCP over HTTPS · OAuth token per agent
         ▼
- ┌──────────────────────────── Home-Mandate (ein Go-Binary) ────────────────────────────┐
+ ┌──────────────────────────── Home-Mandate (one Go binary) ────────────────────────────┐
  │                                                                                      │
- │  oauth ──► mcp (PEP) ──► pdp (AuthZEN-Endpunkt) ──► mandate store                    │
+ │  oauth ──► mcp (PEP) ──► pdp (AuthZEN endpoint) ──► mandate store                    │
  │               │  allow           │ ask                                               │
  │               │                  ▼                                                   │
- │               │            approval ──► HA-Push an Freigebende ──► Antwort/Timeout   │
+ │               │            approval ──► HA push to approvers ──► answer/timeout      │
  │               ▼                                                                      │
- │            ha client ──► Home Assistant (WebSocket-API)                              │
+ │            ha client ──► Home Assistant (WebSocket API)                              │
  │                                                                                      │
- │  audit (hash-verkettet) · ratelimit · ui (Ingress bzw. eigener Port)                 │
+ │  audit (hash-chained) · ratelimit · ui (Ingress or own port)                         │
  └──────────────────────────────────────────────────────────────────────────────────────┘
         │
         ▼
- Home Assistant ──► Geräte
+ Home Assistant ──► devices
 ```
 
-PEP = Policy Enforcement Point (setzt durch), PDP = Policy Decision Point (entscheidet).
-Beide laufen im selben Prozess, sprechen aber **über die AuthZEN-Schnittstelle** miteinander.
-Dadurch können später andere Gateways (Paperless, Immich, Nextcloud) dieselbe
-Entscheidungsstelle nutzen, ohne Umbau.
+PEP = Policy Enforcement Point (enforces), PDP = Policy Decision Point (decides).
+Both run in the same process but talk to each other **through the AuthZEN interface**.
+This lets other gateways (Paperless, Immich, Nextcloud) use the same decision point later
+without restructuring.
 
-## 3. Komponenten (Go-Pakete)
+## 3. Components (Go packages)
 
-| Paket | Aufgabe |
+| Package | Responsibility |
 |---|---|
-| `cmd/home-mandate` | Einstiegspunkt, Konfiguration, Start der Dienste |
-| `internal/config` | Liest `/data/options.json` (App-Modus) bzw. Umgebungsvariablen (Container-Modus) |
-| `internal/ha` | Client für die HA-WebSocket-API: Zustände, Entity-/Device-/Area-Registry, Service-Aufrufe, Benachrichtigungen, Event-Abo |
-| `internal/catalog` | Bildet HA-Entitäten auf das Mandats-Vokabular ab (Gerätekategorie, Bereich, erlaubte Aktionen) |
-| `internal/mandate` | Speichern, Versionieren und Validieren von Mandaten; die **Auswertung** kommt aus der Referenz-Bibliothek `mandate-spec/evaluator` (Go-Modul, eingebunden mit fester Version) |
-| `internal/pdp` | AuthZEN-Endpunkt `POST /access/v1/evaluation`, nur intern gebunden |
-| `internal/mcp` | MCP-Server (Streamable HTTP), eigene Werkzeuge, ruft vor jeder Aktion den PDP |
-| `internal/oauth` | Autorisierungsserver für Agenten: Authorization Code + PKCE, Device Authorization Grant (Kopplungscode), Token-Verwaltung |
-| `internal/approval` | Rückfragen per Aktions-Benachrichtigung, Warten auf Antwort, Timeout |
-| `internal/audit` | Protokoll, hash-verkettet, 30 Tage Aufbewahrung |
-| `internal/ratelimit` | Token-Bucket pro Agent |
-| `internal/store` | SQLite (reines Go, kein CGO), Migrationen |
-| `internal/api` | JSON-API für die Oberfläche (nur für angemeldete HA-Admins), CSRF-Schutz, strikte Eingabeprüfung |
-| `internal/i18n` | Übersetzungen für Texte, die der Server erzeugt (Rückfrage-Benachrichtigungen, Fehlermeldungen in der UI) |
-| `internal/webui` | Liefert die eingebettete Oberfläche aus (`embed.FS`) mit strikter Content-Security-Policy |
-| `web/` | Lokale Oberfläche: Svelte 5 + Vite 8, wird beim Build ins Binary eingebettet (Abschnitt 12) |
+| `cmd/home-mandate` | Entry point, configuration, starting the services |
+| `internal/config` | Reads `/data/options.json` (app mode) or environment variables (container mode) |
+| `internal/ha` | Client for the HA WebSocket API: states, entity/device/area registry, service calls, notifications, event subscriptions |
+| `internal/catalog` | Maps HA entities to the mandate vocabulary (device category, area, permitted actions) |
+| `internal/mandate` | Storing, versioning and validating mandates; the **evaluation** comes from the reference library `mandate-spec/evaluator` (Go module, pinned version) |
+| `internal/pdp` | AuthZEN endpoint `POST /access/v1/evaluation`, bound internally only |
+| `internal/mcp` | MCP server (Streamable HTTP), own tools, calls the PDP before every action |
+| `internal/oauth` | Authorization server for agents: Authorization Code + PKCE, Device Authorization Grant (pairing code), token management |
+| `internal/approval` | Approval requests via actionable notifications, waiting for the answer, timeout |
+| `internal/audit` | Audit log, hash-chained, 30 days retention |
+| `internal/ratelimit` | Token bucket per agent |
+| `internal/store` | SQLite (pure Go, no CGO), migrations |
+| `internal/api` | JSON API for the UI (only for signed-in HA admins), CSRF protection, strict input validation |
+| `internal/i18n` | Translations for texts generated by the server (approval notifications, error messages in the UI) |
+| `internal/webui` | Serves the embedded UI (`embed.FS`) with a strict Content Security Policy |
+| `web/` | Local UI: Svelte 5 + Vite 8, embedded into the binary at build time (section 12) |
 
-## 4. MCP-Werkzeuge in v0.1
+## 4. MCP tools in v0.1
 
-Home-Mandate bietet **eigene Werkzeuge** an und leitet nicht den MCP-Server von Home Assistant
-durch. Grund: Nur so lässt sich jede Anfrage eindeutig auf Gerät und Aktion abbilden.
+Home-Mandate offers **its own tools** and does not proxy Home Assistant's MCP server.
+Reason: only this way can every request be mapped unambiguously to a device and an action.
 
-| Werkzeug | Aktion im Mandat | Zweck |
+| Tool | Action in the mandate | Purpose |
 |---|---|---|
-| `list_devices` | `read` | Listet nur Geräte, auf die der Agent mindestens Leserecht hat |
-| `get_state` | `read` | Zustand eines Geräts |
-| `perform_action` | je nach Kategorie, z. B. `turn_on`, `unlock` | Führt eine Aktion aus, nach Entscheidung |
-| `list_my_permissions` | – | Zeigt dem Agenten, was er darf (hilft Modellen, unnötige Anfragen zu vermeiden). Zeigt nie die Regeln anderer Agenten. |
+| `list_devices` | `read` | Lists only devices the agent has at least read access to |
+| `get_state` | `read` | State of a device |
+| `perform_action` | depends on the category, e.g. `turn_on`, `unlock` | Performs an action, after the decision |
+| `list_my_permissions` | – | Shows the agent what it may do (helps models avoid pointless requests). Never shows other agents' rules. |
 
-Geräte, auf die ein Agent keinen Lesezugriff hat, existieren für ihn nicht (kein Hinweis auf
-ihre Existenz in Listen oder Fehlermeldungen).
+Devices an agent has no read access to do not exist for that agent (no hint of their
+existence in lists or error messages).
 
-## 5. Ablauf einer Anfrage
+## 5. Request flow
 
-1. Agent ruft `perform_action(entity_id="lock.haustuer", action="unlock")` auf.
-2. `mcp` prüft das Token (gültig, nicht widerrufen, für diese Ressource ausgestellt).
-3. `ratelimit` prüft das Kontingent des Agenten. Überschreitung → Absage, Protokoll.
-4. `catalog` löst die Entität auf: Kategorie `lock`, Bereich `flur`.
-5. `mcp` stellt eine AuthZEN-Anfrage an den `pdp` (siehe `mandate-spec/SPEC-v0.md`, Abschnitt 6).
-6. `pdp` wertet das Mandat aus. Ergebnis: `allow`, `ask` oder `deny`.
-7. Bei `ask`: `approval` sendet eine Aktions-Benachrichtigung an alle Freigebenden und wartet
-   höchstens bis zum Timeout (Standard 2 Minuten). Keine oder negative Antwort → `deny`.
-8. Bei `allow`: `ha` ruft den Service auf.
-9. `audit` schreibt einen Eintrag mit Agent, Aktion, Ressource, Entscheidung, Grund, Dauer.
-10. Agent erhält Ergebnis bzw. eine klare Absage mit Begründungscode, ohne interne Details.
+1. The agent calls `perform_action(entity_id="lock.front_door", action="unlock")`.
+2. `mcp` checks the token (valid, not revoked, issued for this resource).
+3. `ratelimit` checks the agent's quota. Exceeded → refusal, logged.
+4. `catalog` resolves the entity: category `lock`, area `hallway`.
+5. `mcp` sends an AuthZEN request to the `pdp` (see `mandate-spec/SPEC-v0.md`, section 6).
+6. `pdp` evaluates the mandate. Result: `allow`, `ask` or `deny`.
+7. On `ask`: `approval` sends an actionable notification to all approvers and waits at most
+   until the timeout (default 2 minutes). No answer or a negative answer → `deny`.
+8. On `allow`: `ha` calls the service.
+9. `audit` writes an entry with agent, action, resource, decision, reason, duration.
+10. The agent receives the result or a clear refusal with a reason code, without internal details.
 
-## 6. Onboarding von Agenten
+## 6. Onboarding agents
 
-Zwei Wege, beide Standard-OAuth, beide verlangen eine Bestätigung im Haus:
+Two ways, both standard OAuth, both require a confirmation inside the household:
 
-**a) Browser-fähige Agenten** (Authorization Code + PKCE, OAuth 2.1)
-- Agent entdeckt Home-Mandate über Protected Resource Metadata (RFC 9728) und
-  Authorization Server Metadata (RFC 8414), wie in der MCP-Spezifikation vorgesehen.
-- Client-Identifikation über Client ID Metadata Documents (CIMD). Offene dynamische
-  Registrierung ist **aus**.
-- Der Mensch meldet sich mit seinem Home-Assistant-Konto an (HA als Identitätsanbieter über
-  dessen OAuth für externe Anwendungen) und wählt das Mandat für den neuen Agenten.
-- Nur HA-Administratoren dürfen Agenten zulassen.
+**a) Browser-capable agents** (Authorization Code + PKCE, OAuth 2.1)
+- The agent discovers Home-Mandate via Protected Resource Metadata (RFC 9728) and
+  Authorization Server Metadata (RFC 8414), as specified by MCP.
+- Client identification via Client ID Metadata Documents (CIMD). Open dynamic client
+  registration is **off**.
+- The human signs in with their Home Assistant account (HA as identity provider via its OAuth
+  for external applications) and picks the mandate for the new agent.
+- Only HA administrators may admit agents.
 
-**b) Agenten ohne Browser** (Device Authorization Grant, RFC 8628) – der „Kopplungscode“
-- Agent fordert einen Code an und zeigt ihn an.
-- Mensch gibt den Code in der Home-Mandate-Oberfläche ein und wählt das Mandat.
+**b) Agents without a browser** (Device Authorization Grant, RFC 8628) – the "pairing code"
+- The agent requests a code and displays it.
+- The human enters the code in the Home-Mandate UI and picks the mandate.
 
-**Token:** undurchsichtige Zufallswerte (256 Bit), in der Datenbank nur als Hash gespeichert.
-Zugriffstoken 10 Minuten, Refresh-Token 30 Tage mit Rotation und Wiederverwendungserkennung
-(Wiederverwendung eines alten Refresh-Tokens widerruft die ganze Kette). Token sind an die
-Ressource Home-Mandate gebunden (Resource Indicators, RFC 8707).
-Entzug eines Agenten oder Not-Aus wirkt sofort, weil jedes Token bei jeder Anfrage geprüft wird.
+**Tokens:** opaque random values (256 bits), stored in the database only as a hash.
+Access tokens 10 minutes, refresh tokens 30 days with rotation and reuse detection (reusing an
+old refresh token revokes the whole chain). Tokens are bound to the Home-Mandate resource
+(Resource Indicators, RFC 8707).
+Revoking an agent or the emergency stop takes effect immediately, because every token is
+checked on every request.
 
-## 7. Rückfragen („ask“)
+## 7. Approval requests ("ask")
 
-- Versand über `notify.mobile_app_<gerät>` an die in den Einstellungen gewählten Freigebenden.
-- Aktionskennungen enthalten eine zufällige Nonce (128 Bit): `HM_APPROVE_<nonce>`, `HM_DENY_<nonce>`.
-- Auswertung des Events `mobile_app_notification_action`: Nonce muss offen sein, `context.user_id`
-  muss zu einem Freigebenden gehören, sonst wird die Antwort verworfen und protokolliert.
-- Auf iOS wird `authenticationRequired: true` gesetzt (Entsperren nötig).
-- Der vom Agenten gelieferte „Grund“ wird in der Nachricht ausdrücklich als Angabe des
-  Agenten gekennzeichnet, nicht als Tatsache.
-- Timeout (Standard 2 Minuten) → `deny`. Jede Nonce ist nur einmal gültig.
+- Sent via `notify.mobile_app_<device>` to the approvers selected in the settings.
+- Action identifiers contain a random nonce (128 bits): `HM_APPROVE_<nonce>`, `HM_DENY_<nonce>`.
+- Handling of the `mobile_app_notification_action` event: the nonce must be open and
+  `context.user_id` must belong to an approver; otherwise the answer is discarded and logged.
+- On iOS, `authenticationRequired: true` is set (unlocking required).
+- The "reason" supplied by the agent is explicitly marked in the message as the agent's claim,
+  not as a fact.
+- Timeout (default 2 minutes) → `deny`. Every nonce is valid exactly once.
 
-## 8. Betriebsarten
+## 8. Operating modes
 
-| | App-Modus (Home Assistant OS) | Container-Modus (Home Assistant Container) |
+| | App mode (Home Assistant OS) | Container mode (Home Assistant Container) |
 |---|---|---|
-| Start | App aus eigenem Repository | `docker run` / Podman-Quadlet mit demselben Image |
-| Zugang zu HA | `SUPERVISOR_TOKEN`, API über `http://supervisor/core/…` | Langzeit-Token eines eigenen HA-Benutzers, URL per Variable |
-| Oberfläche | Ingress (Anmeldung durch HA) | eigener Port, Anmeldung mit HA-Konto (OAuth) |
-| Daten | `/data` | gemountetes Volume |
+| Start | App from its own repository | `docker run` / Podman Quadlet with the same image |
+| Access to HA | `SUPERVISOR_TOKEN`, API via `http://supervisor/core/…` | Long-lived token of a dedicated HA user, URL via variable |
+| UI | Ingress (sign-in handled by HA) | Own port, sign-in with HA account (OAuth) |
+| Data | `/data` | Mounted volume |
 
-Ein Image, zwei Konfigurationsquellen. Architekturen: `amd64`, `aarch64`.
+One image, two configuration sources. Architectures: `amd64`, `aarch64`.
 
-## 9. Datenhaltung
+## 9. Data storage
 
-SQLite unter `/data/home-mandate.db`:
-`agents`, `mandates` (JSON gemäß Schema, versioniert), `tokens` (Hashes), `approvals`,
-`audit` (hash-verkettet), `settings`.
+SQLite at `/data/home-mandate.db`:
+`agents`, `mandates` (JSON per schema, versioned), `tokens` (hashes), `approvals`,
+`audit` (hash-chained), `settings`.
 
-Der HA-Zugang im Container-Modus wird mit einem Schlüssel verschlüsselt, der getrennt von der
-Datenbank liegt (`/data/secret.key`, Dateirechte 0600). Das schützt vor dem versehentlichen
-Weitergeben der Datenbank (Backup, Support-Anfrage), nicht vor einem Angreifer mit Vollzugriff
-auf das Dateisystem. Das wird so dokumentiert.
+In container mode, the HA credentials are encrypted with a key stored separately from the
+database (`/data/secret.key`, file mode 0600). This protects against accidentally handing out
+the database (backup, support request), not against an attacker with full access to the file
+system. This is documented as such.
 
-## 10. Kryptografie
+## 10. Cryptography
 
-- TLS 1.3 als Minimum, Go-Standardkurven inklusive **X25519MLKEM768** (hybride
-  Post-Quanten-Schlüsselvereinbarung, in Go seit 1.24 Standard). Build mit aktueller stabiler
-  Go-Version.
-- Signaturen (Audit-Kette, spätere signierte Entscheidungsbelege): vorerst Ed25519 hinter einer
-  Schnittstelle, damit ML-DSA ohne Formatbruch nachgezogen werden kann, sobald `crypto/mldsa` in
-  der eingesetzten Go-Version verfügbar ist.
-- Zufallswerte ausschließlich aus `crypto/rand`.
+- TLS 1.3 minimum, Go default curves including **X25519MLKEM768** (hybrid post-quantum key
+  agreement, default in Go since 1.24). Built with the current stable Go version.
+- Signatures (audit chain, later signed decision receipts): Ed25519 for now, behind an
+  interface, so that ML-DSA can be added without breaking the format once `crypto/mldsa` is
+  available in the Go version in use.
+- Random values exclusively from `crypto/rand`.
 
-## 11. Offene Entscheidungen (vor Woche 2 klären)
+## 11. Decisions (resolved 2026-10-01)
 
-1. **TLS für den MCP-Endpunkt im LAN.** Viele Clients lehnen selbstsignierte Zertifikate ab.
-   Vorschlag: vorhandenes Zertifikat aus `/ssl` nutzen (üblich bei HA-OS-Installationen mit
-   Let's Encrypt/DuckDNS), sonst nur `localhost` ohne TLS. Kein Klartext im LAN.
-2. **Rechte des HA-Benutzers im Container-Modus.** Prüfen, welche WebSocket-Befehle
-   (Registry-Abfragen) Adminrechte verlangen. Falls nötig: Admin-Benutzer, dafür klar
-   dokumentiert.
-3. **Schreibrechte für Nicht-Root** auf `/data` im App-Modus prüfen; sonst als Root mit
-   schreibgeschütztem Dateisystem und ohne zusätzliche Capabilities.
-4. **App-Konfigurationsformat** gegen die aktuelle Entwicklerdoku prüfen (seit Supervisor
-   2026.04 kein automatisches `BUILD_FROM` mehr).
-5. **Sprache der Rückfrage-Benachrichtigungen.** Prüfen, ob die bevorzugte Sprache eines
-   HA-Benutzers serverseitig abrufbar ist. Sonst: Sprache aus der HA-Systemkonfiguration,
-   in den Home-Mandate-Einstellungen pro Freigebendem überschreibbar.
+Decided by Markus on 2026-10-01.
 
-## 12. Lokale Oberfläche
+1. **TLS for the MCP endpoint on the LAN.** Many clients reject self-signed certificates.
+   **Decision: as proposed.** Use an existing certificate from `/ssl` (common on HA OS
+   installations with Let's Encrypt/DuckDNS); otherwise only `localhost` without TLS. No
+   plaintext on the LAN.
+2. **Permissions of the HA user in container mode.** **Decision: need-to-know.** A dedicated
+   HA user without admin rights; admin rights only where demonstrably required, and then
+   documented here.
 
-**Technik:** Svelte 5 mit Vite 8, als Single-Page-App gebaut und per `embed.FS` in das
-Go-Binary eingebettet. Im Haus läuft weiterhin genau ein Binary, keine Node-Laufzeit.
+   Checked against the Home Assistant source code (`home-assistant/core`, branch `dev`,
+   as of 2026-10-01, checking `require_admin` and `SUBSCRIBE_ALLOWLIST`):
 
-**Design:** Entwürfe entstehen mit Claude Design. Farben, Typografie und Abstände werden als
-Design-Tokens (CSS-Variablen) in `web/src/lib/tokens/` übernommen und später mit Portal und
-Webseite geteilt. Komponenten werden aus den Entwürfen in Svelte umgesetzt, nicht als
-generierter Code übernommen.
+   | Home-Mandate needs to | WebSocket command | Admin required |
+   |---|---|---|
+   | Read states | `get_states`, `subscribe_entities` | no |
+   | Catalog (entities, devices, areas, floors, labels) | `config/entity_registry/list`, `config/device_registry/list`, `config/area_registry/list`, `config/floor_registry/list`, `config/label_registry/list` | no (only modifying commands require admin) |
+   | Track state and registry changes | `subscribe_events` with `state_changed`, `*_registry_updated` | no (on the allowlist) |
+   | Perform an action, send a notification | `call_service` (e.g. `lock.unlock`, `notify.mobile_app_*`) | no |
+   | Check the signed-in human (admin?) | `auth/current_user` | no |
+   | Household time zone, units, language | `get_config` | no |
+   | Select approvers | `config/auth/list` | **yes** – replacement without admin: `person.*` entities via `get_states` (attribute `user_id`) |
+   | **Receive answers to approval requests** | `subscribe_events` with `mobile_app_notification_action` (not on the allowlist); `subscribe_trigger` as the alternative also requires admin | **yes** |
 
-**Besonderheiten durch Home Assistant Ingress:**
-- Die Oberfläche läuft unter einem Pfad, den HA pro Installation vergibt. Deshalb Vite mit
-  `base: './'` (relative Pfade) und Hash-Routing (`#/agents`, `#/mandates/…`), kein
-  Router, der den Basispfad zur Build-Zeit kennen muss.
-- Die UI spricht nur mit der eigenen JSON-API (`internal/api`) unter demselben Ursprung.
-- Ingress-Anfragen werden nur von 172.30.32.2 angenommen.
+   Result: everything except receiving the answers to approval requests works without admin
+   rights.
 
-**Sicherheit im Frontend:**
-- Content-Security-Policy ohne `unsafe-inline` und ohne `unsafe-eval`; alle Skripte und
-  Stile als Dateien aus dem Build.
-- Keine externen Ressourcen (keine CDNs, keine Web-Fonts von Dritten); Schriften werden
-  mitgeliefert.
-- Abhängigkeiten minimal; `pnpm` mit Lockfile, Installations-Skripte von Paketen
-  abgeschaltet, Updates mit Mindestalter, JavaScript-Abhängigkeiten in der SBOM.
-- Svelte-Ausgaben werden standardmäßig maskiert; `{@html}` ist verboten.
+   **Decision (Markus, 2026-10-01): admin user.** The sole reason is the subscription to
+   `mobile_app_notification_action` for the approval answers. The alternative, an HA
+   automation forwarding answers to a webhook, was rejected: the proof of who approved a door
+   (`context.user_id`) must come directly from Home Assistant and not depend on an automation
+   that any admin can modify.
 
-### i18n und l10n
+   To keep the need-to-know principle anyway:
+   - A dedicated HA user only for Home-Mandate (e.g. "Home-Mandate"), not a human's user;
+     sign-in via long-lived token, stored encrypted (section 9).
+   - `internal/ha` sends only the WebSocket commands from the table above (fixed allowlist in
+     the code); any other command is rejected before it is sent. A negative test checks this,
+     and the table here is the source of the list.
+   - `subscribe_events` only for `state_changed`, `*_registry_updated` and
+     `mobile_app_notification_action`; approvers are determined via `person.*`, not via
+     `config/auth/list`.
+   - The reason for the admin rights is stated in the README and in the UI when setting up
+     the HA access.
+   - If Home Assistant lifts the restriction (event added to the allowlist), we switch to a
+     user without admin rights.
 
-- **Bibliothek:** Paraglide JS (inlang), vom Svelte-CLI unterstützt. Übersetzungen werden
-  zur Build-Zeit kompiliert, typsicher, nicht benutzte Texte fallen weg.
-- **Sprachen zum Release:** Deutsch und Englisch. Ab v0.2 Community-Übersetzungen über
-  Weblate (Open Source, in der EU betreibbar).
-- **Formatierung** ausschließlich über die `Intl`-APIs des Browsers: Datum, Uhrzeit,
-  relative Zeiten („vor 3 Minuten“), Zahlen, Pluralformen, Listen.
-- **Zeitzone:** Zeiten werden immer in der Zeitzone des Haushalts aus der HA-Konfiguration
-  angezeigt, nicht in der des Browsers. Zeitfenster in Mandaten sind Ortszeit des Haushalts.
-- **Einheiten:** Temperatur und Maße aus dem HA-Einheitensystem (°C/°F).
-- **Sprachwahl:** Reihenfolge: Einstellung des Benutzers in Home-Mandate → Browsersprache →
-  Englisch als Rückfall.
-- **Vorbereitet für weitere Schriften:** CSS nur mit logischen Eigenschaften
-  (`margin-inline-start` statt `margin-left`), damit spätere rechts-nach-links-Sprachen
-  ohne Umbau funktionieren.
-- **Stabile Schlüssel:** Kategorien, Aktionen und Begründungscodes aus der Spezifikation
-  bleiben englische Bezeichner; übersetzt werden nur ihre Anzeigenamen.
-- **Server-Texte** (Rückfragen, Fehlermeldungen): eigene Kataloge in `internal/i18n`,
-  gleiche Schlüsselkonventionen, ebenfalls über Weblate gepflegt.
+   In app mode, additionally check before week 4 which permissions the supervisor token
+   (`homeassistant_api`) has on the Core API, and request only the access that is needed.
+3. **Write access for non-root** to `/data` in app mode. **Decision: as proposed.** Check
+   during app packaging (week 4); if not writable, run as root with a read-only file system
+   and no additional capabilities.
+4. **App configuration format.** **Decision: as proposed.** Check against the current
+   developer documentation (no automatic `BUILD_FROM` since Supervisor 2026.04) during app
+   packaging (week 4).
+5. **Language of approval notifications.** **Decision: as proposed.** Check whether an HA
+   user's preferred language can be retrieved server-side (week 3, `internal/i18n`).
+   Otherwise: language from the HA system configuration (`get_config`), overridable per
+   approver in the Home-Mandate settings.
+
+**Toolchain (2026-10-01):**
+- Go 1.27.1 for `mandate-spec` and `home-mandate`; build image `golang:1.27.1-alpine` pinned
+  by digest (Dockerfile).
+- HA WebSocket client: `github.com/coder/websocket`.
+- Migrations: `github.com/pressly/goose/v3` with embedded SQL files, plus own guards
+  (checksums of applied migrations, no downgrade).
+- UI: Node 24 LTS, TypeScript 6.0 (TypeScript 7 does not yet work with `svelte-check`).
+- Tests against a real Home Assistant instance start in week 2 with the E2E environment;
+  in week 1, `internal/ha` is tested against a simulated HA server.
+
+## 12. Local UI
+
+**Technology:** Svelte 5 with Vite 8, built as a single-page app and embedded into the Go
+binary via `embed.FS`. Inside the household, there is still exactly one binary and no Node
+runtime.
+
+**Design:** Designs are created with Claude Design. Colours, typography and spacing are
+adopted as design tokens (CSS variables) in `web/src/lib/tokens/` and later shared with the
+portal and the website. Components are implemented in Svelte from the designs, not taken over
+as generated code.
+
+**Specifics due to Home Assistant Ingress:**
+- The UI runs under a path that HA assigns per installation. Hence Vite with `base: './'`
+  (relative paths) and hash routing (`#/agents`, `#/mandates/…`), no router that must know
+  the base path at build time.
+- The UI talks only to its own JSON API (`internal/api`) on the same origin.
+- Ingress requests are accepted only from 172.30.32.2.
+
+**Frontend security:**
+- Content Security Policy without `unsafe-inline` and without `unsafe-eval`; all scripts and
+  styles as files from the build.
+- No external resources (no CDNs, no third-party web fonts); fonts are bundled.
+- Minimal dependencies; `pnpm` with lockfile, package install scripts disabled, updates with a
+  minimum release age, JavaScript dependencies included in the SBOM.
+- Svelte output is escaped by default; `{@html}` is forbidden.
+
+### i18n and l10n
+
+- **Library:** Paraglide JS (inlang), supported by the Svelte CLI. Translations are compiled
+  at build time, type-safe; unused messages are dropped.
+- **Languages at release:** German and English. From v0.2, community translations via
+  Weblate (open source, can be operated in the EU).
+- **Formatting** exclusively via the browser's `Intl` APIs: date, time, relative times
+  ("3 minutes ago"), numbers, plural forms, lists.
+- **Time zone:** times are always shown in the household's time zone from the HA
+  configuration, not in the browser's. Time windows in mandates are household local time.
+- **Units:** temperature and measurements from the HA unit system (°C/°F).
+- **Language selection:** order: the user's setting in Home-Mandate → browser language →
+  English as fallback.
+- **Prepared for other scripts:** CSS uses logical properties only (`margin-inline-start`
+  instead of `margin-left`), so that right-to-left languages work later without rework.
+- **Stable keys:** categories, actions and reason codes from the specification remain English
+  identifiers; only their display names are translated.
+- **Server texts** (approval requests, error messages): own catalogs in `internal/i18n`, same
+  key conventions, also maintained via Weblate.
