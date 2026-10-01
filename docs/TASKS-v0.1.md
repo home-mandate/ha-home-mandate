@@ -12,11 +12,11 @@ Two repositories: **[S]** = `mandate-spec`, **[H]** = `home-mandate`.
 - [x] [S] `evaluator`: data model, schema validation, evaluation per `SPEC-v0.md` section 4, standard library plus schema validator only
 - [x] [S] All conformance cases as Go tests; fuzz test (never panics, unknown input → `deny`); prepare mutation tests
 - [x] [S] Tag `v0.1.0-alpha.1`
-- [ ] [H] Repository, Go module, `go.work` for local development with [S]
-- [ ] [H] CI: `go vet`, `staticcheck`, `go test -race`, `govulncheck`, coverage thresholds from `docs/TESTING.md`, build amd64/aarch64
-- [ ] [H] `web/`: Svelte 5 + Vite 8 + TypeScript, Paraglide with `de` and `en`, Vitest, Playwright; CI steps for lint, type checking, tests, i18n completeness
-- [ ] [H] `internal/store`: SQLite (pure Go), migrations
-- [ ] [H] `internal/ha`: WebSocket connection, authentication, `get_states`, registry queries, reconnection
+- [x] [H] Repository, Go module, `go.work` for local development with [S]
+- [x] [H] CI: `go vet`, `staticcheck`, `go test -race`, `govulncheck`, coverage thresholds from `docs/TESTING.md`, build amd64/aarch64
+- [x] [H] `web/`: Svelte 5 + Vite 8 + TypeScript, Paraglide with `de` and `en`, Vitest, Playwright; CI steps for lint, type checking, tests, i18n completeness
+- [x] [H] `internal/store`: SQLite (pure Go), migrations
+- [x] [H] `internal/ha`: WebSocket connection, authentication, `get_states`, registry queries, reconnection
 - [x] **Open decisions 1–5** from `docs/ARCHITECTURE.md`: resolve and record them there
 - [ ] Claude Design: first designs for agent list, mandate editor, audit log, approval view; define design tokens
 
