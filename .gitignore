@@ -1,0 +1,15 @@
+# Local workspace with ../mandate-spec (see Makefile)
+go.work
+go.work.sum
+
+# Build and test output
+/bin/
+cover.out
+*.test
+
+# UI
+node_modules/
+web/dist/
+web/coverage/
+web/test-results/
+web/playwright-report/
