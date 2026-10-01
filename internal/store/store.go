@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	_ "modernc.org/sqlite" // registers the pure-Go "sqlite" driver
 )
@@ -106,8 +107,11 @@ func prepareFiles(path string) error {
 	if err != nil {
 		return fmt.Errorf("store: database directory: %w", err)
 	}
-	if info.Mode().Perm()&0o002 != 0 {
-		return fmt.Errorf("%w: %s is writable by others", ErrInsecurePermissions, dir)
+	if info.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("%w: %s is writable by group or others", ErrInsecurePermissions, dir)
+	}
+	if err := checkOwner(dir, info); err != nil {
+		return err
 	}
 
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, fileMode)
@@ -128,8 +132,8 @@ func prepareFiles(path string) error {
 	return nil
 }
 
-// checkFile requires an existing file to be a regular file, not a symlink, that only
-// its owner can access. A missing file is fine.
+// checkFile requires an existing file to be a regular file, not a symlink or hard
+// link, owned by this process's user and accessible only to it. A missing file is fine.
 func checkFile(path string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -143,6 +147,21 @@ func checkFile(path string) error {
 	}
 	if info.Mode().Perm()&0o077 != 0 {
 		return fmt.Errorf("%w: %s has mode %o, want 600", ErrInsecurePermissions, path, info.Mode().Perm())
+	}
+	if err := checkOwner(path, info); err != nil {
+		return err
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); !ok || st.Nlink != 1 {
+		return fmt.Errorf("%w: %s has more than one link", ErrInsecurePermissions, path)
+	}
+	return nil
+}
+
+// checkOwner requires path to belong to the user this process runs as.
+func checkOwner(path string, info fs.FileInfo) error {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || int(st.Uid) != os.Getuid() {
+		return fmt.Errorf("%w: %s is not owned by this user", ErrInsecurePermissions, path)
 	}
 	return nil
 }

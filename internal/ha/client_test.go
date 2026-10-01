@@ -182,7 +182,6 @@ func TestAuthInvalidIsPermanent(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not return after auth_invalid")
 	}
-	time.Sleep(50 * time.Millisecond) // more than the reconnect delay
 	if n := f.connections(); n != 1 {
 		t.Errorf("connections = %d, want 1 (no retry after auth_invalid)", n)
 	}
@@ -217,8 +216,8 @@ func TestRequestWhileDisconnectedFailsAndIsNotReplayed(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = c.Run(ctx) }()
-	f.waitAuthenticated(1)
-	time.Sleep(20 * time.Millisecond)
+	waitReady(t, c)
+	roundTrip(t, c)
 	if n := f.count("get_states"); n != 0 {
 		t.Errorf("get_states reached HA %d times after connecting, want 0", n)
 	}
@@ -252,7 +251,8 @@ func TestPendingRequestFailsOnDisconnectAndIsNotReplayed(t *testing.T) {
 		t.Fatal("pending request did not fail after the connection was lost")
 	}
 	f.waitAuthenticated(2)
-	time.Sleep(20 * time.Millisecond)
+	waitReady(t, c)
+	roundTrip(t, c)
 	if n := f.count("get_states"); n != 1 {
 		t.Errorf("get_states reached HA %d times, want 1 (no replay)", n)
 	}
@@ -292,7 +292,7 @@ func TestEventsAreDelivered(t *testing.T) {
 	}
 	defer sub.Unsubscribe(context.Background())
 
-	f.pushEvent(EventMobileAppNotificationAction, map[string]any{
+	sent := f.pushEvent(EventMobileAppNotificationAction, map[string]any{
 		"data":       map[string]any{"action": "HM_APPROVE_abc"},
 		"time_fired": "2026-10-01T10:00:00+00:00",
 		"origin":     "REMOTE",
@@ -305,7 +305,7 @@ func TestEventsAreDelivered(t *testing.T) {
 			t.Errorf("event = %+v", e)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("event not delivered")
+		t.Fatalf("event not delivered (sent to %d subscriptions, HA saw %v)", sent, f.receivedTypes())
 	}
 }
 
@@ -396,11 +396,127 @@ func TestSubscribeFailureIsReported(t *testing.T) {
 	if !errors.As(err, &cerr) || cerr.Code != "unauthorized" {
 		t.Fatalf("SubscribeEvents = %v, want CommandError unauthorized", err)
 	}
+	f.set(func(f *fakeHA) { f.failSubscribe = false })
+	if _, err := c.SubscribeEvents(context.Background(), "label_registry_updated", func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
 	f.dropAll()
 	f.waitAuthenticated(2)
-	time.Sleep(20 * time.Millisecond)
-	if n := f.count("subscribe_events"); n != 1 {
-		t.Errorf("subscribe_events = %d, want 1 (failed subscription is not restored)", n)
+	// Only the successful subscription is restored.
+	eventually(t, "resubscription", func() bool { return f.count("subscribe_events") >= 3 })
+	roundTrip(t, c)
+	if n := f.count("subscribe_events"); n != 3 {
+		t.Errorf("subscribe_events = %d, want 3", n)
+	}
+}
+
+func TestCancelledSubscribeIsUnsubscribed(t *testing.T) {
+	f := newFakeHA(t)
+	hold := make(chan struct{})
+	defer close(hold)
+	f.set(func(f *fakeHA) { f.holdSubscribe = hold })
+	c, _ := startClient(t, testConfig(f.url()))
+	waitReady(t, c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := c.SubscribeEvents(ctx, EventStateChanged, func(Event) {}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("SubscribeEvents = %v, want DeadlineExceeded", err)
+	}
+	eventually(t, "unsubscribe_events", func() bool { return f.count("unsubscribe_events") == 1 })
+}
+
+func TestEventWithWrongTypeIsDropped(t *testing.T) {
+	f := newFakeHA(t)
+	c, _ := startClient(t, testConfig(f.url()))
+	waitReady(t, c)
+	events := make(chan Event, 2)
+	sub, err := c.SubscribeEvents(context.Background(), EventMobileAppNotificationAction, func(e Event) { events <- e })
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	id := sub.id
+	c.mu.Unlock()
+
+	f.sendRaw([]byte(fmt.Sprintf(`{"id":%d,"type":"event","event":{"event_type":"state_changed","data":{}}}`, id)))
+	f.pushEvent(EventMobileAppNotificationAction, map[string]any{"data": map[string]any{}})
+	e := <-events
+	if e.EventType != EventMobileAppNotificationAction {
+		t.Errorf("delivered event of type %q", e.EventType)
+	}
+}
+
+// send records the connection generation before it waits for the writer; a request
+// from before a reconnect must not go out on the new connection.
+func TestRequestFromOldConnectionIsNotSentOnNewConnection(t *testing.T) {
+	f := newFakeHA(t)
+	c, _ := startClient(t, testConfig(f.url()))
+	waitReady(t, c)
+	c.mu.Lock()
+	oldGen := c.gen
+	c.mu.Unlock()
+
+	f.dropAll()
+	f.waitAuthenticated(2)
+	waitReady(t, c)
+
+	if _, _, err := c.write(context.Background(), oldGen, command{Type: "get_config"}, nil); !errors.Is(err, ErrDisconnected) {
+		t.Errorf("write with old generation = %v, want ErrDisconnected", err)
+	}
+	roundTrip(t, c)
+	if n := f.count("get_config"); n != 0 {
+		t.Errorf("get_config reached HA %d times, want 0", n)
+	}
+}
+
+func TestWaitingForTheWriterHonoursContext(t *testing.T) {
+	f := newFakeHA(t)
+	c, _ := startClient(t, testConfig(f.url()))
+	waitReady(t, c)
+
+	c.writeSem <- struct{}{}
+	defer func() { <-c.writeSem }()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := c.GetConfig(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("GetConfig = %v, want DeadlineExceeded", err)
+	}
+}
+
+func TestWaitReadyAfterRunStopped(t *testing.T) {
+	f := newFakeHA(t)
+	c, err := New(testConfig(f.url()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_ = c.Run(ctx)
+	if err := c.WaitReady(context.Background()); !errors.Is(err, ErrStopped) {
+		t.Errorf("WaitReady = %v, want ErrStopped", err)
+	}
+}
+
+func TestPlaintextLocalhostByName(t *testing.T) {
+	f := newFakeHA(t)
+	f.handle("get_config", func(fakeMsg) (any, *CommandError) { return map[string]any{}, nil })
+	url := strings.Replace(f.url(), "127.0.0.1", "localhost", 1)
+	c, _ := startClient(t, testConfig(url))
+	waitReady(t, c)
+	roundTrip(t, c)
+}
+
+// roundTrip completes one request; HA handles messages in order, so everything sent
+// before has been processed.
+func roundTrip(t *testing.T, c *Client) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := c.request(ctx, command{Type: "ping"})
+	if err != nil {
+		t.Fatalf("round trip: %v", err)
 	}
 }
 
@@ -520,8 +636,8 @@ func TestUnreachableHAKeepsRetrying(t *testing.T) {
 	f := newFakeHA(t)
 	url := f.url()
 	f.srv.Close()
-	startClient(t, testConfig(url))
-	time.Sleep(50 * time.Millisecond) // several reconnect attempts; must not panic or exit
+	c, _ := startClient(t, testConfig(url))
+	eventually(t, "several attempts", func() bool { return c.attempts.Load() >= 3 })
 }
 
 func TestTLSWithTrustedCertificate(t *testing.T) {
@@ -548,8 +664,8 @@ func TestTLSRejectsUntrustedCertificate(t *testing.T) {
 	defer tlsSrv.Close()
 	url := "wss" + strings.TrimPrefix(tlsSrv.URL, "https") + "/api/websocket"
 
-	startClient(t, testConfig(url)) // system roots only
-	time.Sleep(50 * time.Millisecond)
+	c, _ := startClient(t, testConfig(url)) // system roots only
+	eventually(t, "two attempts", func() bool { return c.attempts.Load() >= 2 })
 	if n := f.authenticated(); n != 0 {
 		t.Errorf("authenticated %d times against an untrusted certificate", n)
 	}
@@ -561,8 +677,8 @@ func TestRedirectIsNotFollowed(t *testing.T) {
 	defer redirect.Close()
 	url := "ws" + strings.TrimPrefix(redirect.URL, "http") + "/api/websocket"
 
-	startClient(t, testConfig(url))
-	time.Sleep(50 * time.Millisecond)
+	c, _ := startClient(t, testConfig(url))
+	eventually(t, "two attempts", func() bool { return c.attempts.Load() >= 2 })
 	if n := f.connections(); n != 0 {
 		t.Errorf("followed redirect: %d connections", n)
 	}

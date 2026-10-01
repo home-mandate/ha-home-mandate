@@ -26,6 +26,7 @@ type fakeHA struct {
 	authMode      string // "ok" (default), "invalid", "silent"
 	ignorePing    bool
 	failSubscribe bool
+	holdSubscribe chan struct{} // if set, subscribe results wait for it
 	handlers      map[string]func(fakeMsg) (any, *CommandError)
 	conns         []*websocket.Conn
 	authed        int
@@ -126,14 +127,17 @@ func (f *fakeHA) authenticate(ctx context.Context, conn *websocket.Conn, mode st
 	f.mu.Lock()
 	f.authed++
 	f.mu.Unlock()
-	f.authedCh <- struct{}{}
+	select {
+	case f.authedCh <- struct{}{}:
+	default: // waitAuthenticated also polls the counter
+	}
 	return true
 }
 
 func (f *fakeHA) dispatch(ctx context.Context, conn *websocket.Conn, m fakeMsg) {
 	f.mu.Lock()
 	f.received = append(f.received, m)
-	ignorePing, failSubscribe := f.ignorePing, f.failSubscribe
+	ignorePing, failSubscribe, holdSubscribe := f.ignorePing, f.failSubscribe, f.holdSubscribe
 	h := f.handlers[m.typ()]
 	f.mu.Unlock()
 
@@ -154,6 +158,13 @@ func (f *fakeHA) dispatch(ctx context.Context, conn *websocket.Conn, m fakeMsg) 
 		et, _ := m["event_type"].(string)
 		f.subs[conn][m.id()] = et
 		f.mu.Unlock()
+		if holdSubscribe != nil {
+			go func() {
+				<-holdSubscribe
+				f.writeResult(ctx, conn, m.id(), nil, nil)
+			}()
+			return
+		}
 		f.writeResult(ctx, conn, m.id(), nil, nil)
 	case "unsubscribe_events":
 		f.mu.Lock()
@@ -270,6 +281,7 @@ func (f *fakeHA) waitAuthenticated(n int) {
 	for f.authenticated() < n {
 		select {
 		case <-f.authedCh:
+		case <-time.After(10 * time.Millisecond):
 		case <-deadline:
 			f.t.Fatalf("fake HA: %d authentications, want %d", f.authenticated(), n)
 		}

@@ -115,10 +115,13 @@ Every line is at least one test. New attack ideas are added here before they are
 - `auth_invalid` → no retry, permanent error state
 - Connection lost with requests in flight → they fail immediately, nothing is executed after reconnecting
 - Oversized or malformed message from HA → connection closed, no panic
+- Plaintext `ws://` to a host other than loopback or the Supervisor, also after DNS resolution → refused; redirects are not followed; untrusted TLS certificate → refused
+- Access token in logs, error messages or formatted configuration → never (redacted)
 
 **Storage**
 - Checksum of an applied migration changed → start aborted
 - Database schema newer than the binary → start aborted (no downgrade)
+- Database directory writable by group or others, or not owned by the service user; database file readable by others, a symlink or hard link → start aborted
 
 **Transport**
 - TLS 1.2 or older → connection rejected

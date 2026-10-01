@@ -5,6 +5,7 @@ package ha
 import (
 	"context"
 	"errors"
+	"net"
 	"slices"
 	"strings"
 	"testing"
@@ -91,9 +92,9 @@ func TestCommandsOutsideAllowlistNeverReachHA(t *testing.T) {
 	if _, err := c.SubscribeEvents(context.Background(), EventStateChanged, nil); err == nil {
 		t.Error("SubscribeEvents with nil handler succeeded")
 	}
-	time.Sleep(20 * time.Millisecond)
-	if got := f.receivedTypes(); len(got) != 0 {
-		t.Errorf("HA received %v, want nothing", got)
+	roundTrip(t, c)
+	if got := f.receivedTypes(); !slices.Equal(got, []string{"ping"}) {
+		t.Errorf("HA received %v, want only the sentinel ping", got)
 	}
 }
 
@@ -130,6 +131,37 @@ func TestNewValidatesConfig(t *testing.T) {
 				t.Errorf("error leaks credentials: %v", err)
 			}
 		})
+	}
+}
+
+func TestPlaintextAllowed(t *testing.T) {
+	tests := []struct {
+		host string
+		ip   string
+		want bool
+	}{
+		{"localhost", "127.0.0.1", true},
+		{"localhost", "::1", true},
+		{"localhost", "192.168.1.10", false},
+		{"localhost", "203.0.113.7", false},
+		{"supervisor", "172.30.32.2", true},
+		{"supervisor", "10.0.0.5", true},
+		{"supervisor", "203.0.113.7", false},
+		{"127.0.0.1", "127.0.0.1", true},
+	}
+	for _, tt := range tests {
+		if got := plaintextAllowed(tt.host, net.ParseIP(tt.ip)); got != tt.want {
+			t.Errorf("plaintextAllowed(%s, %s) = %v, want %v", tt.host, tt.ip, got, tt.want)
+		}
+	}
+}
+
+func TestPlaintextDialRefusesNonLocalAddresses(t *testing.T) {
+	if _, err := plaintextDial(context.Background(), "tcp", "192.0.2.1:8123"); !errors.Is(err, ErrInsecureURL) {
+		t.Errorf("plaintextDial = %v, want ErrInsecureURL", err)
+	}
+	if _, err := plaintextDial(context.Background(), "tcp", "no-port"); err == nil {
+		t.Error("plaintextDial without port succeeded")
 	}
 }
 

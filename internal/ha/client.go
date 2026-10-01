@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -42,6 +43,8 @@ var (
 	ErrDisconnected = errors.New("home assistant: not connected")
 	// ErrAlreadyRun means Run was called more than once.
 	ErrAlreadyRun = errors.New("home assistant: Run called twice")
+	// ErrStopped means Run has returned; the client does not connect again.
+	ErrStopped = errors.New("home assistant: client stopped")
 )
 
 // Defaults for zero Config fields.
@@ -54,6 +57,9 @@ const (
 	DefaultReconnectMax = 30 * time.Second
 
 	writeTimeout = 10 * time.Second
+	// stableSession is how long a connection must last before the backoff resets, so a
+	// server that accepts and immediately drops connections is not hammered.
+	stableSession = 10 * time.Second
 )
 
 // plaintextHosts may be reached via ws://: the local host and the Supervisor proxy in
@@ -86,9 +92,11 @@ type Client struct {
 	log        *slog.Logger
 	httpClient *http.Client
 
-	// writeMu serializes id assignment and writes: HA rejects ids that do not increase.
-	writeMu sync.Mutex
-	nextID  int64
+	// writeSem (capacity 1) serializes id assignment and writes, because HA rejects ids
+	// that do not increase. A channel instead of a mutex lets waiting honour ctx.
+	writeSem chan struct{}
+	nextID   int64
+	attempts atomic.Int64 // connection attempts, for tests
 
 	mu        sync.Mutex
 	conn      *websocket.Conn // nil while disconnected
@@ -117,7 +125,8 @@ func New(cfg Config) (*Client, error) {
 	return &Client{
 		cfg:        cfg,
 		log:        log,
-		httpClient: newHTTPClient(cfg.RootCAs),
+		httpClient: newHTTPClient(cfg.URL, cfg.RootCAs),
+		writeSem:   make(chan struct{}, 1),
 		pending:    map[int64]chan message{},
 		subs:       map[*Subscription]struct{}{},
 		subByID:    map[int64]*Subscription{},
@@ -165,14 +174,45 @@ func validateURL(raw string) error {
 }
 
 // newHTTPClient refuses redirects (they could leave the configured host or downgrade to
-// ws://), ignores proxy settings and requires TLS 1.3.
-func newHTTPClient(roots *x509.CertPool) *http.Client {
+// ws://), ignores proxy settings and requires TLS 1.3. For ws:// it dials only addresses
+// that are local after name resolution.
+func newHTTPClient(rawURL string, roots *x509.CertPool) *http.Client {
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots},
+	}
+	if u, err := url.Parse(rawURL); err == nil && u.Scheme == "ws" {
+		transport.DialContext = plaintextDial
+	}
 	return &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots},
-		},
+		Transport:     transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
+}
+
+// plaintextDial resolves the host and connects only to an allowed local address, so a
+// name like "localhost" or "supervisor" cannot be pointed elsewhere via DNS.
+func plaintextDial(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	var d net.Dialer
+	for _, ip := range ips {
+		if plaintextAllowed(host, ip.IP) {
+			return d.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+		}
+	}
+	return nil, fmt.Errorf("%w: %s does not resolve to a local address", ErrInsecureURL, host)
+}
+
+// plaintextAllowed accepts loopback addresses, and private addresses for the Supervisor,
+// which runs on the Docker network of Home Assistant OS.
+func plaintextAllowed(host string, ip net.IP) bool {
+	return ip.IsLoopback() || host == "supervisor" && ip.IsPrivate()
 }
 
 // Run connects and keeps the connection alive until ctx is cancelled or Home Assistant
@@ -186,9 +226,11 @@ func (c *Client) Run(ctx context.Context) error {
 	c.started = true
 	c.mu.Unlock()
 
+	defer c.setPermanentIfUnset(ErrStopped)
+
 	delay := c.cfg.ReconnectMin
 	for {
-		authenticated, err := c.session(ctx)
+		connectedFor, err := c.session(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -197,7 +239,7 @@ func (c *Client) Run(ctx context.Context) error {
 			c.setPermanent(err)
 			return err
 		}
-		if authenticated {
+		if connectedFor >= stableSession {
 			delay = c.cfg.ReconnectMin
 		}
 		wait := jitter(delay)
@@ -212,7 +254,7 @@ func (c *Client) Run(ctx context.Context) error {
 }
 
 // WaitReady blocks until the client is connected. It returns ErrAuthInvalid if the
-// token was rejected.
+// token was rejected and ErrStopped once Run has returned.
 func (c *Client) WaitReady(ctx context.Context) error {
 	for {
 		c.mu.Lock()
@@ -232,17 +274,20 @@ func (c *Client) WaitReady(ctx context.Context) error {
 	}
 }
 
-// session runs one connection: dial, authenticate, serve until it breaks.
-func (c *Client) session(ctx context.Context) (authenticated bool, err error) {
+// session runs one connection: dial, authenticate, serve until it breaks. It reports
+// how long the connection was usable.
+func (c *Client) session(ctx context.Context) (connectedFor time.Duration, err error) {
+	c.attempts.Add(1)
 	conn, err := c.dial(ctx)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	defer conn.CloseNow()
 	conn.SetReadLimit(c.cfg.ReadLimit)
 	if err := c.authenticate(ctx, conn); err != nil {
-		return false, err
+		return 0, err
 	}
+	start := time.Now()
 
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -260,7 +305,7 @@ func (c *Client) session(ctx context.Context) (authenticated bool, err error) {
 	_ = conn.CloseNow()
 	c.disconnected()
 	wg.Wait()
-	return true, err
+	return time.Since(start), err
 }
 
 func (c *Client) dial(ctx context.Context) (*websocket.Conn, error) {
@@ -347,11 +392,11 @@ func (c *Client) dispatch(m message) {
 			return
 		}
 		var e Event
-		if err := json.Unmarshal(m.Event, &e); err != nil {
+		if err := json.Unmarshal(m.Event, &e); err != nil || e.EventType != sub.eventType {
 			c.log.Warn("ignored malformed home assistant event", "event_type", sub.eventType)
 			return
 		}
-		sub.handler(e)
+		sub.handler(e) // may still run once after Unsubscribe returned
 	default:
 		c.log.Debug("ignored home assistant message", "type", m.Type)
 	}
@@ -405,6 +450,15 @@ func (c *Client) setPermanent(err error) {
 	c.notifyLocked()
 }
 
+func (c *Client) setPermanentIfUnset(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.permanent == nil {
+		c.permanent = err
+		c.notifyLocked()
+	}
+}
+
 func (c *Client) notifyLocked() {
 	close(c.changed)
 	c.changed = make(chan struct{})
@@ -424,7 +478,15 @@ func (c *Client) send(ctx context.Context, cmd command, onID func(id int64, gen 
 	if err := checkAllowed(cmd); err != nil {
 		return nil, err
 	}
-	id, ch, err := c.write(ctx, cmd, onID)
+	// The request belongs to the connection that is current now; if that one is gone by
+	// the time it can be written, it fails instead of going out on a new connection.
+	c.mu.Lock()
+	conn, gen := c.conn, c.gen
+	c.mu.Unlock()
+	if conn == nil {
+		return nil, ErrDisconnected
+	}
+	id, ch, err := c.write(ctx, gen, cmd, onID)
 	if err != nil {
 		return nil, err
 	}
@@ -449,22 +511,26 @@ func (c *Client) send(ctx context.Context, cmd command, onID func(id int64, gen 
 	}
 }
 
-func (c *Client) write(ctx context.Context, cmd command, onID func(int64, uint64) bool) (int64, chan message, error) {
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
+func (c *Client) write(ctx context.Context, gen uint64, cmd command, onID func(int64, uint64) bool) (int64, chan message, error) {
+	select {
+	case c.writeSem <- struct{}{}:
+	case <-ctx.Done():
+		return 0, nil, ctx.Err()
+	}
+	defer func() { <-c.writeSem }()
 	if err := ctx.Err(); err != nil {
 		return 0, nil, err
 	}
 
 	c.mu.Lock()
 	conn := c.conn
-	if conn == nil {
+	if conn == nil || c.gen != gen {
 		c.mu.Unlock()
 		return 0, nil, ErrDisconnected
 	}
 	c.nextID++
 	id := c.nextID
-	if onID != nil && !onID(id, c.gen) {
+	if onID != nil && !onID(id, gen) {
 		c.mu.Unlock()
 		return 0, nil, errSkipped
 	}

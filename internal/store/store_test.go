@@ -154,6 +154,15 @@ func TestOpenRejectsInsecurePermissions(t *testing.T) {
 		{"directory writable by others", func(t *testing.T, dir, _ string) {
 			chmod(t, dir, 0o777)
 		}},
+		{"directory writable by group", func(t *testing.T, dir, _ string) {
+			chmod(t, dir, 0o770)
+		}},
+		{"database has a second hard link", func(t *testing.T, dir, path string) {
+			writeFile(t, path, 0o600)
+			if err := os.Link(path, filepath.Join(dir, "copy.db")); err != nil {
+				t.Fatal(err)
+			}
+		}},
 		{"database readable by group", func(t *testing.T, _, path string) {
 			writeFile(t, path, 0o640)
 		}},
