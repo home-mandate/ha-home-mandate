@@ -7,6 +7,8 @@
   "approval_deny": "Deny",
   "approval_invalid_title": "Warning: unauthorised answer",
   "approval_invalid_message": "{user} answered the request of {agent} (“{device}”: {action}) but may not approve it. The request was denied.",
+  "approval_bell_title": "Home-Mandate: approval waiting",
+  "approval_bell_message": "An approval request is waiting for an answer. Open Home-Mandate in the sidebar.",
   "action_read": "read state",
   "action_turn_on": "turn on",
   "action_turn_off": "turn off",

@@ -318,3 +318,58 @@ func TestApprovalShowsTheServiceData(t *testing.T) {
 		t.Errorf("asked = %+v", reqs)
 	}
 }
+
+// Decision F2: the request says whether the action is critical (the UI channel depends
+// on it) and which agent asks; the audit entry records the channel of the answer.
+func TestRequestIsMarkedAndChannelRecorded(t *testing.T) {
+	for _, via := range []string{approval.ViaPush, approval.ViaUI} {
+		f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeApproved, By: approverID, Via: via, At: answeredAt}}
+		h := approvalHarness(t, f)
+		if errText := unlock(h, nil); errText != "" {
+			t.Fatalf("%s: perform_action = %q", via, errText)
+		}
+		reqs := f.requests()
+		if len(reqs) != 1 || !reqs[0].Critical || reqs[0].ClientID != h.agent.ClientID {
+			t.Errorf("%s: asked = %+v", via, reqs)
+		}
+		if e := h.lastEntry(); path(e, "approval", "via") != via || path(e, "approval", "by") != approverID {
+			t.Errorf("%s: audit entry = %v", via, e)
+		}
+		if r, err := h.log.Verify(context.Background()); err != nil || !r.Valid {
+			t.Errorf("%s: audit log = %+v, %v", via, r, err)
+		}
+	}
+}
+
+// Decision F1: a request ended by the emergency stop or a revocation is denied without
+// an approval in the audit entry, with the cause as denied_by.
+func TestCancelledApprovals(t *testing.T) {
+	cancelled := approval.Result{Outcome: approval.OutcomeCancelled, At: answeredAt}
+	for name, tc := range map[string]struct {
+		during   func(h *harness)
+		errText  string
+		deniedBy string
+	}{
+		"emergency stop": {func(h *harness) {
+			_, _ = h.db.Exec(`INSERT INTO settings (key, value, updated_at) VALUES ('emergency_stop', 'on', '2026-10-13T12:00:00Z')`)
+		}, "denied: emergency_stop", "emergency_stop"},
+		"agent revoked": {func(*harness) {}, "denied: unauthorized", "authentication"},
+	} {
+		f := &fakeApprover{result: cancelled}
+		h := approvalHarness(t, f)
+		f.during = func() { tc.during(h) }
+		if errText := unlock(h, nil); errText != tc.errText {
+			t.Errorf("%s: %q", name, errText)
+		}
+		if calls := h.ha.recorded(); len(calls) != 0 {
+			t.Errorf("%s: Home Assistant called", name)
+		}
+		e := h.lastEntry()
+		if path(e, "approval") != nil || path(e, "result", "status") != "denied" || path(e, "result", "denied_by") != tc.deniedBy {
+			t.Errorf("%s: audit entry = %v", name, e)
+		}
+		if r, err := h.log.Verify(context.Background()); err != nil || !r.Valid {
+			t.Errorf("%s: audit log = %+v, %v", name, r, err)
+		}
+	}
+}

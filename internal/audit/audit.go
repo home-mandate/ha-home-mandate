@@ -135,10 +135,12 @@ type Evaluation struct {
 	ApprovalTimeout string  `json:"approval_timeout,omitempty"`
 }
 
-// Approval is the outcome of an approval request.
+// Approval is the outcome of an approval request; Via is the channel the answer came
+// through (push or ui), empty for a timeout.
 type Approval struct {
 	Outcome string
 	By      string
+	Via     string
 	At      time.Time
 }
 
@@ -147,9 +149,10 @@ func (a Approval) MarshalJSON() ([]byte, error) {
 	type wire struct {
 		Outcome string `json:"outcome"`
 		By      string `json:"by,omitempty"`
+		Via     string `json:"via,omitempty"`
 		At      string `json:"at"`
 	}
-	return json.Marshal(wire{a.Outcome, a.By, a.At.UTC().Format(timeFormat)})
+	return json.Marshal(wire{a.Outcome, a.By, a.Via, a.At.UTC().Format(timeFormat)})
 }
 
 // Result is what happened with a request.

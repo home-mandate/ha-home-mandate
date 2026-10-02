@@ -119,19 +119,40 @@ checked on every request.
 
 ## 7. Approval requests ("ask")
 
-- Sent via `notify.mobile_app_<device>` to the approvers selected in the settings.
+- Sent via `notify.mobile_app_<device>` to every device (up to 5) of the approvers selected
+  in the settings: phones, tablets, the Companion App on a Mac.
 - Action identifiers contain a random nonce (128 bits): `HM_APPROVE_<nonce>`, `HM_DENY_<nonce>`.
 - Handling of the `mobile_app_notification_action` event: the nonce must be open and
   `context.user_id` must belong to an approver; otherwise the answer is discarded and logged.
   An answer with an open nonce from anyone else (also Home-Mandate's own HA user) ends the
   request as `invalid_response` and warns the approvers (decision W8, 2026-10-02).
-- On iOS, `authenticationRequired: true` is set (unlocking required).
+- On iOS, `authenticationRequired: true` is set (unlocking required). Android and the
+  Companion App on a Mac have no such step: whoever has the unlocked device can answer.
 - The "reason" supplied by the agent is explicitly marked in the message as the agent's claim,
   not as a fact. The message also shows the service data that will be executed.
 - Timeout: the mandate's `approval.timeout`, capped by `HM_APPROVAL_TIMEOUT` (default
   2 minutes, at most 10) because the agent's request waits → `deny`. Every nonce is valid
   exactly once; open requests live in memory.
 - After an approval the PEP checks emergency stop, token and mandate again before executing.
+- **Answering in the UI (decision F2, 2026-10-02):** an approver who is a Home Assistant
+  administrator may also answer in the Home-Mandate UI if this is switched on for them, and
+  for critical actions only with a second, separate switch (a browser session asks for no
+  unlocking). The user comes from `X-Remote-User-Id` (only from the Supervisor). The UI knows
+  a separate random request ID, never the nonce. Administrator rights and settings are checked
+  again at the moment of the answer; a refused UI answer leaves the request open. The first
+  answer on any channel counts; the audit entry records it as `approval.via` (`push`, `ui`).
+  Every person needs at least one channel; the settings show who cannot be reached for
+  ordinary or critical requests.
+- **Hint in Home Assistant (B2, off by default):** a persistent notification without any
+  content of the request (no agent, device, reason or link) and with its own random ID
+  (`hm_approval_…`, not the request ID: persistent notifications are visible to every HA
+  user), removed however the request ends.
+- **Revocation and emergency stop (decision F1):** when triggered in the running gateway
+  (UI), open requests of the agent, or all, end at once and no further notification goes
+  out; the audit entry has no approval and is denied with `authentication` or
+  `emergency_stop`. The command line runs in a separate process and cannot reach open
+  requests; there the check after the answer (above) prevents the execution. Removing an
+  approver in the UI also takes them out of open requests.
 
 ## 8. Operating modes
 

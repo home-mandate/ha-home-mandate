@@ -77,17 +77,23 @@ be used once, and presenting a used one again revokes all tokens of that admissi
 ## Approval requests
 
 Actions with the decision `ask` wait for a human. Home-Mandate sends a notification with
-"Allow" and "Deny" to every approver of the mandate who is set up here; the answer must come
-from that approver's Home Assistant account. No answer within the timeout, an answer from
-anyone else, or no reachable approver means deny. An answer from someone who may not approve
-also warns the approvers. The agent's reason is shown as its claim, never as a fact.
+"Allow" and "Deny" to every device of every approver of the mandate who is set up here; the
+answer must come from that approver's Home Assistant account. No answer within the timeout,
+an answer from anyone else, or no reachable approver means deny. An answer from someone who
+may not approve also warns the approvers. The agent's reason is shown as its claim, never as
+a fact. The first answer counts.
 
 ```bash
-home-mandate approver add USER_ID mobile_app_pixel_9 [de|en]   # notify.mobile_app_pixel_9
+home-mandate approver add USER_ID mobile_app_pixel_9,mobile_app_mac [de|en]   # up to 5 devices
 ```
 
 `USER_ID` is the Home Assistant user ID; it must also be listed in the mandate's
 `approvers`. Without a language, the language of the Home Assistant configuration applies.
+Any device with the Home Assistant Companion App counts, including the Mac app.
+
+Approvers who are Home Assistant administrators can additionally answer in the Home-Mandate
+UI; this is switched on per person in the UI, for critical actions separately, because a
+browser session asks for no unlocking the way a phone does.
 
 ## Administration until the UI exists
 
@@ -101,7 +107,7 @@ home-mandate mandate template list | remove NAME
 home-mandate agent list | revoke CLIENT_ID   # revoking takes effect with the next request
 home-mandate mandate import mandate.json     # or - for stdin; validated against mandate-spec
 home-mandate mandate list | revoke ID
-home-mandate approver add USER_ID NOTIFY_SERVICE [de|en] | list | remove USER_ID
+home-mandate approver add USER_ID NOTIFY_SERVICE[,NOTIFY_SERVICE…] [de|en] | list | remove USER_ID
 home-mandate emergency-stop on | off | status   # on: all tokens revoked, all agents blocked
 home-mandate audit verify | export           # hash chain check, JSON Lines export
 ```

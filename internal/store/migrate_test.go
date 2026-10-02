@@ -6,7 +6,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"io/fs"
 	"path/filepath"
+	"slices"
 	"testing"
 	"testing/fstest"
 )
@@ -181,5 +184,71 @@ func TestMigrateRecordsMissingChecksumOfAppliedMigration(t *testing.T) {
 func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	if _, err := readMigrations(embeddedMigrations()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// upTo returns the embedded migrations up to and including version.
+func upTo(t *testing.T, version int) fstest.MapFS {
+	t.Helper()
+	out := fstest.MapFS{}
+	entries, err := fs.ReadDir(embeddedMigrations(), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries[:version] {
+		data, err := fs.ReadFile(embeddedMigrations(), e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[e.Name()] = &fstest.MapFile{Data: data}
+	}
+	return out
+}
+
+// Migration 8 (decision F2) keeps every approver's phone as their first device; the UI
+// channel starts switched off, and the database refuses ui_critical without ui.
+func TestApproverChannelsMigrationKeepsPhones(t *testing.T) {
+	ctx := context.Background()
+	db := openRaw(t)
+	if err := migrate(ctx, db, upTo(t, 7)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO approvers (user_id, notify_service, language, created_at)
+		VALUES ('u1', 'mobile_app_pixel', 'de', '2026-10-01T00:00:00Z'), ('u2', 'mobile_app_iphone', '', '2026-10-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(ctx, db, embeddedMigrations()); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.Query(`SELECT a.user_id, d.notify_service, a.language, a.ui, a.ui_critical
+		FROM approvers a JOIN approver_devices d USING (user_id) ORDER BY a.user_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var user, service, lang string
+		var ui, uiCritical int
+		if err := rows.Scan(&user, &service, &lang, &ui, &uiCritical); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, fmt.Sprint(user, service, lang, ui, uiCritical))
+	}
+	if want := []string{"u1mobile_app_pixelde0 0", "u2mobile_app_iphone0 0"}; !slices.Equal(got, want) {
+		t.Errorf("after migration %q, want %q", got, want)
+	}
+	if _, err := db.Exec(`UPDATE approvers SET ui_critical = 1 WHERE user_id = 'u1'`); err == nil {
+		t.Error("ui_critical without ui accepted")
+	}
+	if _, err := db.Exec(`UPDATE approvers SET ui = 1, ui_critical = 1 WHERE user_id = 'u1'`); err != nil {
+		t.Errorf("ui with ui_critical refused: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM approvers WHERE user_id = 'u1'`); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM approver_devices WHERE user_id = 'u1'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("devices of a removed approver: %d, %v", n, err)
 	}
 }

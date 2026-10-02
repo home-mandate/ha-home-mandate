@@ -106,6 +106,17 @@ Every line is at least one test. New attack ideas are added here before they are
 - Emergency stop, revoked token or changed mandate while the human decides → not executed
 - More than 2 pending approval requests of one agent → refused
 - No approver set up or reachable → denied at once
+- Approver without any channel, more than 5 devices, duplicate device, critical actions in the UI without the UI channel → refused when saving
+- UI channel for someone who is no administrator → refused when saving (`CheckUI`, called by the API); at the time of a request or answer → no UI channel (also when the check fails)
+- Answer in the UI by someone who is no approver of the request (also Home-Mandate's own HA user) → refused, request stays open
+- Answer in the UI to a critical action without "critical actions in the UI" → refused, request stays open
+- Answer in the UI after the UI channel was switched off, the person removed or the administrator rights withdrawn → refused
+- Answer in the UI with an unknown, guessed or truncated request ID, or with the nonce → refused; the request ID is never the nonce
+- Phone and UI answer at the same time → exactly one counts; the other gets "already answered"
+- Answer on either channel after the timeout, a revocation or the emergency stop → no effect
+- Revocation or emergency stop in the gateway while a request is open → ended at once, no further notification sent, recorded without approval, denied with the cause
+- Approver removed while a request is open → their answer counts as one from anyone else
+- Bell in Home Assistant (if switched on) → no agent name, device, reason, link, nonce or request ID in it; removed however the request ends
 
 **MCP interface**
 - Unknown tool, missing or extra parameters, wrong types → error without internal details

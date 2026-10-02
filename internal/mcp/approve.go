@@ -50,7 +50,8 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 		}
 	}()
 
-	req := approval.Request{Agent: a.DisplayName, Device: d.Resource.EntityID, Action: d.Action, Reason: reason, Params: call.Data}
+	req := approval.Request{ClientID: a.ClientID, Agent: a.DisplayName, Device: d.Resource.EntityID, Action: d.Action, Reason: reason,
+		Params: call.Data, Critical: evaluator.IsCritical(d.Resource.Category, d.Action)}
 	if dev, ok := g.cfg.Catalog.Lookup(d.Resource.EntityID); ok {
 		if name, _ := dev.Attributes["friendly_name"].(string); name != "" {
 			req.Device = name
@@ -67,7 +68,10 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval})
 		return nil, actionOut{}, errors.New(codeDenied + ": no_approver")
 	}
-	appr := &audit.Approval{Outcome: res.Outcome, By: res.By, At: res.At}
+	if res.Outcome == approval.OutcomeCancelled {
+		return g.cancelled(ctx, a, d)
+	}
+	appr := &audit.Approval{Outcome: res.Outcome, By: res.By, Via: res.Via, At: res.At}
 	var code string
 	switch res.Outcome {
 	case approval.OutcomeApproved:
@@ -81,6 +85,17 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 	}
 	_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}, appr)
 	return nil, actionOut{}, errors.New(codeDenied + ": " + code)
+}
+
+// cancelled records a request that the emergency stop or a revocation ended before
+// anyone answered (decision F1): no approval, only the denial with its cause.
+func (g *Gateway) cancelled(ctx context.Context, a agent.Agent, d pdp.Decision) (*sdk.CallToolResult, actionOut, error) {
+	if g.stopped(ctx) {
+		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop})
+		return nil, actionOut{}, errors.New(codeDenied + ": emergency_stop")
+	}
+	_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication})
+	return nil, actionOut{}, errors.New(codeDenied + ": unauthorized")
 }
 
 // afterApproval checks again what may have changed while the human decided: the

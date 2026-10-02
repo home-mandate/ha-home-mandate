@@ -39,6 +39,8 @@ type fakeNotifier struct {
 	sent []sent
 	fail map[string]bool
 	ch   chan sent
+	// before runs before each delivery, outside the lock (e.g. to cancel meanwhile).
+	before func(service string)
 }
 
 func newFakeNotifier() *fakeNotifier {
@@ -46,6 +48,9 @@ func newFakeNotifier() *fakeNotifier {
 }
 
 func (f *fakeNotifier) Notify(_ context.Context, service string, n ha.Notification) error {
+	if f.before != nil {
+		f.before(service)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.fail[service] {
@@ -93,8 +98,8 @@ func newEnv(t *testing.T, maxTimeout time.Duration) env {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	approvers := NewApprovers(st.DB())
-	for _, a := range []Approver{{UserID: u1, NotifyService: "mobile_app_markus", Language: "de"},
-		{UserID: u2, NotifyService: "mobile_app_anna"}, {UserID: u3, NotifyService: "mobile_app_guest"}} {
+	for _, a := range []Approver{{UserID: u1, Devices: []string{"mobile_app_markus"}, Language: "de"},
+		{UserID: u2, Devices: []string{"mobile_app_anna"}}, {UserID: u3, Devices: []string{"mobile_app_guest"}}} {
 		if err := approvers.Put(context.Background(), a); err != nil {
 			t.Fatal(err)
 		}
@@ -105,7 +110,7 @@ func newEnv(t *testing.T, maxTimeout time.Duration) env {
 }
 
 func request() Request {
-	return Request{Agent: "Voice assistant", Device: "Front door", Action: "unlock", Reason: "The parcel service is at the door",
+	return Request{ClientID: "hm-client:voice", Agent: "Voice assistant", Device: "Front door", Action: "unlock", Reason: "The parcel service is at the door",
 		Approvers: []string{u1, u2, "not-configured"}, Timeout: time.Minute}
 }
 

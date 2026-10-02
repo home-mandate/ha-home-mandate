@@ -7,6 +7,8 @@
   "approval_deny": "Ablehnen",
   "approval_invalid_title": "Warnung: unberechtigte Antwort",
   "approval_invalid_message": "{user} hat auf die Anfrage von {agent} geantwortet („{device}“: {action}), darf diese Anfrage aber nicht freigeben. Die Anfrage wurde abgelehnt.",
+  "approval_bell_title": "Home-Mandate: Rückfrage wartet",
+  "approval_bell_message": "Eine Rückfrage wartet auf Antwort. Öffne Home-Mandate in der Seitenleiste.",
   "action_read": "Zustand lesen",
   "action_turn_on": "einschalten",
   "action_turn_off": "ausschalten",

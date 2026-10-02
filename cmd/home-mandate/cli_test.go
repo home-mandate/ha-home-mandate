@@ -15,6 +15,8 @@ import (
 	"testing"
 
 	mandatespec "github.com/mandate-spec/mandate-spec"
+
+	"github.com/home-mandate/home-mandate/internal/approval"
 )
 
 // cli runs commands against one temporary data directory in container mode.
@@ -184,6 +186,8 @@ func TestCommandErrors(t *testing.T) {
 		{[]string{"approver"}, exitUsage},
 		{[]string{"approver", "add", "u1"}, exitUsage},
 		{[]string{"approver", "add", "u1", "notify.x"}, exitFailure},
+		{[]string{"approver", "add", "u1", "mobile_app_a,mobile_app_a"}, exitFailure},
+		{[]string{"approver", "add", "u1", ","}, exitFailure},
 		{[]string{"approver", "remove", "none"}, exitFailure},
 		{[]string{"emergency-stop", "maybe"}, exitUsage},
 		{[]string{"emergency-stop", "on", "now"}, exitUsage},
@@ -276,11 +280,27 @@ func TestTemplateCommands(t *testing.T) {
 
 func TestApproverCommands(t *testing.T) {
 	c := newCLI(t)
-	c.mustRun("", "approver", "add", "1a2b3c", "mobile_app_pixel_9", "de")
+	c.mustRun("", "approver", "add", "1a2b3c", "mobile_app_pixel_9,mobile_app_mac", "de")
 	c.mustRun("", "approver", "add", "4d5e6f", "mobile_app_iphone")
 	out := c.mustRun("", "approver", "list")
-	if out != "1a2b3c\tnotify.mobile_app_pixel_9\tde\n4d5e6f\tnotify.mobile_app_iphone\thousehold\n" {
+	if out != "1a2b3c\tnotify.mobile_app_mac,notify.mobile_app_pixel_9\tde\t-\n4d5e6f\tnotify.mobile_app_iphone\thousehold\t-\n" {
 		t.Errorf("approver list = %q", out)
+	}
+	// The UI channel is set in the UI only (administrators); adding devices on the
+	// command line keeps it.
+	e, _, _ := c.env("")
+	s, err := openState(context.Background(), e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.approvers.Put(context.Background(), approval.Approver{UserID: "4d5e6f", Devices: []string{"mobile_app_iphone"},
+		UI: true, UICritical: true}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.store.Close()
+	c.mustRun("", "approver", "add", "4d5e6f", "mobile_app_ipad")
+	if out := c.mustRun("", "approver", "list"); !strings.Contains(out, "4d5e6f\tnotify.mobile_app_ipad\thousehold\tui+critical\n") {
+		t.Errorf("UI channel lost: %q", out)
 	}
 	c.mustRun("", "approver", "remove", "1a2b3c")
 	if out := c.mustRun("", "approver", "list"); strings.Contains(out, "1a2b3c") {

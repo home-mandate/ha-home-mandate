@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/mandate-spec/mandate-spec/evaluator"
@@ -151,32 +153,67 @@ func onOff(on bool) string {
 	return "off"
 }
 
-// approverCommand manages who receives approval requests (local settings until the UI).
+// approverCommand manages who receives approval requests on which devices. The UI
+// channel is set in the UI only, where administrator rights are checked; adding
+// devices here keeps it.
 func approverCommand(ctx context.Context, e env, args []string) int {
 	switch {
 	case (len(args) == 3 || len(args) == 4) && args[0] == "add":
-		ap := approval.Approver{UserID: args[1], NotifyService: args[2]}
+		ap := approval.Approver{UserID: args[1], Devices: strings.Split(args[2], ",")}
 		if len(args) == 4 {
 			ap.Language = args[3]
 		}
-		return withState(ctx, e, func(s *state) error { return s.approvers.Put(ctx, ap) })
+		return withState(ctx, e, func(s *state) error {
+			list, err := s.approvers.List(ctx)
+			if err != nil {
+				return err
+			}
+			if i := slices.IndexFunc(list, func(a approval.Approver) bool { return a.UserID == ap.UserID }); i >= 0 {
+				ap.UI, ap.UICritical = list[i].UI, list[i].UICritical
+			}
+			return s.approvers.Put(ctx, ap)
+		})
 	case len(args) == 1 && args[0] == "list":
 		return withState(ctx, e, func(s *state) error {
 			list, err := s.approvers.List(ctx)
 			for _, ap := range list {
-				lang := ap.Language
-				if lang == "" {
-					lang = "household"
-				}
-				fmt.Fprintf(e.stdout, "%s\tnotify.%s\t%s\n", ap.UserID, ap.NotifyService, lang)
+				fmt.Fprintf(e.stdout, "%s\t%s\t%s\t%s\n", ap.UserID, devicesText(ap.Devices), languageText(ap.Language), uiText(ap))
 			}
 			return err
 		})
 	case len(args) == 2 && args[0] == "remove":
 		return withState(ctx, e, func(s *state) error { return s.approvers.Remove(ctx, args[1]) })
 	default:
-		return usageError(e, "approver needs add USER_ID NOTIFY_SERVICE [de|en], list or remove USER_ID")
+		return usageError(e, "approver needs add USER_ID NOTIFY_SERVICE[,NOTIFY_SERVICE…] [de|en], list or remove USER_ID")
 	}
+}
+
+func devicesText(devices []string) string {
+	if len(devices) == 0 {
+		return "-"
+	}
+	out := make([]string, len(devices))
+	for i, d := range devices {
+		out[i] = "notify." + d
+	}
+	return strings.Join(out, ",")
+}
+
+func languageText(lang string) string {
+	if lang == "" {
+		return "household"
+	}
+	return lang
+}
+
+func uiText(ap approval.Approver) string {
+	switch {
+	case ap.UICritical:
+		return "ui+critical"
+	case ap.UI:
+		return "ui"
+	}
+	return "-"
 }
 
 func mandateCommand(ctx context.Context, e env, args []string) int {
