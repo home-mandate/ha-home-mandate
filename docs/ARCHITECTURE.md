@@ -206,8 +206,22 @@ Decided by Markus on 2026-10-01.
    In app mode, additionally check before week 4 which permissions the supervisor token
    (`homeassistant_api`) has on the Core API, and request only the access that is needed.
 3. **Write access for non-root** to `/data` in app mode. **Decision: as proposed.** Check
-   during app packaging (week 4); if not writable, run as root with a read-only file system
-   and no additional capabilities.
+   whether non-root works; if not, run as root with a read-only file system and no
+   additional capabilities.
+
+   **Checked 2026-10-02 against the source code** (`home-assistant/supervisor` and
+   `home-assistant/addons`, `main` branches): non-root does not work.
+   - Supervisor creates the app data directory as root with mode 0755 and bind-mounts it
+     to `/data` unchanged; it writes `/data/options.json` as root with mode 0600. The app
+     configuration has no option for a user ID or ownership.
+   - The Let's Encrypt app copies `privkey.pem` to `/ssl` as root with mode 0600 (certbot
+     default); the DuckDNS app writes key and certificate with `umask 077`.
+
+   **Result: the image runs as root**, like all official apps. It is `FROM scratch` with
+   only the binary and CA certificates (no shell, no package manager), requests no
+   `privileged` capabilities, and writes only to `/data`. Dropping privileges inside the
+   binary after reading the key and `options.json` remains possible later; it would
+   require a restart for certificate renewal.
 4. **App configuration format.** **Decision: as proposed.** Check against the current
    developer documentation (no automatic `BUILD_FROM` since Supervisor 2026.04) during app
    packaging (week 4).

@@ -25,8 +25,9 @@ RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false \
 FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /out/home-mandate /home-mandate
-# Non-root, provided /data is writable in app mode (decision 3, checked in week 4).
-USER 65532:65532
+# Runs as root (docs/ARCHITECTURE.md decision 3): in app mode, Supervisor creates /data,
+# /data/options.json and the private key in /ssl as root-only. The image holds nothing
+# but the binary and CA certificates; there is no shell and nothing else to escalate to.
 EXPOSE 8765 8099
 ENTRYPOINT ["/home-mandate"]
 
