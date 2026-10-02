@@ -635,5 +635,19 @@
   "save_effect_unknown": "Home Assistant hat keine Geräteliste geliefert. Die Auswirkung lässt sich deshalb gerade nicht berechnen; die Regeln gelten trotzdem.",
   "matrix_no_catalog": "Die Geräteliste konnte nicht geladen werden. Die Vorschau ist deshalb leer; die Regeln gelten trotzdem.",
   "save_validity_longer": "Das Mandat gilt länger als bisher: früherer Beginn oder späteres Ende.",
-  "matrix_not_in_effect": "Dieses Mandat gilt derzeit nicht ({status}). Die Vorschau zeigt, was während seiner Gültigkeit gilt."
+  "matrix_not_in_effect": "Dieses Mandat gilt derzeit nicht ({status}). Die Vorschau zeigt, was während seiner Gültigkeit gilt.",
+  "filter_period_7d": "Letzte 7 Tage",
+  "filter_period_all": "Alle (30 Tage)",
+  "filter_device_all": "Alle Geräte und Bereiche",
+  "filter_areas": "Bereiche",
+  "filter_devices": "Geräte",
+  "audit_new_entries": "{count, plural, one {{count, number} neuer Eintrag} other {{count, number} neue Einträge}}",
+  "audit_via_push": "am Handy",
+  "audit_via_ui": "in Home-Mandate",
+  "audit_verify_failed": "Das Protokoll konnte nicht geprüft werden. Versuche es gleich noch einmal.",
+  "audit_field_agent": "Agent",
+  "audit_field_device": "Gerät",
+  "audit_field_action": "Aktion",
+  "audit_field_actor": "Ausgelöst von",
+  "audit_seq_short": "Nr. {number}"
 }

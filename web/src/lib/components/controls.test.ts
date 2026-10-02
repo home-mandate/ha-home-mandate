@@ -127,6 +127,24 @@ describe('SelectField', () => {
     await fireEvent.change(select, { target: { value: 'kitchen' } });
     expect(onchange).toHaveBeenCalledWith('kitchen');
   });
+
+  it('shows further options in labelled groups', async () => {
+    const onchange = vi.fn();
+    render(SelectField, {
+      label: 'Device or area',
+      value: '',
+      options: [{ value: '', label: 'All' }],
+      groups: [
+        { label: 'Areas', options: [{ value: 'hallway', label: 'Flur' }] },
+        { label: 'Devices', options: [{ value: 'lock.front_door', label: 'Haustür' }] },
+      ],
+      onchange,
+    });
+    const select = screen.getByLabelText('Device or area') as HTMLSelectElement;
+    expect([...select.querySelectorAll('optgroup')].map((g) => g.label)).toEqual(['Areas', 'Devices']);
+    await fireEvent.change(select, { target: { value: 'lock.front_door' } });
+    expect(onchange).toHaveBeenCalledWith('lock.front_door');
+  });
 });
 
 describe('DecisionSegment', () => {

@@ -42,6 +42,13 @@ const navigate = async (hash: string) => {
 };
 
 describe('App frame', () => {
+  it('shows the audit log and a single entry', async () => {
+    await start({}, '#/audit');
+    expect(screen.getByRole('heading', { level: 1, name: 'Audit log' })).toBeTruthy();
+    await navigate('#/audit/9');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Entry no. 9' })).toBeTruthy();
+  });
+
   it('shows the overview at the start', async () => {
     await start();
     expect(screen.getByRole('heading', { level: 1, name: 'Overview' })).toBeTruthy();

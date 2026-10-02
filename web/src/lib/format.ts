@@ -53,7 +53,7 @@ export function formatRelative(date: Date, now: Date, ctx: FormatContext): strin
 }
 
 /** dayNumber counts days since the epoch for the calendar date of d in timeZone. */
-function dayNumber(d: Date, timeZone: string): number {
+export function dayNumber(d: Date, timeZone: string): number {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: 'numeric', day: 'numeric' }).formatToParts(d);
   const part = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === type)?.value);
   return Date.UTC(part('year'), part('month') - 1, part('day')) / DAY;

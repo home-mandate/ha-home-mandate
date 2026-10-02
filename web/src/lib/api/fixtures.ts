@@ -283,6 +283,10 @@ const entries: Omit<AuditEntry, 'digest' | 'prev'>[] = [
 /** digestOf is a stand-in digest for fixtures; the server computes real ones (SPEC-v0 section 9). */
 export const digestOf = (seq: number) => `sha256:${seq.toString(16).padStart(64, '0')}`;
 
+// The approved request of entry 8 was made 42 s before the answer (approval history).
+const approved = entries.find((e) => e.seq === 8);
+if (approved?.request) approved.request = { ...approved.request, time: '2026-10-02T15:00:00.000Z' };
+
 export const auditFixture: AuditEntry[] = entries.map((e) => ({
   ...e,
   digest: digestOf(e.seq),

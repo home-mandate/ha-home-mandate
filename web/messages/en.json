@@ -635,5 +635,19 @@
   "save_effect_unknown": "Home Assistant delivered no device list. The effect can’t be computed right now; the rules apply anyway.",
   "matrix_no_catalog": "Couldn’t load the device list. The preview is therefore empty; the rules apply anyway.",
   "save_validity_longer": "The mandate applies for longer than before: earlier start or later end.",
-  "matrix_not_in_effect": "This mandate doesn’t apply right now ({status}). The preview shows what applies while it is valid."
+  "matrix_not_in_effect": "This mandate doesn’t apply right now ({status}). The preview shows what applies while it is valid.",
+  "filter_period_7d": "Last 7 days",
+  "filter_period_all": "All (30 days)",
+  "filter_device_all": "All devices and areas",
+  "filter_areas": "Areas",
+  "filter_devices": "Devices",
+  "audit_new_entries": "{count, plural, one {{count, number} new entry} other {{count, number} new entries}}",
+  "audit_via_push": "on the phone",
+  "audit_via_ui": "in Home-Mandate",
+  "audit_verify_failed": "Couldn’t verify the audit log. Try again in a moment.",
+  "audit_field_agent": "Agent",
+  "audit_field_device": "Device",
+  "audit_field_action": "Action",
+  "audit_field_actor": "Triggered by",
+  "audit_seq_short": "No. {number}"
 }

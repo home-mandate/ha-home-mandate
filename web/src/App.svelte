@@ -17,6 +17,8 @@
   import { m } from './lib/i18n.ts';
   import MandateEditor from './lib/pages/MandateEditor.svelte';
   import MandateList from './lib/pages/MandateList.svelte';
+  import AuditEntry from './lib/pages/AuditEntry.svelte';
+  import AuditLog from './lib/pages/AuditLog.svelte';
   import MandateVersions from './lib/pages/MandateVersions.svelte';
   import Overview from './lib/pages/Overview.svelte';
   import Placeholder from './lib/pages/Placeholder.svelte';
@@ -133,6 +135,10 @@
     />
   {:else if route.name === 'overview'}
     <Overview {app} {now} />
+  {:else if route.name === 'audit'}
+    {#key href(route)}<AuditLog {app} {now} query={route.query} />{/key}
+  {:else if route.name === 'audit_entry'}
+    {#key route.seq}<AuditEntry {app} seq={route.seq} />{/key}
   {:else if route.name === 'mandates'}
     <MandateList {app} {now} />
   {:else if route.name === 'mandate'}

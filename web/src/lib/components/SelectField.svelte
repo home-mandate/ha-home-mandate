@@ -1,5 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-<!-- Native select, restyled (Components "Select"); area and device names stay untranslated. -->
+<!--
+  Native select, restyled (Components "Select"); area and device names stay untranslated.
+  Options can follow in labelled groups (optgroup), e.g. areas and devices.
+-->
 <script lang="ts">
   import Icon from './Icon.svelte';
 
@@ -7,12 +10,13 @@
     label: string;
     value: string;
     options: readonly { value: string; label: string }[];
+    groups?: readonly { label: string; options: readonly { value: string; label: string }[] }[];
     help?: string;
     disabled?: boolean;
     onchange?: (value: string) => void;
   }
 
-  let { label, value = $bindable(), options, help, disabled = false, onchange }: Props = $props();
+  let { label, value = $bindable(), options, groups = [], help, disabled = false, onchange }: Props = $props();
 
   const id = $props.id();
 </script>
@@ -28,6 +32,11 @@
       onchange={() => onchange?.(value)}
     >
       {#each options as option (option.value)}<option value={option.value}>{option.label}</option>{/each}
+      {#each groups as group (group.label)}
+        <optgroup label={group.label}>
+          {#each group.options as option (option.value)}<option value={option.value}>{option.label}</option>{/each}
+        </optgroup>
+      {/each}
     </select>
     <span class="chevron"><Icon name="chevronDown" /></span>
   </div>
