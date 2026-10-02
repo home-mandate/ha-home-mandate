@@ -60,7 +60,7 @@ func TestRegisterAssignsASpecConformingClientID(t *testing.T) {
 
 func TestRegisterRejectsInvalidNames(t *testing.T) {
 	s, _, db := newStore(t)
-	for _, name := range []string{"", "   ", strings.Repeat("x", 81), "line\nbreak", "bidi‮override", "zero​width", "sep arator"} {
+	for _, name := range []string{"", "   ", strings.Repeat("x", 81), "line\nbreak", "bidi\u202eoverride", "zero\u200bwidth", "sep\u2028arator"} {
 		if _, err := s.Register(context.Background(), name, admin); !errors.Is(err, agent.ErrInvalidName) {
 			t.Errorf("Register(%q) = %v, want ErrInvalidName", name, err)
 		}

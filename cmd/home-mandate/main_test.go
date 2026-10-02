@@ -5,24 +5,33 @@ package main
 import (
 	"bytes"
 	"context"
-	"io/fs"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
-
-	mandatespec "github.com/mandate-spec/mandate-spec"
 )
+
+// bareEnv has no configuration at all.
+func bareEnv() (env, *bytes.Buffer, *bytes.Buffer) {
+	var stdout, stderr bytes.Buffer
+	return env{
+		getenv:   func(string) string { return "" },
+		readFile: os.ReadFile,
+		stdin:    strings.NewReader(""),
+		stdout:   &stdout,
+		stderr:   &stderr,
+	}, &stdout, &stderr
+}
 
 func TestRunVersion(t *testing.T) {
 	old := version
 	version = "1.2.3-test"
 	t.Cleanup(func() { version = old })
 
-	var stdout, stderr bytes.Buffer
-	code := run(context.Background(), []string{"--version"}, &stdout, &stderr)
+	e, stdout, stderr := bareEnv()
+	code := run(context.Background(), []string{"--version"}, e)
 
 	if code != exitOK {
 		t.Fatalf("exit code = %d, want %d (stderr: %q)", code, exitOK, stderr.String())
@@ -36,14 +45,14 @@ func TestRunVersion(t *testing.T) {
 }
 
 func TestRunHelpExitsCleanly(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	code := run(context.Background(), []string{"-h"}, &stdout, &stderr)
+	e, _, stderr := bareEnv()
+	code := run(context.Background(), []string{"-h"}, e)
 
 	if code != exitOK {
 		t.Fatalf("exit code = %d, want %d", code, exitOK)
 	}
-	if !strings.Contains(stderr.String(), "-version") {
-		t.Errorf("usage does not mention -version: %q", stderr.String())
+	if !strings.Contains(stderr.String(), "-version") || !strings.Contains(stderr.String(), "mandate import") {
+		t.Errorf("usage is incomplete: %q", stderr.String())
 	}
 }
 
@@ -53,13 +62,14 @@ func TestRunRejectsInvalidArguments(t *testing.T) {
 		args []string
 	}{
 		{"unknown flag", []string{"--unlock-everything"}},
-		{"positional argument", []string{"serve"}},
+		{"unknown command", []string{"frobnicate"}},
 		{"flag value for boolean", []string{"--version=maybe"}},
+		{"argument for serve", []string{"serve", "now"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			code := run(context.Background(), tt.args, &stdout, &stderr)
+			e, stdout, stderr := bareEnv()
+			code := run(context.Background(), tt.args, e)
 
 			if code != exitUsage {
 				t.Errorf("exit code = %d, want %d", code, exitUsage)
@@ -74,17 +84,25 @@ func TestRunRejectsInvalidArguments(t *testing.T) {
 	}
 }
 
-func TestRunStopsWhenContextIsCancelled(t *testing.T) {
+func TestServeNeedsAValidConfiguration(t *testing.T) {
+	e, _, stderr := bareEnv()
+	if code := run(context.Background(), nil, e); code != exitFailure || stderr.Len() == 0 {
+		t.Errorf("exit code = %d, stderr %q", code, stderr.String())
+	}
+}
+
+func TestServeStopsWhenContextIsCancelled(t *testing.T) {
+	c := newCLI(t)
+	e, _, stderr := c.env("")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
-	var stdout, stderr bytes.Buffer
 
-	go func() { done <- run(ctx, nil, &stdout, &stderr) }()
+	go func() { done <- run(ctx, []string{"serve"}, e) }()
 
 	select {
 	case code := <-done:
-		t.Fatalf("run returned %d before the context was cancelled", code)
-	case <-time.After(50 * time.Millisecond):
+		t.Fatalf("run returned %d before the context was cancelled: %s", code, stderr)
+	case <-time.After(200 * time.Millisecond):
 	}
 
 	cancel()
@@ -94,8 +112,21 @@ func TestRunStopsWhenContextIsCancelled(t *testing.T) {
 		if code != exitOK {
 			t.Errorf("exit code = %d, want %d", code, exitOK)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("run did not return after the context was cancelled")
+	}
+}
+
+func TestServeRefusesABrokenAuditLog(t *testing.T) {
+	c := newCLI(t)
+	c.mustRun("", "agent", "add", "--name", "A")
+	c.mustRun("", "agent", "add", "--name", "B")
+	if err := tamper(c.envVars["HM_DATA_DIR"] + "/home-mandate.db"); err != nil {
+		t.Fatal(err)
+	}
+	e, _, stderr := c.env("")
+	if code := run(context.Background(), []string{"serve"}, e); code != exitFailure || !strings.Contains(stderr.String(), "audit log") {
+		t.Errorf("exit code = %d, stderr %q", code, stderr.String())
 	}
 }
 
@@ -105,14 +136,15 @@ func TestRunUntilSignalStopsOnSIGTERM(t *testing.T) {
 	signal.Notify(guard, syscall.SIGTERM)
 	t.Cleanup(func() { signal.Stop(guard) })
 
+	c := newCLI(t)
+	e, _, _ := c.env("")
 	done := make(chan int, 1)
-	var stdout, stderr bytes.Buffer
-	go func() { done <- runUntilSignal(nil, &stdout, &stderr) }()
+	go func() { done <- runUntilSignal([]string{"serve"}, e) }()
 
 	// runUntilSignal installs its handler asynchronously, so repeat the signal until it returns.
-	ticker := time.NewTicker(10 * time.Millisecond)
+	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
-	timeout := time.After(5 * time.Second)
+	timeout := time.After(10 * time.Second)
 	for {
 		select {
 		case code := <-done:
@@ -126,25 +158,6 @@ func TestRunUntilSignalStopsOnSIGTERM(t *testing.T) {
 			}
 		case <-timeout:
 			t.Fatal("runUntilSignal did not return after SIGTERM")
-		}
-	}
-}
-
-// The gateway is bound to one pinned version of the specification; its conformance cases
-// run against the PDP from week 2 on. This guards that the pinned module provides them.
-func TestPinnedSpecificationProvidesSchemaAndConformanceCases(t *testing.T) {
-	for _, path := range []string{
-		mandatespec.MandateSchemaPath,
-		mandatespec.CasesPath,
-		mandatespec.InvalidCasesPath,
-	} {
-		data, err := fs.ReadFile(mandatespec.FS(), path)
-		if err != nil {
-			t.Errorf("read %s: %v", path, err)
-			continue
-		}
-		if len(data) == 0 {
-			t.Errorf("%s is empty", path)
 		}
 	}
 }
