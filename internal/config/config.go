@@ -62,15 +62,27 @@ type Config struct {
 	// address (decision 1: no plaintext on the LAN).
 	MCPAddr string
 	// PDPAddr, if set, serves the AuthZEN endpoint for other gateways; loopback only.
-	PDPAddr         string
+	PDPAddr string
+	// PublicURL is the origin agents and browsers reach Home-Mandate at, e.g.
+	// https://hm.example.org:8765: OAuth issuer, base of the MCP resource and of the
+	// sign-in pages. Empty means OAuth is off. Plaintext only for loopback (decision 1).
+	PublicURL string
+	// HABrowserURL is the origin of Home Assistant as the human's browser reaches it, for
+	// the sign-in redirect; empty in app mode without the option.
+	HABrowserURL string
+	// HAHTTPURL is the origin of Home Assistant's HTTP API as Home-Mandate reaches it,
+	// for exchanging and revoking sign-in codes.
+	HAHTTPURL string
+	// ApprovalTimeout is the upper limit for waiting for an approval; a mandate may
+	// only shorten it.
 	ApprovalTimeout time.Duration
 	LogLevel        slog.Level
 }
 
 // String omits nothing but the token, which Secret redacts.
 func (c Config) String() string {
-	return fmt.Sprintf("mode=%s data=%s ha=%s token=%s tls=%t mcp=%s approval=%s log=%s",
-		c.Mode, c.DataDir, c.HAURL, c.HAToken, c.TLSCert != "", c.MCPAddr, c.ApprovalTimeout, c.LogLevel)
+	return fmt.Sprintf("mode=%s data=%s ha=%s token=%s tls=%t mcp=%s public=%s approval=%s log=%s",
+		c.Mode, c.DataDir, c.HAURL, c.HAToken, c.TLSCert != "", c.MCPAddr, c.PublicURL, c.ApprovalTimeout, c.LogLevel)
 }
 
 // DataDir returns the data directory without reading the rest of the configuration, so
@@ -103,6 +115,8 @@ type appOptionsFile struct {
 	TLSKeyFile             string `json:"tls_keyfile"`
 	ApprovalTimeoutSeconds int    `json:"approval_timeout_seconds"`
 	LogLevel               string `json:"log_level"`
+	PublicURL              string `json:"public_url"`
+	HABrowserURL           string `json:"ha_browser_url"`
 }
 
 func loadApp(token ha.Secret, readFile func(string) ([]byte, error)) (Config, error) {
@@ -130,6 +144,13 @@ func loadApp(token ha.Secret, readFile func(string) ([]byte, error)) (Config, er
 	if cfg.TLSCert != "" {
 		cfg.MCPAddr = ":" + mcpPort
 	}
+	if cfg.PublicURL, err = publicURL(opts.PublicURL); err != nil {
+		return Config{}, err
+	}
+	if cfg.HABrowserURL, err = browserURL(opts.HABrowserURL); err != nil {
+		return Config{}, err
+	}
+	cfg.HAHTTPURL = appHAHTTP
 	return cfg, nil
 }
 
@@ -190,6 +211,16 @@ func loadContainer(getenv func(string) string, readFile func(string) ([]byte, er
 	}
 	if cfg.LogLevel, err = logLevel(getenv("HM_LOG_LEVEL")); err != nil {
 		return Config{}, err
+	}
+	if cfg.PublicURL, err = publicURL(getenv("HM_PUBLIC_URL")); err != nil {
+		return Config{}, err
+	}
+	cfg.HAHTTPURL = httpOrigin(cfg.HAURL)
+	cfg.HABrowserURL = cfg.HAHTTPURL
+	if s := getenv("HM_HA_BROWSER_URL"); s != "" {
+		if cfg.HABrowserURL, err = browserURL(s); err != nil {
+			return Config{}, err
+		}
 	}
 	return cfg, nil
 }
