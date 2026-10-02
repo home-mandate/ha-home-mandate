@@ -59,7 +59,9 @@ var env struct {
 	roots    *x509.CertPool
 	haURL    string // https://127.0.0.1:<port>
 	haToken  string // long-lived token of the onboarding admin
-	mcpURL   string // https://127.0.0.1:<port>/mcp
+	mcpURL   string // https://localhost:<port>/mcp
+	public   string // https://localhost:<port>, HM_PUBLIC_URL
+	users    map[string]*haUser
 	ha, hm   string // container names
 	network  string
 	volume   string
@@ -98,7 +100,7 @@ func setUp() error {
 	env.ha, env.hm = "hm-e2e-ha-"+env.id, "hm-e2e-gw-"+env.id
 	env.network, env.volume = "hm-e2e-net-"+env.id, "hm-e2e-data-"+env.id
 
-	for _, step := range []func() error{prepareImage, makeCertificates, createNetwork, startHA, onboard, startGateway} {
+	for _, step := range []func() error{prepareImage, makeCertificates, createNetwork, startHA, onboard, createUsers, startGateway} {
 		if err := step(); err != nil {
 			return err
 		}
@@ -329,23 +331,38 @@ func startGateway() error {
 		return err
 	}
 	env.teardown = append(env.teardown, func() { _, _ = run("volume", "rm", "-f", env.volume) })
-	if _, err := run("run", "-d", "--name", env.hm, "--network", env.network, "-p", "127.0.0.1::8765",
+	port, err := freePort()
+	if err != nil {
+		return err
+	}
+	env.public = "https://localhost:" + port
+	if _, err := run("run", "-d", "--name", env.hm, "--network", env.network, "-p", "127.0.0.1:"+port+":8765",
 		"-v", env.volume+":/data", "-v", env.certs+":/certs:ro",
 		"-e", "HM_HA_URL=wss://homeassistant:8123/api/websocket",
 		"-e", "HM_HA_TOKEN_FILE=/certs/ha-token",
 		"-e", "HM_HA_CA_FILE=/certs/ca.pem",
 		"-e", "HM_TLS_CERT=/certs/cert.pem", "-e", "HM_TLS_KEY=/certs/key.pem",
 		"-e", "HM_LOG_LEVEL=debug",
+		"-e", "HM_PUBLIC_URL="+env.public,
+		"-e", "HM_APPROVAL_TIMEOUT=30",
 		env.image); err != nil {
 		return err
 	}
 	env.teardown = append(env.teardown, func() { _, _ = run("rm", "-f", env.hm) })
-	addr, err := hostPort(env.hm, "8765")
-	if err != nil {
-		return err
-	}
-	env.mcpURL = "https://" + addr + "/mcp"
+	env.mcpURL = env.public + "/mcp"
 	return waitHTTP(env.mcpURL, time.Minute) // 401 means it is up
+}
+
+// freePort returns a free TCP port on the host for the gateway: its public URL must be
+// known before it starts.
+func freePort() (string, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", err
+	}
+	defer ln.Close()
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	return port, err
 }
 
 // cli runs a Home-Mandate administration command inside the gateway container.
@@ -393,8 +410,8 @@ func dumpLogs() {
 		if c == "" {
 			continue
 		}
-		out, _ := run("logs", "--tail", "60", c)
-		fmt.Fprintf(os.Stderr, "--- logs of %s ---\n%s\n", c, out)
+		lines := strings.Split(strings.TrimSpace(logsOf(c)), "\n") // stdout and stderr
+		fmt.Fprintf(os.Stderr, "--- logs of %s ---\n%s\n", c, strings.Join(lines[max(0, len(lines)-80):], "\n"))
 	}
 }
 

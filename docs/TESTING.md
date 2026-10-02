@@ -84,12 +84,25 @@ Every line is at least one test. New attack ideas are added here before they are
 - Client metadata unreachable, wrong format, client ID ≠ URL → rejected
 - Pairing code wrong, expired, used more than once, brute force → locked after n attempts
 - Admission by a non-admin → rejected
+- Client metadata on a private, loopback or link-local address (also after DNS resolution), other port than 443, redirect, more than 5 KB, repeated keys → rejected without a connection to the private address
+- Redirect URI host with characters that could end a CSP directive → rejected
+- Sign-in callback without session, with a wrong, reused or expired `state` → rejected; a wrong `state` uses the attempt up
+- Session cookie from before the sign-in → worthless afterwards (session fixation)
+- Consent without CSRF token, from another origin, or posted twice at the same time → rejected, at most one agent admitted
+- Authorization code used twice, expired, for another client, redirect URI or resource → rejected
+- Refresh token presented by another OAuth client or for another resource → rejected
+- Admission during the emergency stop → no agent, no tokens
+- Many sign-ins, pairings or metadata fetches from one sender → refused beyond the per-sender limit
 
 **Approval requests**
 - Answer with an unknown, expired or already used nonce → discarded
-- Answer from a non-approver → discarded
+- Answer from a non-approver (also without user, or from Home-Mandate's own HA user) → request denied as `invalid_response`, approvers warned (decision W8)
 - "Yes" and "No" at the same time → first valid answer counts, second discarded, both logged
 - Very long or manipulated "reason" from the agent (control characters, Markdown, links) → truncated, sanitized, marked as the agent's claim
+- Invalid action parameters → rejected before a human is asked
+- Emergency stop, revoked token or changed mandate while the human decides → not executed
+- More than 2 pending approval requests of one agent → refused
+- No approver set up or reachable → denied at once
 
 **MCP interface**
 - Unknown tool, missing or extra parameters, wrong types → error without internal details

@@ -98,12 +98,17 @@ Two ways, both standard OAuth, both require a confirmation inside the household:
 - Client identification via Client ID Metadata Documents (CIMD). Open dynamic client
   registration is **off**.
 - The human signs in with their Home Assistant account (HA as identity provider via its OAuth
-  for external applications) and picks the mandate for the new agent.
+  for external applications) and picks the mandate for the new agent: a mandate template
+  (`home-mandate mandate template import`) that becomes the agent's mandate.
 - Only HA administrators may admit agents.
 
 **b) Agents without a browser** (Device Authorization Grant, RFC 8628) – the "pairing code"
 - The agent requests a code and displays it.
-- The human enters the code in the Home-Mandate UI and picks the mandate.
+- The human signs in at `/pair` (HA account, administrators only), enters the code and picks
+  the mandate template.
+
+Agent, mandate and first tokens are created in one transaction when the agent redeems the
+human's decision; codes, pairings and browser sessions live in memory only.
 
 **Tokens:** opaque random values (256 bits), stored in the database only as a hash.
 Access tokens 10 minutes, refresh tokens 30 days with rotation and reuse detection (reusing an
@@ -118,10 +123,15 @@ checked on every request.
 - Action identifiers contain a random nonce (128 bits): `HM_APPROVE_<nonce>`, `HM_DENY_<nonce>`.
 - Handling of the `mobile_app_notification_action` event: the nonce must be open and
   `context.user_id` must belong to an approver; otherwise the answer is discarded and logged.
+  An answer with an open nonce from anyone else (also Home-Mandate's own HA user) ends the
+  request as `invalid_response` and warns the approvers (decision W8, 2026-10-02).
 - On iOS, `authenticationRequired: true` is set (unlocking required).
 - The "reason" supplied by the agent is explicitly marked in the message as the agent's claim,
-  not as a fact.
-- Timeout (default 2 minutes) → `deny`. Every nonce is valid exactly once.
+  not as a fact. The message also shows the service data that will be executed.
+- Timeout: the mandate's `approval.timeout`, capped by `HM_APPROVAL_TIMEOUT` (default
+  2 minutes, at most 10) because the agent's request waits → `deny`. Every nonce is valid
+  exactly once; open requests live in memory.
+- After an approval the PEP checks emergency stop, token and mandate again before executing.
 
 ## 8. Operating modes
 
@@ -229,6 +239,12 @@ Decided by Markus on 2026-10-01.
    user's preferred language can be retrieved server-side (week 3, `internal/i18n`).
    Otherwise: language from the HA system configuration (`get_config`), overridable per
    approver in the Home-Mandate settings.
+
+   **Checked 2026-10-02 against the source code** (`home-assistant/core`, `dev`): a user's
+   language is stored in the frontend user data (`frontend/get_user_data`), which Home
+   Assistant returns only to that user's own connection. It cannot be read for another
+   user. **Result:** the language of `get_config`, overridable per approver
+   (`home-mandate approver add USER_ID SERVICE de|en`).
 
 **Toolchain (2026-10-01):**
 - Go 1.27.1 for `mandate-spec` and `home-mandate`; build image `golang:1.27.1-alpine` pinned

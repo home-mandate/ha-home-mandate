@@ -32,12 +32,12 @@ Two repositories: **[S]** = `mandate-spec`, **[H]** = `home-mandate`.
 
 ## Week 3 · 10-13 – 10-19 · Agent onboarding and approval requests
 
-- [ ] [H] `internal/oauth`: metadata (RFC 8414, RFC 9728), Authorization Code + PKCE, Resource Indicators, CIMD, human sign-in via HA account, admins only
-- [ ] [H] Device Authorization Grant (RFC 8628) as pairing code
-- [ ] [H] Tokens: 256 bits, only the hash stored, access 10 min, refresh 30 days with rotation and reuse detection; revocation and emergency stop
-- [ ] [H] `internal/approval`: actionable notification, 128-bit nonce, `context.user_id`, timeout → `deny`, iOS `authenticationRequired`
-- [ ] [H] `internal/i18n`: approval texts and server error messages in `de` and `en`
-- [ ] [H] Negative tests for tokens, sign-in and approval requests complete; E2E scenarios 2, 3, 4, 6, 7, 10 green
+- [x] [H] `internal/oauth`: metadata (RFC 8414, RFC 9728), Authorization Code + PKCE, Resource Indicators, CIMD, human sign-in via HA account, admins only
+- [x] [H] Device Authorization Grant (RFC 8628) as pairing code
+- [x] [H] Tokens: 256 bits, only the hash stored, access 10 min, refresh 30 days with rotation and reuse detection; revocation and emergency stop
+- [x] [H] `internal/approval`: actionable notification, 128-bit nonce, `context.user_id`, timeout → `deny`, iOS `authenticationRequired`
+- [x] [H] `internal/i18n`: approval texts and server error messages in `de` and `en`
+- [x] [H] Negative tests for tokens, sign-in and approval requests complete; E2E scenarios 2, 3, 4, 6, 7, 10 green
 
 ## Week 4 · 10-20 – 10-26 · UI and packaging
 
