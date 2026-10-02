@@ -1,0 +1,35 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Sign-in, consent and pairing pages. Logical properties only (right-to-left ready);
+   the design tokens of the UI replace these values in week 4. */
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+}
+main {
+  max-inline-size: 32rem;
+  margin-block: 3rem;
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+h1 { font-size: 1.5rem; }
+.user { opacity: 0.75; font-size: 0.875rem; }
+.warn, .error {
+  padding-block: 0.5rem;
+  padding-inline: 0.75rem;
+  border-inline-start: 0.25rem solid;
+}
+.warn { border-color: #b26b00; }
+.error { border-color: #b00020; }
+label { display: block; margin-block-start: 1rem; font-weight: 600; }
+input, select {
+  display: block;
+  inline-size: 100%;
+  box-sizing: border-box;
+  padding-block: 0.5rem;
+  padding-inline: 0.5rem;
+  font: inherit;
+}
+.actions { display: flex; gap: 0.75rem; margin-block-start: 1.5rem; flex-wrap: wrap; }
+button { font: inherit; padding-block: 0.5rem; padding-inline: 1rem; cursor: pointer; }
+button.secondary { background: transparent; }

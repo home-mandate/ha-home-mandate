@@ -20,6 +20,7 @@ import (
 	"github.com/home-mandate/home-mandate/internal/config"
 	"github.com/home-mandate/home-mandate/internal/ha"
 	"github.com/home-mandate/home-mandate/internal/mcp"
+	"github.com/home-mandate/home-mandate/internal/oauth"
 	"github.com/home-mandate/home-mandate/internal/pdp"
 	"github.com/home-mandate/home-mandate/internal/ratelimit"
 )
@@ -116,6 +117,26 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		return nil, err
 	}
 	return g, nil
+}
+
+// withOAuth adds the authorization server next to the MCP endpoint when a public URL is
+// configured; without one, OAuth is off and every token is refused.
+func withOAuth(s *state, mcpHandler http.Handler, resource string, logger *slog.Logger) (http.Handler, error) {
+	if s.cfg.PublicURL == "" {
+		logger.Warn("no public URL configured: OAuth is off, agents cannot be admitted")
+		return mcpHandler, nil
+	}
+	signIn, err := oauth.NewHASignIn(oauth.HASignInConfig{PublicURL: s.cfg.PublicURL, BrowserURL: s.cfg.HABrowserURL,
+		HTTPURL: s.cfg.HAHTTPURL, WebSocketURL: s.cfg.HAURL, Roots: s.cfg.HARootCAs})
+	if err != nil {
+		return nil, err
+	}
+	as := oauth.New(oauth.Config{PublicURL: s.cfg.PublicURL, Resource: resource, SignIn: signIn,
+		Clients: oauth.NewCIMDResolver(nil), Admission: s.admission, Tokens: s.agents, Audit: s.log, Logger: logger})
+	mux := http.NewServeMux()
+	mux.Handle(mcp.Path, mcpHandler)
+	mux.Handle("/", as.Handler())
+	return mux, nil
 }
 
 // listen opens the MCP listener: TLS 1.3 when a certificate is configured, otherwise

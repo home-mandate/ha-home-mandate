@@ -42,6 +42,34 @@ const (
 	ApprovalDeny           Key = "approval_deny"
 	ApprovalInvalidTitle   Key = "approval_invalid_title"
 	ApprovalInvalidMessage Key = "approval_invalid_message"
+
+	PageErrorTitle         Key = "page_error_title"
+	PageInvalidRequest     Key = "page_invalid_request"
+	PageInvalidClient      Key = "page_invalid_client"
+	PageSessionExpired     Key = "page_session_expired"
+	PageSignInFailed       Key = "page_signin_failed"
+	PageNotAdmin           Key = "page_not_admin"
+	PageBusy               Key = "page_busy"
+	PageSignedInAs         Key = "page_signed_in_as"
+	PageConsentTitle       Key = "page_consent_title"
+	PageConsentClaimed     Key = "page_consent_claimed"
+	PageConsentVerified    Key = "page_consent_verified"
+	PageConsentUnverified  Key = "page_consent_unverified"
+	PageConsentReturn      Key = "page_consent_return"
+	PageConsentName        Key = "page_consent_name"
+	PageConsentTemplate    Key = "page_consent_template"
+	PageConsentApprove     Key = "page_consent_approve"
+	PageConsentDeny        Key = "page_consent_deny"
+	PageConsentNoTemplates Key = "page_consent_no_templates"
+	PageConsentInvalid     Key = "page_consent_invalid"
+	PageDenied             Key = "page_denied"
+	PageAdmitted           Key = "page_admitted"
+	PagePairTitle          Key = "page_pair_title"
+	PagePairIntro          Key = "page_pair_intro"
+	PagePairCode           Key = "page_pair_code"
+	PagePairSubmit         Key = "page_pair_submit"
+	PagePairInvalid        Key = "page_pair_invalid"
+	PagePairLocked         Key = "page_pair_locked"
 )
 
 // actions are the vocabulary actions of SPEC-v0 section 5; their display names have the
@@ -53,6 +81,7 @@ var actions = []string{"read", "turn_on", "turn_off", "set", "set_temperature", 
 var Keys = append([]Key{
 	ApprovalTitle, ApprovalMessage, ApprovalReason, ApprovalNoAnswer, ApprovalApprove, ApprovalDeny,
 	ApprovalInvalidTitle, ApprovalInvalidMessage,
+	PageErrorTitle, PageInvalidRequest, PageInvalidClient, PageSessionExpired, PageSignInFailed, PageNotAdmin, PageBusy, PageSignedInAs, PageConsentTitle, PageConsentClaimed, PageConsentVerified, PageConsentUnverified, PageConsentReturn, PageConsentName, PageConsentTemplate, PageConsentApprove, PageConsentDeny, PageConsentNoTemplates, PageConsentInvalid, PageDenied, PageAdmitted, PagePairTitle, PagePairIntro, PagePairCode, PagePairSubmit, PagePairInvalid, PagePairLocked,
 }, actionKeys()...)
 
 func actionKeys() []Key {

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -14,6 +15,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -102,5 +104,46 @@ func TestListenWithoutCertificateInAppModeFallsBackToLoopback(t *testing.T) {
 	defer ln.Close()
 	if host, _, _ := net.SplitHostPort(ln.Addr().String()); host != "127.0.0.1" {
 		t.Errorf("listening on %s, want loopback", ln.Addr())
+	}
+}
+
+func TestWithOAuth(t *testing.T) {
+	c := newCLI(t)
+	s, err := openStore(context.Background(), c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.store.Close()
+	mcpHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	logger := slog.New(slog.DiscardHandler)
+
+	// Without a public URL, only the MCP endpoint is served.
+	h, err := withOAuth(s, mcpHandler, "", logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil))
+	if rec.Code != http.StatusTeapot {
+		t.Errorf("OAuth off: %d", rec.Code)
+	}
+
+	s.cfg = config.Config{PublicURL: "https://hm.example.org", HABrowserURL: "https://ha.example.org",
+		HAHTTPURL: "https://ha.example.org", HAURL: "wss://ha.example.org/api/websocket"}
+	h, err = withOAuth(s, mcpHandler, "https://hm.example.org/mcp", logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]int{"/.well-known/oauth-authorization-server": http.StatusOK, "/mcp": http.StatusTeapot} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != want {
+			t.Errorf("%s: %d", path, rec.Code)
+		}
+	}
+
+	s.cfg.HAHTTPURL = "http://ha.example.org" // plaintext on the LAN
+	if _, err := withOAuth(s, mcpHandler, "https://hm.example.org/mcp", logger); err == nil {
+		t.Error("plaintext Home Assistant accepted")
 	}
 }

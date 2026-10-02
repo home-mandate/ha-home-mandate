@@ -150,6 +150,9 @@ func loadApp(token ha.Secret, readFile func(string) ([]byte, error)) (Config, er
 	if cfg.HABrowserURL, err = browserURL(opts.HABrowserURL); err != nil {
 		return Config{}, err
 	}
+	if cfg.PublicURL != "" && cfg.HABrowserURL == "" {
+		return Config{}, fmt.Errorf("%w: public_url needs ha_browser_url for the sign-in of humans", ErrInvalid)
+	}
 	cfg.HAHTTPURL = appHAHTTP
 	return cfg, nil
 }

@@ -93,6 +93,11 @@ func TestOAuthURLsAppMode(t *testing.T) {
 		t.Errorf("without options: %+v, %v", cfg, err)
 	}
 
+	noBrowser := strings.Replace(opts, `,"ha_browser_url":"https://ha.example.org"`, ``, 1)
+	if _, err := Load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": noBrowser})); !errors.Is(err, ErrInvalid) {
+		t.Errorf("public_url without ha_browser_url: %v", err)
+	}
+
 	bad := strings.Replace(opts, "https://hm.example.org:8765", "http://hm.lan", 1)
 	if _, err := Load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": bad})); !errors.Is(err, ErrInvalid) {
 		t.Errorf("plaintext public_url: %v", err)

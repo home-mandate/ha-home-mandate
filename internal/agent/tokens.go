@@ -125,11 +125,12 @@ func (s *Store) Authenticate(ctx context.Context, token, resource string) (Agent
 	var createdAt, kind, tokenResource, expiresAt, stop string
 	var revokedAt sql.NullString
 	err := s.db.QueryRowContext(ctx, `SELECT a.client_id, a.display_name, a.status, a.created_at, a.created_by,
-			t.kind, t.resource, t.expires_at, t.revoked_at,
+			a.oauth_client, a.client_verified, t.kind, t.resource, t.expires_at, t.revoked_at,
 			COALESCE((SELECT value FROM settings WHERE key = ?), ?)
 		FROM tokens t JOIN agents a ON a.client_id = t.client_id WHERE t.token_hash = ?`,
 		settingEmergencyStop, stopOff, hashToken(token)).
-		Scan(&a.ClientID, &a.DisplayName, &a.Status, &createdAt, &a.CreatedBy, &kind, &tokenResource, &expiresAt, &revokedAt, &stop)
+		Scan(&a.ClientID, &a.DisplayName, &a.Status, &createdAt, &a.CreatedBy, &a.OAuthClient, &a.ClientVerified,
+			&kind, &tokenResource, &expiresAt, &revokedAt, &stop)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Agent{}, ErrUnauthorized
 	}

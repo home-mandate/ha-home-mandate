@@ -204,7 +204,7 @@ func TestAdmitIsAllOrNothing(t *testing.T) {
 		want error
 	}{
 		"unknown template": {func(r *admission.Request) { r.Template = "none" }, admission.ErrTemplateNotFound},
-		"bad name":         {func(r *admission.Request) { r.DisplayName = "bad‮name" }, agent.ErrInvalidName},
+		"bad name":         {func(r *admission.Request) { r.DisplayName = "bad\u202ename" }, agent.ErrInvalidName},
 		"no resource":      {func(r *admission.Request) { r.Resource = "" }, nil},
 		"no actor":         {func(r *admission.Request) { r.By = audit.Actor{} }, nil},
 	} {
@@ -239,7 +239,7 @@ func TestAdmitValidatesTheInstance(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := request()
-	req.By = audit.Actor{Kind: audit.ActorUser, ID: "user x"}
+	req.By = audit.Actor{Kind: audit.ActorUser, ID: "user\u2028x"}
 	if _, _, err := e.adm.Admit(ctx, req); !errors.Is(err, mandate.ErrInvalid) {
 		t.Errorf("Admit = %v, want mandate.ErrInvalid", err)
 	}
