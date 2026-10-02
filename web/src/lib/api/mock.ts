@@ -131,7 +131,7 @@ function initialMandates(): Record<string, StoredMandate> {
       .map((a, i): [string, StoredMandate] => {
         const id = a.mandate?.id ?? '';
         const document: MandateDocument = { ...voiceAssistantMandate, id, agent: { client_id: a.client_id, display_name: a.display_name } };
-        const meta = { digest: `sha256:fixture-${i}`, created_at: document.created_at, created_by: 'u-admin', created_by_name: 'Markus' };
+        const meta = { number: 1, digest: `sha256:fixture-${i}`, created_at: document.created_at, created_by: 'u-admin', created_by_name: 'Markus' };
         return [id, { name: a.mandate?.name ?? id, status: 'active', versions: [{ meta, document }] }];
       }),
   );
@@ -261,7 +261,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     }
     const createdAt = now().toISOString();
     const document: MandateDocument = { ...current.document, ...draft, created_by: user().id, created_at: createdAt };
-    const meta = { digest: `sha256:mock-${++counter}`, created_at: createdAt, created_by: user().id, created_by_name: user().name };
+    const meta = { number: m.versions.length + 1, digest: `sha256:mock-${++counter}`, created_at: createdAt, created_by: user().id, created_by_name: user().name };
     putStored(id, { ...m, name: name ?? m.name, versions: [{ meta, document }, ...m.versions] });
     log('mandate.updated', { agent: document.agent, mandate: { id, digest: meta.digest, previous_digest: current.meta.digest } });
     return detail(id);
@@ -288,7 +288,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       created_by: user().id,
       created_at: createdAt,
     };
-    const meta = { digest: `sha256:mock-${counter}`, created_at: createdAt, created_by: user().id, created_by_name: user().name };
+    const meta = { number: 1, digest: `sha256:mock-${counter}`, created_at: createdAt, created_by: user().id, created_by_name: user().name };
     state = { ...state, agents: state.agents.map((a) => (a.client_id === clientId ? { ...a, mandate: { id, name: '', status: 'active' as const } } : a)) };
     putStored(id, { name: mandateName ?? name, status: 'active', versions: [{ meta, document }] });
     log('mandate.created', { agent: document.agent, mandate: { id, digest: meta.digest } });
@@ -416,8 +416,8 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     async mandate(id) {
       return detail(id);
     },
-    async mandateVersion(id, digest) {
-      const v = stored(id).versions.find((x) => x.meta.digest === digest) ?? fail('not_found');
+    async mandateVersion(id, number) {
+      const v = stored(id).versions.find((x) => x.meta.number === number) ?? fail('not_found');
       return copy(v.document);
     },
     async putMandate(id, update) {

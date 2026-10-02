@@ -3,9 +3,9 @@
 import { describe, expect, it } from 'vitest';
 import { voiceAssistantDraft, voiceAssistantMandate } from '../api/fixtures.ts';
 import type { MandateVersion } from '../api/types.ts';
-import { draftOf, numberAt, shortDigest, versionAt } from './versions.ts';
+import { currentNumber, draftOf, shortDigest, versionAt } from './versions.ts';
 
-const version = (digest: string): MandateVersion => ({ digest, created_at: '2026-10-01T08:00:00Z', created_by: 'u-admin', created_by_name: 'Markus' });
+const version = (number: number, digest: string): MandateVersion => ({ number, digest, created_at: '2026-10-01T08:00:00Z', created_by: 'u-admin', created_by_name: 'Markus' });
 
 describe('versions', () => {
   it('shortens a digest to eight characters without its prefix', () => {
@@ -14,16 +14,17 @@ describe('versions', () => {
     expect(shortDigest('sha256:ab')).toBe('ab');
   });
 
-  it('numbers versions by position from the oldest; the list is newest first', () => {
-    const versions = [version('c'), version('b'), version('a')];
-    expect(versions.map((_, i) => numberAt(versions, i))).toEqual([3, 2, 1]);
+  it('finds versions by the number the server gave them; the list is newest first', () => {
+    const versions = [version(3, 'c'), version(2, 'b'), version(1, 'a')];
+    expect(currentNumber(versions)).toBe(3);
+    expect(currentNumber([])).toBe(0);
     expect(versionAt(versions, 3)?.digest).toBe('c');
     expect(versionAt(versions, 1)?.digest).toBe('a');
     for (const absent of [0, 4, -1, 1.5]) expect(versionAt(versions, absent)).toBeUndefined();
   });
 
   it('tells versions with the same digest apart (a restored version repeats one)', () => {
-    const versions = [version('a'), version('b'), version('a')];
+    const versions = [version(3, 'a'), version(2, 'b'), version(1, 'a')];
     expect(versionAt(versions, 3)).toBe(versions[0]);
     expect(versionAt(versions, 1)).toBe(versions[2]);
   });

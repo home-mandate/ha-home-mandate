@@ -285,3 +285,190 @@ func TestRevokedAgentRevokesItsMandate(t *testing.T) {
 		t.Errorf("ForAgent after agent revocation = %v, %v; want revoked", loaded.Status, err)
 	}
 }
+
+// withRule returns an edit that appends rule to the mandate's rules.
+func withRule(rule map[string]any) func(map[string]any) {
+	return func(d map[string]any) {
+		rules, _ := d["rules"].([]any)
+		d["rules"] = append(append([]any{}, rules...), rule)
+	}
+}
+
+func unlockWithoutApproval() map[string]any {
+	return map[string]any{"id": "r-unlock", "resource": map[string]any{"category": "lock"},
+		"actions": []any{"read", "unlock"}, "decision": "allow", "allow_critical": true}
+}
+
+func TestUpdateNeedsTheVersionTheEditStartedFrom(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a := e.agent(t, "Voice assistant")
+	first, err := e.mandates.Put(ctx, voiceAssistant(t, a.ClientID, nil), admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limit := func(n int) []byte {
+		return voiceAssistant(t, a.ClientID, func(d map[string]any) { d["limits"] = map[string]any{"max_actions_per_hour": n} })
+	}
+
+	second, err := e.mandates.Update(ctx, first.ID, limit(10), mandate.Change{BaseDigest: first.Digest}, admin)
+	if err != nil || second.Digest == first.Digest || second.MaxActionsPerHour != 10 {
+		t.Fatalf("Update = %+v, %v", second, err)
+	}
+
+	// Someone who still edits the first version must not overwrite the second one.
+	for name, base := range map[string]string{"outdated": first.Digest, "missing": "", "unknown": "sha256:0000"} {
+		if _, err := e.mandates.Update(ctx, first.ID, limit(20), mandate.Change{BaseDigest: base}, admin); !errors.Is(err, mandate.ErrConflict) {
+			t.Errorf("%s base digest: err = %v, want ErrConflict", name, err)
+		}
+	}
+	if got, err := e.mandates.Get(ctx, first.ID); err != nil || got.Digest != second.Digest {
+		t.Errorf("after refused updates: %+v, %v", got, err)
+	}
+	if versions, err := e.mandates.Versions(ctx, first.ID); err != nil || len(versions) != 2 {
+		t.Errorf("Versions = %+v, %v", versions, err)
+	}
+}
+
+func TestUpdateRefusesWhatDoesNotBelongToTheMandate(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a := e.agent(t, "Voice assistant")
+	first, err := e.mandates.Put(ctx, voiceAssistant(t, a.ClientID, nil), admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	change := mandate.Change{BaseDigest: first.Digest}
+
+	if _, err := e.mandates.Update(ctx, "m-unknown", voiceAssistant(t, a.ClientID, nil), change, admin); !errors.Is(err, mandate.ErrNotFound) {
+		t.Errorf("unknown mandate: err = %v, want ErrNotFound", err)
+	}
+	other := voiceAssistant(t, a.ClientID, func(d map[string]any) { d["id"] = "m-other" })
+	if _, err := e.mandates.Update(ctx, first.ID, other, change, admin); !errors.Is(err, mandate.ErrInvalid) {
+		t.Errorf("document of another mandate: err = %v, want ErrInvalid", err)
+	}
+	if _, err := e.mandates.Update(ctx, first.ID, []byte(`{"default":"allow"}`), change, admin); !errors.Is(err, mandate.ErrInvalid) {
+		t.Errorf("invalid document: err = %v, want ErrInvalid", err)
+	}
+	if err := e.mandates.Revoke(ctx, first.ID, admin); err != nil {
+		t.Fatal(err)
+	}
+	limited := voiceAssistant(t, a.ClientID, func(d map[string]any) { d["limits"] = map[string]any{"max_actions_per_hour": 10} })
+	if _, err := e.mandates.Update(ctx, first.ID, limited, change, admin); !errors.Is(err, mandate.ErrConflict) {
+		t.Errorf("revoked mandate: err = %v, want ErrConflict", err)
+	}
+	if versions, err := e.mandates.Versions(ctx, first.ID); err != nil || len(versions) != 1 {
+		t.Errorf("Versions = %+v, %v", versions, err)
+	}
+}
+
+func TestUpdateNeedsTheConfirmationForCriticalActions(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a := e.agent(t, "Voice assistant")
+	current, err := e.mandates.Put(ctx, voiceAssistant(t, a.ClientID, nil), admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := func(doc []byte, confirm bool) error {
+		t.Helper()
+		info, err := e.mandates.Update(ctx, current.ID, doc, mandate.Change{BaseDigest: current.Digest, ConfirmCritical: confirm}, admin)
+		if err == nil {
+			current = info
+		}
+		return err
+	}
+	granted := voiceAssistant(t, a.ClientID, withRule(unlockWithoutApproval()))
+
+	// A new rule that allows critical actions without approval needs the separate confirmation.
+	if err := update(granted, false); !errors.Is(err, mandate.ErrCriticalConfirmation) {
+		t.Fatalf("new allow_critical without confirmation: err = %v, want ErrCriticalConfirmation", err)
+	}
+	if versions, _ := e.mandates.Versions(ctx, current.ID); len(versions) != 1 {
+		t.Fatalf("refused update stored a version: %+v", versions)
+	}
+	if err := update(granted, true); err != nil {
+		t.Fatalf("confirmed: %v", err)
+	}
+
+	// The same rule in the same form needs no new confirmation, however it is written.
+	reordered := unlockWithoutApproval()
+	reordered["actions"] = []any{"unlock", "read"}
+	unchanged := voiceAssistant(t, a.ClientID, func(d map[string]any) {
+		withRule(reordered)(d)
+		d["limits"] = map[string]any{"max_actions_per_hour": 10}
+	})
+	if err := update(unchanged, false); err != nil {
+		t.Fatalf("unchanged allow_critical rule: %v", err)
+	}
+
+	// Changed in any field, or under another id, it is a new grant.
+	for name, edit := range map[string]func(map[string]any){
+		"more actions":  func(r map[string]any) { r["actions"] = []any{"read", "unlock", "open"} },
+		"wider scope":   func(r map[string]any) { r["resource"] = map[string]any{"any": true} },
+		"new condition": func(r map[string]any) { r["conditions"] = map[string]any{"time_window": "08:00-18:00"} },
+		"another id":    func(r map[string]any) { r["id"] = "r-unlock-2" },
+	} {
+		rule := unlockWithoutApproval()
+		edit(rule)
+		doc := voiceAssistant(t, a.ClientID, withRule(rule))
+		if err := update(doc, false); !errors.Is(err, mandate.ErrCriticalConfirmation) {
+			t.Errorf("%s without confirmation: err = %v, want ErrCriticalConfirmation", name, err)
+		}
+	}
+
+	// Taking the grant away never needs a confirmation.
+	if err := update(voiceAssistant(t, a.ClientID, nil), false); err != nil {
+		t.Errorf("removing allow_critical: %v", err)
+	}
+}
+
+func TestVersionsAreNumberedAndCanRepeatADigest(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a := e.agent(t, "Voice assistant")
+	original := voiceAssistant(t, a.ClientID, nil)
+	first, err := e.mandates.Put(ctx, original, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limited := voiceAssistant(t, a.ClientID, func(d map[string]any) { d["limits"] = map[string]any{"max_actions_per_hour": 10} })
+	second, err := e.mandates.Update(ctx, first.ID, limited, mandate.Change{BaseDigest: first.Digest}, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Restoring the first version stores a third one with the content, and so the digest, of the first.
+	third, err := e.mandates.Update(ctx, first.ID, original, mandate.Change{BaseDigest: second.Digest}, admin)
+	if err != nil || third.Digest != first.Digest {
+		t.Fatalf("restore = %+v, %v", third, err)
+	}
+
+	versions, err := e.mandates.Versions(ctx, first.ID)
+	if err != nil || len(versions) != 3 {
+		t.Fatalf("Versions = %+v, %v", versions, err)
+	}
+	for i, want := range []string{first.Digest, second.Digest, first.Digest} {
+		if versions[i].Number != i+1 || versions[i].Digest != want {
+			t.Errorf("version %d = %+v, want number %d and digest %s", i, versions[i], i+1, want)
+		}
+	}
+
+	doc, v, err := e.mandates.VersionDocument(ctx, first.ID, 2)
+	if err != nil || v.Number != 2 || v.Digest != second.Digest || !strings.Contains(string(doc), `"max_actions_per_hour":10`) {
+		t.Errorf("VersionDocument(2) = %s, %+v, %v", doc, v, err)
+	}
+	if _, v, err := e.mandates.VersionDocument(ctx, first.ID, 3); err != nil || v.Number != 3 || v.Digest != first.Digest {
+		t.Errorf("VersionDocument(3) = %+v, %v", v, err)
+	}
+	for _, number := range []int{0, -1, 4} {
+		if _, _, err := e.mandates.VersionDocument(ctx, first.ID, number); !errors.Is(err, mandate.ErrNotFound) {
+			t.Errorf("VersionDocument(%d): err = %v, want ErrNotFound", number, err)
+		}
+	}
+	if _, _, err := e.mandates.VersionDocument(ctx, "m-unknown", 1); !errors.Is(err, mandate.ErrNotFound) {
+		t.Errorf("unknown mandate: err = %v, want ErrNotFound", err)
+	}
+	if loaded, err := e.mandates.ForAgent(ctx, a.ClientID); err != nil || loaded.Info.Digest != first.Digest {
+		t.Errorf("ForAgent = %+v, %v", loaded.Info, err)
+	}
+}

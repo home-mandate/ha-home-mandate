@@ -27,8 +27,13 @@ var (
 	// ErrNotFound means there is no such mandate.
 	ErrNotFound = errors.New("mandate: not found")
 	// ErrConflict means the change conflicts with stored mandates: a second mandate for
-	// an agent, a mandate moved to another agent, or a change to a revoked mandate.
+	// an agent, a mandate moved to another agent, a change to a revoked mandate, or an
+	// edit that started from a version that is no longer the current one.
 	ErrConflict = errors.New("mandate: conflict")
+	// ErrCriticalConfirmation means the new version lets a rule allow critical actions
+	// without approval that the current version does not have in this form, and the
+	// separate confirmation for that is missing.
+	ErrCriticalConfirmation = errors.New("mandate: allow_critical needs the separate confirmation")
 )
 
 // Mandate statuses.
@@ -49,8 +54,11 @@ type Info struct {
 	UpdatedAt         time.Time
 }
 
-// Version is one stored version of a mandate.
+// Version is one stored version of a mandate. Versions are told apart by Number, which
+// counts from 1 for the oldest: the digest is a hash of the content, and a version that
+// restores an earlier one repeats its digest.
 type Version struct {
+	Number    int
 	Digest    string
 	CreatedAt time.Time
 	CreatedBy string
@@ -107,6 +115,19 @@ func (s *Store) Put(ctx context.Context, document []byte, by audit.Actor) (Info,
 // PutTx is Put inside tx, so that admitting an agent and storing its mandate commit
 // together. It returns the stored information as written.
 func (s *Store) PutTx(ctx context.Context, tx *sql.Tx, document []byte, by audit.Actor) (Info, error) {
+	info, err := s.check(document)
+	if err != nil {
+		return Info{}, err
+	}
+	if err := s.put(ctx, tx, info, document, by); err != nil {
+		return Info{}, err
+	}
+	return info, nil
+}
+
+// check accepts document only if the reference evaluator accepts it and it belongs to
+// this household; it returns what would be stored.
+func (s *Store) check(document []byte) (Info, error) {
 	m, err := evaluator.Parse(document)
 	if err != nil {
 		return Info{}, fmt.Errorf("%w: %w", ErrInvalid, err)
@@ -118,12 +139,8 @@ func (s *Store) PutTx(ctx context.Context, tx *sql.Tx, document []byte, by audit
 	if md.Principal != s.principal {
 		return Info{}, fmt.Errorf("%w: principal is not this household", ErrInvalid)
 	}
-	info := Info{ID: m.ID(), ClientID: md.Agent.ClientID, Status: StatusActive, Digest: m.Digest(),
-		MaxActionsPerHour: md.Limits.MaxActionsPerHour, UpdatedAt: time.Now().UTC()}
-	if err := s.put(ctx, tx, info, document, by); err != nil {
-		return Info{}, err
-	}
-	return info, nil
+	return Info{ID: m.ID(), ClientID: md.Agent.ClientID, Status: StatusActive, Digest: m.Digest(),
+		MaxActionsPerHour: md.Limits.MaxActionsPerHour, UpdatedAt: time.Now().UTC()}, nil
 }
 
 func (s *Store) put(ctx context.Context, tx *sql.Tx, info Info, document []byte, by audit.Actor) error {
@@ -280,7 +297,7 @@ func (s *Store) query(ctx context.Context, where string, args ...any) ([]Info, e
 	return list, rows.Err()
 }
 
-// Versions returns all versions of a mandate, oldest first.
+// Versions returns all versions of a mandate, oldest first, numbered from 1.
 func (s *Store) Versions(ctx context.Context, id string) ([]Version, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT digest, created_at, created_by FROM mandate_versions WHERE mandate_id = ? ORDER BY version`, id)
 	if err != nil {
@@ -295,9 +312,30 @@ func (s *Store) Versions(ctx context.Context, id string) ([]Version, error) {
 			return nil, fmt.Errorf("mandate: versions: %w", err)
 		}
 		v.CreatedAt, _ = time.Parse(timeFormat, createdAt)
+		v.Number = len(list) + 1
 		list = append(list, v)
 	}
 	return list, rows.Err()
+}
+
+// VersionDocument returns the stored document of version number of a mandate.
+func (s *Store) VersionDocument(ctx context.Context, id string, number int) ([]byte, Version, error) {
+	if number < 1 {
+		return nil, Version{}, ErrNotFound
+	}
+	v := Version{Number: number}
+	var document, createdAt string
+	// Versions are never deleted, so the position in creation order is the number.
+	err := s.db.QueryRowContext(ctx, `SELECT digest, document, created_at, created_by FROM mandate_versions
+		WHERE mandate_id = ? ORDER BY version LIMIT 1 OFFSET ?`, id, number-1).Scan(&v.Digest, &document, &createdAt, &v.CreatedBy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, Version{}, ErrNotFound
+	}
+	if err != nil {
+		return nil, Version{}, fmt.Errorf("mandate: version: %w", err)
+	}
+	v.CreatedAt, _ = time.Parse(timeFormat, createdAt)
+	return []byte(document), v, nil
 }
 
 func (s *Store) inTx(ctx context.Context, fn func(*sql.Tx) error) error {

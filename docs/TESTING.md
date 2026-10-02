@@ -75,6 +75,9 @@ Every line is at least one test. New attack ideas are added here before they are
 - Empty mandate, mandate without rules → everything `deny`
 - Time window across midnight, boundaries 00:00 and 23:59, DST change (2026-10-25) → correct
 - Critical action with `allow` without `allow_critical` → `ask`
+- Edited mandate based on a version that is no longer the current one, or of a revoked mandate → refused as a conflict, nothing stored
+- Edited mandate with an `allow_critical` rule that is new, changed in any field or renamed, without the separate confirmation → refused, nothing stored; an unchanged rule needs no new confirmation
+- Version that restores an earlier one (same digest) → stored as a new version with its own number; versions are addressed by number
 
 **Tokens and sign-in**
 - No token, wrong scheme, expired, revoked, issued for another resource → 401

@@ -290,13 +290,19 @@ export interface MandateSummary {
 }
 
 export interface MandateVersion {
+  /**
+   * Number of the version within its mandate, counted from 1 for the oldest. It tells
+   * versions apart: the digest is a hash of the content, and a version that restores an
+   * earlier one repeats its digest.
+   */
+  number: number;
   digest: string;
   created_at: string;
   created_by: string;
   created_by_name: string | null;
 }
 
-/** GET api/mandates/{id}; versions newest first, their number is the position from the end. */
+/** GET api/mandates/{id}; versions newest first. A single version: GET api/mandates/{id}/versions/{number}. */
 export interface MandateDetail {
   summary: MandateSummary;
   document: MandateDocument;
@@ -315,11 +321,14 @@ export interface MandateCreate {
 }
 
 /**
- * PUT api/mandates/{id}. base_digest is the version the edit started from; if another
- * version was stored meanwhile the server answers "conflict". confirm_critical must be
- * true when the draft grants allow_critical that the base version did not (decision U9):
- * an allow_critical rule that is new or changed in any field. Revoked mandates cannot
- * be edited ("conflict"). A rename alone stores no new version.
+ * PUT api/mandates/{id}. base_digest is the digest of the version the edit started from;
+ * if that is not the current version any more the server answers "conflict" and stores
+ * nothing. confirm_critical must be true when the draft grants allow_critical that the
+ * current version does not have (decision U9): an allow_critical rule that is new or
+ * changed in any field; otherwise the answer is "critical_confirmation_required".
+ * Revoked mandates cannot be edited ("conflict"). A rename alone stores no new version.
+ * The server enforces all of this itself (internal/mandate Store.Update), whatever the
+ * UI checked.
  */
 export interface MandateUpdate {
   name: string;

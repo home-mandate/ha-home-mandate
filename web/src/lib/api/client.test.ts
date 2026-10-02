@@ -119,8 +119,18 @@ describe('createHttpClient', () => {
 
   it('encodes path segments', async () => {
     const { api, calls } = await signedIn(json({}));
-    await api.mandateVersion('m1', 'sha256:ab/c');
-    expect(calls()[0]?.url).toBe(`${BASE}api/mandates/m1/versions/sha256%3Aab%2Fc`);
+    await api.template('guest room/a b');
+    expect(calls()[0]?.url).toBe(`${BASE}api/templates/guest%20room%2Fa%20b`);
+  });
+
+  it('asks for a version by its number and refuses anything that is not one', async () => {
+    const { api, calls } = await signedIn(json({}));
+    await api.mandateVersion('m1', 3);
+    expect(calls()[0]?.url).toBe(`${BASE}api/mandates/m1/versions/3`);
+    for (const bad of [0, -1, 1.5, NaN, Infinity]) {
+      await expect(api.mandateVersion('m1', bad)).rejects.toMatchObject({ code: 'invalid_input' });
+    }
+    expect(calls()).toHaveLength(1);
   });
 
   it('rejects identifiers that would change the path', async () => {
@@ -264,7 +274,7 @@ describe('createHttpClient', () => {
     await c.mandates();
     await c.createMandate({ client_id: 'pair:kitchen', template: 'voice' });
     await c.mandate('m1');
-    await c.mandateVersion('m1', 'sha256:ab');
+    await c.mandateVersion('m1', 2);
     await c.putMandate('m1', { name: 'Küche', draft, base_digest: 'sha256:ab', confirm_critical: true });
     await c.applyTemplate('m1', { template: 'voice', base_digest: 'sha256:ab' });
     await c.revokeMandate('m1');
@@ -294,7 +304,7 @@ describe('createHttpClient', () => {
       'GET api/mandates',
       'POST api/mandates {"client_id":"pair:kitchen","template":"voice"}',
       'GET api/mandates/m1',
-      'GET api/mandates/m1/versions/sha256%3Aab',
+      'GET api/mandates/m1/versions/2',
       `PUT api/mandates/m1 ${JSON.stringify({ name: 'Küche', draft, base_digest: 'sha256:ab', confirm_critical: true })}`,
       'POST api/mandates/m1/apply-template {"template":"voice","base_digest":"sha256:ab"}',
       'POST api/mandates/m1/revoke',

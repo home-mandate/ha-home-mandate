@@ -57,7 +57,8 @@ export interface ApiClient {
   mandates(): Promise<MandateSummary[]>;
   createMandate(create: MandateCreate): Promise<MandateDetail>;
   mandate(id: string): Promise<MandateDetail>;
-  mandateVersion(id: string, digest: string): Promise<MandateDocument>;
+  /** The document of one version, by its number within the mandate. */
+  mandateVersion(id: string, number: number): Promise<MandateDocument>;
   putMandate(id: string, update: MandateUpdate): Promise<MandateDetail>;
   applyTemplate(id: string, apply: ApplyTemplate): Promise<MandateDetail>;
   revokeMandate(id: string): Promise<MandateSummary>;
@@ -160,6 +161,12 @@ export interface HttpClientOptions {
 function segment(value: string): string {
   if (value === '' || value === '.' || value === '..') throw new ApiError('invalid_input', 0);
   return encodeURIComponent(value);
+}
+
+/** versionSegment accepts a version number (from 1) and nothing else. */
+function versionSegment(number: number): string {
+  if (!Number.isSafeInteger(number) || number < 1) throw new ApiError('invalid_input', 0);
+  return String(number);
 }
 
 function auditQuery(q: AuditQuery): string {
@@ -272,7 +279,7 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
     mandates: () => get('mandates'),
     createMandate: (create) => request('POST', 'mandates', create),
     mandate: async (id) => get(`mandates/${segment(id)}`),
-    mandateVersion: async (id, digest) => get(`mandates/${segment(id)}/versions/${segment(digest)}`),
+    mandateVersion: async (id, number) => get(`mandates/${segment(id)}/versions/${versionSegment(number)}`),
     putMandate: async (id, update) => request('PUT', `mandates/${segment(id)}`, update),
     applyTemplate: async (id, apply) => request('POST', `mandates/${segment(id)}/apply-template`, apply),
     revokeMandate: async (id) => request('POST', `mandates/${segment(id)}/revoke`),

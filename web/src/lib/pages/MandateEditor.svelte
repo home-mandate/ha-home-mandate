@@ -39,7 +39,7 @@
   import { describeProblems, type FieldProblem, type Part } from '../mandate/problems.ts';
   import { isEditable } from '../mandate/scope.ts';
   import { ruleLine, ruleText } from '../mandate/text.ts';
-  import { draftOf } from '../mandate/versions.ts';
+  import { currentNumber, draftOf } from '../mandate/versions.ts';
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
   import { focusables } from '../ui/focus.ts';
@@ -131,7 +131,7 @@
   const edited: Edited | null = $derived(draft ? { name, draft } : null);
   const changes = $derived(base && edited ? countChanges(base, edited) : 0);
   const readonly = $derived(stored?.summary.status === 'revoked');
-  const version = $derived(stored?.versions.length ?? 0);
+  const version = $derived(currentNumber(stored?.versions ?? []));
   const agent = $derived(isolate(stored?.document.agent.display_name));
   const serverNow = $derived(now - app.offsetMs);
   /** Whether the draft, once saved, would apply right now. */
@@ -226,7 +226,7 @@
       return;
     }
     adopt(detail);
-    toasts.show({ kind: 'success', text: m.editor_updated_toast({ version: detail.versions.length }) });
+    toasts.show({ kind: 'success', text: m.editor_updated_toast({ version: currentNumber(detail.versions) }) });
   }
 
   async function reload() {
@@ -377,7 +377,7 @@
       adopt(detail);
       page.set({ detail, catalog, approvers: page.data?.approvers ?? NO_APPROVERS });
       saveOpen = false;
-      toasts.show({ kind: 'success', text: m.toast_saved({ version: detail.versions.length }) });
+      toasts.show({ kind: 'success', text: m.toast_saved({ version: currentNumber(detail.versions) }) });
     } catch (err) {
       const code = err instanceof ApiError ? err.code : 'internal';
       conflict = code === 'conflict';
@@ -515,9 +515,9 @@
   {#if newer}
     <div class="conflict" role="alert">
       <span class="lead"><Icon name="warning" /><strong>{m.editor_conflict_title()}</strong></span>
-      <span>{m.editor_conflict_body({ version: newer.versions.length })}</span>
+      <span>{m.editor_conflict_body({ version: currentNumber(newer.versions) })}</span>
       <div class="choices">
-        <Button size="lg" onclick={rebase}>{m.editor_conflict_keep({ version: newer.versions.length })}</Button>
+        <Button size="lg" onclick={rebase}>{m.editor_conflict_keep({ version: currentNumber(newer.versions) })}</Button>
         <Button size="lg" onclick={() => newer && adopt(newer)}>{m.editor_conflict_discard()}</Button>
       </div>
     </div>

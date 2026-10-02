@@ -212,7 +212,7 @@ describe('MandateVersions', () => {
       a.mandate = async (id) => {
         const detail = await real(id);
         const first = detail.versions.at(-1);
-        return first ? { ...detail, versions: [{ ...first, created_at: '2026-10-02T18:00:00Z' }, ...detail.versions] } : detail;
+        return first ? { ...detail, versions: [{ ...first, number: 4, created_at: '2026-10-02T18:00:00Z' }, ...detail.versions] } : detail;
       };
     });
     void api;

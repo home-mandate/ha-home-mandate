@@ -26,7 +26,7 @@
   import { ruleChanges, type Edited, type RuleChangeKind } from '../mandate/changes.ts';
   import { settingLines } from '../mandate/summary.ts';
   import { ruleText } from '../mandate/text.ts';
-  import { draftOf, numberAt, shortDigest, versionAt } from '../mandate/versions.ts';
+  import { currentNumber, draftOf, shortDigest, versionAt } from '../mandate/versions.ts';
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
   import { toasts } from '../ui/toasts.ts';
@@ -66,10 +66,7 @@
    * a digest is a hash of the content, and a restored version repeats an earlier one.
    */
   let picked = $state<number | null>(null);
-  const earlier = new Loader<MandateDocument | null>(async () => {
-    const version = picked === null ? undefined : versionAt(page.data?.detail.versions ?? [], picked);
-    return version ? app.api.mandateVersion(id, version.digest) : null;
-  });
+  const earlier = new Loader<MandateDocument | null>(async () => (picked === null ? null : app.api.mandateVersion(id, picked)));
   let restoring = $state(false);
   let saving = $state(false);
   let saveError = $state('');
@@ -105,11 +102,11 @@
 
   async function reload() {
     await page.run();
-    const count = page.data?.detail.versions.length ?? 0;
-    // Versions are only ever added: an earlier pick stays valid, except when it became
-    // the current version's number. Without a pick, compare with the one before the current.
-    if (count < 2) picked = null;
-    else if (picked === null || picked >= count) pick(count - 1);
+    const [, ...earlierOnes] = page.data?.detail.versions ?? [];
+    // Keep the pick while it is an earlier version; otherwise compare with the one before the current.
+    const previous = earlierOnes[0];
+    if (!previous) picked = null;
+    else if (!earlierOnes.some((v) => v.number === picked)) pick(previous.number);
   }
 
   onMount(() => {
@@ -137,7 +134,7 @@
       });
       restoring = false;
       done = true;
-      toasts.show({ kind: 'success', text: m.toast_saved({ version: stored.versions.length }) });
+      toasts.show({ kind: 'success', text: m.toast_saved({ version: currentNumber(stored.versions) }) });
     } catch (err) {
       const code = err instanceof ApiError ? err.code : 'internal';
       const rejected = code === 'invalid_mandate' || code === 'invalid_input' || code === 'critical_confirmation_required';
@@ -147,7 +144,8 @@
     }
     await reload();
     // The restored version is now the current one; compare what was current before with it.
-    if (done && versions.length >= 2) pick(versions.length - 1);
+    const previous = versions[1];
+    if (done && previous) pick(previous.number);
   }
 
   /** tagOf marks a rule in one of the two lists: "removed" only in the old one, "added" only in the current one. */
@@ -183,7 +181,7 @@
 {:else if !detail || !current}
   <div role="status" aria-busy="true" aria-label={m.common_loading()}><Skeleton lines={['30%', '70%', '50%']} /></div>
 {:else}
-  {@const currentNumber = versions.length}
+  {@const current_ = currentNumber(versions)}
   <div class="head">
     <a class="back" href={href({ name: 'mandate', id })}><Icon name="back" size={16} /><bdi>{cleanUntrusted(detail.summary.name)}</bdi></a>
     <h1>{m.versions_title()}</h1>
@@ -191,8 +189,8 @@
 
   <div class="columns">
     <ol class="versions" role="list" aria-label={m.versions_pick()}>
-      {#each versions as v, i (numberAt(versions, i))}
-        {@const n = numberAt(versions, i)}
+      {#each versions as v, i (v.number)}
+        {@const n = v.number}
         <li>
           {#if i === 0}
             <div class="version current">
@@ -225,7 +223,7 @@
       {:else}
         {@const pickedNumber = picked}
         <div class="compare-head">
-          <h2 aria-live="polite">{m.versions_compare_title({ a: label(pickedNumber), b: label(currentNumber) })}</h2>
+          <h2 aria-live="polite">{m.versions_compare_title({ a: label(pickedNumber), b: label(current_) })}</h2>
           {#if detail.summary.status === 'active' && !identical}
             <Button
               size="lg"
@@ -244,7 +242,7 @@
             <ul role="list">{@render rules(old.draft.rules, false)}</ul>
           </section>
           <section aria-labelledby="{uid}-current">
-            <h3 id="{uid}-current">{label(currentNumber)}{#if versions[0]}{DOT}<bdi>{author(versions[0])}</bdi>{/if}</h3>
+            <h3 id="{uid}-current">{label(current_)}{#if versions[0]}{DOT}<bdi>{author(versions[0])}</bdi>{/if}</h3>
             <ul role="list">{@render rules(current.draft.rules, true)}</ul>
           </section>
         </div>
@@ -264,8 +262,8 @@
         <SaveDialog
           open={restoring}
           title={m.restore_title({ version: pickedNumber })}
-          body={m.restore_body({ agent, version: pickedNumber, next: currentNumber + 1 })}
-          confirm={m.save_confirm({ version: currentNumber + 1 })}
+          body={m.restore_body({ agent, version: pickedNumber, next: current_ + 1 })}
+          confirm={m.save_confirm({ version: current_ + 1 })}
           prev={current}
           next={old}
           {catalog}

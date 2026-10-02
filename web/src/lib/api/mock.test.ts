@@ -84,7 +84,7 @@ describe('createMockClient: agents and pairing', () => {
     await expect(api.revokeAgent('pair:nobody')).rejects.toMatchObject({ code: 'not_found', status: 404 });
     await expect(api.mandate('nope')).rejects.toMatchObject({ code: 'not_found' });
     await expect(api.template('nope')).rejects.toMatchObject({ code: 'not_found' });
-    await expect(api.mandateVersion('mandate-voice', 'sha256:none')).rejects.toMatchObject({ code: 'not_found' });
+    await expect(api.mandateVersion('mandate-voice', 99)).rejects.toMatchObject({ code: 'not_found' });
   });
 
   it('shows the agent behind a pairing code, ignoring case, spaces and dash', async () => {
@@ -144,8 +144,9 @@ describe('createMockClient: mandates and templates', () => {
     const after = await api.putMandate('mandate-voice', { name: 'Neu', draft, base_digest: before.summary.digest });
     expect(after.summary).toMatchObject({ name: 'Neu', max_actions_per_hour: 10, rule_count: 5, expires: null });
     expect(after.versions).toHaveLength(2);
+    expect(after.versions.map((v) => v.number)).toEqual([2, 1]);
     expect(after.versions[0]).toMatchObject({ created_by: 'u-admin', created_by_name: 'Markus' });
-    expect((await api.mandateVersion('mandate-voice', before.summary.digest)).limits.max_actions_per_hour).toBe(60);
+    expect((await api.mandateVersion('mandate-voice', 1)).limits.max_actions_per_hour).toBe(60);
     expect((await api.agents())[0]?.mandate?.name).toBe('Neu');
   });
 

@@ -282,6 +282,23 @@ as generated code.
   minimum release age, JavaScript dependencies included in the SBOM.
 - Svelte output is escaped by default; `{@html}` is forbidden.
 
+**Editing mandates:** The editor works on a draft and shows live what it would mean (rule
+notes, the "what it may do" preview, the summary before saving). That preview is computed in
+the browser with a port of the evaluation rule that passes the conformance cases of
+`mandate-spec`; it never decides anything. What is stored is checked by the server alone, in
+`internal/mandate` (`Store.Update`), whatever the UI did or did not check:
+- The document must be accepted by the reference evaluator and belong to this household and
+  to this mandate.
+- An edit names the digest of the version it started from. If that is not the current version
+  any more, or the mandate is revoked, nothing is stored (conflict): nobody overwrites a
+  version they have not seen.
+- A rule that allows critical actions without approval (`allow_critical`) and that the current
+  version does not have in exactly this form needs the separate confirmation of the human; a
+  changed or renamed rule counts as new. Without it nothing is stored.
+- Every version is kept. Versions are numbered from 1 per mandate and addressed by that
+  number: the digest is a hash of the content, and restoring an earlier version stores a new
+  version with the same digest.
+
 ### i18n and l10n
 
 - **Library:** Paraglide JS (inlang), supported by the Svelte CLI. Translations are compiled
