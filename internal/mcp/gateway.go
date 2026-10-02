@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
+	"sync"
 	"time"
 
 	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
@@ -32,6 +34,12 @@ const Path = "/mcp"
 const (
 	maxRequestBytes    = 64 << 10
 	defaultCallTimeout = 10 * time.Second
+	// noMandateLimit bounds requests of agents without a usable mandate, which would
+	// otherwise fill the audit log with denials.
+	noMandateLimit = 60
+	// rateLimitLogInterval is the minimum time between two audit entries for rate-limit
+	// refusals of one agent.
+	rateLimitLogInterval = time.Minute
 )
 
 // Error codes returned to agents: short, without internal details (ARCHITECTURE §5).
@@ -51,8 +59,6 @@ var (
 	// audit log stores.
 	entityIDPattern = regexp.MustCompile(`^[a-z0-9_]{1,64}\.[a-z0-9_]{1,190}$`)
 	actionPattern   = regexp.MustCompile(`^[a-z_]{1,64}$`)
-	// hiddenAttributes are never returned to agents (entity_picture carries an access token).
-	hiddenAttributes = []string{"entity_picture", "access_token"}
 )
 
 // Interfaces to the rest of the gateway.
@@ -61,7 +67,7 @@ type (
 		Authenticate(ctx context.Context, token string) (agent.Agent, error)
 	}
 	Decider interface {
-		Decide(ctx context.Context, clientID, entityID, action string) (pdp.Decision, error)
+		Snapshot(ctx context.Context, clientID string) (*pdp.Snapshot, error)
 	}
 	Catalog interface {
 		Lookup(entityID string) (catalog.Device, bool)
@@ -77,6 +83,7 @@ type (
 	}
 	Auditor interface {
 		Append(ctx context.Context, e audit.Entry) (int64, error)
+		WithEntry(ctx context.Context, e audit.Entry, action func() error) error
 	}
 )
 
@@ -98,6 +105,9 @@ type Config struct {
 type Gateway struct {
 	cfg    Config
 	server *sdk.Server
+
+	mu           sync.Mutex
+	rateLimitLog map[string]time.Time // last rate-limit entry per agent
 }
 
 // New registers the tools.
@@ -111,7 +121,7 @@ func New(cfg Config) *Gateway {
 	if cfg.CallTimeout <= 0 {
 		cfg.CallTimeout = defaultCallTimeout
 	}
-	g := &Gateway{cfg: cfg, server: sdk.NewServer(&sdk.Implementation{Name: "home-mandate", Version: cfg.Version}, nil)}
+	g := &Gateway{cfg: cfg, rateLimitLog: map[string]time.Time{}, server: sdk.NewServer(&sdk.Implementation{Name: "home-mandate", Version: cfg.Version}, nil)}
 	sdk.AddTool(g.server, &sdk.Tool{Name: "list_devices",
 		Description: "Lists the devices you may read, with category, area and state."}, g.listDevices)
 	sdk.AddTool(g.server, &sdk.Tool{Name: "get_state",
@@ -203,16 +213,13 @@ type (
 
 func (g *Gateway) listDevices(ctx context.Context, req *sdk.CallToolRequest, _ noInput) (*sdk.CallToolResult, devicesOut, error) {
 	out := devicesOut{Devices: []deviceOut{}}
-	a, err := agentOf(req)
+	snap, err := g.listSnapshot(ctx, req)
 	if err != nil {
 		return nil, out, err
 	}
-	if !g.available() {
-		return nil, out, errors.New(codeUnavailable)
-	}
 	for _, dev := range g.cfg.Catalog.All() {
-		d, err := g.cfg.PDP.Decide(ctx, a.ClientID, dev.EntityID, "read")
-		if err != nil || d.Result.Decision == evaluator.Deny {
+		// Only devices the agent may read now; ask would need a human first.
+		if snap.Decide(dev.EntityID, "read").Result.Decision != evaluator.Allow {
 			continue
 		}
 		name, _ := dev.Attributes["friendly_name"].(string)
@@ -223,18 +230,14 @@ func (g *Gateway) listDevices(ctx context.Context, req *sdk.CallToolRequest, _ n
 
 func (g *Gateway) listPermissions(ctx context.Context, req *sdk.CallToolRequest, _ noInput) (*sdk.CallToolResult, permissionsOut, error) {
 	out := permissionsOut{Devices: []permissionOut{}}
-	a, err := agentOf(req)
+	snap, err := g.listSnapshot(ctx, req)
 	if err != nil {
 		return nil, out, err
-	}
-	if !g.available() {
-		return nil, out, errors.New(codeUnavailable)
 	}
 	for _, dev := range g.cfg.Catalog.All() {
 		p := permissionOut{EntityID: dev.EntityID, Category: dev.Category, Area: dev.Area, Actions: map[string]string{}}
 		for _, action := range actionsOf(dev.Category) {
-			d, err := g.cfg.PDP.Decide(ctx, a.ClientID, dev.EntityID, action)
-			if err == nil && d.Result.Decision != evaluator.Deny {
+			if d := snap.Decide(dev.EntityID, action); d.Result.Decision != evaluator.Deny {
 				p.Actions[action] = string(d.Result.Decision)
 			}
 		}
@@ -243,6 +246,33 @@ func (g *Gateway) listPermissions(ctx context.Context, req *sdk.CallToolRequest,
 		}
 	}
 	return nil, out, nil
+}
+
+// listSnapshot checks availability and the rate limit for a list request (one token per
+// list) and loads the agent's mandate once.
+func (g *Gateway) listSnapshot(ctx context.Context, req *sdk.CallToolRequest) (*pdp.Snapshot, error) {
+	a, err := agentOf(req)
+	if err != nil {
+		return nil, err
+	}
+	if !g.available() {
+		return nil, errors.New(codeUnavailable)
+	}
+	snap, err := g.cfg.PDP.Snapshot(ctx, a.ClientID)
+	if err != nil {
+		g.cfg.Logger.Error("loading the mandate failed", "error", err)
+	}
+	if !g.cfg.Limiter.Allow(a.ClientID, limitOf(snap)) {
+		return nil, errors.New(codeRateLimited)
+	}
+	return snap, nil
+}
+
+func limitOf(snap *pdp.Snapshot) int {
+	if n := snap.MaxActionsPerHour(); n > 0 {
+		return n
+	}
+	return noMandateLimit
 }
 
 func (g *Gateway) getState(ctx context.Context, req *sdk.CallToolRequest, in entityInput) (*sdk.CallToolResult, stateOut, error) {
@@ -259,13 +289,31 @@ func (g *Gateway) getState(ctx context.Context, req *sdk.CallToolRequest, in ent
 	}
 	dev, ok := g.cfg.Catalog.Lookup(in.EntityID)
 	if !ok { // removed between decision and answer
+		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusFailed, Error: codeNotFound})
 		return nil, stateOut{}, errors.New(codeNotFound)
 	}
-	g.record(ctx, a, d, true, audit.Result{Status: audit.StatusExecuted})
-	for _, k := range hiddenAttributes {
-		delete(dev.Attributes, k)
+	// The state is returned only if the read is in the audit log.
+	if err := g.record(ctx, a, d, true, audit.Result{Status: audit.StatusExecuted}); err != nil {
+		return nil, stateOut{}, errors.New(codeUnavailable)
 	}
-	return nil, stateOut{EntityID: dev.EntityID, State: dev.State, Attributes: dev.Attributes}, nil
+	return nil, stateOut{EntityID: dev.EntityID, State: dev.State, Attributes: sanitize(dev.Attributes)}, nil
+}
+
+// sanitize removes attributes that can carry access tokens, such as entity_picture of
+// cameras and media players with a ?token= URL.
+func sanitize(attrs map[string]any) map[string]any {
+	out := make(map[string]any, len(attrs))
+	for k, v := range attrs {
+		key := strings.ToLower(k)
+		if strings.Contains(key, "token") || strings.Contains(key, "picture") {
+			continue
+		}
+		if s, ok := v.(string); ok && strings.Contains(strings.ToLower(s), "token=") {
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }
 
 func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, in actionInput) (*sdk.CallToolResult, actionOut, error) {
@@ -286,73 +334,120 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 		if errors.Is(err, errNotSupported) {
 			code = codeNotSupported
 		}
-		g.record(ctx, a, d, true, audit.Result{Status: audit.StatusFailed, Error: code})
+		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusFailed, Error: code})
 		if code == codeInvalidParams {
 			return nil, actionOut{}, err // names the parameter, nothing internal
 		}
 		return nil, actionOut{}, errors.New(code)
 	}
+	return g.execute(ctx, a, d, call)
+}
+
+// execute calls Home Assistant only while its "executed" entry is being written in the
+// same transaction: no entry, no execution. A failed call rolls the entry back and is
+// logged as failed.
+func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, call ha.ServiceCall) (*sdk.CallToolResult, actionOut, error) {
 	start := g.cfg.Now()
-	cctx, cancel := context.WithTimeout(ctx, g.cfg.CallTimeout)
-	err = g.cfg.HA.CallService(cctx, call)
-	cancel()
-	took := max(g.cfg.Now().Sub(start).Milliseconds(), 0)
-	if err != nil {
-		code := "ha_error"
-		if errors.Is(err, ha.ErrDisconnected) || errors.Is(err, context.DeadlineExceeded) {
-			code = "ha_unavailable"
+	executed := false
+	err := g.cfg.Audit.WithEntry(context.WithoutCancel(ctx), g.entry(a, d, true, audit.Result{Status: audit.StatusExecuted}), func() error {
+		cctx, cancel := context.WithTimeout(ctx, g.cfg.CallTimeout)
+		defer cancel()
+		if err := g.cfg.HA.CallService(cctx, call); err != nil {
+			return err
 		}
-		g.cfg.Logger.Warn("service call failed", "entity_id", in.EntityID, "action", in.Action, "error", err)
-		g.record(ctx, a, d, true, audit.Result{Status: audit.StatusFailed, Error: code, DurationMs: took})
-		return nil, actionOut{}, errors.New(codeFailed)
+		executed = true
+		return nil
+	})
+	var actionErr *audit.ActionError
+	switch {
+	case err == nil:
+		return nil, actionOut{Status: "executed"}, nil
+	case executed:
+		// Executed, but the entry could not be committed: report the truth, log loudly.
+		g.cfg.Logger.Error("action executed but its audit entry was lost", "entity_id", call.EntityID, "error", err)
+		return nil, actionOut{Status: "executed"}, nil
+	case !errors.As(err, &actionErr):
+		g.cfg.Logger.Error("audit log unavailable, action not executed", "error", err)
+		return nil, actionOut{}, errors.New(codeUnavailable)
 	}
-	g.record(ctx, a, d, true, audit.Result{Status: audit.StatusExecuted, DurationMs: took})
-	return nil, actionOut{Status: "executed"}, nil
+	code := "ha_error"
+	if errors.Is(err, ha.ErrDisconnected) || errors.Is(err, context.DeadlineExceeded) {
+		code = "ha_unavailable"
+	}
+	g.cfg.Logger.Warn("service call failed", "entity_id", call.EntityID, "service", call.Service, "error", actionErr.Err)
+	took := max(g.cfg.Now().Sub(start).Milliseconds(), 0)
+	_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusFailed, Error: code, DurationMs: took})
+	return nil, actionOut{}, errors.New(codeFailed)
 }
 
 // enforce runs availability, PDP, rate limit and the decision for one request and logs
-// every refusal. It returns the decision only if the action is allowed.
+// every refusal. It returns the decision only if the action is allowed. An agent that
+// may not read the entity gets not_found for every refusal, as for a missing entity.
 func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action string) (pdp.Decision, error) {
 	if !g.available() {
 		d := pdp.Decision{Time: g.cfg.Now(), Resource: evaluator.Resource{EntityID: entityID}, Action: action}
-		g.record(ctx, a, d, false, audit.Result{Status: audit.StatusFailed, Error: "ha_unavailable"})
+		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusFailed, Error: "ha_unavailable"})
 		return pdp.Decision{}, errors.New(codeUnavailable)
 	}
-	d, err := g.cfg.PDP.Decide(ctx, a.ClientID, entityID, action)
+	snap, err := g.cfg.PDP.Snapshot(ctx, a.ClientID)
 	if err != nil {
-		g.cfg.Logger.Error("decision failed", "error", err)
+		g.cfg.Logger.Error("loading the mandate failed", "error", err)
 	}
+	d := snap.Decide(entityID, action)
 	if d.TimeZone == "" && err == nil {
-		g.record(ctx, a, d, false, audit.Result{Status: audit.StatusFailed, Error: "timezone_unknown"})
+		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusFailed, Error: "timezone_unknown"})
 		return pdp.Decision{}, errors.New(codeUnavailable)
 	}
-	if d.Result.Reason != evaluator.ReasonInvalidMandate && !g.cfg.Limiter.Allow(a.ClientID, d.MaxActionsPerHour) {
-		g.record(ctx, a, d, false, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByRateLimit})
+	if !g.cfg.Limiter.Allow(a.ClientID, limitOf(snap)) {
+		g.recordRateLimited(ctx, a, d)
 		return pdp.Decision{}, errors.New(codeRateLimited)
 	}
-	switch d.Result.Decision {
-	case evaluator.Allow:
+	if d.Result.Decision == evaluator.Allow {
 		return d, nil
-	case evaluator.Ask:
-		g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval})
+	}
+	readable := d.Result.Decision != evaluator.Deny
+	if action != "read" {
+		readable = snap.Decide(entityID, "read").Result.Decision != evaluator.Deny
+	}
+	if d.Result.Decision == evaluator.Ask {
+		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval})
+		if !readable {
+			return pdp.Decision{}, errors.New(codeNotFound)
+		}
 		return pdp.Decision{}, errors.New(codeApprovalRequired + ": confirmation by a human is not available yet")
 	}
-	g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate})
-	if action == "read" || !g.readable(ctx, a, entityID) {
+	_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate})
+	if !readable {
 		return pdp.Decision{}, errors.New(codeNotFound) // same answer as for an entity that does not exist
 	}
 	return pdp.Decision{}, errors.New(codeDenied + ": " + string(d.Result.Reason))
 }
 
-// readable reports whether the agent may read the entity; otherwise its existence is
-// not revealed.
-func (g *Gateway) readable(ctx context.Context, a agent.Agent, entityID string) bool {
-	d, err := g.cfg.PDP.Decide(ctx, a.ClientID, entityID, "read")
-	return err == nil && d.Result.Decision != evaluator.Deny
+// recordRateLimited logs at most one rate-limit refusal per agent and interval, so an
+// agent cannot fill the audit log by exceeding its limit.
+func (g *Gateway) recordRateLimited(ctx context.Context, a agent.Agent, d pdp.Decision) {
+	now := g.cfg.Now()
+	g.mu.Lock()
+	last, seen := g.rateLimitLog[a.ClientID]
+	if seen && now.Sub(last) < rateLimitLogInterval {
+		g.mu.Unlock()
+		return
+	}
+	g.rateLimitLog[a.ClientID] = now
+	g.mu.Unlock()
+	_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByRateLimit})
 }
 
-// record writes a decision entry. A failure is logged; the request result stands.
-func (g *Gateway) record(ctx context.Context, a agent.Agent, d pdp.Decision, withEvaluation bool, result audit.Result) {
+// record writes a decision entry; a failure is logged and returned.
+func (g *Gateway) record(ctx context.Context, a agent.Agent, d pdp.Decision, withEvaluation bool, result audit.Result) error {
+	if _, err := g.cfg.Audit.Append(context.WithoutCancel(ctx), g.entry(a, d, withEvaluation, result)); err != nil {
+		g.cfg.Logger.Error("audit log write failed", "error", err)
+		return err
+	}
+	return nil
+}
+
+func (g *Gateway) entry(a agent.Agent, d pdp.Decision, withEvaluation bool, result audit.Result) audit.Entry {
 	e := audit.Entry{
 		Event: audit.EventDecision,
 		Agent: &audit.Agent{ClientID: a.ClientID, DisplayName: a.DisplayName},
@@ -374,7 +469,5 @@ func (g *Gateway) record(ctx context.Context, a agent.Agent, d pdp.Decision, wit
 			e.Mandate = &audit.Mandate{ID: d.MandateID, Digest: r.MandateDigest}
 		}
 	}
-	if _, err := g.cfg.Audit.Append(context.WithoutCancel(ctx), e); err != nil {
-		g.cfg.Logger.Error("audit log write failed", "error", err)
-	}
+	return e
 }

@@ -92,6 +92,10 @@ func buildCall(entityID, category, action string, params map[string]any) (ha.Ser
 	if err != nil {
 		return ha.ServiceCall{}, err
 	}
+	if category == "light" && action == "set" && len(data) == 0 {
+		// Without a parameter "set" would be a plain turn_on, which the mandate may not allow.
+		return ha.ServiceCall{}, fmt.Errorf("%w: set needs brightness_pct or color_temp_kelvin", errInvalidParams)
+	}
 	if spec.service == "" {
 		return ha.ServiceCall{}, errNotSupported
 	}

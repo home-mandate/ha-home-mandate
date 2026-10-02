@@ -222,6 +222,28 @@ func (l *Log) Append(ctx context.Context, e Entry) (int64, error) {
 	return seq, err
 }
 
+// ActionError wraps the error of the action passed to WithEntry.
+type ActionError struct{ Err error }
+
+func (e *ActionError) Error() string { return "audit: action failed: " + e.Err.Error() }
+func (e *ActionError) Unwrap() error { return e.Err }
+
+// WithEntry appends e and runs action in one transaction, so that nothing is executed
+// without its entry: if the entry cannot be written, action does not run; if action
+// fails, the entry is rolled back and the error is returned as *ActionError. The write
+// lock is held while action runs.
+func (l *Log) WithEntry(ctx context.Context, e Entry, action func() error) error {
+	return l.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := l.AppendTx(ctx, tx, e); err != nil {
+			return err
+		}
+		if err := action(); err != nil {
+			return &ActionError{Err: err}
+		}
+		return nil
+	})
+}
+
 func (l *Log) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
 	tx, err := l.db.BeginTx(ctx, nil)
 	if err != nil {

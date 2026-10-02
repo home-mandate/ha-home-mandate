@@ -141,3 +141,32 @@ func TestAppendTxOnAFinishedTransaction(t *testing.T) {
 		t.Error("AppendTx on a rolled-back transaction succeeded")
 	}
 }
+
+func TestWithEntry(t *testing.T) {
+	l, db := newLog(t)
+	ctx := context.Background()
+	count := func() (n int) {
+		_ = db.QueryRow(`SELECT count(*) FROM audit_log`).Scan(&n)
+		return n
+	}
+
+	ran := false
+	if err := l.WithEntry(ctx, samples()[2], func() error { ran = true; return nil }); err != nil || !ran || count() != 1 {
+		t.Fatalf("success: err %v, ran %v, entries %d", err, ran, count())
+	}
+
+	boom := errors.New("lock jammed")
+	err := l.WithEntry(ctx, samples()[2], func() error { return boom })
+	var actionErr *audit.ActionError
+	if !errors.As(err, &actionErr) || !errors.Is(err, boom) || count() != 1 {
+		t.Errorf("failed action: err %v, entries %d (the entry must be rolled back)", err, count())
+	}
+
+	ran = false
+	if err := l.WithEntry(ctx, audit.Entry{Event: "unknown.event"}, func() error { ran = true; return nil }); err == nil || ran {
+		t.Errorf("invalid entry: err %v, ran %v (the action must not run)", err, ran)
+	}
+	if r := verify(t, l); !r.Valid {
+		t.Errorf("Verify = %+v", r)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -119,6 +120,7 @@ type harness struct {
 	ha      *fakeHA
 	catalog *fakeCatalog
 	log     *audit.Log
+	pdp     *pdp.PDP
 
 	mu sync.Mutex
 	tz string
@@ -166,12 +168,17 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 			"climate.living_room":      {EntityID: "climate.living_room", Category: "climate", State: "heat"},
 			"number.wallbox":           {EntityID: "number.wallbox", Category: "other", State: "16"},
 		}}}
-	p := pdp.New(pdp.Config{Principal: household, Mandates: mandates, Catalog: h.catalog, TimeZone: h.timeZone})
-	g := New(Config{Agents: agents, PDP: p, Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: log, Version: "test"})
-	srv := httptest.NewServer(g.Handler())
-	t.Cleanup(srv.Close)
-	h.url = srv.URL + Path
+	h.pdp = pdp.New(pdp.Config{Principal: household, Mandates: mandates, Catalog: h.catalog, TimeZone: h.timeZone})
+	h.url = h.serve(log)
 	return h
+}
+
+// serve starts a gateway on the harness with auditor and returns its URL.
+func (h *harness) serve(auditor Auditor) string {
+	g := New(Config{Agents: h.agents, PDP: h.pdp, Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test"})
+	srv := httptest.NewServer(g.Handler())
+	h.t.Cleanup(srv.Close)
+	return srv.URL + Path
 }
 
 func mandateDoc(t *testing.T, clientID string, edit func(map[string]any)) []byte {
@@ -475,6 +482,7 @@ func TestParametersAreChecked(t *testing.T) {
 		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": 150}}, "invalid_params"},
 		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": 40.5}}, "invalid_params"},
 		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"entity_id": "lock.front_door"}}, "invalid_params"},
+		{map[string]any{"entity_id": "light.kitchen", "action": "set"}, "invalid_params"},
 		{map[string]any{"entity_id": "climate.living_room", "action": "set_temperature"}, "invalid_params"},
 		{map[string]any{"entity_id": "climate.living_room", "action": "set_mode", "params": map[string]any{"hvac_mode": "sauna"}}, "invalid_params"},
 		{map[string]any{"entity_id": "climate.living_room", "action": "set_temperature", "params": map[string]any{"temperature": 21.5}}, ""},
@@ -610,5 +618,116 @@ func TestMissingMandateIsNotFound(t *testing.T) {
 	}
 	if e := h.lastEntry(); path(e, "evaluation", "reason") != "invalid_mandate" || e["mandate"] != nil {
 		t.Errorf("audit entry = %v", e)
+	}
+}
+
+// failingAuditor cannot write anything.
+type failingAuditor struct{}
+
+func (failingAuditor) Append(context.Context, audit.Entry) (int64, error) {
+	return 0, errors.New("disk full")
+}
+func (failingAuditor) WithEntry(context.Context, audit.Entry, func() error) error {
+	return errors.New("disk full")
+}
+
+func TestNothingIsExecutedOrReadWithoutAnAuditEntry(t *testing.T) {
+	h := newHarness(t, nil)
+	h.url = h.serve(failingAuditor{})
+	s := h.session()
+	if _, errText := h.call(s, "perform_action", map[string]any{"entity_id": "light.kitchen", "action": "turn_on"}); errText != "unavailable" {
+		t.Errorf("perform_action: %q, want unavailable", errText)
+	}
+	if _, errText := h.call(s, "get_state", map[string]any{"entity_id": "light.kitchen"}); errText != "unavailable" {
+		t.Errorf("get_state: %q, want unavailable", errText)
+	}
+	if len(h.ha.recorded()) != 0 {
+		t.Error("Home Assistant was called without an audit entry")
+	}
+}
+
+func TestFailedActionLeavesOnlyAFailedEntry(t *testing.T) {
+	h := newHarness(t, nil)
+	h.ha.set(func(f *fakeHA) { f.err = ha.ErrDisconnected })
+	if _, errText := h.call(h.session(), "perform_action", map[string]any{"entity_id": "light.kitchen", "action": "turn_on"}); errText != "failed" {
+		t.Fatalf("perform_action: %q", errText)
+	}
+	log := h.auditLog()
+	if strings.Contains(log, `"status":"executed"`) || !strings.Contains(log, `"error":"ha_unavailable"`) {
+		t.Errorf("audit log:\n%s", log)
+	}
+}
+
+func TestAskReadIsNotListedAndAskOnUnreadableIsNotFound(t *testing.T) {
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+			map[string]any{"id": "r-lock-read", "resource": map[string]any{"category": "lock"}, "actions": []any{"read"}, "decision": "ask"},
+			map[string]any{"id": "r-no-camera-read", "resource": map[string]any{"category": "camera"}, "actions": []any{"read"}, "decision": "deny"},
+			map[string]any{"id": "r-camera", "resource": map[string]any{"category": "camera"}, "actions": []any{"snapshot"}, "decision": "ask"},
+		}
+	})
+	s := h.session()
+	out, errText := h.call(s, "list_devices", nil)
+	if errText != "" {
+		t.Fatal(errText)
+	}
+	if listed := mustJSON(out); strings.Contains(listed, "lock.front_door") || strings.Contains(listed, "camera.porch") || !strings.Contains(listed, "light.kitchen") {
+		t.Errorf("list_devices = %s", listed)
+	}
+	if _, errText := h.call(s, "get_state", map[string]any{"entity_id": "lock.front_door"}); !strings.HasPrefix(errText, "approval_required") {
+		t.Errorf("get_state on ask-read lock: %q", errText)
+	}
+	// The camera may not be read; asking to snapshot it must not reveal that it exists.
+	_, camera := h.call(s, "perform_action", map[string]any{"entity_id": "camera.porch", "action": "snapshot"})
+	_, missing := h.call(s, "perform_action", map[string]any{"entity_id": "camera.nowhere", "action": "snapshot"})
+	if camera != "not_found" || missing != camera {
+		t.Errorf("ask on an unreadable camera: %q, missing %q", camera, missing)
+	}
+}
+
+func TestRateLimitRefusalsAreLoggedOncePerInterval(t *testing.T) {
+	h := newHarness(t, func(d map[string]any) { d["limits"] = map[string]any{"max_actions_per_hour": 1} })
+	s := h.session()
+	for range 5 {
+		h.call(s, "get_state", map[string]any{"entity_id": "light.kitchen"})
+	}
+	if n := strings.Count(h.auditLog(), `"denied_by":"rate_limit"`); n != 1 {
+		t.Errorf("%d rate-limit entries for 4 refusals within a minute, want 1", n)
+	}
+	if _, errText := h.call(s, "list_devices", nil); errText != "rate_limited" {
+		t.Errorf("list_devices beyond the limit: %q", errText)
+	}
+}
+
+func TestAgentsWithoutMandateAreRateLimited(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	other, err := h.agents.Register(ctx, "No mandate", admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.token, _, _ = h.agents.IssueToken(ctx, other.ClientID, time.Hour)
+	s := h.session()
+	last := ""
+	for range noMandateLimit + 1 {
+		_, last = h.call(s, "get_state", map[string]any{"entity_id": "light.kitchen"})
+	}
+	if last != "rate_limited" {
+		t.Errorf("request %d without a mandate: %q, want rate_limited", noMandateLimit+1, last)
+	}
+}
+
+func TestSanitizeRemovesTokenCarryingAttributes(t *testing.T) {
+	got := sanitize(map[string]any{
+		"friendly_name":        "TV",
+		"entity_picture":       "/api/media_player_proxy/media_player.tv?token=abc",
+		"entity_picture_local": "/api/media_player_proxy/media_player.tv?token=abc",
+		"access_token":         "abc",
+		"stream_url":           "rtsp://host/x?Token=abc",
+		"volume_level":         0.4,
+	})
+	if len(got) != 2 || got["friendly_name"] != "TV" || got["volume_level"] != 0.4 {
+		t.Errorf("sanitize = %v", got)
 	}
 }

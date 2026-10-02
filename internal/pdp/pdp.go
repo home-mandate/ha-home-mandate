@@ -75,26 +75,58 @@ type Decision struct {
 	MaxActionsPerHour int
 }
 
+// Snapshot holds an agent's mandate, the time and the household time zone for a
+// series of decisions, so that one request (e.g. a list) is decided on one mandate
+// version with one store query.
+type Snapshot struct {
+	p        *PDP
+	loaded   mandate.Loaded
+	found    bool
+	now      time.Time
+	timeZone string
+}
+
+// Snapshot loads the mandate of clientID. A store error is returned together with a
+// snapshot that denies everything.
+func (p *PDP) Snapshot(ctx context.Context, clientID string) (*Snapshot, error) {
+	s := &Snapshot{p: p, now: p.cfg.Now(), timeZone: p.cfg.TimeZone()}
+	loaded, err := p.cfg.Mandates.ForAgent(ctx, clientID)
+	switch {
+	case err == nil:
+		s.loaded, s.found = loaded, true
+	case !errors.Is(err, mandate.ErrNotFound):
+		return s, fmt.Errorf("pdp: load mandate: %w", err)
+	}
+	return s, nil
+}
+
+// Decide evaluates action on entityID.
+func (s *Snapshot) Decide(entityID, action string) Decision {
+	d := Decision{Time: s.now, TimeZone: s.timeZone, Resource: evaluator.Resource{EntityID: entityID}, Action: action}
+	if dev, ok := s.p.cfg.Catalog.Lookup(entityID); ok {
+		d.Known, d.Resource.Category, d.Resource.Area = true, dev.Category, dev.Area
+	}
+	if !s.found {
+		d.Result = evaluator.Result{Decision: evaluator.Deny, Reason: evaluator.ReasonInvalidMandate}
+		return d
+	}
+	d.Status, d.MandateID, d.MaxActionsPerHour = s.loaded.Status, s.loaded.Info.ID, s.loaded.Info.MaxActionsPerHour
+	d.Result = evaluator.Evaluate(s.loaded.Mandate, evaluator.Request{
+		Resource: d.Resource, Action: action, Time: d.Time, TimeZone: d.TimeZone, Status: d.Status,
+	})
+	return d
+}
+
+// MaxActionsPerHour is the agent's rate limit; 0 without a mandate.
+func (s *Snapshot) MaxActionsPerHour() int {
+	return s.loaded.Info.MaxActionsPerHour
+}
+
 // Decide evaluates action on entityID for the agent clientID. A store error is returned
 // together with a deny decision.
 func (p *PDP) Decide(ctx context.Context, clientID, entityID, action string) (Decision, error) {
-	d := Decision{Time: p.cfg.Now(), TimeZone: p.cfg.TimeZone(), Resource: evaluator.Resource{EntityID: entityID}, Action: action}
-	if dev, ok := p.cfg.Catalog.Lookup(entityID); ok {
-		d.Known, d.Resource.Category, d.Resource.Area = true, dev.Category, dev.Area
-	}
-	loaded, err := p.cfg.Mandates.ForAgent(ctx, clientID)
-	if err != nil {
-		d.Result = evaluator.Result{Decision: evaluator.Deny, Reason: evaluator.ReasonInvalidMandate}
-		if errors.Is(err, mandate.ErrNotFound) {
-			return d, nil
-		}
-		return d, fmt.Errorf("pdp: load mandate: %w", err)
-	}
-	d.Status, d.MandateID, d.MaxActionsPerHour = loaded.Status, loaded.Info.ID, loaded.Info.MaxActionsPerHour
-	d.Result = evaluator.Evaluate(loaded.Mandate, evaluator.Request{
-		Resource: d.Resource, Action: action, Time: d.Time, TimeZone: d.TimeZone, Status: d.Status,
-	})
-	return d, nil
+	s, err := p.Snapshot(ctx, clientID)
+	return s.Decide(entityID, action), err
 }
 
 // AuthZEN request and response (SPEC-v0 section 6).
@@ -166,8 +198,8 @@ func (p *PDP) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+evaluationPath, func(w http.ResponseWriter, r *http.Request) {
 		var req Request
+		// AuthZEN allows additional members; they are ignored.
 		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBytes))
-		dec.DisallowUnknownFields()
 		if err := dec.Decode(&req); err != nil || dec.Decode(&struct{}{}) != io.EOF {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
@@ -192,7 +224,7 @@ func (p *PDP) ListenAndServe(ctx context.Context, addr string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("pdp: %w", err)
 	}
-	srv := &http.Server{Handler: p.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Handler: p.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second}
 	go func() { _ = srv.Serve(ln) }()
 	go func() {
 		<-ctx.Done()

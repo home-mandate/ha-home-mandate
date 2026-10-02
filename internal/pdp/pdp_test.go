@@ -268,10 +268,9 @@ func TestHandlerRejectsBadRequests(t *testing.T) {
 		t.Errorf("GET: %d", resp.StatusCode)
 	}
 	for name, body := range map[string]string{
-		"malformed":     `{`,
-		"unknown field": `{"subject":{"type":"agent","id":"x"},"action":{"name":"read"},"resource":{"id":"light.a"},"evil":1}`,
-		"two values":    `{} {}`,
-		"too large":     `{"subject":{"type":"agent","id":"` + strings.Repeat("a", 70000) + `"}}`,
+		"malformed":  `{`,
+		"two values": `{} {}`,
+		"too large":  `{"subject":{"type":"agent","id":"` + strings.Repeat("a", 70000) + `"}}`,
 	} {
 		resp, err := http.Post(srv.URL+"/access/v1/evaluation", "application/json", strings.NewReader(body))
 		if err != nil {
@@ -311,5 +310,35 @@ func TestListenOnlyOnLoopback(t *testing.T) {
 	resp, out := post(t, "http://"+addr, Request{Subject: Subject{Type: "agent", ID: "x"}, Resource: Resource{ID: "light.kitchen"}, Action: Action{Name: "read"}})
 	if resp.StatusCode != http.StatusOK || out.Decision {
 		t.Errorf("loopback endpoint: %d %+v", resp.StatusCode, out)
+	}
+}
+
+func TestAdditionalAuthZENMembersAreIgnored(t *testing.T) {
+	cfg, clientID := voice(t)
+	srv := httptest.NewServer(New(cfg).Handler())
+	defer srv.Close()
+	body := `{"subject":{"type":"agent","id":"` + clientID + `","properties":{"principal":"` + cfg.Principal + `","x":1}},` +
+		`"action":{"name":"turn_on"},"resource":{"type":"light","id":"light.kitchen"},"context":{"time":"2026-10-06T12:00:00Z","foo":"bar"},"extra":true}`
+	resp, err := http.Post(srv.URL+"/access/v1/evaluation", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out Response
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if resp.StatusCode != http.StatusOK || !out.Decision {
+		t.Errorf("status %d, %+v", resp.StatusCode, out)
+	}
+}
+
+func TestSnapshotDecidesManyOnOneMandate(t *testing.T) {
+	cfg, clientID := voice(t)
+	s, err := New(cfg).Snapshot(context.Background(), clientID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Decide("light.kitchen", "turn_on").Result.Decision != evaluator.Allow ||
+		s.Decide("lock.front", "unlock").Result.Decision != evaluator.Ask || s.MaxActionsPerHour() != 60 {
+		t.Error("snapshot decisions differ from the mandate")
 	}
 }
