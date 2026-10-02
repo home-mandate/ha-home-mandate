@@ -2,8 +2,9 @@
 
 # Checks run against the pinned mandate-spec version from go.mod, as in CI.
 # For local development against ../mandate-spec: make test GOWORK=$(CURDIR)/go.work
-# (go.work is not checked in). This also keeps a go.work in a parent directory out.
-export GOWORK ?= off
+# (go.work is not checked in; a command-line value overrides this, an exported
+# GOWORK in the shell does not). This also keeps a go.work in a parent directory out.
+export GOWORK := off
 
 STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.1
 GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.8.0

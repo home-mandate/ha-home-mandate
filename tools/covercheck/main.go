@@ -7,7 +7,8 @@
 //
 //	covercheck -profile cover.out -default 85 -min internal/pdp=95 -min internal/api=95
 //
-// A -min key matches the package whose import path ends with "/key".
+// A -min key matches the package whose import path ends with "/key" and its
+// sub-packages; if several keys match, the highest threshold applies.
 package main
 
 import (
@@ -16,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path"
 	"slices"
@@ -61,7 +63,7 @@ func (t thresholds) Set(v string) error {
 
 func parsePercent(s string) (float64, error) {
 	p, err := strconv.ParseFloat(s, 64)
-	if err != nil || p < 0 || p > 100 {
+	if err != nil || math.IsNaN(p) || p < 0 || p > 100 {
 		return 0, fmt.Errorf("want a percentage between 0 and 100, got %q", s)
 	}
 	return p, nil
@@ -109,10 +111,16 @@ func report(pkgs map[string]counts, mins thresholds, fallback float64, stdout, s
 	})
 	for _, pkg := range names {
 		want := fallback
+		matched := false
 		for key, p := range mins {
-			if pkg == key || strings.HasSuffix(pkg, "/"+key) {
-				want, used[key] = p, true
+			if !matches(pkg, key) {
+				continue
 			}
+			// The strictest matching threshold wins, independent of map order.
+			if !matched || p > want {
+				want = p
+			}
+			matched, used[key] = true, true
 		}
 		got := pkgs[pkg].percent()
 		if got < want {
@@ -130,6 +138,12 @@ func report(pkgs map[string]counts, mins thresholds, fallback float64, stdout, s
 		}
 	}
 	return code
+}
+
+// matches reports whether pkg is the package key or one of its sub-packages, e.g.
+// key "internal/api" matches ".../internal/api" and ".../internal/api/handlers".
+func matches(pkg, key string) bool {
+	return pkg == key || strings.HasSuffix(pkg, "/"+key) || strings.Contains(pkg+"/", "/"+key+"/")
 }
 
 // parseProfile sums statements per package. Blocks listed more than once count as

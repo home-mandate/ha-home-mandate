@@ -143,6 +143,8 @@ func TestRunRejectsBadArguments(t *testing.T) {
 		"bad min value":     {"-profile", path, "-min", "internal/pdp=x"},
 		"min above 100":     {"-profile", path, "-min", "internal/pdp=101"},
 		"default above 100": {"-profile", path, "-default", "150"},
+		"default NaN":       {"-profile", path, "-default", "NaN"},
+		"min NaN":           {"-profile", path, "-min", "internal/pdp=NaN"},
 		"unknown flag":      {"-profile", path, "-x"},
 		"malformed profile": {"-profile", writeProfile(t, "garbage")},
 	} {
@@ -152,5 +154,14 @@ func TestRunRejectsBadArguments(t *testing.T) {
 				t.Errorf("exit code = %d, want 2", code)
 			}
 		})
+	}
+}
+
+func TestRunAppliesStrictThresholdToSubPackagesAndHighestMatch(t *testing.T) {
+	path := writeProfile(t, "mode: set\nexample.org/m/internal/api/handlers/h.go:1.1,2.2 9 1\nexample.org/m/internal/api/handlers/h.go:3.1,4.2 1 0\n")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-profile", path, "-default", "0", "-min", "internal/api=95", "-min", "handlers=50"}, &stdout, &stderr)
+	if code != 1 || !strings.Contains(stdout.String(), "90.0% < 95%") {
+		t.Errorf("exit code = %d, output:\n%s%s", code, stdout.String(), stderr.String())
 	}
 }

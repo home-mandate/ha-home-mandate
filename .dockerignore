@@ -12,3 +12,11 @@ web/coverage
 web/test-results
 web/playwright-report
 web/src/lib/paraglide
+
+# Never send secrets or local data to a (possibly remote) builder.
+.env*
+*.pem
+*.key
+*.db
+*.db-*
+data/
