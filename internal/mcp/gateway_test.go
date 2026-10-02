@@ -5,6 +5,7 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -14,7 +15,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -30,7 +30,11 @@ import (
 	"github.com/home-mandate/home-mandate/internal/store"
 )
 
-const household = "household:hm-0123456789ab"
+const (
+	household       = "household:hm-0123456789ab"
+	testResource    = "https://hm.test/mcp"
+	testMetadataURL = "https://hm.test/.well-known/oauth-protected-resource/mcp"
+)
 
 var admin = audit.Actor{Kind: audit.ActorUser, ID: "user-1"}
 
@@ -120,6 +124,7 @@ type harness struct {
 	ha      *fakeHA
 	catalog *fakeCatalog
 	log     *audit.Log
+	db      *sql.DB
 	pdp     *pdp.PDP
 
 	mu sync.Mutex
@@ -150,7 +155,7 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := agents.IssueToken(ctx, a.ClientID, time.Hour)
+	tokens, err := agents.IssueTokens(ctx, a.ClientID, testResource)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +163,7 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 		t.Fatal(err)
 	}
 
-	h := &harness{t: t, token: token, agent: a, agents: agents, log: log, tz: "Europe/Berlin",
+	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), tz: "Europe/Berlin",
 		ha: &fakeHA{connected: true},
 		catalog: &fakeCatalog{ready: true, devices: map[string]catalog.Device{
 			"light.kitchen":            {EntityID: "light.kitchen", Category: "light", Area: "kitchen", State: "off", Attributes: map[string]any{"friendly_name": "Kitchen"}},
@@ -175,10 +180,20 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 
 // serve starts a gateway on the harness with auditor and returns its URL.
 func (h *harness) serve(auditor Auditor) string {
-	g := New(Config{Agents: h.agents, PDP: h.pdp, Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test"})
+	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: h.pdp, Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test"})
 	srv := httptest.NewServer(g.Handler())
 	h.t.Cleanup(srv.Close)
 	return srv.URL + Path
+}
+
+// issue returns a new access token of clientID for the test resource.
+func (h *harness) issue(clientID string) string {
+	h.t.Helper()
+	p, err := h.agents.IssueTokens(context.Background(), clientID, testResource)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return p.AccessToken
 }
 
 func mandateDoc(t *testing.T, clientID string, edit func(map[string]any)) []byte {
@@ -611,7 +626,7 @@ func TestMissingMandateIsNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.token, _, _ = h.agents.IssueToken(ctx, other.ClientID, time.Hour)
+	h.token = h.issue(other.ClientID)
 	_, errText := h.call(h.session(), "perform_action", map[string]any{"entity_id": "light.kitchen", "action": "turn_on"})
 	if errText != "not_found" {
 		t.Errorf("agent without mandate: %q", errText)
@@ -707,7 +722,7 @@ func TestAgentsWithoutMandateAreRateLimited(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.token, _, _ = h.agents.IssueToken(ctx, other.ClientID, time.Hour)
+	h.token = h.issue(other.ClientID)
 	s := h.session()
 	last := ""
 	for range noMandateLimit + 1 {

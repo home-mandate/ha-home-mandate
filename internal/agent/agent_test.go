@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/home-mandate/home-mandate/internal/agent"
 	"github.com/home-mandate/home-mandate/internal/audit"
@@ -72,140 +71,22 @@ func TestRegisterRejectsInvalidNames(t *testing.T) {
 	}
 }
 
-func TestTokenAuthenticatesItsAgent(t *testing.T) {
-	s, _, _ := newStore(t)
-	ctx := context.Background()
-	a := register(t, s, "Voice assistant")
-	token, expires, err := s.IssueToken(ctx, a.ClientID, 30*24*time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(token, "hma_") || len(token) < 40 || time.Until(expires) < 29*24*time.Hour {
-		t.Errorf("token %q expires %v", token, expires)
-	}
-	got, err := s.Authenticate(ctx, token)
-	if err != nil || got.ClientID != a.ClientID {
-		t.Errorf("Authenticate = %+v, %v", got, err)
-	}
-}
-
-func TestTokensAreStoredOnlyAsHashes(t *testing.T) {
-	s, _, db := newStore(t)
-	a := register(t, s, "Voice assistant")
-	token, _, err := s.IssueToken(context.Background(), a.ClientID, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	secret := strings.TrimPrefix(token, "hma_")
-	rows, err := db.Query(`SELECT name FROM sqlite_schema WHERE type = 'table'`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var tables []string
-	for rows.Next() {
-		var name string
-		_ = rows.Scan(&name)
-		tables = append(tables, name)
-	}
-	rows.Close()
-	for _, table := range tables {
-		if n := dumpContains(t, db, table, secret); n != 0 {
-			t.Errorf("token found in table %s", table)
-		}
-	}
-}
-
-// dumpContains counts values in table that contain needle, as text or as bytes.
-func dumpContains(t *testing.T, db *sql.DB, table, needle string) int {
-	t.Helper()
-	rows, err := db.Query(`SELECT * FROM "` + table + `"`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	cols, _ := rows.Columns()
-	found := 0
-	for rows.Next() {
-		values := make([]any, len(cols))
-		ptrs := make([]any, len(cols))
-		for i := range values {
-			ptrs[i] = &values[i]
-		}
-		_ = rows.Scan(ptrs...)
-		for _, v := range values {
-			switch x := v.(type) {
-			case string:
-				if strings.Contains(x, needle) {
-					found++
-				}
-			case []byte:
-				if strings.Contains(string(x), needle) {
-					found++
-				}
-			}
-		}
-	}
-	return found
-}
-
-func TestAuthenticateRejects(t *testing.T) {
-	s, _, _ := newStore(t)
-	ctx := context.Background()
-	a := register(t, s, "Voice assistant")
-	valid, _, _ := s.IssueToken(ctx, a.ClientID, time.Hour)
-	for name, token := range map[string]string{
-		"empty":           "",
-		"no prefix":       strings.TrimPrefix(valid, "hma_"),
-		"wrong prefix":    "hmx_" + strings.TrimPrefix(valid, "hma_"),
-		"unknown":         "hma_" + strings.Repeat("A", 43),
-		"truncated":       valid[:len(valid)-1],
-		"too long":        valid + strings.Repeat("A", 4096),
-		"other alphabet":  "hma_" + strings.Repeat("+", 43),
-		"with whitespace": valid + " ",
-	} {
-		if _, err := s.Authenticate(ctx, token); !errors.Is(err, agent.ErrUnauthorized) {
-			t.Errorf("%s: Authenticate = %v, want ErrUnauthorized", name, err)
-		}
-	}
-}
-
-func TestExpiredTokenIsRejected(t *testing.T) {
-	s, _, _ := newStore(t)
-	ctx := context.Background()
-	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
-	s.SetClock(func() time.Time { return now })
-	a := register(t, s, "Voice assistant")
-	token, _, _ := s.IssueToken(ctx, a.ClientID, time.Hour)
-
-	s.SetClock(func() time.Time { return now.Add(time.Hour - time.Second) })
-	if _, err := s.Authenticate(ctx, token); err != nil {
-		t.Errorf("just before expiry: %v", err)
-	}
-	s.SetClock(func() time.Time { return now.Add(time.Hour) })
-	if _, err := s.Authenticate(ctx, token); !errors.Is(err, agent.ErrUnauthorized) {
-		t.Errorf("at expiry: %v, want ErrUnauthorized", err)
-	}
-}
-
 func TestRevokeTakesEffectImmediately(t *testing.T) {
 	s, log, _ := newStore(t)
 	ctx := context.Background()
 	a := register(t, s, "Voice assistant")
 	other := register(t, s, "Other")
-	token, _, _ := s.IssueToken(ctx, a.ClientID, time.Hour)
-	otherToken, _, _ := s.IssueToken(ctx, other.ClientID, time.Hour)
+	token := issue(t, s, a.ClientID).AccessToken
+	otherToken := issue(t, s, other.ClientID).AccessToken
 
 	if err := s.Revoke(ctx, a.ClientID, admin); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Authenticate(ctx, token); !errors.Is(err, agent.ErrUnauthorized) {
+	if _, err := s.Authenticate(ctx, token, resource); !errors.Is(err, agent.ErrUnauthorized) {
 		t.Errorf("revoked agent's token: %v, want ErrUnauthorized", err)
 	}
-	if _, err := s.Authenticate(ctx, otherToken); err != nil {
+	if _, err := s.Authenticate(ctx, otherToken, resource); err != nil {
 		t.Errorf("other agent affected: %v", err)
-	}
-	if _, _, err := s.IssueToken(ctx, a.ClientID, time.Hour); !errors.Is(err, agent.ErrRevoked) {
-		t.Errorf("IssueToken for revoked agent = %v, want ErrRevoked", err)
 	}
 	if err := s.Revoke(ctx, a.ClientID, admin); err != nil {
 		t.Errorf("second Revoke: %v", err)
@@ -239,12 +120,6 @@ func TestUnknownAgents(t *testing.T) {
 	if err := s.Revoke(ctx, "hm-client:nobody-00000000", admin); !errors.Is(err, agent.ErrNotFound) {
 		t.Errorf("Revoke = %v, want ErrNotFound", err)
 	}
-	if _, _, err := s.IssueToken(ctx, "hm-client:nobody-00000000", time.Hour); !errors.Is(err, agent.ErrNotFound) {
-		t.Errorf("IssueToken = %v, want ErrNotFound", err)
-	}
-	if _, _, err := s.IssueToken(ctx, "hm-client:nobody-00000000", 0); err == nil {
-		t.Error("IssueToken with zero lifetime succeeded")
-	}
 }
 
 func TestList(t *testing.T) {
@@ -264,12 +139,6 @@ func TestStoreReportsDatabaseErrors(t *testing.T) {
 	ctx := context.Background()
 	if _, err := s.Register(ctx, "B", admin); err == nil {
 		t.Error("Register succeeded")
-	}
-	if _, _, err := s.IssueToken(ctx, a.ClientID, time.Hour); err == nil {
-		t.Error("IssueToken succeeded")
-	}
-	if _, err := s.Authenticate(ctx, "hma_"+strings.Repeat("A", 43)); err == nil || errors.Is(err, agent.ErrUnauthorized) {
-		t.Errorf("Authenticate = %v, want a database error", err)
 	}
 	if err := s.Revoke(ctx, a.ClientID, admin); err == nil {
 		t.Error("Revoke succeeded")

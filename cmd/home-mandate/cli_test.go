@@ -64,6 +64,22 @@ func (c *cli) mustRun(stdin string, args ...string) string {
 	return out
 }
 
+// register admits an agent directly in the store, as the OAuth admission does; the
+// administration commands cannot add agents.
+func (c *cli) register(name string) string {
+	c.t.Helper()
+	s, err := openStore(context.Background(), c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	defer s.store.Close()
+	a, err := s.agents.Register(context.Background(), name, localAdmin)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	return a.ClientID
+}
+
 func field(t *testing.T, out, key string) string {
 	t.Helper()
 	m := regexp.MustCompile(`(?m)^` + key + `=(\S+)$`).FindStringSubmatch(out)
@@ -106,12 +122,8 @@ func TestAgentAndMandateLifecycle(t *testing.T) {
 		t.Fatalf("household = %q", household)
 	}
 
-	out := c.mustRun("", "agent", "add", "--name", "Voice assistant", "--days", "7")
-	clientID, token := field(t, out, "client_id"), field(t, out, "token")
-	if !strings.HasPrefix(clientID, "hm-client:voice-assistant-") || !strings.HasPrefix(token, "hma_") {
-		t.Errorf("agent add output: %q", out)
-	}
-	if list := c.mustRun("", "agent", "list"); !strings.Contains(list, clientID) || !strings.Contains(list, "active") || strings.Contains(list, token) {
+	clientID := c.register("Voice assistant")
+	if list := c.mustRun("", "agent", "list"); !strings.Contains(list, clientID) || !strings.Contains(list, "active") {
 		t.Errorf("agent list: %q", list)
 	}
 
@@ -119,7 +131,7 @@ func TestAgentAndMandateLifecycle(t *testing.T) {
 	if err := os.WriteFile(path, []byte(mandateFor(t, household, clientID)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out = c.mustRun("", "mandate", "import", path)
+	out := c.mustRun("", "mandate", "import", path)
 	if field(t, out, "id") != "m-voice-assistant" || !strings.HasPrefix(field(t, out, "digest"), "sha256:") {
 		t.Errorf("mandate import: %q", out)
 	}
@@ -141,15 +153,15 @@ func TestAgentAndMandateLifecycle(t *testing.T) {
 		t.Errorf("audit verify: %q", out)
 	}
 	export := c.mustRun("", "audit", "export")
-	if strings.Count(export, "\n") != 4 || strings.Contains(export, token) {
+	if strings.Count(export, "\n") != 4 {
 		t.Errorf("audit export (agent.registered, mandate.created, mandate.revoked, agent.revoked):\n%s", export)
 	}
 }
 
 func TestAuditVerifyReportsABrokenChain(t *testing.T) {
 	c := newCLI(t)
-	c.mustRun("", "agent", "add", "--name", "A")
-	c.mustRun("", "agent", "add", "--name", "B")
+	c.register("A")
+	c.register("B")
 	if err := tamper(filepath.Join(c.envVars["HM_DATA_DIR"], "home-mandate.db")); err != nil {
 		t.Fatal(err)
 	}
@@ -167,10 +179,10 @@ func TestCommandErrors(t *testing.T) {
 	}{
 		{[]string{"agent"}, exitUsage},
 		{[]string{"agent", "fly"}, exitUsage},
-		{[]string{"agent", "add"}, exitUsage},
-		{[]string{"agent", "add", "--name", "x", "--days", "0"}, exitUsage},
-		{[]string{"agent", "add", "--name", "x", "--days", "400"}, exitUsage},
-		{[]string{"agent", "add", "--name", "bad\u202ename"}, exitFailure},
+		{[]string{"agent", "add", "--name", "x"}, exitUsage}, // agents are admitted via OAuth only
+		{[]string{"emergency-stop"}, exitUsage},
+		{[]string{"emergency-stop", "maybe"}, exitUsage},
+		{[]string{"emergency-stop", "on", "now"}, exitUsage},
 		{[]string{"agent", "revoke"}, exitUsage},
 		{[]string{"agent", "revoke", "hm-client:nobody-00000000"}, exitFailure},
 		{[]string{"mandate"}, exitUsage},
@@ -214,5 +226,29 @@ func TestImportLimitsTheFileSize(t *testing.T) {
 	}
 	if code, _, stderr := c.run("", "mandate", "import", path); code != exitFailure || !strings.Contains(stderr, "too large") {
 		t.Errorf("exit %d, %s", code, stderr)
+	}
+}
+
+func TestEmergencyStopCommand(t *testing.T) {
+	c := newCLI(t)
+	if out := c.mustRun("", "emergency-stop", "status"); strings.TrimSpace(out) != "emergency stop: off" {
+		t.Errorf("status = %q", out)
+	}
+	if out := c.mustRun("", "emergency-stop", "on"); !strings.Contains(out, "activated") {
+		t.Errorf("on = %q", out)
+	}
+	if out := c.mustRun("", "emergency-stop", "on"); !strings.Contains(out, "already on") {
+		t.Errorf("second on = %q", out)
+	}
+	if out := c.mustRun("", "emergency-stop", "status"); strings.TrimSpace(out) != "emergency stop: on" {
+		t.Errorf("status = %q", out)
+	}
+	if out := c.mustRun("", "emergency-stop", "off"); !strings.Contains(out, "released") {
+		t.Errorf("off = %q", out)
+	}
+	export := c.mustRun("", "audit", "export")
+	if !strings.Contains(export, `"event":"emergency_stop.activated"`) || !strings.Contains(export, `"event":"emergency_stop.released"`) ||
+		!strings.Contains(export, `"id":"local-admin"`) {
+		t.Errorf("audit export:\n%s", export)
 	}
 }

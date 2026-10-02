@@ -5,12 +5,10 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/mandate-spec/mandate-spec/evaluator"
 
@@ -21,11 +19,7 @@ import (
 	"github.com/home-mandate/home-mandate/internal/store"
 )
 
-const (
-	databaseFile     = "home-mandate.db"
-	defaultTokenDays = 30
-	maxTokenDays     = 365
-)
+const databaseFile = "home-mandate.db"
 
 // localAdmin is the actor of changes made with the administration commands.
 var localAdmin = audit.Actor{Kind: audit.ActorUser, ID: "local-admin"}
@@ -90,27 +84,6 @@ func agentCommand(ctx context.Context, e env, args []string) int {
 		return usageError(e, "agent needs a subcommand")
 	}
 	switch args[0] {
-	case "add":
-		flags := flag.NewFlagSet("agent add", flag.ContinueOnError)
-		flags.SetOutput(e.stderr)
-		name := flags.String("name", "", "display name of the agent")
-		days := flags.Int("days", defaultTokenDays, "lifetime of the token in days")
-		if err := flags.Parse(args[1:]); err != nil || *name == "" || flags.NArg() > 0 || *days < 1 || *days > maxTokenDays {
-			return usageError(e, fmt.Sprintf("agent add needs --name and --days between 1 and %d", maxTokenDays))
-		}
-		return withState(ctx, e, func(s *state) error {
-			a, err := s.agents.Register(ctx, *name, localAdmin)
-			if err != nil {
-				return err
-			}
-			token, expires, err := s.agents.IssueToken(ctx, a.ClientID, time.Duration(*days)*24*time.Hour)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(e.stdout, "client_id=%s\ntoken=%s\nexpires=%s\n", a.ClientID, token, expires.Format(time.RFC3339))
-			fmt.Fprintln(e.stderr, "The token is shown only once. Give it to the agent now.")
-			return nil
-		})
 	case "list":
 		return withState(ctx, e, func(s *state) error {
 			agents, err := s.agents.List(ctx)
@@ -127,6 +100,49 @@ func agentCommand(ctx context.Context, e env, args []string) int {
 	default:
 		return usageError(e, fmt.Sprintf("unknown agent subcommand %q", args[0]))
 	}
+}
+
+// emergencyStopCommand switches the emergency stop. It takes effect in a running gateway
+// at once: the stop and the token revocation are read from the database per request.
+func emergencyStopCommand(ctx context.Context, e env, args []string) int {
+	if len(args) != 1 {
+		return usageError(e, "emergency-stop needs on, off or status")
+	}
+	switch args[0] {
+	case "status":
+		return withState(ctx, e, func(s *state) error {
+			on, err := s.agents.EmergencyStopActive(ctx)
+			if err == nil {
+				fmt.Fprintln(e.stdout, "emergency stop:", onOff(on))
+			}
+			return err
+		})
+	case "on", "off":
+		on := args[0] == "on"
+		return withState(ctx, e, func(s *state) error {
+			changed, err := s.agents.SetEmergencyStop(ctx, on, localAdmin)
+			switch {
+			case err != nil:
+				return err
+			case !changed:
+				fmt.Fprintln(e.stdout, "emergency stop already", onOff(on))
+			case on:
+				fmt.Fprintln(e.stdout, "emergency stop activated: all tokens revoked, agents blocked")
+			default:
+				fmt.Fprintln(e.stdout, "emergency stop released: agents need new tokens")
+			}
+			return nil
+		})
+	default:
+		return usageError(e, fmt.Sprintf("unknown emergency-stop argument %q", args[0]))
+	}
+}
+
+func onOff(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
 }
 
 func mandateCommand(ctx context.Context, e env, args []string) int {

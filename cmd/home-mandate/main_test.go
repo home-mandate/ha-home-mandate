@@ -119,8 +119,8 @@ func TestServeStopsWhenContextIsCancelled(t *testing.T) {
 
 func TestServeRefusesABrokenAuditLog(t *testing.T) {
 	c := newCLI(t)
-	c.mustRun("", "agent", "add", "--name", "A")
-	c.mustRun("", "agent", "add", "--name", "B")
+	c.register("A")
+	c.register("B")
 	if err := tamper(c.envVars["HM_DATA_DIR"] + "/home-mandate.db"); err != nil {
 		t.Fatal(err)
 	}

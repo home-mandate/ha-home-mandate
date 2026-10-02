@@ -4,7 +4,8 @@
 //
 //	home-mandate [serve]            run the gateway (default)
 //	home-mandate household          print the household principal
-//	home-mandate agent …            manage agents (local administration only)
+//	home-mandate agent …            list and revoke agents (local administration only)
+//	home-mandate emergency-stop …   block all agents at once, or release the stop
 //	home-mandate mandate …          manage mandates (local administration only)
 //	home-mandate audit verify|export
 //
@@ -35,7 +36,8 @@ const (
 const usage = `Usage:
   home-mandate [-version] [serve]
   home-mandate household
-  home-mandate agent add --name NAME [--days N] | list | revoke CLIENT_ID
+  home-mandate agent list | revoke CLIENT_ID
+  home-mandate emergency-stop on | off | status
   home-mandate mandate import FILE|- | list | revoke ID
   home-mandate audit verify | export
 `
@@ -103,6 +105,8 @@ func run(ctx context.Context, args []string, e env) int {
 		})
 	case "agent":
 		return agentCommand(ctx, e, rest)
+	case "emergency-stop":
+		return emergencyStopCommand(ctx, e, rest)
 	case "mandate":
 		return mandateCommand(ctx, e, rest)
 	case "audit":

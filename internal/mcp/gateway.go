@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Package mcp is the MCP server for agents and the Policy Enforcement Point. Every tool
-// call that touches a device goes token → availability → PDP → rate limit → (ask is
-// refused until approval requests exist) → execution → audit log. Administrative
-// functions do not exist here.
+// call that touches a device goes token (bound to this resource) → emergency stop →
+// availability → PDP → rate limit → (ask is refused until approval requests exist) →
+// execution → audit log. Administrative functions do not exist here.
 package mcp
 
 import (
@@ -64,7 +64,8 @@ var (
 // Interfaces to the rest of the gateway.
 type (
 	Authenticator interface {
-		Authenticate(ctx context.Context, token string) (agent.Agent, error)
+		Authenticate(ctx context.Context, token, resource string) (agent.Agent, error)
+		EmergencyStopActive(ctx context.Context) (bool, error)
 	}
 	Decider interface {
 		Snapshot(ctx context.Context, clientID string) (*pdp.Snapshot, error)
@@ -89,6 +90,12 @@ type (
 
 // Config wires the gateway.
 type Config struct {
+	// Resource is this endpoint's RFC 8707 resource identifier (public URL + Path);
+	// access tokens must be bound to it. Empty refuses every token (OAuth off).
+	Resource string
+	// ResourceMetadataURL is announced in WWW-Authenticate on 401 (RFC 9728).
+	ResourceMetadataURL string
+
 	Agents      Authenticator
 	PDP         Decider
 	Catalog     Catalog
@@ -108,6 +115,7 @@ type Gateway struct {
 
 	mu           sync.Mutex
 	rateLimitLog map[string]time.Time // last rate-limit entry per agent
+	rejectedLog  time.Time            // last auth.rejected entry for an invalid token
 }
 
 // New registers the tools.
@@ -138,21 +146,52 @@ func (g *Gateway) Handler() http.Handler {
 	h := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return g.server }, &sdk.StreamableHTTPOptions{
 		Stateless: true, JSONResponse: true, MaxRequestBodyBytes: maxRequestBytes, Logger: g.cfg.Logger,
 	})
-	protected := sdkauth.RequireBearerToken(g.verify, &sdkauth.RequireBearerTokenOptions{AllowMissingExpiration: true})(h)
+	protected := sdkauth.RequireBearerToken(g.verify, &sdkauth.RequireBearerTokenOptions{
+		ResourceMetadataURL: g.cfg.ResourceMetadataURL, AllowMissingExpiration: true})(h)
 	mux := http.NewServeMux()
 	mux.Handle(Path, protected)
 	return mux
 }
 
 func (g *Gateway) verify(ctx context.Context, token string, _ *http.Request) (*sdkauth.TokenInfo, error) {
-	a, err := g.cfg.Agents.Authenticate(ctx, token)
+	a, err := g.cfg.Agents.Authenticate(ctx, token, g.cfg.Resource)
 	if err != nil {
 		if !errors.Is(err, agent.ErrUnauthorized) {
 			g.cfg.Logger.Error("token check failed", "error", err)
 		}
+		g.recordRejectedToken(ctx)
 		return nil, sdkauth.ErrInvalidToken
 	}
 	return &sdkauth.TokenInfo{UserID: a.ClientID, Extra: map[string]any{"agent": a}}, nil
+}
+
+// recordRejectedToken logs at most one auth.rejected entry per interval: an invalid
+// token names no agent, and anyone on the network could otherwise fill the audit log.
+func (g *Gateway) recordRejectedToken(ctx context.Context) {
+	now := g.cfg.Now()
+	g.mu.Lock()
+	if !g.rejectedLog.IsZero() && now.Sub(g.rejectedLog) < rateLimitLogInterval {
+		g.mu.Unlock()
+		return
+	}
+	g.rejectedLog = now
+	g.mu.Unlock()
+	if _, err := g.cfg.Audit.Append(context.WithoutCancel(ctx), audit.Entry{Event: audit.EventAuthRejected,
+		Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication, Error: "invalid_token"}}); err != nil {
+		g.cfg.Logger.Error("audit log write failed", "error", err)
+	}
+}
+
+// stopped reports whether the emergency stop is active; an unreadable stop counts as
+// active. Tokens are revoked when the stop is activated, so this catches requests that
+// were authenticated a moment before.
+func (g *Gateway) stopped(ctx context.Context) bool {
+	on, err := g.cfg.Agents.EmergencyStopActive(ctx)
+	if err != nil {
+		g.cfg.Logger.Error("reading the emergency stop failed", "error", err)
+		return true
+	}
+	return on
 }
 
 func agentOf(req *sdk.CallToolRequest) (agent.Agent, error) {
@@ -254,6 +293,9 @@ func (g *Gateway) listSnapshot(ctx context.Context, req *sdk.CallToolRequest) (*
 	a, err := agentOf(req)
 	if err != nil {
 		return nil, err
+	}
+	if g.stopped(ctx) {
+		return nil, errors.New(codeDenied + ": emergency_stop")
 	}
 	if !g.available() {
 		return nil, errors.New(codeUnavailable)
@@ -384,6 +426,11 @@ func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, ca
 // every refusal. It returns the decision only if the action is allowed. An agent that
 // may not read the entity gets not_found for every refusal, as for a missing entity.
 func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action string) (pdp.Decision, error) {
+	if g.stopped(ctx) {
+		d := pdp.Decision{Time: g.cfg.Now(), Resource: evaluator.Resource{EntityID: entityID}, Action: action}
+		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop})
+		return pdp.Decision{}, errors.New(codeDenied + ": emergency_stop")
+	}
 	if !g.available() {
 		d := pdp.Decision{Time: g.cfg.Now(), Resource: evaluator.Resource{EntityID: entityID}, Action: action}
 		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusFailed, Error: "ha_unavailable"})

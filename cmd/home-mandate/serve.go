@@ -103,7 +103,11 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		logger.Info("PDP listening on loopback", "addr", addr)
 	}
 
-	gw := mcp.New(mcp.Config{Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
+	resource, metadata := "", ""
+	if s.cfg.PublicURL != "" {
+		resource, metadata = s.cfg.PublicURL+mcp.Path, s.cfg.PublicURL+"/.well-known/oauth-protected-resource"+mcp.Path
+	}
+	gw := mcp.New(mcp.Config{Resource: resource, ResourceMetadataURL: metadata, Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
 		Limiter: ratelimit.New(nil), Audit: s.log, Logger: logger, Version: version})
 	g.server = &http.Server{Handler: gw.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10,
@@ -194,7 +198,8 @@ func (g *gateway) run(ctx context.Context) int {
 	return exitOK
 }
 
-// retention truncates the audit log to 30 days, at start and then daily.
+// retention truncates the audit log to 30 days and deletes expired tokens, at start and
+// then daily.
 func (g *gateway) retention(ctx context.Context) {
 	actor := audit.Actor{Kind: audit.ActorSystem, ID: "retention"}
 	for {
@@ -202,6 +207,11 @@ func (g *gateway) retention(ctx context.Context) {
 			g.logger.Error("audit log retention failed", "error", err)
 		} else if n > 0 {
 			g.logger.Info("audit log truncated", "entries", n)
+		}
+		if n, err := g.state.agents.PurgeExpiredTokens(ctx, time.Now()); err != nil {
+			g.logger.Error("deleting expired tokens failed", "error", err)
+		} else if n > 0 {
+			g.logger.Info("expired tokens deleted", "tokens", n)
 		}
 		select {
 		case <-ctx.Done():
