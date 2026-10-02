@@ -26,7 +26,7 @@
   import { ruleChanges, type Edited, type RuleChangeKind } from '../mandate/changes.ts';
   import { settingLines } from '../mandate/summary.ts';
   import { ruleText } from '../mandate/text.ts';
-  import { currentNumber, draftOf, shortDigest, versionAt } from '../mandate/versions.ts';
+  import { currentNumber, draftOf, restoredDraft, shortDigest, versionAt } from '../mandate/versions.ts';
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
   import { toasts } from '../ui/toasts.ts';
@@ -81,6 +81,8 @@
   const identical = $derived(pickedVersion !== undefined && pickedVersion.digest === versions[0]?.digest);
   const current: Edited | null = $derived(detail ? { name: detail.summary.name, draft: draftOf(detail.document) } : null);
   const old: Edited | null = $derived(detail && earlier.data ? { name: detail.summary.name, draft: draftOf(earlier.data) } : null);
+  /** What restoring stores: the earlier rules with today's name and validity. */
+  const restored: Edited | null = $derived(current && old ? { name: current.name, draft: restoredDraft(current.draft, old.draft) } : null);
   const kinds = $derived(new Map(old && current ? ruleChanges(old.draft, current.draft).map((c) => [c.rule.id, c.kind]) : []));
   const people = $derived.by(() => {
     const approvers = page.data?.approvers ?? NO_APPROVERS;
@@ -121,16 +123,16 @@
   });
 
   async function restore() {
-    if (!detail || !old || saving) return;
+    if (!detail || !restored || saving) return;
     saving = true;
     saveError = '';
     let done = false;
     try {
       const stored = await app.api.putMandate(id, {
         name: detail.summary.name,
-        draft: old.draft,
+        draft: restored.draft,
         base_digest: detail.summary.digest,
-        ...(current && needsCriticalConfirmation(current.draft, old.draft) ? { confirm_critical: true } : {}),
+        ...(current && needsCriticalConfirmation(current.draft, restored.draft) ? { confirm_critical: true } : {}),
       });
       restoring = false;
       done = true;
@@ -265,11 +267,11 @@
           body={m.restore_body({ agent, version: pickedNumber, next: current_ + 1 })}
           confirm={m.save_confirm({ version: current_ + 1 })}
           prev={current}
-          next={old}
+          next={restored ?? old}
           {catalog}
           {people}
           {ctx}
-          critical={needsCriticalConfirmation(current.draft, old.draft)}
+          critical={restored !== null && needsCriticalConfirmation(current.draft, restored.draft)}
           unknown={catalogMissing}
           busy={saving}
           error={saveError}

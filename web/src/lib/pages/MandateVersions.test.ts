@@ -107,7 +107,7 @@ describe('MandateVersions', () => {
     await screen.findByRole('heading', { name: 'Compare version v1 with v3' });
     await fireEvent.click(screen.getByRole('button', { name: 'Restore as new version' }));
     const dialog = await screen.findByRole('dialog', { name: 'Restore version 1?' });
-    expect(dialog.textContent).toContain('This creates version 4 with the content of version 1; nothing is overwritten.');
+    expect(dialog.textContent).toContain('This creates version 4 with the rules, approval settings and rate limit of version 1; validity and name stay as they are now.');
     expect(within(dialog).getByText('Added').closest('div')?.textContent).toContain('Camera');
     expect(within(dialog).getByText(/Newly allowed · 8/)).toBeTruthy();
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Save as version 4' }));
@@ -157,6 +157,27 @@ describe('MandateVersions', () => {
     }
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('restores the rules but keeps the current name and validity', async () => {
+    const { api } = await start(async (a) => {
+      await store(a, (d) => ({ ...d, rules: d.rules.slice(0, 2), expires: '2026-11-30T23:00:00Z' }));
+      const { document: doc, summary } = await a.mandate(ID);
+      await a.putMandate(ID, { name: 'Neuer Name', draft: { ...draftOf(doc), expires: '2026-12-31T23:00:00Z' }, base_digest: summary.digest });
+    });
+    // Restore v1 (no end date, five rules) onto v3 (two rules, valid until December 31).
+    await fireEvent.click(within(await list()).getByRole('button', { name: /v1/ }));
+    await screen.findByRole('heading', { name: 'Compare version v1 with v3' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Restore as new version' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Restore version 1?' });
+    expect(dialog.textContent).toContain('validity and name stay as they are now');
+    expect(within(dialog).queryByText('Changed settings')).toBeNull();
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Save as version 4' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const detail = await api.mandate(ID);
+    expect(detail.document.rules).toHaveLength(5);
+    expect(detail.document.expires).toBe('2026-12-31T23:00:00Z');
+    expect(detail.summary.name).toBe('Neuer Name');
   });
 
   it('does not offer to restore a revoked mandate', async () => {

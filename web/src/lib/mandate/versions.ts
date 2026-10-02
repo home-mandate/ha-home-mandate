@@ -46,3 +46,13 @@ export interface UnsavedMandate {
   name: string;
   draft: MandateDraft;
 }
+
+/**
+ * restoredDraft is what restoring an earlier version stores: its rules, approval settings
+ * and rate limit. The validity (valid from, valid until) stays as it is now, as does the
+ * name: restoring is meant to bring back the rules of that time, not a period that may
+ * be over or end later than intended. Applying a template behaves the same.
+ */
+export function restoredDraft(current: MandateDraft, earlier: MandateDraft): MandateDraft {
+  return { ...current, rules: earlier.rules, approval: earlier.approval, limits: earlier.limits };
+}

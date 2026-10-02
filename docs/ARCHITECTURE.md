@@ -296,8 +296,11 @@ the browser with a port of the evaluation rule that passes the conformance cases
   version does not have in exactly this form needs the separate confirmation of the human; a
   changed or renamed rule counts as new. Without it nothing is stored.
 - Every version is kept. Versions are numbered from 1 per mandate and addressed by that
-  number: the digest is a hash of the content, and restoring an earlier version stores a new
-  version with the same digest.
+  number: the digest is a hash of the content and repeats when a version brings back earlier
+  content.
+- Restoring an earlier version stores a new version with that version's rules, approval
+  settings and rate limit; the validity (valid from, valid until) and the name stay as they
+  are, as when applying a template.
 
 ### i18n and l10n
 

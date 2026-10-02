@@ -617,7 +617,7 @@
   "versions_no_rules": "Keine Regeln. Alles ist verboten.",
   "versions_load_failed": "Diese Version konnte nicht geladen werden.",
   "restore_title": "Version {version} wiederherstellen?",
-  "restore_body": "Gilt sofort für {agent}. Es entsteht Version {next} mit dem Inhalt von Version {version}; nichts wird überschrieben.",
+  "restore_body": "Gilt sofort für {agent}. Es entsteht Version {next} mit den Regeln, Rückfrage-Einstellungen und dem Tempolimit von Version {version}; Gültigkeit und Name bleiben wie jetzt. Nichts wird überschrieben.",
   "version_label": "v{version}",
   "rule_restored": "Regel {n} wiederhergestellt.",
   "rule_undo_delete": "Löschen von Regel {n} rückgängig machen",

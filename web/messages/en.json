@@ -617,7 +617,7 @@
   "versions_no_rules": "No rules. Everything is denied.",
   "versions_load_failed": "Couldn’t load this version.",
   "restore_title": "Restore version {version}?",
-  "restore_body": "Applies to {agent} immediately. This creates version {next} with the content of version {version}; nothing is overwritten.",
+  "restore_body": "Applies to {agent} immediately. This creates version {next} with the rules, approval settings and rate limit of version {version}; validity and name stay as they are now. Nothing is overwritten.",
   "version_label": "v{version}",
   "rule_restored": "Rule {n} restored.",
   "rule_undo_delete": "Undo deleting rule {n}",
