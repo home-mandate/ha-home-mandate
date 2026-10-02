@@ -1,6 +1,6 @@
 # Home-Mandate – Architecture v0.1
 
-As of: 2026-10-01 · Target: release v0.1 on 2026-10-31
+As of: 2026-10-01
 
 ## 1. Purpose
 
@@ -213,7 +213,7 @@ Decided by Markus on 2026-10-01.
    - If Home Assistant lifts the restriction (event added to the allowlist), we switch to a
      user without admin rights.
 
-   In app mode, additionally check before week 4 which permissions the supervisor token
+   In app mode, additionally check during app packaging which permissions the supervisor token
    (`homeassistant_api`) has on the Core API, and request only the access that is needed.
 3. **Write access for non-root** to `/data` in app mode. **Decision: as proposed.** Check
    whether non-root works; if not, run as root with a read-only file system and no
@@ -234,9 +234,9 @@ Decided by Markus on 2026-10-01.
    require a restart for certificate renewal.
 4. **App configuration format.** **Decision: as proposed.** Check against the current
    developer documentation (no automatic `BUILD_FROM` since Supervisor 2026.04) during app
-   packaging (week 4).
+   packaging.
 5. **Language of approval notifications.** **Decision: as proposed.** Check whether an HA
-   user's preferred language can be retrieved server-side (week 3, `internal/i18n`).
+   user's preferred language can be retrieved server-side (`internal/i18n`).
    Otherwise: language from the HA system configuration (`get_config`), overridable per
    approver in the Home-Mandate settings.
 
@@ -253,8 +253,8 @@ Decided by Markus on 2026-10-01.
 - Migrations: `github.com/pressly/goose/v3` with embedded SQL files, plus own guards
   (checksums of applied migrations, no downgrade).
 - UI: Node 24 LTS, TypeScript 6.0 (TypeScript 7 does not yet work with `svelte-check`).
-- Tests against a real Home Assistant instance start in week 2 with the E2E environment;
-  in week 1, `internal/ha` is tested against a simulated HA server.
+- `internal/ha` is unit-tested against a simulated HA server; the E2E environment tests
+  against a real Home Assistant instance.
 
 ## 12. Local UI
 

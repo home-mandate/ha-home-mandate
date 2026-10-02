@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 /* Sign-in, consent and pairing pages. Logical properties only (right-to-left ready);
-   the design tokens of the UI replace these values in week 4. */
+   the design tokens of the UI replace these values later. */
 :root {
   color-scheme: light dark;
   font-family: system-ui, sans-serif;

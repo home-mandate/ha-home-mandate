@@ -128,8 +128,7 @@ func post(t *testing.T, url string, body any) (*http.Response, Response) {
 	return resp, out
 }
 
-// Every conformance case of mandate-spec runs against the AuthZEN endpoint over HTTP
-// (docs/TASKS-v0.1.md, week 2).
+// Every conformance case of mandate-spec runs against the AuthZEN endpoint over HTTP.
 func TestConformanceCasesOverHTTP(t *testing.T) {
 	for _, c := range loadCases(t) {
 		t.Run(c.ID, func(t *testing.T) {

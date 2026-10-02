@@ -133,8 +133,8 @@ func TestScenario04AnswerFromANonApprover(t *testing.T) {
 	}
 }
 
-// Scenario 6: revoke an agent → the next request with the old token is denied. (The UI
-// variant follows in week 4; the administration command is used here.)
+// Scenario 6: revoke an agent → the next request with the old token is denied. (The
+// administration command is used here; the UI variant runs through the UI's own tests.)
 func TestScenario06RevokedAgentIsLockedOut(t *testing.T) {
 	token := newAgent(t, "Revoke me", nil)
 	if status := statusWith(t, token); status != http.StatusOK {

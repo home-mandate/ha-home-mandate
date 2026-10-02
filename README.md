@@ -4,14 +4,13 @@ Mandates for AI agents in Home Assistant: every agent gets its own identity and 
 Actions are allowed, sent to your phone for confirmation, or forbidden, and every request is
 logged.
 
-**Status:** in development, release v0.1 planned for 2026-10-31.
+**Status:** in development.
 
 ## Repository layout
 
 | Path | Contents |
 |---|---|
 | `docs/ARCHITECTURE.md` | Architecture v0.1: gateway, local UI, flows, decisions |
-| `docs/TASKS-v0.1.md` | Weekly plan up to the release, cut lines |
 | `docs/TESTING.md` | Test strategy: unit, negative, fuzzing, E2E, UI, i18n, coverage thresholds |
 | `SECURITY.md` | Reporting vulnerabilities, threat model |
 | `app/config.yaml` | Draft of the Home Assistant app configuration |
@@ -119,7 +118,7 @@ A template is a mandate whose `id`, `principal`, `agent`, `created_by`, `created
   although the specification allows up to one hour: the agent's request waits for the answer.
 - Open approval requests live in memory: after a restart they are gone and their requests
   have ended without execution.
-- In app mode (Home Assistant OS), admitting agents is not available yet (week 4).
+- In app mode (Home Assistant OS), admitting agents is not available yet.
 - Changes to mandate templates and approvers are local settings: the specification has no
   audit event for them, so they do not appear in the audit log.
 

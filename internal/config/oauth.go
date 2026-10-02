@@ -11,7 +11,7 @@ import (
 
 // appHAHTTP is Home Assistant's HTTP API on the internal network of the Supervisor; the
 // Supervisor proxy (http://supervisor/core) forwards only /api and the WebSocket, not
-// /auth. To be confirmed during app packaging (week 4).
+// /auth. To be confirmed during app packaging.
 const appHAHTTP = "http://homeassistant:8123"
 
 // publicURL validates HM_PUBLIC_URL or the public_url option and returns its origin.

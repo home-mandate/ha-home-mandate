@@ -12,7 +12,7 @@ import (
 
 // allowedServices is the second line of defence behind the PEP's action table: the only
 // services Home-Mandate calls for a device, each on exactly one entity of the same
-// domain. Notifications (week 3) use their own, separate path.
+// domain. Notifications use their own, separate path.
 var allowedServices = map[string]map[string]bool{
 	"light":               {"turn_on": true, "turn_off": true},
 	"switch":              {"turn_on": true, "turn_off": true},

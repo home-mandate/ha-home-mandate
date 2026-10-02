@@ -16,7 +16,7 @@ import (
 )
 
 // fakeHA is a scriptable stand-in for the Home Assistant WebSocket API, modelled on
-// homeassistant/components/websocket_api. Real HA follows in the week 2 E2E environment.
+// homeassistant/components/websocket_api. The E2E environment tests against a real HA.
 type fakeHA struct {
 	t     *testing.T
 	srv   *httptest.Server
