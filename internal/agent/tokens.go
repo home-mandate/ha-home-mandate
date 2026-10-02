@@ -147,15 +147,16 @@ func (s *Store) Authenticate(ctx context.Context, token, resource string) (Agent
 
 // refreshRow is a refresh token with its agent.
 type refreshRow struct {
-	kind, clientID, name, family, resource, expiresAt, status string
-	usedAt, revokedAt                                         sql.NullString
+	kind, clientID, name, family, resource, expiresAt, status, oauthClient string
+	usedAt, revokedAt                                                      sql.NullString
 }
 
 // Refresh rotates a refresh token: it can be used once and yields a new pair in the
-// same family. resource, if not empty, must be the one the family is bound to.
-// Presenting a used refresh token revokes the whole family and is logged as
-// auth.rejected (ErrRefreshReused).
-func (s *Store) Refresh(ctx context.Context, token, resource string) (TokenPair, error) {
+// same family. It must be presented by the OAuth client the agent was admitted with;
+// resource, if not empty, must be the one the family is bound to. Presenting a used
+// refresh token revokes the whole family and is logged as auth.rejected
+// (ErrRefreshReused).
+func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string) (TokenPair, error) {
 	if !wellFormed(token, refreshPrefix) {
 		return TokenPair{}, ErrInvalidGrant
 	}
@@ -164,9 +165,9 @@ func (s *Store) Refresh(ctx context.Context, token, resource string) (TokenPair,
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		var r refreshRow
 		err := tx.QueryRowContext(ctx, `SELECT t.kind, t.client_id, a.display_name, t.family_id, t.resource, t.expires_at,
-				a.status, t.used_at, t.revoked_at
+				a.status, a.oauth_client, t.used_at, t.revoked_at
 			FROM tokens t JOIN agents a ON a.client_id = t.client_id WHERE t.token_hash = ?`, hashToken(token)).
-			Scan(&r.kind, &r.clientID, &r.name, &r.family, &r.resource, &r.expiresAt, &r.status, &r.usedAt, &r.revokedAt)
+			Scan(&r.kind, &r.clientID, &r.name, &r.family, &r.resource, &r.expiresAt, &r.status, &r.oauthClient, &r.usedAt, &r.revokedAt)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrInvalidGrant
 		}
@@ -179,6 +180,9 @@ func (s *Store) Refresh(ctx context.Context, token, resource string) (TokenPair,
 		if r.usedAt.Valid {
 			reused = true
 			return s.revokeFamily(ctx, tx, r)
+		}
+		if r.oauthClient != oauthClient {
+			return ErrInvalidGrant
 		}
 		if err := s.checkRefresh(ctx, tx, r, resource); err != nil {
 			return err

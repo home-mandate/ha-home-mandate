@@ -55,6 +55,10 @@ type Agent struct {
 	Status      string
 	CreatedAt   time.Time
 	CreatedBy   string
+	// OAuthClient is the OAuth client ID the agent was admitted with: a Client ID
+	// Metadata Document URL (ClientVerified) or a free identifier from a pairing code.
+	OAuthClient    string
+	ClientVerified bool
 }
 
 // Store manages agents in the database opened by internal/store.
@@ -86,20 +90,33 @@ func (s *Store) clock() time.Time {
 
 // Register creates an agent with a new client ID of the form hm-client:<slug>-<hex>.
 func (s *Store) Register(ctx context.Context, displayName string, by audit.Actor) (Agent, error) {
+	var a Agent
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		a, err = s.RegisterTx(ctx, tx, displayName, "", false, by)
+		return err
+	})
+	if err != nil {
+		return Agent{}, err
+	}
+	return a, nil
+}
+
+// RegisterTx registers an agent inside tx for the OAuth client it is admitted with.
+func (s *Store) RegisterTx(ctx context.Context, tx *sql.Tx, displayName, oauthClient string, verified bool, by audit.Actor) (Agent, error) {
 	name, err := validName(displayName)
 	if err != nil {
 		return Agent{}, err
 	}
-	a := Agent{ClientID: newClientID(name), DisplayName: name, Status: StatusActive, CreatedAt: s.clock(), CreatedBy: by.ID}
-	err = s.inTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO agents (client_id, display_name, status, created_at, created_by) VALUES (?, ?, ?, ?, ?)`,
-			a.ClientID, a.DisplayName, a.Status, a.CreatedAt.Format(timeFormat), a.CreatedBy); err != nil {
-			return fmt.Errorf("agent: insert: %w", err)
-		}
-		_, err := s.log.AppendTx(ctx, tx, audit.Entry{Event: audit.EventAgentRegistered, Actor: &by,
-			Agent: &audit.Agent{ClientID: a.ClientID, DisplayName: a.DisplayName}})
-		return err
-	})
+	a := Agent{ClientID: newClientID(name), DisplayName: name, Status: StatusActive, CreatedAt: s.clock(), CreatedBy: by.ID,
+		OAuthClient: oauthClient, ClientVerified: verified}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agents (client_id, display_name, status, created_at, created_by, oauth_client, client_verified)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`, a.ClientID, a.DisplayName, a.Status, a.CreatedAt.Format(timeFormat), a.CreatedBy,
+		a.OAuthClient, verified); err != nil {
+		return Agent{}, fmt.Errorf("agent: insert: %w", err)
+	}
+	_, err = s.log.AppendTx(ctx, tx, audit.Entry{Event: audit.EventAgentRegistered, Actor: &by,
+		Agent: &audit.Agent{ClientID: a.ClientID, DisplayName: a.DisplayName}})
 	if err != nil {
 		return Agent{}, err
 	}
@@ -152,7 +169,8 @@ func (s *Store) List(ctx context.Context) ([]Agent, error) {
 }
 
 func (s *Store) query(ctx context.Context, where string, args ...any) ([]Agent, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT client_id, display_name, status, created_at, created_by FROM agents `+where+` ORDER BY rowid`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT client_id, display_name, status, created_at, created_by, oauth_client, client_verified
+		FROM agents `+where+` ORDER BY rowid`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("agent: query: %w", err)
 	}
@@ -161,7 +179,7 @@ func (s *Store) query(ctx context.Context, where string, args ...any) ([]Agent, 
 	for rows.Next() {
 		var a Agent
 		var createdAt string
-		if err := rows.Scan(&a.ClientID, &a.DisplayName, &a.Status, &createdAt, &a.CreatedBy); err != nil {
+		if err := rows.Scan(&a.ClientID, &a.DisplayName, &a.Status, &createdAt, &a.CreatedBy, &a.OAuthClient, &a.ClientVerified); err != nil {
 			return nil, fmt.Errorf("agent: query: %w", err)
 		}
 		a.CreatedAt, _ = time.Parse(timeFormat, createdAt)

@@ -92,6 +92,21 @@ type meta struct {
 // Put stores document as a new mandate or as a new version of an existing one.
 // Unchanged content (same digest) creates no version.
 func (s *Store) Put(ctx context.Context, document []byte, by audit.Actor) (Info, error) {
+	var info Info
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		info, err = s.PutTx(ctx, tx, document, by)
+		return err
+	})
+	if err != nil {
+		return Info{}, err
+	}
+	return s.Get(ctx, info.ID)
+}
+
+// PutTx is Put inside tx, so that admitting an agent and storing its mandate commit
+// together. It returns the stored information as written.
+func (s *Store) PutTx(ctx context.Context, tx *sql.Tx, document []byte, by audit.Actor) (Info, error) {
 	m, err := evaluator.Parse(document)
 	if err != nil {
 		return Info{}, fmt.Errorf("%w: %w", ErrInvalid, err)
@@ -105,11 +120,10 @@ func (s *Store) Put(ctx context.Context, document []byte, by audit.Actor) (Info,
 	}
 	info := Info{ID: m.ID(), ClientID: md.Agent.ClientID, Status: StatusActive, Digest: m.Digest(),
 		MaxActionsPerHour: md.Limits.MaxActionsPerHour, UpdatedAt: time.Now().UTC()}
-	err = s.inTx(ctx, func(tx *sql.Tx) error { return s.put(ctx, tx, info, document, by) })
-	if err != nil {
+	if err := s.put(ctx, tx, info, document, by); err != nil {
 		return Info{}, err
 	}
-	return s.Get(ctx, info.ID)
+	return info, nil
 }
 
 func (s *Store) put(ctx context.Context, tx *sql.Tx, info Info, document []byte, by audit.Actor) error {

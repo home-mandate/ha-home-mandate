@@ -189,6 +189,10 @@ func TestCommandErrors(t *testing.T) {
 		{[]string{"mandate", "import"}, exitUsage},
 		{[]string{"mandate", "import", "/does/not/exist.json"}, exitFailure},
 		{[]string{"mandate", "revoke", "m-none"}, exitFailure},
+		{[]string{"mandate", "template"}, exitUsage},
+		{[]string{"mandate", "template", "import", "x"}, exitUsage},
+		{[]string{"mandate", "template", "remove", "none"}, exitFailure},
+		{[]string{"mandate", "template", "import", "Bad Name", "-"}, exitFailure},
 		{[]string{"audit"}, exitUsage},
 		{[]string{"audit", "rewrite"}, exitUsage},
 		{[]string{"household", "extra"}, exitUsage},
@@ -250,5 +254,18 @@ func TestEmergencyStopCommand(t *testing.T) {
 	if !strings.Contains(export, `"event":"emergency_stop.activated"`) || !strings.Contains(export, `"event":"emergency_stop.released"`) ||
 		!strings.Contains(export, `"id":"local-admin"`) {
 		t.Errorf("audit export:\n%s", export)
+	}
+}
+
+func TestTemplateCommands(t *testing.T) {
+	c := newCLI(t)
+	household := strings.TrimSpace(c.mustRun("", "household"))
+	c.mustRun(mandateFor(t, household, "hm-client:placeholder-00000000"), "mandate", "template", "import", "voice-assistant", "-")
+	if out := c.mustRun("", "mandate", "template", "list"); !strings.HasPrefix(out, "voice-assistant\t") || !strings.Contains(out, "local-admin") {
+		t.Errorf("template list = %q", out)
+	}
+	c.mustRun("", "mandate", "template", "remove", "voice-assistant")
+	if out := c.mustRun("", "mandate", "template", "list"); out != "" {
+		t.Errorf("template list after remove = %q", out)
 	}
 }

@@ -40,7 +40,7 @@ func TestCurrentUserRejects(t *testing.T) {
 		"command fails": {func(fakeMsg) (any, *CommandError) {
 			return nil, &CommandError{Code: "unauthorized", Message: "x"}
 		}, "user-token", nil},
-		"no id": {func(fakeMsg) (any, *CommandError) { return map[string]any{"name": "x"}, nil }, "user-token", ErrProtocol},
+		"no id":     {func(fakeMsg) (any, *CommandError) { return map[string]any{"name": "x"}, nil }, "user-token", ErrProtocol},
 		"malformed": {func(fakeMsg) (any, *CommandError) { return []any{1}, nil }, "user-token", ErrProtocol},
 	}
 	for name, tc := range tests {

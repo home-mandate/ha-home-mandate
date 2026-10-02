@@ -105,7 +105,7 @@ func TestTokensAreStoredOnlyAsHashes(t *testing.T) {
 	s, _, db := newStore(t)
 	a := register(t, s, "Voice assistant")
 	p := issue(t, s, a.ClientID)
-	refreshed, err := s.Refresh(context.Background(), p.RefreshToken, resource)
+	refreshed, err := s.Refresh(context.Background(), p.RefreshToken, resource, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func TestRefreshRotates(t *testing.T) {
 	p := issue(t, s, a.ClientID)
 
 	c.Set(t0.Add(time.Hour))
-	next, err := s.Refresh(ctx, p.RefreshToken, "")
+	next, err := s.Refresh(ctx, p.RefreshToken, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,10 +231,10 @@ func TestRefreshRotates(t *testing.T) {
 		t.Errorf("new access token: %+v, %v", got, err)
 	}
 	// The resource of a refresh request must match the original one.
-	if _, err := s.Refresh(ctx, next.RefreshToken, "https://other.example.org/mcp"); !errors.Is(err, agent.ErrInvalidGrant) {
+	if _, err := s.Refresh(ctx, next.RefreshToken, "https://other.example.org/mcp", ""); !errors.Is(err, agent.ErrInvalidGrant) {
 		t.Errorf("other resource: %v", err)
 	}
-	if _, err := s.Refresh(ctx, next.RefreshToken, resource); err != nil {
+	if _, err := s.Refresh(ctx, next.RefreshToken, resource, ""); err != nil {
 		t.Errorf("same resource after a refused attempt: %v", err)
 	}
 }
@@ -245,7 +245,7 @@ func TestRefreshTokenExpiresAfterThirtyDays(t *testing.T) {
 	a := register(t, s, "A")
 	p := issue(t, s, a.ClientID)
 	c.Set(t0.Add(30 * 24 * time.Hour))
-	if _, err := s.Refresh(context.Background(), p.RefreshToken, resource); !errors.Is(err, agent.ErrInvalidGrant) {
+	if _, err := s.Refresh(context.Background(), p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
 		t.Errorf("expired refresh token: %v", err)
 	}
 }
@@ -256,18 +256,18 @@ func TestRefreshTokenReuseRevokesTheWholeChain(t *testing.T) {
 	ctx := context.Background()
 	a := register(t, s, "A")
 	first := issue(t, s, a.ClientID)
-	second, err := s.Refresh(ctx, first.RefreshToken, resource)
+	second, err := s.Refresh(ctx, first.RefreshToken, resource, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	third, err := s.Refresh(ctx, second.RefreshToken, resource)
+	third, err := s.Refresh(ctx, second.RefreshToken, resource, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	unrelated := issue(t, s, a.ClientID) // another family of the same agent
 
 	// An attacker replays the first refresh token.
-	if _, err := s.Refresh(ctx, first.RefreshToken, resource); !errors.Is(err, agent.ErrInvalidGrant) || !errors.Is(err, agent.ErrRefreshReused) {
+	if _, err := s.Refresh(ctx, first.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) || !errors.Is(err, agent.ErrRefreshReused) {
 		t.Fatalf("reuse = %v", err)
 	}
 	for name, token := range map[string]string{"first access": first.AccessToken, "second access": second.AccessToken, "third access": third.AccessToken} {
@@ -275,7 +275,7 @@ func TestRefreshTokenReuseRevokesTheWholeChain(t *testing.T) {
 			t.Errorf("%s after reuse: %v", name, err)
 		}
 	}
-	if _, err := s.Refresh(ctx, third.RefreshToken, resource); !errors.Is(err, agent.ErrInvalidGrant) {
+	if _, err := s.Refresh(ctx, third.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
 		t.Errorf("latest refresh token after reuse: %v", err)
 	}
 	if _, err := s.Authenticate(ctx, unrelated.AccessToken, resource); err != nil {
@@ -299,7 +299,7 @@ func TestConcurrentRefreshHasOneWinner(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, 8)
 	for i := range errs {
-		wg.Go(func() { _, errs[i] = s.Refresh(context.Background(), p.RefreshToken, resource) })
+		wg.Go(func() { _, errs[i] = s.Refresh(context.Background(), p.RefreshToken, resource, "") })
 	}
 	wg.Wait()
 	ok := 0
@@ -324,14 +324,14 @@ func TestRefreshRejects(t *testing.T) {
 		"empty": "", "access token": p.AccessToken, "unknown": "hmr_" + strings.Repeat("A", 43),
 		"bad encoding": "hmr_" + strings.Repeat("*", 43), "wrong length": p.RefreshToken + "A",
 	} {
-		if _, err := s.Refresh(ctx, token, resource); !errors.Is(err, agent.ErrInvalidGrant) {
+		if _, err := s.Refresh(ctx, token, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	if err := s.Revoke(ctx, a.ClientID, admin); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Refresh(ctx, p.RefreshToken, resource); !errors.Is(err, agent.ErrInvalidGrant) {
+	if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
 		t.Errorf("revoked agent: %v", err)
 	}
 }
@@ -347,7 +347,7 @@ func TestRevokeRevokesAccessAndRefreshTokens(t *testing.T) {
 	if _, err := s.Authenticate(ctx, p.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
 		t.Errorf("access token of revoked agent: %v", err)
 	}
-	if _, err := s.Refresh(ctx, p.RefreshToken, resource); !errors.Is(err, agent.ErrInvalidGrant) {
+	if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
 		t.Errorf("refresh token of revoked agent: %v", err)
 	}
 	if _, err := s.Authenticate(ctx, q.AccessToken, resource); err != nil {
@@ -379,7 +379,7 @@ func TestEmergencyStop(t *testing.T) {
 		if _, err := s.Authenticate(ctx, p.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
 			t.Errorf("access during stop: %v", err)
 		}
-		if _, err := s.Refresh(ctx, p.RefreshToken, resource); !errors.Is(err, agent.ErrInvalidGrant) {
+		if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
 			t.Errorf("refresh during stop: %v", err)
 		}
 	}
@@ -393,7 +393,7 @@ func TestEmergencyStop(t *testing.T) {
 	if _, err := s.Authenticate(ctx, pa.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
 		t.Errorf("old token after release: %v", err)
 	}
-	if _, err := s.Refresh(ctx, pa.RefreshToken, resource); !errors.Is(err, agent.ErrInvalidGrant) {
+	if _, err := s.Refresh(ctx, pa.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
 		t.Errorf("old refresh token after release: %v", err)
 	}
 	fresh := issue(t, s, a.ClientID)
@@ -437,7 +437,7 @@ func TestAuthenticateChecksTheStopItself(t *testing.T) {
 	if _, err := s.Authenticate(ctx, p.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
 		t.Errorf("Authenticate = %v", err)
 	}
-	if _, err := s.Refresh(ctx, p.RefreshToken, resource); !errors.Is(err, agent.ErrInvalidGrant) {
+	if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
 		t.Errorf("Refresh = %v", err)
 	}
 }
@@ -476,7 +476,7 @@ func TestTokenFunctionsReportDatabaseErrors(t *testing.T) {
 	if _, err := s.Authenticate(ctx, p.AccessToken, resource); err == nil || errors.Is(err, agent.ErrUnauthorized) {
 		t.Errorf("Authenticate = %v, want a database error", err)
 	}
-	if _, err := s.Refresh(ctx, p.RefreshToken, resource); err == nil || errors.Is(err, agent.ErrInvalidGrant) {
+	if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); err == nil || errors.Is(err, agent.ErrInvalidGrant) {
 		t.Errorf("Refresh = %v, want a database error", err)
 	}
 	if _, err := s.SetEmergencyStop(ctx, true, admin); err == nil {
@@ -487,5 +487,32 @@ func TestTokenFunctionsReportDatabaseErrors(t *testing.T) {
 	}
 	if _, err := s.PurgeExpiredTokens(ctx, time.Now()); err == nil {
 		t.Error("PurgeExpiredTokens succeeded")
+	}
+}
+
+// A refresh token is bound to the OAuth client the agent was admitted with.
+func TestRefreshChecksTheOAuthClient(t *testing.T) {
+	s, _, db := newStore(t)
+	ctx := context.Background()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.RegisterTx(ctx, tx, "Claude", "https://claude.example.org/client.json", true, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Get(ctx, a.ClientID); got.OAuthClient != "https://claude.example.org/client.json" || !got.ClientVerified {
+		t.Errorf("agent = %+v", got)
+	}
+	p := issue(t, s, a.ClientID)
+	if _, err := s.Refresh(ctx, p.RefreshToken, resource, "https://evil.example.org/client.json"); !errors.Is(err, agent.ErrInvalidGrant) {
+		t.Errorf("other client: %v", err)
+	}
+	if _, err := s.Refresh(ctx, p.RefreshToken, resource, "https://claude.example.org/client.json"); err != nil {
+		t.Errorf("own client after a refused attempt: %v", err)
 	}
 }

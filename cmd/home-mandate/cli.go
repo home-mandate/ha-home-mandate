@@ -9,9 +9,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/mandate-spec/mandate-spec/evaluator"
 
+	"github.com/home-mandate/home-mandate/internal/admission"
 	"github.com/home-mandate/home-mandate/internal/agent"
 	"github.com/home-mandate/home-mandate/internal/audit"
 	"github.com/home-mandate/home-mandate/internal/config"
@@ -35,6 +37,7 @@ type state struct {
 	log       *audit.Log
 	agents    *agent.Store
 	mandates  *mandate.Store
+	admission *admission.Store
 }
 
 // openState opens the database for the administration commands; they need the data
@@ -58,8 +61,9 @@ func openStore(ctx context.Context, dataDir string) (*state, error) {
 		return nil, err
 	}
 	log := audit.New(st.DB(), household)
-	return &state{store: st, household: household, log: log,
-		agents: agent.New(st.DB(), log), mandates: mandate.New(st.DB(), log, household)}, nil
+	agents, mandates := agent.New(st.DB(), log), mandate.New(st.DB(), log, household)
+	return &state{store: st, household: household, log: log, agents: agents, mandates: mandates,
+		admission: admission.New(st.DB(), agents, mandates, household)}, nil
 }
 
 // withState opens the state, runs fn and reports its error.
@@ -179,8 +183,37 @@ func mandateCommand(ctx context.Context, e env, args []string) int {
 			return usageError(e, "mandate revoke needs ID")
 		}
 		return withState(ctx, e, func(s *state) error { return s.mandates.Revoke(ctx, args[1], localAdmin) })
+	case "template":
+		return templateCommand(ctx, e, args[1:])
 	default:
 		return usageError(e, fmt.Sprintf("unknown mandate subcommand %q", args[0]))
+	}
+}
+
+// templateCommand manages the mandate templates a human picks from when admitting an
+// agent.
+func templateCommand(ctx context.Context, e env, args []string) int {
+	switch {
+	case len(args) == 3 && args[0] == "import":
+		return withState(ctx, e, func(s *state) error {
+			doc, err := readDocument(e, args[2])
+			if err != nil {
+				return err
+			}
+			return s.admission.PutTemplate(ctx, args[1], doc, localAdmin)
+		})
+	case len(args) == 1 && args[0] == "list":
+		return withState(ctx, e, func(s *state) error {
+			list, err := s.admission.Templates(ctx)
+			for _, t := range list {
+				fmt.Fprintf(e.stdout, "%s\t%s\t%s\n", t.Name, t.CreatedAt.Format(time.RFC3339), t.CreatedBy)
+			}
+			return err
+		})
+	case len(args) == 2 && args[0] == "remove":
+		return withState(ctx, e, func(s *state) error { return s.admission.RemoveTemplate(ctx, args[1]) })
+	default:
+		return usageError(e, "mandate template needs import NAME FILE|-, list or remove NAME")
 	}
 }
 
