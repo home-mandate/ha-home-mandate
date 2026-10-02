@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import type { MandateDraft, Rule } from './types.ts';
+import type { MandateDraft, Rule } from '../api/types.ts';
 import {
   CATEGORIES,
   actionsOf,
   criticalActionsOf,
   grantsCritical,
   isCritical,
+  lookupAction,
   needsCriticalConfirmation,
   newRule,
 } from './vocabulary.ts';
@@ -68,17 +69,29 @@ describe('vocabulary', () => {
   });
 });
 
+describe('lookupAction (SPEC-v0 section 4 step 0)', () => {
+  it('knows categories, actions and critical actions', () => {
+    expect(lookupAction('lock', 'unlock')).toEqual({ categoryKnown: true, actionKnown: true, critical: true });
+    expect(lookupAction('lock', 'lock')).toEqual({ categoryKnown: true, actionKnown: true, critical: false });
+    expect(lookupAction('light', 'unlock')).toEqual({ categoryKnown: true, actionKnown: false, critical: false });
+  });
+
+  it('does not know extensions or inherited object keys', () => {
+    expect(lookupAction('paperless:document', 'read').categoryKnown).toBe(false);
+    expect(lookupAction('toString', 'read').categoryKnown).toBe(false);
+    expect(lookupAction('light', 'toString').actionKnown).toBe(false);
+    expect(lookupAction('light', '*').actionKnown).toBe(false);
+  });
+});
+
 describe('newRule (safe defaults)', () => {
-  it('starts with read only and allow for a non-critical category', () => {
+  it('starts with read only and ask, the safe middle (design README 6.5)', () => {
     expect(newRule('light', [])).toEqual({
       id: 'rule-1',
       resource: { category: 'light' },
       actions: ['read'],
-      decision: 'allow',
+      decision: 'ask',
     });
-  });
-
-  it('starts with ask for a category that has critical actions', () => {
     expect(newRule('lock', []).decision).toBe('ask');
   });
 

@@ -130,23 +130,27 @@ describe('createHttpClient', () => {
     await expect(api.template('')).rejects.toMatchObject({ code: 'invalid_input' });
   });
 
-  it('builds the audit query string from set filters only', async () => {
-    const { fetch, calls } = fakeFetch(json({ entries: [], next_before: null }));
+  it('builds the audit query string from set filters only, one parameter per decision', async () => {
+    const { fetch, calls } = fakeFetch(json({ entries: [], next_before: null, total: 0 }));
     await createHttpClient({ fetch, base: BASE }).audit({
       before: 120,
       limit: 50,
-      decision: 'deny',
+      since: '2026-10-01T00:00:00Z',
+      until: '2026-10-02T00:00:00Z',
       agent: 'pair:a b',
-      entity_id: 'lock.front_door',
+      device: 'lock.front_door',
+      group: 'decision',
       event: 'decision',
+      decisions: ['deny', 'default'],
     });
     expect(calls[0]?.url).toBe(
-      `${BASE}api/audit?before=120&limit=50&agent=pair%3Aa+b&entity_id=lock.front_door&event=decision&decision=deny`,
+      `${BASE}api/audit?before=120&limit=50&since=2026-10-01T00%3A00%3A00Z&until=2026-10-02T00%3A00%3A00Z` +
+        '&agent=pair%3Aa+b&device=lock.front_door&group=decision&event=decision&decision=deny&decision=default',
     );
   });
 
   it('asks for the newest audit entries without a query', async () => {
-    const { fetch, calls } = fakeFetch(json({ entries: [], next_before: null }));
+    const { fetch, calls } = fakeFetch(json({ entries: [], next_before: null, total: 0 }));
     await createHttpClient({ fetch, base: BASE }).audit({});
     expect(calls[0]?.url).toBe(`${BASE}api/audit`);
   });
@@ -168,6 +172,7 @@ describe('createHttpClient', () => {
     [403, 'forbidden'],
     [404, 'not_found'],
     [409, 'conflict'],
+    [410, 'internal'],
     [413, 'too_large'],
     [429, 'rate_limited'],
     [500, 'internal'],
@@ -178,6 +183,27 @@ describe('createHttpClient', () => {
   ])('maps status %i without a usable body to %s', async (status, code) => {
     const { fetch } = fakeFetch(new Response('<html>proxy page</html>', { status }));
     await expect(createHttpClient({ fetch, base: BASE }).session()).rejects.toMatchObject({ code, status });
+  });
+
+  it('passes retry_after of a lock on as seconds', async () => {
+    const { api } = await signedIn(json({ code: 'pairing_locked', retry_after: 540 }, 429));
+    await expect(api.pairingCheck('BCDF-GHJK')).rejects.toMatchObject({ code: 'pairing_locked', retryAfter: 540 });
+  });
+
+  it('maps a bare 410 to an expired code only for pairing calls', async () => {
+    const { api } = await signedIn(new Response('gone', { status: 410 }));
+    await expect(api.pairingCheck('BCDF-GHJK')).rejects.toMatchObject({ code: 'pairing_code_expired' });
+  });
+
+  it('falls back to the Retry-After header of a proxy', async () => {
+    const { fetch } = fakeFetch(new Response('busy', { status: 429, headers: { 'Retry-After': '30' } }));
+    await expect(createHttpClient({ fetch, base: BASE }).system()).rejects.toMatchObject({ code: 'rate_limited', retryAfter: 30 });
+  });
+
+  it('ignores a retry_after that is not a small positive integer', async () => {
+    const { api } = await signedIn(json({ code: 'rate_limited', retry_after: -1 }, 429), json({ code: 'rate_limited', retry_after: 1e9 }, 429));
+    await expect(api.system()).rejects.toMatchObject({ retryAfter: undefined });
+    await expect(api.system()).rejects.toMatchObject({ retryAfter: undefined });
   });
 
   it('does not trust an unknown error code from the body', async () => {
@@ -225,57 +251,89 @@ describe('createHttpClient', () => {
   });
 
   it('calls every endpoint with the method, path and body of the contract', async () => {
-    const answers = Array.from({ length: 24 }, () => json({ ...sessionFixture }));
+    const answers = Array.from({ length: 29 }, () => json({ ...sessionFixture }));
     const { api: c, calls } = await signedIn(...answers);
     await c.setLanguage('de');
+    await c.system();
     await c.agents();
     await c.revokeAgent('pair:kitchen');
-    await c.pairing();
+    await c.pairingCheck('bcdf-ghjk');
+    await c.pairingApprove({ code: 'BCDFGHJK', display_name: 'Küche', template: 'voice' });
+    await c.pairingDeny('BCDFGHJK');
     await c.devices();
     await c.mandates();
     await c.createMandate({ client_id: 'pair:kitchen', template: 'voice' });
     await c.mandate('m1');
     await c.mandateVersion('m1', 'sha256:ab');
-    await c.putMandate('m1', { draft, base_digest: 'sha256:ab', confirm_critical: true });
+    await c.putMandate('m1', { name: 'Küche', draft, base_digest: 'sha256:ab', confirm_critical: true });
+    await c.applyTemplate('m1', { template: 'voice', base_digest: 'sha256:ab' });
     await c.revokeMandate('m1');
-    await c.preview({ draft, mandate_id: 'm1' });
     await c.templates();
     await c.template('voice');
     await c.putTemplate('voice', { draft });
     await c.deleteTemplate('voice');
+    await c.settings();
+    await c.putSettings({ approval_timeout: 'PT2M', max_actions_per_hour: 60 });
+    await c.approvals();
     await c.audit({});
     await c.verifyAudit();
     await c.approvers();
     await c.putApprover('u1', { notify_service: 'mobile_app_a', language: null });
     await c.testApprover('u1');
     await c.deleteApprover('u1');
-    await c.emergencyStop();
     await c.setEmergencyStop(false);
     expect(calls().map((x) => `${x.init.method} ${x.url.slice(BASE.length)} ${x.init.body ?? ''}`.trim())).toEqual([
       'PUT api/session/language {"language":"de"}',
+      'GET api/system',
       'GET api/agents',
       'POST api/agents/revoke {"client_id":"pair:kitchen"}',
-      'GET api/pairing',
+      'POST api/pairing/check {"code":"bcdf-ghjk"}',
+      'POST api/pairing/approve {"code":"BCDFGHJK","display_name":"Küche","template":"voice"}',
+      'POST api/pairing/deny {"code":"BCDFGHJK"}',
       'GET api/devices',
       'GET api/mandates',
       'POST api/mandates {"client_id":"pair:kitchen","template":"voice"}',
       'GET api/mandates/m1',
       'GET api/mandates/m1/versions/sha256%3Aab',
-      `PUT api/mandates/m1 ${JSON.stringify({ draft, base_digest: 'sha256:ab', confirm_critical: true })}`,
+      `PUT api/mandates/m1 ${JSON.stringify({ name: 'Küche', draft, base_digest: 'sha256:ab', confirm_critical: true })}`,
+      'POST api/mandates/m1/apply-template {"template":"voice","base_digest":"sha256:ab"}',
       'POST api/mandates/m1/revoke',
-      `POST api/mandates/preview ${JSON.stringify({ draft, mandate_id: 'm1' })}`,
       'GET api/templates',
       'GET api/templates/voice',
       `PUT api/templates/voice ${JSON.stringify({ draft })}`,
       'DELETE api/templates/voice',
+      'GET api/settings',
+      'PUT api/settings {"approval_timeout":"PT2M","max_actions_per_hour":60}',
+      'GET api/approvals',
       'GET api/audit',
-      'GET api/audit/verify',
+      'POST api/audit/verify',
       'GET api/approvers',
       'PUT api/approvers/u1 {"notify_service":"mobile_app_a","language":null}',
       'POST api/approvers/u1/test',
       'DELETE api/approvers/u1',
-      'GET api/emergency-stop',
       'PUT api/emergency-stop {"active":false}',
     ]);
+  });
+
+  it('opens the event stream next to the page with the current CSRF token', async () => {
+    const sockets: { url: string; sent: string[]; onopen: (() => void) | null }[] = [];
+    const { fetch } = fakeFetch(json(sessionFixture));
+    const api = createHttpClient({
+      fetch,
+      base: BASE,
+      socket: (url) => {
+        const s = { url, sent: [] as string[], onopen: null, onmessage: null, onclose: null, send(d: string) { this.sent.push(d); }, close() {} };
+        sockets.push(s);
+        return s;
+      },
+    });
+    await api.session();
+    const states: string[] = [];
+    const stop = api.events({ onEvent: () => {}, onState: (st) => states.push(st) });
+    sockets[0]?.onopen?.();
+    expect(sockets[0]?.url).toBe('wss://ha.example/api/hassio_ingress/f00d/api/events');
+    expect(sockets[0]?.sent).toEqual([`{"csrf":"${sessionFixture.csrf_token}"}`]);
+    expect(states).toEqual(['connecting', 'open']);
+    stop.close();
   });
 });

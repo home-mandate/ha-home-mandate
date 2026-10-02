@@ -20,7 +20,7 @@ COVER_FLAGS   := -default $(COVER_DEFAULT) $(foreach p,$(STRICT_PKGS),$(if $(wil
 VERSION ?= dev
 GOARCHES := amd64 arm64
 
-.PHONY: check test cover vet staticcheck vulncheck actionlint build web-install web-check web-e2e e2e
+.PHONY: check test cover vet staticcheck vulncheck actionlint build web-install web-check web-conformance web-e2e e2e
 
 ## check: everything that must be green before a commit
 check: vet staticcheck cover vulncheck actionlint
@@ -60,6 +60,11 @@ web-install:
 ## check, audit
 web-check:
 	cd web && pnpm lint && pnpm typecheck && pnpm test && pnpm i18n:check && pnpm build && pnpm audit
+
+## web-conformance: copy the mandate-spec evaluation cases into the UI (a Go test fails
+## if the copy differs from the pinned mandate-spec version)
+web-conformance:
+	go run ./tools/webconformance
 
 ## web-e2e: Playwright in de and en under a random Ingress path
 web-e2e:

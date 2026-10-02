@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Vocabulary v0 (mandate-spec SPEC-v0 section 5) for the mandate editor: which actions a
-// category has, which are critical, and the safe defaults for new rules. The server is
-// the authority (GET api/devices lists each device's actions, and it enforces U9 itself);
-// this copy only drives the editor.
+// Vocabulary v0 (mandate-spec SPEC-v0 section 5): which actions a category has, which are
+// critical, and the safe defaults for new rules. Used by the UI's own evaluation
+// (./evaluate.ts) and the editor; the server stays the authority for every decision.
 
-import type { Category, Decision, ExtensionCategory, MandateDraft, Rule } from './types.ts';
+import type { Category, ExtensionCategory, MandateDraft, Rule } from '../api/types.ts';
 
 interface CategorySpec {
   actions: readonly string[];
@@ -43,6 +42,19 @@ function isKnown(category: string): category is Category {
   return Object.hasOwn(VOCABULARY, category);
 }
 
+export interface ActionLookup {
+  categoryKnown: boolean;
+  actionKnown: boolean;
+  critical: boolean;
+}
+
+/** lookupAction resolves a requested action (never "*") in the vocabulary v0. */
+export function lookupAction(category: string, action: string): ActionLookup {
+  if (!isKnown(category)) return { categoryKnown: false, actionKnown: false, critical: false };
+  const { actions, critical } = VOCABULARY[category];
+  return { categoryKnown: true, actionKnown: actions.includes(action), critical: critical.includes(action) };
+}
+
 /**
  * isCritical tells whether a rule action can hit a critical action. "read" never is.
  * Without a category (rule on an entity, an area or "any") or with an extension category
@@ -56,12 +68,11 @@ export function isCritical(category: Category | ExtensionCategory | undefined, a
 }
 
 /**
- * newRule returns a rule with safe defaults: only "read", "allow" for harmless
- * categories and "ask" where critical actions exist; never allow_critical.
+ * newRule returns a rule with safe defaults: only "read" and "ask", the safe middle
+ * between allowing and forbidding (design README 6.5); never allow_critical.
  */
 export function newRule(category: Category, existing: readonly Rule[]): Rule {
-  const decision: Decision = criticalActionsOf(category).length > 0 ? 'ask' : 'allow';
-  return { id: freeRuleId(existing), resource: { category }, actions: ['read'], decision };
+  return { id: freeRuleId(existing), resource: { category }, actions: ['read'], decision: 'ask' };
 }
 
 function freeRuleId(existing: readonly Rule[]): string {
@@ -91,7 +102,7 @@ export function needsCriticalConfirmation(base: MandateDraft | null, draft: Mand
 }
 
 /** canonical serializes a value with sorted keys and sorted string arrays. */
-function canonical(value: unknown): string {
+export function canonical(value: unknown): string {
   return JSON.stringify(normalize(value));
 }
 

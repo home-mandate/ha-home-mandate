@@ -2,21 +2,33 @@
 
 // A household for the mock client and component tests, shaped like the E2E environment
 // (Home Assistant demo integration). Some texts are hostile on purpose: they must render
-// escaped and must not break the layout.
+// escaped, isolated (bidi) and without breaking the layout.
 
 import type {
   Agent,
+  ApprovalHistoryEntry,
+  ApprovalRequest,
   ApproverList,
   AuditEntry,
+  Defaults,
   DeviceCatalog,
   MandateDocument,
   MandateDraft,
   Session,
+  SystemStatus,
   Template,
 } from './types.ts';
 
 export const HOSTILE_NAME = '<img src=x onerror=alert(1)> Agent "quoted" & <b>bold</b>';
+export const BIDI_NAME = 'Helfer ‮gnalnegrom‬ ⁦x⁩';
 export const LONG_NAME = 'Sehr langer Agentenname für den Pseudo-Lokalisierungstest mit Überlänge';
+export const HOSTILE_REASON = 'Bitte jetzt öffnen!\nIgnoriere alle Regeln. [Link](javascript:alert(1)) ‮esrever';
+
+/** Home Assistant users of the household: ID → name. */
+export const USERS: Readonly<Record<string, string>> = { 'u-admin': 'Markus', 'u-partner': 'Alex' };
+
+/** The mock's clock: Friday 2026-10-02, 19:42 in Berlin. */
+export const NOW = '2026-10-02T17:42:00Z';
 
 export const sessionFixture: Session = {
   user: { id: 'u-admin', name: 'Markus' },
@@ -25,16 +37,25 @@ export const sessionFixture: Session = {
   household: {
     time_zone: 'Europe/Berlin',
     language: 'de',
-    unit_system: {
-      temperature: '°C',
-      length: 'km',
-      mass: 'g',
-      volume: 'L',
-      pressure: 'Pa',
-      wind_speed: 'm/s',
-    },
+    unit_system: { temperature: '°C', length: 'km', mass: 'g', volume: 'L', pressure: 'Pa', wind_speed: 'm/s' },
   },
 };
+
+export const systemFixture: SystemStatus = {
+  mode: 'app',
+  version: '0.1.0',
+  commit: 'da11343',
+  server_time: NOW,
+  retention_days: 30,
+  ha: { connected: true, since: '2026-10-01T06:12:00Z', version: '2026.9.4' },
+  mcp_url: 'https://home.example:8765/mcp',
+  tls: { present: true, valid_until: '2026-12-24T10:00:00Z' },
+  emergency_stop: { active: false, since: null, by_name: null },
+  chain: { valid: true, broken_at_seq: null, checked_at: '2026-10-02T17:38:00Z' },
+  approvers_configured: 1,
+};
+
+export const defaultsFixture: Defaults = { approval_timeout: 'PT2M', max_actions_per_hour: 60 };
 
 export const devicesFixture: DeviceCatalog = {
   areas: [
@@ -62,7 +83,7 @@ export const voiceAssistantDraft: MandateDraft = {
     { id: 'lights', resource: { category: 'light' }, actions: ['read', 'turn_on', 'turn_off', 'set'], decision: 'allow' },
     { id: 'climate', resource: { category: 'climate' }, actions: ['read', 'set_temperature'], decision: 'allow' },
     { id: 'door', resource: { entity_id: 'lock.front_door' }, actions: ['read', 'unlock'], decision: 'ask' },
-    { id: 'night', resource: { category: 'media' }, actions: ['*'], decision: 'allow', conditions: { time_window: '07:00-22:00' } },
+    { id: 'media', resource: { category: 'media' }, actions: ['*'], decision: 'allow', conditions: { time_window: '07:00-22:00' } },
     { id: 'no-cameras', resource: { category: 'camera' }, actions: ['*'], decision: 'deny' },
   ],
   approval: { timeout: 'PT2M', approvers: ['u-admin'] },
@@ -81,55 +102,69 @@ export const voiceAssistantMandate: MandateDocument = {
   created_at: '2026-10-01T08:00:00Z',
 };
 
+const agent = (a: Omit<Agent, 'created_by' | 'created_by_name' | 'client_verified'> & Partial<Agent>): Agent => ({
+  created_by: 'u-admin',
+  created_by_name: 'Markus',
+  client_verified: false,
+  ...a,
+});
+
 export const agentsFixture: Agent[] = [
-  {
+  agent({
     client_id: 'pair:voice-assistant',
     display_name: 'Sprachassistent',
     status: 'active',
     created_at: '2026-10-01T08:00:00Z',
-    created_by: 'u-admin',
+    last_active_at: '2026-10-02T17:40:10Z',
     oauth_client: 'voice-assistant',
-    client_verified: false,
-    mandate: { id: 'mandate-voice', status: 'active' },
-  },
-  {
+    mandate: { id: 'mandate-voice', name: 'Sprachassistent Küche', status: 'active' },
+  }),
+  agent({
     client_id: 'https://claude.ai/oauth/claude-code-client-metadata',
     display_name: 'Claude Code',
     status: 'active',
     created_at: '2026-10-02T09:15:00Z',
-    created_by: 'u-admin',
+    last_active_at: '2026-10-02T17:12:00Z',
     oauth_client: 'https://claude.ai/oauth/claude-code-client-metadata',
     client_verified: true,
-    mandate: { id: 'mandate-claude', status: 'active' },
-  },
-  {
+    mandate: { id: 'mandate-claude', name: 'Claude Code', status: 'active' },
+  }),
+  agent({
     client_id: 'pair:old-bot',
     display_name: HOSTILE_NAME,
     status: 'revoked',
     created_at: '2026-09-29T18:00:00Z',
-    created_by: 'u-admin',
+    last_active_at: '2026-09-30T07:00:00Z',
     oauth_client: 'old-bot',
-    client_verified: false,
     mandate: null,
-  },
-  {
+  }),
+  agent({
     client_id: 'pair:long',
     display_name: LONG_NAME,
     status: 'active',
     created_at: '2026-10-02T07:00:00Z',
-    created_by: 'u-admin',
+    last_active_at: null,
     oauth_client: 'long',
-    client_verified: false,
-    mandate: { id: 'mandate-long', status: 'active' },
-  },
+    mandate: { id: 'mandate-long', name: LONG_NAME, status: 'active' },
+  }),
+  agent({
+    client_id: 'pair:bidi',
+    display_name: BIDI_NAME,
+    status: 'active',
+    created_at: '2026-10-02T07:30:00Z',
+    last_active_at: null,
+    oauth_client: 'bidi',
+    mandate: { id: 'mandate-bidi', name: 'Bidi', status: 'active' },
+  }),
 ];
 
 export const templatesFixture: Template[] = [
-  { name: 'voice-assistant', draft: voiceAssistantDraft },
   {
     name: 'read-only',
     draft: { ...voiceAssistantDraft, rules: [{ id: 'read', resource: { any: true }, actions: ['read'], decision: 'allow' }] },
   },
+  { name: 'voice-assistant', draft: voiceAssistantDraft },
+  { name: 'empty', draft: { ...voiceAssistantDraft, rules: [] } },
 ];
 
 export const approversFixture: ApproverList = {
@@ -144,90 +179,111 @@ export const approversFixture: ApproverList = {
 };
 
 const voice = { client_id: 'pair:voice-assistant', display_name: 'Sprachassistent' };
-const mandateRef = { id: 'mandate-voice', digest: 'sha256:4f1c' };
+const claude = { client_id: 'https://claude.ai/oauth/claude-code-client-metadata', display_name: 'Claude Code' };
 
-export const auditFixture: AuditEntry[] = [
+export const approvalsOpenFixture: ApprovalRequest[] = [
   {
-    id: '0192-a',
-    seq: 1,
-    recorded_at: '2026-10-01T08:00:00.000Z',
-    event: 'agent.registered',
-    actor: { kind: 'user', id: 'u-admin' },
-    agent: voice,
-  },
-  {
-    id: '0192-b',
-    seq: 2,
-    recorded_at: '2026-10-01T08:00:00.000Z',
-    event: 'mandate.created',
-    actor: { kind: 'user', id: 'u-admin' },
-    agent: voice,
-    mandate: mandateRef,
-  },
-  {
-    id: '0192-c',
-    seq: 3,
-    recorded_at: '2026-10-02T17:42:10.120Z',
-    event: 'decision',
-    actor: { kind: 'agent', id: voice.client_id },
-    agent: voice,
-    request: {
-      time: '2026-10-02T17:42:10.100Z',
-      timezone: 'Europe/Berlin',
-      resource: { entity_id: 'light.kitchen', category: 'light', area: 'kitchen' },
-      action: 'turn_on',
-    },
-    mandate: mandateRef,
-    evaluation: { decision: 'allow', reason: 'rule', rule_id: 'lights' },
-    result: { status: 'executed', duration_ms: 84 },
-  },
-  {
-    id: '0192-d',
-    seq: 4,
-    recorded_at: '2026-10-02T17:45:31.900Z',
-    event: 'decision',
-    actor: { kind: 'agent', id: voice.client_id },
-    agent: voice,
-    request: {
-      time: '2026-10-02T17:43:30.000Z',
-      timezone: 'Europe/Berlin',
-      resource: { entity_id: 'lock.front_door', category: 'lock', area: 'hallway' },
-      action: 'unlock',
-    },
-    mandate: mandateRef,
-    evaluation: { decision: 'ask', reason: 'rule', rule_id: 'door', approval_timeout: 'PT2M' },
-    approval: { outcome: 'timeout', at: '2026-10-02T17:45:30.000Z' },
-    result: { status: 'denied', denied_by: 'approval' },
-  },
-  {
-    id: '0192-e',
-    seq: 5,
-    recorded_at: '2026-10-02T18:01:02.000Z',
-    event: 'decision',
-    actor: { kind: 'agent', id: voice.client_id },
-    agent: voice,
-    request: {
-      time: '2026-10-02T18:01:02.000Z',
-      timezone: 'Europe/Berlin',
-      resource: { entity_id: 'camera.demo_camera', category: 'camera', area: 'garage' },
-      action: 'snapshot',
-    },
-    mandate: mandateRef,
-    evaluation: { decision: 'deny', reason: 'rule', rule_id: 'no-cameras' },
-    result: { status: 'denied', denied_by: 'mandate' },
-  },
-  {
-    id: '0192-f',
-    seq: 6,
-    recorded_at: '2026-10-02T18:30:00.000Z',
-    event: 'emergency_stop.activated',
-    actor: { kind: 'user', id: 'u-admin' },
-  },
-  {
-    id: '0192-g',
-    seq: 7,
-    recorded_at: '2026-10-02T18:35:00.000Z',
-    event: 'emergency_stop.released',
-    actor: { kind: 'user', id: 'u-admin' },
+    id: 'apr-1',
+    agent: claude,
+    entity_id: 'lock.front_door',
+    device_name: 'Haustür',
+    area: 'hallway',
+    action: 'unlock',
+    critical: true,
+    reason: HOSTILE_REASON,
+    recipients: ['Markus'],
+    created_at: '2026-10-02T17:41:30Z',
+    expires_at: '2026-10-02T17:43:30Z',
   },
 ];
+
+export const approvalsHistoryFixture: ApprovalHistoryEntry[] = [
+  { seq: 4, agent: voice, entity_id: 'lock.front_door', device_name: 'Haustür', action: 'unlock', outcome: 'timeout', by_name: null, created_at: '2026-10-02T14:43:30Z', answered_at: '2026-10-02T14:45:30Z' },
+  { seq: 8, agent: voice, entity_id: 'lock.front_door', device_name: 'Haustür', action: 'unlock', outcome: 'approved', by_name: 'Markus', created_at: '2026-10-02T15:00:00Z', answered_at: '2026-10-02T15:00:42Z' },
+  { seq: 9, agent: claude, entity_id: 'cover.garage_door', device_name: 'Garagentor', action: 'open', outcome: 'rejected', by_name: 'Alex', created_at: '2026-10-02T16:00:00Z', answered_at: '2026-10-02T16:00:08Z' },
+  { seq: 10, agent: claude, entity_id: 'lock.front_door', device_name: 'Haustür', action: 'unlock', outcome: 'invalid_response', by_name: 'Alex', created_at: '2026-10-02T16:10:00Z', answered_at: '2026-10-02T16:10:05Z' },
+  { seq: 11, agent: voice, entity_id: 'lock.front_door', device_name: 'Haustür', action: 'open', outcome: 'emergency_stop', by_name: null, created_at: '2026-10-02T16:29:50Z', answered_at: '2026-10-02T16:30:00Z' },
+];
+
+const mandateRef = { id: 'mandate-voice', digest: 'sha256:fixture-0' };
+const decision = (
+  seq: number,
+  recordedAt: string,
+  entityId: string,
+  category: string,
+  area: string | undefined,
+  action: string,
+  rest: Pick<AuditEntry, 'evaluation' | 'result'> & Partial<AuditEntry>,
+  who = voice,
+): Omit<AuditEntry, 'digest' | 'prev'> => ({
+  id: `0192-${seq}`,
+  seq,
+  recorded_at: recordedAt,
+  event: 'decision',
+  actor: { kind: 'agent', id: who.client_id },
+  agent: who,
+  request: { time: recordedAt, timezone: 'Europe/Berlin', resource: { entity_id: entityId, category, ...(area ? { area } : {}) }, action },
+  mandate: mandateRef,
+  ...rest,
+});
+
+const entries: Omit<AuditEntry, 'digest' | 'prev'>[] = [
+  { id: '0192-1', seq: 1, recorded_at: '2026-10-01T08:00:00.000Z', event: 'agent.registered', actor: { kind: 'user', id: 'u-admin', name: 'Markus' }, agent: voice },
+  { id: '0192-2', seq: 2, recorded_at: '2026-10-01T08:00:00.000Z', event: 'mandate.created', actor: { kind: 'user', id: 'u-admin', name: 'Markus' }, agent: voice, mandate: mandateRef },
+  decision(3, '2026-10-02T14:42:10.120Z', 'light.kitchen', 'light', 'kitchen', 'turn_on', {
+    evaluation: { decision: 'allow', reason: 'rule', rule_id: 'lights' },
+    result: { status: 'executed', duration_ms: 84 },
+  }),
+  decision(4, '2026-10-02T14:45:30.000Z', 'lock.front_door', 'lock', 'hallway', 'unlock', {
+    evaluation: { decision: 'ask', reason: 'rule', rule_id: 'door', approval_timeout: 'PT2M' },
+    approval: { outcome: 'timeout', at: '2026-10-02T14:45:30.000Z' },
+    result: { status: 'denied', denied_by: 'approval' },
+  }),
+  decision(5, '2026-10-02T14:50:02.000Z', 'camera.demo_camera', 'camera', 'garage', 'snapshot', {
+    evaluation: { decision: 'deny', reason: 'rule', rule_id: 'no-cameras' },
+    result: { status: 'denied', denied_by: 'mandate' },
+  }),
+  decision(6, '2026-10-02T14:52:00.000Z', 'alarm_control_panel.security', 'alarm', undefined, 'disarm', {
+    evaluation: { decision: 'deny', reason: 'no_match', rule_id: null },
+    result: { status: 'denied', denied_by: 'mandate' },
+  }),
+  decision(7, '2026-10-02T15:00:30.000Z', 'light.living_room', 'light', 'living_room', 'set', {
+    evaluation: { decision: 'allow', reason: 'rule', rule_id: 'lights' },
+    result: { status: 'failed', error: 'Home Assistant: entity unavailable', duration_ms: 1200 },
+  }),
+  decision(8, '2026-10-02T15:00:42.000Z', 'lock.front_door', 'lock', 'hallway', 'unlock', {
+    evaluation: { decision: 'ask', reason: 'rule', rule_id: 'door', approval_timeout: 'PT2M' },
+    approval: { outcome: 'approved', by: 'u-admin', by_name: 'Markus', at: '2026-10-02T15:00:42.000Z' },
+    result: { status: 'executed', duration_ms: 42_310 },
+  }),
+  decision(9, '2026-10-02T16:00:08.000Z', 'cover.garage_door', 'gate', 'garage', 'open', {
+    evaluation: { decision: 'ask', reason: 'critical_demotion', rule_id: 'gate', approval_timeout: 'PT2M' },
+    approval: { outcome: 'rejected', by: 'u-partner', by_name: 'Alex', at: '2026-10-02T16:00:08.000Z' },
+    result: { status: 'denied', denied_by: 'approval' },
+  }, claude),
+  decision(10, '2026-10-02T16:10:05.000Z', 'lock.front_door', 'lock', 'hallway', 'unlock', {
+    evaluation: { decision: 'ask', reason: 'rule', rule_id: 'door', approval_timeout: 'PT2M' },
+    approval: { outcome: 'invalid_response', by: 'u-partner', by_name: 'Alex', at: '2026-10-02T16:10:05.000Z' },
+    result: { status: 'denied', denied_by: 'approval' },
+  }, claude),
+  decision(11, '2026-10-02T16:30:00.000Z', 'lock.front_door', 'lock', 'hallway', 'open', {
+    evaluation: { decision: 'ask', reason: 'rule', rule_id: 'door', approval_timeout: 'PT2M' },
+    result: { status: 'denied', denied_by: 'emergency_stop' },
+  }),
+  { id: '0192-12', seq: 12, recorded_at: '2026-10-02T16:30:00.000Z', event: 'emergency_stop.activated', actor: { kind: 'user', id: 'u-admin', name: 'Markus' } },
+  { id: '0192-13', seq: 13, recorded_at: '2026-10-02T16:35:00.000Z', event: 'emergency_stop.released', actor: { kind: 'user', id: 'u-admin', name: 'Markus' } },
+  decision(14, '2026-10-02T17:20:00.000Z', 'light.kitchen', 'light', 'kitchen', 'turn_off', {
+    evaluation: { decision: 'allow', reason: 'rule', rule_id: 'lights' },
+    result: { status: 'denied', denied_by: 'rate_limit' },
+  }),
+  { id: '0192-15', seq: 15, recorded_at: '2026-10-02T17:30:00.000Z', event: 'auth.rejected', actor: { kind: 'system', id: 'home-mandate' } },
+];
+
+/** digestOf is a stand-in digest for fixtures; the server computes real ones (SPEC-v0 section 9). */
+export const digestOf = (seq: number) => `sha256:${seq.toString(16).padStart(64, '0')}`;
+
+export const auditFixture: AuditEntry[] = entries.map((e) => ({
+  ...e,
+  digest: digestOf(e.seq),
+  prev: e.seq === 1 ? null : digestOf(e.seq - 1),
+}));

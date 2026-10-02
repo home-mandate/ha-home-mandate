@@ -4,15 +4,19 @@
 // UI and the server: createHttpClient talks to internal/api, createMockClient (./mock.ts)
 // serves fixtures for component tests and for building the UI before the backend.
 
+import { connectEvents, eventsUrl, type EventSocket, type EventsConnection, type EventsState } from './events.ts';
 import type {
   Agent,
   ApiErrorBody,
   ApiErrorCode,
+  ApplyTemplate,
+  Approvals,
   ApproverList,
   ApproverUpdate,
   AuditPage,
   AuditQuery,
   AuditVerification,
+  Defaults,
   DeviceCatalog,
   EmergencyStop,
   Language,
@@ -21,23 +25,32 @@ import type {
   MandateDocument,
   MandateSummary,
   MandateUpdate,
-  Pairing,
-  Preview,
-  PreviewRequest,
+  PairingApprove,
+  PairingCandidate,
+  ServerEvent,
   Session,
+  SystemStatus,
   Template,
   TemplateSummary,
   TemplateUpdate,
 } from './types.ts';
 
+export interface EventHandlers {
+  onEvent: (event: ServerEvent) => void;
+  onState: (state: EventsState) => void;
+}
+
 export interface ApiClient {
   /** Loads the session; must be called first, it carries the CSRF token for writes. */
   session(): Promise<Session>;
   setLanguage(language: Language | null): Promise<Session>;
+  system(): Promise<SystemStatus>;
 
   agents(): Promise<Agent[]>;
   revokeAgent(clientId: string): Promise<Agent>;
-  pairing(): Promise<Pairing>;
+  pairingCheck(code: string): Promise<PairingCandidate>;
+  pairingApprove(approve: PairingApprove): Promise<void>;
+  pairingDeny(code: string): Promise<void>;
 
   devices(): Promise<DeviceCatalog>;
 
@@ -46,13 +59,18 @@ export interface ApiClient {
   mandate(id: string): Promise<MandateDetail>;
   mandateVersion(id: string, digest: string): Promise<MandateDocument>;
   putMandate(id: string, update: MandateUpdate): Promise<MandateDetail>;
+  applyTemplate(id: string, apply: ApplyTemplate): Promise<MandateDetail>;
   revokeMandate(id: string): Promise<MandateSummary>;
-  preview(request: PreviewRequest): Promise<Preview>;
 
   templates(): Promise<TemplateSummary[]>;
   template(name: string): Promise<Template>;
   putTemplate(name: string, update: TemplateUpdate): Promise<Template>;
   deleteTemplate(name: string): Promise<void>;
+
+  settings(): Promise<Defaults>;
+  putSettings(defaults: Defaults): Promise<Defaults>;
+
+  approvals(): Promise<Approvals>;
 
   audit(query: AuditQuery): Promise<AuditPage>;
   verifyAudit(): Promise<AuditVerification>;
@@ -62,8 +80,10 @@ export interface ApiClient {
   testApprover(userId: string): Promise<void>;
   deleteApprover(userId: string): Promise<void>;
 
-  emergencyStop(): Promise<EmergencyStop>;
   setEmergencyStop(active: boolean): Promise<EmergencyStop>;
+
+  /** Opens the live event stream; it reconnects on its own until closed. */
+  events(handlers: EventHandlers): EventsConnection;
 }
 
 const ERROR_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
@@ -75,6 +95,9 @@ const ERROR_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   'invalid_input',
   'invalid_mandate',
   'critical_confirmation_required',
+  'pairing_code_invalid',
+  'pairing_code_expired',
+  'pairing_locked',
   'too_large',
   'rate_limited',
   'unavailable',
@@ -97,6 +120,7 @@ const BY_STATUS: Readonly<Record<number, ApiErrorCode>> = {
 };
 
 const JSON_POINTER = /^(\/[A-Za-z0-9_~.-]*)+$/;
+const MAX_RETRY_AFTER_S = 24 * 60 * 60;
 
 /** Longer than the server's own limits; the emergency stop must never hang silently. */
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -107,13 +131,16 @@ export class ApiError extends Error {
   /** HTTP status; 0 when the server was not reached or did not answer in time. */
   readonly status: number;
   readonly field: string | undefined;
+  /** Seconds until a lock or rate limit ends. */
+  readonly retryAfter: number | undefined;
 
-  constructor(code: ApiErrorCode, status: number, field?: string) {
+  constructor(code: ApiErrorCode, status: number, field?: string, retryAfter?: number) {
     super(`api: ${code}`);
     this.name = 'ApiError';
     this.code = code;
     this.status = status;
     this.field = field;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -125,6 +152,8 @@ export interface HttpClientOptions {
   /** URL the "api/…" paths resolve against; the page itself under its Ingress prefix. */
   base?: string;
   timeoutMs?: number;
+  /** WebSocket factory for the event stream; tests pass a fake. */
+  socket?: (url: string) => EventSocket;
 }
 
 /** segment encodes one path segment and refuses values that could change the path. */
@@ -137,25 +166,35 @@ function auditQuery(q: AuditQuery): string {
   const params = new URLSearchParams();
   if (q.before !== undefined) params.set('before', String(q.before));
   if (q.limit !== undefined) params.set('limit', String(q.limit));
+  if (q.since !== undefined) params.set('since', q.since);
+  if (q.until !== undefined) params.set('until', q.until);
   if (q.agent !== undefined) params.set('agent', q.agent);
-  if (q.entity_id !== undefined) params.set('entity_id', q.entity_id);
+  if (q.device !== undefined) params.set('device', q.device);
+  if (q.group !== undefined) params.set('group', q.group);
   if (q.event !== undefined) params.set('event', q.event);
-  if (q.decision !== undefined) params.set('decision', q.decision);
+  for (const d of q.decisions ?? []) params.append('decision', d);
   const s = params.toString();
   return s ? `?${s}` : '';
 }
 
-async function errorFrom(res: Response): Promise<ApiError> {
+/** retryAfter accepts whole seconds up to a day, from the body or a proxy's header. */
+function retryAfterOf(body: unknown, header: string | null): number | undefined {
+  const value = body ?? (header !== null && /^\d{1,6}$/.test(header) ? Number(header) : undefined);
+  return Number.isInteger(value) && (value as number) > 0 && (value as number) <= MAX_RETRY_AFTER_S ? (value as number) : undefined;
+}
+
+async function errorFrom(res: Response, path: string): Promise<ApiError> {
   let body: Partial<ApiErrorBody> = {};
   try {
     body = (await res.json()) as Partial<ApiErrorBody>;
   } catch {
     // Not JSON: a proxy page or a crash; never show it.
   }
-  const fallback = BY_STATUS[res.status] ?? 'internal';
+  // A bare 410 only means an expired code where codes are involved, not from a proxy elsewhere.
+  const fallback = res.status === 410 && path.startsWith('pairing/') ? 'pairing_code_expired' : (BY_STATUS[res.status] ?? 'internal');
   const code = typeof body.code === 'string' && ERROR_CODES.has(body.code) ? body.code : fallback;
   const field = typeof body.field === 'string' && JSON_POINTER.test(body.field) ? body.field : undefined;
-  return new ApiError(code, res.status, field);
+  return new ApiError(code, res.status, field, retryAfterOf(body.retry_after, res.headers.get('Retry-After')));
 }
 
 function checkSession(s: Session): Session {
@@ -194,7 +233,7 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
     }
 
     if (!res.ok) {
-      const err = await errorFrom(res);
+      const err = await errorFrom(res, path);
       if (err.code === 'csrf_invalid') csrf = null;
       throw err;
     }
@@ -220,10 +259,13 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
   return {
     session: async () => useSession(await get<Session>('session')),
     setLanguage: async (language) => useSession(await request<Session>('PUT', 'session/language', { language })),
+    system: () => get('system'),
 
     agents: () => get('agents'),
     revokeAgent: (clientId) => request('POST', 'agents/revoke', { client_id: clientId }),
-    pairing: () => get('pairing'),
+    pairingCheck: (code) => request('POST', 'pairing/check', { code }),
+    pairingApprove: (approve) => request('POST', 'pairing/approve', approve),
+    pairingDeny: (code) => request('POST', 'pairing/deny', { code }),
 
     devices: () => get('devices'),
 
@@ -232,23 +274,35 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
     mandate: async (id) => get(`mandates/${segment(id)}`),
     mandateVersion: async (id, digest) => get(`mandates/${segment(id)}/versions/${segment(digest)}`),
     putMandate: async (id, update) => request('PUT', `mandates/${segment(id)}`, update),
+    applyTemplate: async (id, apply) => request('POST', `mandates/${segment(id)}/apply-template`, apply),
     revokeMandate: async (id) => request('POST', `mandates/${segment(id)}/revoke`),
-    preview: (req) => request('POST', 'mandates/preview', req),
 
     templates: () => get('templates'),
     template: async (name) => get(`templates/${segment(name)}`),
     putTemplate: async (name, update) => request('PUT', `templates/${segment(name)}`, update),
     deleteTemplate: async (name) => request('DELETE', `templates/${segment(name)}`),
 
+    settings: () => get('settings'),
+    putSettings: (defaults) => request('PUT', 'settings', defaults),
+
+    approvals: () => get('approvals'),
+
     audit: (q) => get(`audit${auditQuery(q)}`),
-    verifyAudit: () => get('audit/verify'),
+    verifyAudit: () => request('POST', 'audit/verify'),
 
     approvers: () => get('approvers'),
     putApprover: async (id, update) => request('PUT', `approvers/${segment(id)}`, update),
     testApprover: async (id) => request('POST', `approvers/${segment(id)}/test`),
     deleteApprover: async (id) => request('DELETE', `approvers/${segment(id)}`),
 
-    emergencyStop: () => get('emergency-stop'),
     setEmergencyStop: (active) => request('PUT', 'emergency-stop', { active }),
+
+    events: (handlers) =>
+      connectEvents({
+        url: eventsUrl(base),
+        csrf: () => csrf,
+        ...handlers,
+        ...(options.socket ? { socket: options.socket } : {}),
+      }),
   };
 }

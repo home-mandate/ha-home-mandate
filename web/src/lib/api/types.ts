@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Contract of the JSON API between the UI and the gateway (internal/api). The Go side
-// implements exactly these shapes; field names are snake_case as on the wire. All times
-// are RFC 3339 strings in UTC and are formatted for display in the household time zone
-// (src/lib/format.ts). Paths are relative ("api/…") because Ingress serves the UI under
-// a per-installation prefix.
+// Contract of the JSON API between the UI and the gateway (internal/api), version 2. The
+// Go side implements exactly these shapes; field names are snake_case as on the wire. All
+// times are RFC 3339 strings in UTC and are formatted for display in the household time
+// zone (src/lib/format.ts). Paths are relative ("api/…") because Ingress serves the UI
+// under a per-installation prefix. Live changes arrive over the WebSocket api/events
+// (ServerEvent at the end); after every (re)connect the UI reloads what it shows.
 
 /** UI languages at release. */
 export type Language = 'de' | 'en';
+
+// HTTP status per error code (see ApiErrorCode at the end):
+// 400 invalid_input, pairing_code_invalid · 401 unauthenticated · 403 forbidden,
+// csrf_invalid · 404 not_found · 409 conflict · 410 pairing_code_expired · 413 too_large ·
+// 422 invalid_mandate, critical_confirmation_required · 429 rate_limited, pairing_locked ·
+// 500 internal · 503 unavailable (Home Assistant not reachable).
 
 // ---------------------------------------------------------------------------
 // Session: GET api/session, PUT api/session/language
@@ -44,13 +51,45 @@ export interface LanguageUpdate {
   language: Language | null;
 }
 
-// HTTP status per error code (see ApiErrorCode at the end):
-// 400 invalid_input · 401 unauthenticated · 403 forbidden, csrf_invalid · 404 not_found ·
-// 409 conflict · 413 too_large · 422 invalid_mandate, critical_confirmation_required ·
-// 429 rate_limited · 500 internal · 503 unavailable (Home Assistant not reachable).
+// ---------------------------------------------------------------------------
+// System: GET api/system – header, banners, overview, settings
+
+export interface EmergencyStop {
+  active: boolean;
+  /** When it was switched on; null while off. */
+  since: string | null;
+  /** Name of the Home Assistant user who switched it on; null while off or if unknown. */
+  by_name: string | null;
+}
+
+export interface ChainStatus {
+  valid: boolean;
+  /** seq of the first entry whose chain link fails; null when valid. */
+  broken_at_seq: number | null;
+  /** Last verification (every 10 minutes and on request); null before the first. */
+  checked_at: string | null;
+}
+
+export interface SystemStatus {
+  /** v0.1 serves the UI only through Ingress, i.e. in app mode. */
+  mode: 'app' | 'container';
+  version: string;
+  commit: string;
+  /** Server clock, for countdowns that must not depend on the browser clock. */
+  server_time: string;
+  retention_days: number;
+  ha: { connected: boolean; since: string | null; version: string | null };
+  /** URL agents connect to; null without TLS (MCP only on localhost then). */
+  mcp_url: string | null;
+  tls: { present: boolean; valid_until: string | null };
+  emergency_stop: EmergencyStop;
+  chain: ChainStatus;
+  /** Approvers set up; 0 means every approval request is denied at once. */
+  approvers_configured: number;
+}
 
 // ---------------------------------------------------------------------------
-// Agents: GET api/agents, POST api/agents/revoke, GET api/pairing
+// Agents: GET api/agents, POST api/agents/revoke
 //
 // Client IDs are often URLs. They travel in the body, never in the path: an encoded "/"
 // (%2F) does not survive every proxy on the Ingress path unchanged.
@@ -63,8 +102,11 @@ export interface Agent {
   display_name: string;
   status: AgentStatus;
   created_at: string;
-  /** Home Assistant user ID of whoever admitted the agent. */
+  /** Home Assistant user ID and name of whoever admitted the agent. */
   created_by: string;
+  created_by_name: string | null;
+  /** Last request of the agent (any decision); null if none yet. */
+  last_active_at: string | null;
   /**
    * Client ID Metadata Document URL or the identifier the agent gave with a pairing code.
    * Untrusted; link it only through safeLink (./url.ts).
@@ -77,7 +119,7 @@ export interface Agent {
    * agent never had one. An active agent with a revoked mandate may do nothing; it gets a
    * new mandate through POST api/mandates.
    */
-  mandate: { id: string; status: MandateStatus } | null;
+  mandate: { id: string; name: string; status: MandateStatus } | null;
 }
 
 /** POST api/agents/revoke: revokes the agent, its tokens and its mandate at once. */
@@ -85,12 +127,34 @@ export interface AgentRevoke {
   client_id: string;
 }
 
-export interface Pairing {
-  /**
-   * Absolute URL of the pairing page; null while OAuth is not configured (no public_url).
-   * Server-supplied: render as a link only through safeLink (./url.ts).
-   */
-  url: string | null;
+// ---------------------------------------------------------------------------
+// Pairing by code inside the UI (decision D5): POST api/pairing/check,
+// POST api/pairing/approve, POST api/pairing/deny. Wrong codes count towards the lock
+// (5 per session, 30 per 10 minutes for everyone).
+
+export interface PairingCode {
+  /** As typed; the server ignores case, spaces and the dash ("BCDF-GHJK"). */
+  code: string;
+}
+
+/** The agent waiting behind a code. */
+export interface PairingCandidate {
+  /** Name the agent claims; untrusted. */
+  claimed_name: string;
+  /** OAuth client ID: verified metadata URL or the agent's free identifier. */
+  client: string;
+  client_verified: boolean;
+  requested_at: string;
+  expires_at: string;
+}
+
+export interface PairingApprove extends PairingCode {
+  /** Display name chosen by the human. */
+  display_name: string;
+  /** The template that becomes the agent's mandate. */
+  template: string;
+  /** Name of the new mandate; default: the template name. */
+  mandate_name?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +207,7 @@ export interface DeviceCatalog {
 // Mandates (mandate-spec schema/mandate-v0.schema.json)
 
 export type Decision = 'allow' | 'ask' | 'deny';
+/** Stored status; "not yet valid" and "expired" follow from the dates and the server time. */
 export type MandateStatus = 'active' | 'revoked';
 export type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 
@@ -163,7 +228,7 @@ export interface Conditions {
 }
 
 export interface Approval {
-  /** ISO 8601 duration "PT…M…S". */
+  /** ISO 8601 duration "PT…M…S", 10 s to 1 h. */
   timeout: string;
   /** Home Assistant user IDs. */
   approvers: string[];
@@ -207,11 +272,19 @@ export interface MandateDocument extends MandateDraft {
 
 export interface MandateSummary {
   id: string;
+  /**
+   * Display name (decision D2): Home-Mandate metadata next to the document, not part of
+   * it, so the specification and the digest are untouched.
+   */
+  name: string;
   client_id: string;
   agent_display_name: string;
   status: MandateStatus;
   /** Digest of the current version. */
   digest: string;
+  rule_count: number;
+  valid_from: string;
+  expires: string | null;
   max_actions_per_hour: number;
   updated_at: string;
 }
@@ -220,9 +293,10 @@ export interface MandateVersion {
   digest: string;
   created_at: string;
   created_by: string;
+  created_by_name: string | null;
 }
 
-/** GET api/mandates/{id}; versions newest first. */
+/** GET api/mandates/{id}; versions newest first, their number is the position from the end. */
 export interface MandateDetail {
   summary: MandateSummary;
   document: MandateDocument;
@@ -236,6 +310,8 @@ export interface MandateDetail {
 export interface MandateCreate {
   client_id: string;
   template: string;
+  /** Default: the template name. */
+  name?: string;
 }
 
 /**
@@ -243,49 +319,27 @@ export interface MandateCreate {
  * version was stored meanwhile the server answers "conflict". confirm_critical must be
  * true when the draft grants allow_critical that the base version did not (decision U9):
  * an allow_critical rule that is new or changed in any field. Revoked mandates cannot
- * be edited ("conflict").
+ * be edited ("conflict"). A rename alone stores no new version.
  */
 export interface MandateUpdate {
+  name: string;
   draft: MandateDraft;
   base_digest: string;
   confirm_critical?: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// Preview "may afterwards": POST api/mandates/preview (decision U10)
-//
-// One entry per device and action of the catalog. The server answers "too_large" above
-// 5000 entries. The preview shows effective decisions, so it also reveals critical
-// actions that become allowed because a restricting rule was removed.
-
-export interface PreviewRequest {
-  draft: MandateDraft;
-  /** Compare against this mandate's active version. */
-  mandate_id?: string;
-  /** Reference time, default now; evaluated in the household time zone. */
-  at?: string;
+/**
+ * POST api/mandates/{id}/apply-template (decision D3): the template's rules, approval and
+ * limits become a new version of this mandate; dates and name stay. Same conflict and
+ * U9 rules as an update.
+ */
+export interface ApplyTemplate {
+  template: string;
+  base_digest: string;
+  confirm_critical?: boolean;
 }
 
-export interface PreviewEntry {
-  entity_id: string;
-  action: string;
-  decision: Decision;
-  /** Reason code of SPEC-v0 section 4.2. */
-  reason: Reason;
-  rule_id: string | null;
-  critical: boolean;
-  /** Decision of the active version; absent without mandate_id. */
-  previous?: Decision;
-  /** For "ask": who is asked and how long the agent waits (SPEC-v0 section 4.1). */
-  approval?: Approval;
-}
-
-export interface Preview {
-  at: string;
-  time_zone: string;
-  entries: PreviewEntry[];
-}
-
+/** Reason codes of SPEC-v0 section 4.1. */
 export type Reason =
   | 'invalid_mandate'
   | 'invalid_request'
@@ -303,8 +357,10 @@ export type Reason =
 
 export interface TemplateSummary {
   name: string;
+  rule_count: number;
   created_at: string;
   created_by: string;
+  created_by_name: string | null;
 }
 
 export interface Template {
@@ -318,7 +374,57 @@ export interface TemplateUpdate {
 }
 
 // ---------------------------------------------------------------------------
-// Audit log: GET api/audit, GET api/audit/verify (mandate-spec audit-v0)
+// Settings: GET|PUT api/settings – defaults for new templates and mandates
+
+export interface Defaults {
+  /** "PT…M…S"; capped by the server's HM_APPROVAL_TIMEOUT. */
+  approval_timeout: string;
+  max_actions_per_hour: number;
+}
+
+// ---------------------------------------------------------------------------
+// Approval requests: GET api/approvals – open ones and the recent history (newest first)
+
+export type ApprovalOutcome = 'approved' | 'rejected' | 'timeout' | 'invalid_response';
+
+export interface ApprovalRequest {
+  id: string;
+  agent: { client_id: string; display_name: string };
+  entity_id: string;
+  device_name: string;
+  area: string | null;
+  action: string;
+  critical: boolean;
+  /** The agent's claim, sanitized by the server; untrusted. */
+  reason: string | null;
+  /** Names of the approvers the notification went to. */
+  recipients: string[];
+  created_at: string;
+  expires_at: string;
+}
+
+export interface ApprovalHistoryEntry {
+  /** seq of the audit entry. */
+  seq: number;
+  agent: { client_id: string; display_name: string };
+  entity_id: string;
+  device_name: string;
+  action: string;
+  /** emergency_stop: the stop ended the request before an answer. */
+  outcome: ApprovalOutcome | 'emergency_stop';
+  by_name: string | null;
+  created_at: string;
+  answered_at: string;
+}
+
+export interface Approvals {
+  open: ApprovalRequest[];
+  /** Up to 50 most recent. */
+  history: ApprovalHistoryEntry[];
+}
+
+// ---------------------------------------------------------------------------
+// Audit log: GET api/audit, POST api/audit/verify (mandate-spec audit-v0)
 
 export type AuditEvent =
   | 'decision'
@@ -334,14 +440,13 @@ export type AuditEvent =
 
 export type ResultStatus = 'executed' | 'denied' | 'failed';
 export type DeniedBy = 'mandate' | 'approval' | 'rate_limit' | 'emergency_stop' | 'authentication';
-export type ApprovalOutcome = 'approved' | 'rejected' | 'timeout' | 'invalid_response';
 
 export interface AuditEntry {
   id: string;
   seq: number;
   recorded_at: string;
   event: AuditEvent;
-  actor?: { kind: 'user' | 'agent' | 'system'; id: string };
+  actor?: { kind: 'user' | 'agent' | 'system'; id: string; name?: string };
   agent?: { client_id: string; display_name?: string };
   request?: {
     time: string;
@@ -351,32 +456,42 @@ export interface AuditEntry {
   };
   mandate?: { id: string; digest: string; previous_digest?: string };
   evaluation?: { decision: Decision; reason: Reason; rule_id: string | null; approval_timeout?: string };
-  approval?: { outcome: ApprovalOutcome; by?: string; at: string };
+  approval?: { outcome: ApprovalOutcome; by?: string; by_name?: string; at: string };
   result?: { status: ResultStatus; denied_by?: DeniedBy; error?: string; duration_ms?: number };
   truncated?: { up_to_seq: number; last_digest: string };
+  /** Digest of this entry and of the one before (technical details). */
+  digest: string;
+  prev: string | null;
 }
+
+/** Filter "decision" values: the three decisions, plus "default" for reason no_match. */
+export type DecisionFilter = Decision | 'default';
 
 export interface AuditQuery {
   /** Entries with seq below this value; omitted for the newest. */
   before?: number;
   /** 1–100, default 50. */
   limit?: number;
+  since?: string;
+  until?: string;
   agent?: string;
-  entity_id?: string;
+  /** Exact entity_id or area_id. */
+  device?: string;
+  /** decision: requests only; admin: everything else. */
+  group?: 'decision' | 'admin';
   event?: AuditEvent;
-  decision?: Decision;
+  decisions?: DecisionFilter[];
 }
 
-/** Newest first; next_before is null on the last page. */
+/** Newest first; next_before is null on the last page; total counts all matches of the filter, regardless of the cursor. */
 export interface AuditPage {
   entries: AuditEntry[];
   next_before: number | null;
+  total: number;
 }
 
-export interface AuditVerification {
-  valid: boolean;
-  /** seq of the first entry whose chain link fails; null when valid. */
-  broken_at_seq: number | null;
+export interface AuditVerification extends ChainStatus {
+  /** Entries checked by this run. */
   checked: number;
 }
 
@@ -410,11 +525,25 @@ export interface ApproverUpdate {
 }
 
 // ---------------------------------------------------------------------------
-// Emergency stop: GET|PUT api/emergency-stop
+// Emergency stop: PUT api/emergency-stop {active} → EmergencyStop (state: api/system)
 
-export interface EmergencyStop {
-  active: boolean;
-}
+// ---------------------------------------------------------------------------
+// Live events: WebSocket api/events (decision D6). Server → client only; the client sends
+// exactly one message after opening, {"csrf": "<token>"}. The server answers an accepted
+// token with a "system" event and closes with 4419 on a wrong token or 4403 when the user
+// is no longer an administrator (checked every 60 s). Events carry what changed; for
+// lists the UI reloads through the REST endpoints.
+
+export type ServerEvent =
+  | { type: 'system'; system: SystemStatus }
+  | { type: 'approval.opened'; request: ApprovalRequest }
+  | { type: 'approval.closed'; id: string; entry: ApprovalHistoryEntry }
+  | { type: 'audit.appended'; seq: number }
+  | { type: 'agents.changed' }
+  | { type: 'mandates.changed'; id: string }
+  | { type: 'templates.changed' }
+  | { type: 'approvers.changed' }
+  | { type: 'settings.changed' };
 
 // ---------------------------------------------------------------------------
 // Errors: every non-2xx answer has this body; no internal details.
@@ -428,6 +557,9 @@ export type ApiErrorCode =
   | 'invalid_input'
   | 'invalid_mandate'
   | 'critical_confirmation_required'
+  | 'pairing_code_invalid'
+  | 'pairing_code_expired'
+  | 'pairing_locked'
   | 'too_large'
   | 'rate_limited'
   | 'unavailable'
@@ -437,4 +569,6 @@ export interface ApiErrorBody {
   code: ApiErrorCode;
   /** JSON pointer into the request body for invalid_input/invalid_mandate, e.g. "/draft/rules/2/actions". */
   field?: string;
+  /** Seconds until a pairing lock or rate limit ends. */
+  retry_after?: number;
 }
