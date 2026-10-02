@@ -1,0 +1,237 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+// Package catalog maps Home Assistant entities to the vocabulary of SPEC-v0 section 5:
+// category and area of every device. The PEP takes both from here, never from the agent.
+// Until the first successful refresh the catalog is empty, so every request is denied.
+package catalog
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"maps"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/home-mandate/home-mandate/internal/ha"
+)
+
+// Source is what the catalog reads from Home Assistant.
+type Source interface {
+	GetStates(ctx context.Context) ([]ha.State, error)
+	ListEntities(ctx context.Context) ([]ha.EntityEntry, error)
+	ListDevices(ctx context.Context) ([]ha.Device, error)
+}
+
+// Device is an entity as the PEP sees it.
+type Device struct {
+	EntityID   string
+	Category   string
+	Area       string
+	State      string
+	Attributes map[string]any
+}
+
+// domainCategory maps entity domains to categories (SPEC-v0 section 5, column Home
+// Assistant). cover is handled separately; everything else is "other".
+var domainCategory = map[string]string{
+	"light":               "light",
+	"switch":              "switch",
+	"climate":             "climate",
+	"lock":                "lock",
+	"alarm_control_panel": "alarm",
+	"camera":              "camera",
+	"media_player":        "media",
+	"sensor":              "sensor",
+	"binary_sensor":       "sensor",
+	"scene":               "scene",
+	"script":              "script",
+}
+
+// Category returns the category of an entity from its domain and device_class.
+func Category(entityID, deviceClass string) string {
+	domain, _, _ := strings.Cut(entityID, ".")
+	if domain == "cover" {
+		if deviceClass == "garage" || deviceClass == "gate" {
+			return "gate"
+		}
+		return "cover"
+	}
+	if c, ok := domainCategory[domain]; ok {
+		return c
+	}
+	return "other"
+}
+
+// Catalog is a snapshot of the household's devices, kept current by events.
+type Catalog struct {
+	src Source
+	log *slog.Logger
+
+	mu         sync.RWMutex
+	ready      bool
+	devices    map[string]Device
+	entityArea map[string]string // entity → area from the registries
+	disabled   map[string]bool
+
+	refresh chan struct{}
+}
+
+// New returns an empty catalog; call Refresh or Run to load it.
+func New(src Source, log *slog.Logger) *Catalog {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	return &Catalog{src: src, log: log, devices: map[string]Device{}, refresh: make(chan struct{}, 1)}
+}
+
+// Ready reports whether the catalog was loaded at least once.
+func (c *Catalog) Ready() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.ready
+}
+
+// Lookup returns a copy of the device with entityID.
+func (c *Catalog) Lookup(entityID string) (Device, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	d, ok := c.devices[entityID]
+	if !ok {
+		return Device{}, false
+	}
+	return clone(d), true
+}
+
+// All returns copies of all devices, sorted by entity ID.
+func (c *Catalog) All() []Device {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make([]Device, 0, len(c.devices))
+	for _, id := range slices.Sorted(maps.Keys(c.devices)) {
+		out = append(out, clone(c.devices[id]))
+	}
+	return out
+}
+
+func clone(d Device) Device {
+	d.Attributes = maps.Clone(d.Attributes)
+	return d
+}
+
+// Refresh reloads states and registries. On failure the last snapshot stays.
+func (c *Catalog) Refresh(ctx context.Context) error {
+	states, err := c.src.GetStates(ctx)
+	if err != nil {
+		return fmt.Errorf("catalog: states: %w", err)
+	}
+	entities, err := c.src.ListEntities(ctx)
+	if err != nil {
+		return fmt.Errorf("catalog: entity registry: %w", err)
+	}
+	devices, err := c.src.ListDevices(ctx)
+	if err != nil {
+		return fmt.Errorf("catalog: device registry: %w", err)
+	}
+
+	deviceArea := make(map[string]string, len(devices))
+	for _, d := range devices {
+		deviceArea[d.ID] = d.AreaID
+	}
+	entityArea := make(map[string]string, len(entities))
+	disabled := map[string]bool{}
+	for _, e := range entities {
+		if e.DisabledBy != "" {
+			disabled[e.EntityID] = true
+		}
+		area := e.AreaID
+		if area == "" {
+			area = deviceArea[e.DeviceID]
+		}
+		entityArea[e.EntityID] = area
+	}
+	snapshot := make(map[string]Device, len(states))
+	for _, s := range states {
+		if disabled[s.EntityID] {
+			continue
+		}
+		snapshot[s.EntityID] = device(s, entityArea[s.EntityID])
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.devices, c.entityArea, c.disabled, c.ready = snapshot, entityArea, disabled, true
+	return nil
+}
+
+func device(s ha.State, area string) Device {
+	deviceClass, _ := s.Attributes["device_class"].(string)
+	return Device{EntityID: s.EntityID, Category: Category(s.EntityID, deviceClass), Area: area,
+		State: s.State, Attributes: maps.Clone(s.Attributes)}
+}
+
+// HandleEvent applies a state_changed event or schedules a refresh after a registry
+// change. It runs on the Home Assistant read loop and never blocks.
+func (c *Catalog) HandleEvent(e ha.Event) {
+	if strings.HasSuffix(e.EventType, "_registry_updated") {
+		c.RequestRefresh()
+		return
+	}
+	if e.EventType != ha.EventStateChanged {
+		return
+	}
+	var data struct {
+		EntityID string    `json:"entity_id"`
+		NewState *ha.State `json:"new_state"`
+	}
+	if err := json.Unmarshal(e.Data, &data); err != nil || data.NewState != nil && data.NewState.EntityID != data.EntityID {
+		c.log.Warn("ignored malformed state_changed event")
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.ready || c.disabled[data.EntityID] {
+		return
+	}
+	if data.NewState == nil {
+		delete(c.devices, data.EntityID)
+		return
+	}
+	c.devices[data.EntityID] = device(*data.NewState, c.entityArea[data.EntityID])
+}
+
+// RequestRefresh schedules a refresh by Run; it never blocks.
+func (c *Catalog) RequestRefresh() {
+	select {
+	case c.refresh <- struct{}{}:
+	default: // one is already pending
+	}
+}
+
+// Run performs requested refreshes until ctx ends. It waits debounce after a request so
+// that a burst of registry events causes one refresh, and retries failed refreshes.
+func (c *Catalog) Run(ctx context.Context, debounce time.Duration) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.refresh:
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(debounce):
+		}
+		select { // requests that arrived during the wait are covered by this refresh
+		case <-c.refresh:
+		default:
+		}
+		if err := c.Refresh(ctx); err != nil && ctx.Err() == nil {
+			c.log.Warn("catalog refresh failed, retrying", "error", err)
+			c.RequestRefresh()
+		}
+	}
+}
