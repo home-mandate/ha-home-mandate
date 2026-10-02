@@ -33,6 +33,7 @@ func newCLI(t *testing.T) *cli {
 		"HM_HA_URL":   "ws://localhost:1/api/websocket",
 		"HM_HA_TOKEN": "test-token",
 		"HM_DATA_DIR": dir,
+		"HM_MCP_ADDR": "127.0.0.1:0",
 	}}
 }
 
