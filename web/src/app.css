@@ -33,6 +33,13 @@ code,
   font-family: var(--hm-font-mono);
 }
 
+/* Touch: every control at least 44 px (design README section 4, touch target). */
+@media (pointer: coarse), (max-width: 767px) {
+  :root {
+    --hm-size-control: var(--hm-size-touch);
+  }
+}
+
 .hm-visually-hidden {
   position: absolute;
   inline-size: 1px;

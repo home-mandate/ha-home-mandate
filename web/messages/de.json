@@ -558,5 +558,8 @@
   "lang_en": "English",
   "hash_copy": "Hash kopieren",
   "hash_label": "Mandatsversion",
-  "change_from_to": "v{version}: {from}"
+  "change_from_to": "v{version}: {from}",
+  "countdown_seconds_left": "{count, plural, one {Noch {count, number} Sekunde} other {Noch {count, number} Sekunden}}",
+  "countdown_expired": "Zeit abgelaufen",
+  "common_copy_failed": "Kopieren war nicht möglich. Der Text ist markiert, kopiere ihn mit Strg+C."
 }
