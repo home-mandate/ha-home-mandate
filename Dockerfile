@@ -1,5 +1,5 @@
 # 1) UI: Svelte + Vite, built without package install scripts
-FROM node:24-alpine AS web
+FROM node:24.21.0-alpine@sha256:83f1c388c31fb2e51f7cbd4dea949b96260798c98f206e8e4696bc93bd964e3a AS web
 WORKDIR /web
 RUN corepack enable
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
@@ -10,6 +10,8 @@ RUN pnpm run build            # produces /web/dist with relative paths (base: '.
 # 2) Gateway: static Go binary with the embedded UI
 FROM golang:1.27.1-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS build
 WORKDIR /src
+# Build against the mandate-spec version pinned in go.mod, never a workspace.
+ENV GOWORK=off
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .

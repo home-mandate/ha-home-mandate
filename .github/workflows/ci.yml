@@ -91,3 +91,14 @@ jobs:
       - run: make web-install
       - run: cd web && pnpm exec playwright install --with-deps chromium
       - run: make web-e2e
+
+  image:
+    name: Container image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: docker build --build-arg VERSION=${{ github.sha }} -t home-mandate:ci .
+      - run: docker run --rm home-mandate:ci --version
