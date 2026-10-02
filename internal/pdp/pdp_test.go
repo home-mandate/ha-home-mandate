@@ -1,0 +1,315 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package pdp
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io/fs"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	mandatespec "github.com/mandate-spec/mandate-spec"
+	"github.com/mandate-spec/mandate-spec/evaluator"
+
+	"github.com/home-mandate/home-mandate/internal/catalog"
+	"github.com/home-mandate/home-mandate/internal/mandate"
+)
+
+// fakeMandates returns one parsed mandate for every agent (nil if it does not parse).
+type fakeMandates struct {
+	loaded mandate.Loaded
+	err    error
+}
+
+func (f fakeMandates) ForAgent(context.Context, string) (mandate.Loaded, error) {
+	return f.loaded, f.err
+}
+
+type fakeCatalog map[string]catalog.Device
+
+func (f fakeCatalog) Lookup(id string) (catalog.Device, bool) {
+	d, ok := f[id]
+	return d, ok
+}
+
+type conformanceCase struct {
+	ID            string          `json:"id"`
+	Mandate       string          `json:"mandate"`
+	MandateInline json.RawMessage `json:"mandate_inline"`
+	RawResource   struct {
+		EntityID string `json:"entity_id"`
+		Category string `json:"category"`
+		Area     string `json:"area"`
+	} `json:"resource"`
+	Action          string  `json:"action"`
+	Time            string  `json:"time"`
+	Timezone        string  `json:"timezone"`
+	Revoked         bool    `json:"revoked"`
+	Expected        string  `json:"expected"`
+	Reason          string  `json:"reason"`
+	RuleID          *string `json:"rule_id"`
+	ApprovalTimeout string  `json:"approval_timeout"`
+	Why             string  `json:"why"`
+}
+
+func loadCases(t *testing.T) []conformanceCase {
+	t.Helper()
+	data, err := fs.ReadFile(mandatespec.FS(), mandatespec.CasesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		Cases []conformanceCase `json:"cases"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Cases) == 0 {
+		t.Fatal("no cases")
+	}
+	return file.Cases
+}
+
+// pdpFor builds a PDP whose sources answer with the inputs of the case: the catalog
+// knows the resource, the clock returns the case time, the household zone is the case
+// zone, and the mandate store returns the case mandate with its status.
+func pdpFor(t *testing.T, c conformanceCase) (*PDP, string) {
+	t.Helper()
+	doc := []byte(c.MandateInline)
+	if c.Mandate != "" {
+		var err error
+		if doc, err = fs.ReadFile(mandatespec.FS(), c.Mandate); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m, _ := evaluator.Parse(doc) // invalid mandates stay nil and must be denied
+	var meta struct {
+		Principal string `json:"principal"`
+		Agent     struct {
+			ClientID string `json:"client_id"`
+		} `json:"agent"`
+	}
+	_ = json.Unmarshal(doc, &meta)
+	status := evaluator.StatusActive
+	if c.Revoked {
+		status = evaluator.StatusRevoked
+	}
+	at, err := time.Parse(time.RFC3339, c.Time)
+	if err != nil {
+		t.Fatalf("%s: time %q: %v", c.ID, c.Time, err)
+	}
+	r := c.RawResource
+	p := New(Config{
+		Principal: meta.Principal,
+		Mandates:  fakeMandates{loaded: mandate.Loaded{Mandate: m, Status: status}},
+		Catalog:   fakeCatalog{r.EntityID: {EntityID: r.EntityID, Category: r.Category, Area: r.Area}},
+		TimeZone:  func() string { return c.Timezone },
+		Now:       func() time.Time { return at },
+	})
+	return p, meta.Agent.ClientID
+}
+
+func post(t *testing.T, url string, body any) (*http.Response, Response) {
+	t.Helper()
+	data, _ := json.Marshal(body)
+	resp, err := http.Post(url+"/access/v1/evaluation", "application/json", bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out Response
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return resp, out
+}
+
+// Every conformance case of mandate-spec runs against the AuthZEN endpoint over HTTP
+// (docs/TASKS-v0.1.md, week 2).
+func TestConformanceCasesOverHTTP(t *testing.T) {
+	for _, c := range loadCases(t) {
+		t.Run(c.ID, func(t *testing.T) {
+			p, clientID := pdpFor(t, c)
+			srv := httptest.NewServer(p.Handler())
+			defer srv.Close()
+			resp, got := post(t, srv.URL, Request{
+				Subject:  Subject{Type: "agent", ID: clientID, Properties: SubjectProperties{Principal: p.cfg.Principal}},
+				Action:   Action{Name: c.Action},
+				Resource: Resource{Type: c.RawResource.Category, ID: c.RawResource.EntityID, Properties: ResourceProperties{Area: c.RawResource.Area}},
+				Context:  RequestContext{Time: c.Time},
+			})
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status %d", resp.StatusCode)
+			}
+			if got.Decision != (c.Expected == "allow") || got.Context.Outcome != c.Expected || got.Context.Reason != c.Reason {
+				t.Errorf("%s (%s): got %+v, want %s/%s", c.ID, c.Why, got, c.Expected, c.Reason)
+			}
+			wantRule := ""
+			if c.RuleID != nil {
+				wantRule = *c.RuleID
+			}
+			if got.Context.RuleID != wantRule || got.Context.ApprovalTimeout != c.ApprovalTimeout {
+				t.Errorf("%s: rule %q timeout %q, want %q %q", c.ID, got.Context.RuleID, got.Context.ApprovalTimeout, wantRule, c.ApprovalTimeout)
+			}
+			if c.Reason != "invalid_mandate" && !strings.HasPrefix(got.Context.MandateDigest, "sha256:") {
+				t.Errorf("%s: mandate_digest missing", c.ID)
+			}
+		})
+	}
+}
+
+func voice(t *testing.T) (Config, string) {
+	t.Helper()
+	doc, _ := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+	m, err := evaluator.Parse(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Config{
+		Principal: "household:hm-7f3a",
+		Mandates: fakeMandates{loaded: mandate.Loaded{Mandate: m, Status: evaluator.StatusActive,
+			Info: mandate.Info{ID: "m-voice-assistant", MaxActionsPerHour: 60}}},
+		Catalog: fakeCatalog{
+			"light.kitchen": {EntityID: "light.kitchen", Category: "light", Area: "kitchen"},
+			"camera.porch":  {EntityID: "camera.porch", Category: "camera", Area: "porch"},
+			"lock.front":    {EntityID: "lock.front", Category: "lock", Area: "hallway"},
+		},
+		TimeZone: func() string { return "Europe/Berlin" },
+		Now:      func() time.Time { return time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC) },
+	}, "hm-client:voice-7c21e9a4"
+}
+
+func TestInputsComeFromThePEPNotTheRequest(t *testing.T) {
+	cfg, clientID := voice(t)
+	p := New(cfg)
+	// The agent claims the camera is a light in the kitchen; the catalog says camera.
+	got := p.Evaluate(context.Background(), Request{
+		Subject:  Subject{Type: "agent", ID: clientID, Properties: SubjectProperties{Principal: cfg.Principal}},
+		Action:   Action{Name: "turn_on"},
+		Resource: Resource{Type: "light", ID: "camera.porch", Properties: ResourceProperties{Area: "kitchen"}},
+		Context:  RequestContext{Time: "2026-01-01T00:00:00Z"},
+	})
+	if got.Decision || got.Context.Reason != "unknown_action" {
+		t.Errorf("Evaluate = %+v, want deny unknown_action (turn_on is no camera action)", got)
+	}
+}
+
+func TestDecideReportsTheResolvedInputs(t *testing.T) {
+	cfg, clientID := voice(t)
+	d, err := New(cfg).Decide(context.Background(), clientID, "lock.front", "unlock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Result.Decision != evaluator.Ask || d.Resource.Category != "lock" || d.Resource.Area != "hallway" ||
+		d.TimeZone != "Europe/Berlin" || !d.Time.Equal(cfg.Now()) || d.MandateID != "m-voice-assistant" ||
+		d.MaxActionsPerHour != 60 || d.Status != evaluator.StatusActive || !d.Known {
+		t.Errorf("Decide = %+v", d)
+	}
+}
+
+func TestUnknownEntityIsDenied(t *testing.T) {
+	cfg, clientID := voice(t)
+	d, err := New(cfg).Decide(context.Background(), clientID, "light.unknown", "turn_on")
+	if err != nil || d.Result.Decision != evaluator.Deny || d.Known {
+		t.Errorf("Decide = %+v, %v; want deny for an unknown entity", d, err)
+	}
+}
+
+func TestMissingMandateIsDenied(t *testing.T) {
+	cfg, clientID := voice(t)
+	cfg.Mandates = fakeMandates{err: mandate.ErrNotFound}
+	d, err := New(cfg).Decide(context.Background(), clientID, "light.kitchen", "turn_on")
+	if err != nil || d.Result.Decision != evaluator.Deny || d.Result.Reason != evaluator.ReasonInvalidMandate {
+		t.Errorf("Decide = %+v, %v", d, err)
+	}
+	cfg.Mandates = fakeMandates{err: errors.New("database gone")}
+	d, err = New(cfg).Decide(context.Background(), clientID, "light.kitchen", "turn_on")
+	if err == nil || d.Result.Decision != evaluator.Deny {
+		t.Errorf("Decide with a store error = %+v, %v; want deny and the error", d, err)
+	}
+	if got := New(cfg).Evaluate(context.Background(), Request{
+		Subject: Subject{Type: "agent", ID: clientID, Properties: SubjectProperties{Principal: cfg.Principal}},
+		Action:  Action{Name: "turn_on"}, Resource: Resource{ID: "light.kitchen"},
+	}); got.Decision || got.Context.Outcome != "deny" {
+		t.Errorf("Evaluate with a store error = %+v", got)
+	}
+}
+
+func TestEvaluateChecksSubject(t *testing.T) {
+	cfg, clientID := voice(t)
+	p := New(cfg)
+	for name, subject := range map[string]Subject{
+		"other household": {Type: "agent", ID: clientID, Properties: SubjectProperties{Principal: "household:other"}},
+		"not an agent":    {Type: "user", ID: clientID, Properties: SubjectProperties{Principal: cfg.Principal}},
+		"no id":           {Type: "agent", Properties: SubjectProperties{Principal: cfg.Principal}},
+	} {
+		got := p.Evaluate(context.Background(), Request{Subject: subject, Action: Action{Name: "turn_on"}, Resource: Resource{ID: "light.kitchen"}})
+		if got.Decision || got.Context.Outcome != "deny" || got.Context.Reason != "invalid_mandate" || got.Context.MandateDigest != "" {
+			t.Errorf("%s: %+v", name, got)
+		}
+	}
+}
+
+func TestHandlerRejectsBadRequests(t *testing.T) {
+	cfg, _ := voice(t)
+	srv := httptest.NewServer(New(cfg).Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/access/v1/evaluation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("GET: %d", resp.StatusCode)
+	}
+	for name, body := range map[string]string{
+		"malformed":     `{`,
+		"unknown field": `{"subject":{"type":"agent","id":"x"},"action":{"name":"read"},"resource":{"id":"light.a"},"evil":1}`,
+		"two values":    `{} {}`,
+		"too large":     `{"subject":{"type":"agent","id":"` + strings.Repeat("a", 70000) + `"}}`,
+	} {
+		resp, err := http.Post(srv.URL+"/access/v1/evaluation", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", name, resp.StatusCode)
+		}
+	}
+	resp, err = http.Post(srv.URL+"/other", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("other path: %d", resp.StatusCode)
+	}
+}
+
+func TestListenOnlyOnLoopback(t *testing.T) {
+	cfg, _ := voice(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addr, err := New(cfg).ListenAndServe(ctx, "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(addr, "127.0.0.1:") {
+		t.Errorf("addr = %s", addr)
+	}
+	for _, bad := range []string{"0.0.0.0:0", ":0", "nonsense"} {
+		if _, err := New(cfg).ListenAndServe(ctx, bad); err == nil {
+			t.Errorf("listening on %q was allowed", bad)
+		}
+	}
+	resp, out := post(t, "http://"+addr, Request{Subject: Subject{Type: "agent", ID: "x"}, Resource: Resource{ID: "light.kitchen"}, Action: Action{Name: "read"}})
+	if resp.StatusCode != http.StatusOK || out.Decision {
+		t.Errorf("loopback endpoint: %d %+v", resp.StatusCode, out)
+	}
+}
