@@ -122,6 +122,13 @@ Every line is at least one test. New attack ideas are added here before they are
 - Content Security Policy: Playwright reports every CSP violation as a test failure
 - Build contains no references to external hosts (check of the `dist/` directory)
 - API call without a valid Ingress session or as a non-admin → rejected
+- Mandate editor: critical actions without approval → only through the separate confirmation; any edit of the rule's scope, actions or conditions takes the confirmation back
+- Edit put on top of a newer version (conflict): a confirmation for critical actions that the newer version took back → dropped, never sent as confirmed
+- Save of an edit based on an outdated version → conflict shown, nothing overwritten; an undo of a deleted rule never reaches into a version taken over from the server
+- Save summary and version compare: a rule that allows critical actions without approval → never shown as a plain "allowed"; critical changes are never cut from a long list
+- Device list not loadable → the save summary says the effect is unknown, never "no effect"
+- Draft that would not apply right now (not yet valid, expired, revoked) → the preview says so; a longer validity is flagged in the save summary
+- Device, area and agent names with HTML, bidi overrides or control characters in the editor, preview and versions → shown as text, isolated
 
 **Audit log**
 - Tampered entry in the database → chain verification fails and reports the position

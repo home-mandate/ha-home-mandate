@@ -5,9 +5,11 @@
 // after the stream comes back they hear "reconnected" and reload, so nothing is lost while
 // the connection was down (decision D6, design README section 7).
 
+import { SvelteMap } from 'svelte/reactivity';
 import { ApiError, type ApiClient } from '../api/client.ts';
 import type { EventsConnection, EventsState } from '../api/events.ts';
 import type { ServerEvent, Session, SystemStatus } from '../api/types.ts';
+import type { UnsavedMandate } from '../mandate/versions.ts';
 import { clockOffset } from '../ui/countdown.ts';
 import { Bus } from './bus.ts';
 
@@ -31,6 +33,8 @@ export class AppState {
   lastUpdated: number | null = $state(null);
   /** Browser clock minus server clock, in ms. */
   offsetMs = $state(0);
+  /** Unsaved edits of mandates by mandate id, so leaving the editor does not lose them. */
+  readonly unsaved = new SvelteMap<string, UnsavedMandate>();
 
   readonly #api: ApiClient;
   readonly #now: () => number;

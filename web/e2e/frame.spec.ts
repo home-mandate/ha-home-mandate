@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // The frame against the mock build: header, emergency stop sheet, banners, mobile layout.
-import { expect, test as base, type Page } from '@playwright/test';
+import { expect, pageScroll, test } from './support.ts';
 
 const text = {
   de: {
@@ -25,29 +25,6 @@ const text = {
     cancel: 'Cancel',
   },
 } as const;
-
-/** watch collects CSP violations and console errors. */
-async function watch(page: Page): Promise<string[]> {
-  const problems: string[] = [];
-  page.on('console', (msg) => msg.type() === 'error' && problems.push(msg.text()));
-  page.on('pageerror', (err) => problems.push(err.message));
-  await page.addInitScript(() => {
-    document.addEventListener('securitypolicyviolation', (e) => console.error(`CSP violation: ${e.violatedDirective}`));
-  });
-  return problems;
-}
-
-/** Every test fails on CSP violations and console errors. */
-const test = base.extend<{ problems: string[] }>({
-  problems: [
-    async ({ page }, use) => {
-      const problems = await watch(page);
-      await use(problems);
-      expect(problems).toEqual([]);
-    },
-    { auto: true },
-  ],
-});
 
 test('emergency stop with the keyboard only: hold Space for 2 s', async ({ page }, info) => {
   const t = text[info.project.name as keyof typeof text];
@@ -99,8 +76,7 @@ test('mobile: sections in a scrolling tab bar, no horizontal page scroll', async
   await page.goto('./#/settings');
   const nav = page.getByRole('navigation');
   await expect(nav.getByRole('link')).toHaveCount(5);
-  const pageScroll = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  expect(pageScroll).toBe(0);
+  expect(await pageScroll(page)).toBe(0);
   const box = await page.getByRole('button', { name: /Not-Aus|Emergency stop/ }).boundingBox();
   expect(box?.height).toBeGreaterThanOrEqual(44);
 });

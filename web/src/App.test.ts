@@ -43,12 +43,27 @@ const navigate = async (hash: string) => {
 
 describe('App frame', () => {
   it('shows the sections with the current one marked, and the page title', async () => {
-    await start({}, '#/mandates/mandate-voice');
+    await start({}, '#/mandates');
     const nav = screen.getByRole('navigation', { name: 'Sections' });
     const links = within(nav).getAllByRole('link');
     expect(links.map((l) => l.textContent)).toEqual(['Overview', 'Agents', 'Mandates', 'Audit log', 'Settings']);
     expect(within(nav).getByRole('link', { name: 'Mandates' }).getAttribute('aria-current')).toBe('page');
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Mandates');
+  });
+
+  it('opens the mandate list, the editor of a mandate and its versions', async () => {
+    await start({}, '#/mandates');
+    const nav = screen.getByRole('navigation', { name: 'Sections' });
+    await fireEvent.click(await screen.findByRole('link', { name: 'Sprachassistent Küche' }));
+    await navigate('#/mandates/mandate-voice');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Sprachassistent Küche' })).toBeTruthy();
+    expect(within(nav).getByRole('link', { name: 'Mandates' }).getAttribute('aria-current')).toBe('page');
+    await navigate('#/mandates/mandate-voice/versions');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Versions' })).toBeTruthy();
+    expect(within(nav).getByRole('link', { name: 'Mandates' }).getAttribute('aria-current')).toBe('page');
+    // Another mandate gets its own editor, not the state of the previous one.
+    await navigate('#/mandates/mandate-claude');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Claude Code' })).toBeTruthy();
   });
 
   it('shows not found with a way back, and follows hash changes', async () => {

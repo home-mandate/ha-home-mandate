@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import { cleanUntrusted, UNTRUSTED_MAX } from './untrusted.ts';
+import { cleanUntrusted, isolate, UNTRUSTED_MAX } from './untrusted.ts';
 
 describe('cleanUntrusted', () => {
   it('keeps ordinary text, umlauts, emoji and right-to-left script', () => {
@@ -43,5 +43,14 @@ describe('cleanUntrusted', () => {
   it('returns an empty string for null and undefined', () => {
     expect(cleanUntrusted(null)).toBe('');
     expect(cleanUntrusted(undefined)).toBe('');
+  });
+});
+
+describe('isolate', () => {
+  it('wraps cleaned text in a directional isolate that the text cannot close', () => {
+    expect(isolate('Claude Code')).toBe('\u2068Claude Code\u2069');
+    expect(isolate('a\u2069\u202Eb\u2068c')).toBe('\u2068abc\u2069');
+    expect(isolate(null)).toBe('\u2068\u2069');
+    expect([...isolate('y'.repeat(300), 10)]).toHaveLength(12);
   });
 });

@@ -20,3 +20,13 @@ export function cleanUntrusted(text: string | null | undefined, max = UNTRUSTED_
   const chars = [...flat];
   return chars.length <= max ? flat : `${chars.slice(0, max - 1).join('')}…`;
 }
+
+/**
+ * isolate cleans untrusted text for use inside a sentence (a message placeholder, an
+ * aria-label), where <bdi> is not possible: FIRST STRONG ISOLATE … POP DIRECTIONAL ISOLATE
+ * keep a right-to-left name from reordering the words around it. cleanUntrusted removes
+ * these characters from the text itself, so it cannot close the isolate early.
+ */
+export function isolate(text: string | null | undefined, max = UNTRUSTED_MAX): string {
+  return `\u2068${cleanUntrusted(text, max)}\u2069`;
+}

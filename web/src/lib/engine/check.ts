@@ -28,7 +28,9 @@ export interface Problem {
   code: ProblemCode;
 }
 
-const MAX_RULES = 200;
+export const MAX_RULES = 200;
+export const MIN_RATE = 1;
+export const MAX_RATE = 1000;
 const RULE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const ENTITY_ID = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 const AREA = /^[a-z0-9_]{1,64}$/;
@@ -195,7 +197,7 @@ function checkRule(rule: Rule, at: string, ids: Set<string>): Problem[] {
 export function checkDraft(draft: MandateDraft): Problem[] {
   const problems: Problem[] = [];
   const limit = draft.limits?.max_actions_per_hour;
-  if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+  if (!Number.isInteger(limit) || limit < MIN_RATE || limit > MAX_RATE) {
     problems.push({ field: '/limits/max_actions_per_hour', code: 'range' });
   }
   problems.push(...checkApproval(draft.approval, '/approval'));

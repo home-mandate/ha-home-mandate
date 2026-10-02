@@ -19,13 +19,15 @@
     /** Id of the text that explains the consequence; give it for destructive dialogs. */
     describedby?: string;
     destructive?: boolean;
+    /** lg: 600 px for dialogs with lists (save summary). */
+    size?: 'md' | 'lg';
     /** Element to focus on open; destructive dialogs pass their safe button. */
     initial?: HTMLElement | null;
     onclose: () => void;
     children: Snippet;
   }
 
-  let { open, labelledby, describedby, destructive = false, initial = null, onclose, children }: Props = $props();
+  let { open, labelledby, describedby, destructive = false, size = 'md', initial = null, onclose, children }: Props = $props();
 
   let panel: HTMLElement | undefined = $state();
   let pressedOnBackdrop = false;
@@ -102,7 +104,7 @@
   <div class="backdrop" use:portal onpointerdown={pointerdown} onclick={backdrop}>
     <div
       bind:this={panel}
-      class="panel"
+      class="panel {size}"
       role={destructive ? 'alertdialog' : 'dialog'}
       aria-modal="true"
       aria-labelledby={labelledby}
@@ -140,6 +142,9 @@
     color: var(--hm-color-text);
     box-shadow: var(--hm-shadow-lg);
     animation: enter var(--hm-motion-duration-base) var(--hm-motion-easing-enter);
+  }
+  .lg {
+    max-inline-size: 600px;
   }
   .panel:focus {
     outline: none;

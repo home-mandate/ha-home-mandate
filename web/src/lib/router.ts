@@ -15,6 +15,7 @@ export type Route =
   | { name: 'agent'; id: string }
   | { name: 'mandates' }
   | { name: 'mandate'; id: string }
+  | { name: 'mandate_versions'; id: string }
   | { name: 'audit'; query: Record<string, string[]> }
   | { name: 'audit_entry'; seq: number }
   | { name: 'requests' }
@@ -48,8 +49,12 @@ export function parseHash(hash: string): Route {
   const [path = '', query = ''] = (hash.replace(/^#/, '') || '/').split('?', 2);
   if (!path.startsWith('/')) return NOT_FOUND;
   const parts = path.split('/').slice(1);
-  const [first = '', second, ...rest] = parts;
+  const [first = '', second, third, ...rest] = parts;
   if (rest.length > 0) return NOT_FOUND;
+  if (third !== undefined) {
+    const versions = first === 'mandates' && third === 'versions' && second !== undefined && MANDATE_ID.test(second);
+    return versions ? { name: 'mandate_versions', id: second } : NOT_FOUND;
+  }
   if (second === undefined) {
     switch (first) {
       case '':
@@ -103,6 +108,8 @@ export function href(route: Route): string {
       return '#/mandates';
     case 'mandate':
       return `#/mandates/${encodeURIComponent(route.id)}`;
+    case 'mandate_versions':
+      return `#/mandates/${encodeURIComponent(route.id)}/versions`;
     case 'audit': {
       const params = new URLSearchParams();
       for (const [key, values] of Object.entries(route.query)) for (const v of values) params.append(key, v);
@@ -130,6 +137,7 @@ export function sectionOf(route: Route): Section | null {
       return 'agents';
     case 'mandates':
     case 'mandate':
+    case 'mandate_versions':
       return 'mandates';
     case 'audit':
     case 'audit_entry':

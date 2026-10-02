@@ -15,6 +15,9 @@
   import Skeleton from './lib/components/Skeleton.svelte';
   import ToastHost from './lib/components/ToastHost.svelte';
   import { m } from './lib/i18n.ts';
+  import MandateEditor from './lib/pages/MandateEditor.svelte';
+  import MandateList from './lib/pages/MandateList.svelte';
+  import MandateVersions from './lib/pages/MandateVersions.svelte';
   import Placeholder from './lib/pages/Placeholder.svelte';
   import { getLocale } from './lib/paraglide/runtime.js';
   import { href, parseHash, sectionOf, type Route, type Section } from './lib/router.ts';
@@ -127,6 +130,12 @@
       body={m.notfound_body()}
       cta={{ href: '#/', label: m.notfound_back() }}
     />
+  {:else if route.name === 'mandates'}
+    <MandateList {app} {now} />
+  {:else if route.name === 'mandate'}
+    {#key route.id}<MandateEditor {app} id={route.id} {now} />{/key}
+  {:else if route.name === 'mandate_versions'}
+    {#key route.id}<MandateVersions {app} id={route.id} />{/key}
   {:else}
     <Placeholder {section} />
   {/if}
