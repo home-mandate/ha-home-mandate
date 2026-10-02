@@ -39,6 +39,42 @@ versions published at least seven days ago (`web/pnpm-workspace.yaml`). Playwrig
 browsers are not npm packages: `pnpm exec playwright install chromium` downloads them
 from Playwright's CDN, for tests only.
 
+## Running in container mode
+
+| Variable | Meaning |
+|---|---|
+| `HM_HA_URL` | WebSocket API of Home Assistant: `ws://localhost:8123/api/websocket` or `wss://…` (plaintext only to localhost) |
+| `HM_HA_TOKEN` or `HM_HA_TOKEN_FILE` | Long-lived token of Home-Mandate's own Home Assistant user |
+| `HM_HA_CA_FILE` | Optional PEM file with a CA to trust for `wss://` (self-signed Home Assistant certificate) |
+| `HM_DATA_DIR` | Data directory, default `/data` |
+| `HM_TLS_CERT`, `HM_TLS_KEY` | Certificate for the MCP endpoint (TLS 1.3); without it, MCP listens on localhost only |
+| `HM_MCP_ADDR` | Listen address of the MCP endpoint, default `:8765` with TLS, `127.0.0.1:8765` without |
+| `HM_LOG_LEVEL` | `debug`, `info`, `warning` or `error` |
+
+Agents connect to `https://<host>:8765/mcp` with a bearer token.
+
+## Administration until the UI exists
+
+The administration commands work on the local database only; they are not reachable over
+the network. Run them inside the container, e.g. `docker exec -i home-mandate /home-mandate …`.
+
+```bash
+home-mandate household                       # principal to use in mandates
+home-mandate agent add --name "Voice assistant" [--days 30]   # prints the token once
+home-mandate agent list | revoke CLIENT_ID
+home-mandate mandate import mandate.json     # or - for stdin; validated against mandate-spec
+home-mandate mandate list | revoke ID
+home-mandate audit verify | export           # hash chain check, JSON Lines export
+```
+
+## Limits of the current development version
+
+- Actions that need a human confirmation (`ask`) are refused until approval requests
+  exist (planned for week 3).
+- Camera snapshots and `set` on entities of category `other` are evaluated and logged but
+  not executed: Home Assistant offers no safe way to perform them for one entity.
+- Agents get their tokens from the administration command; OAuth and pairing codes follow.
+
 ## Home Assistant permissions
 
 In container mode, Home-Mandate uses a dedicated Home Assistant user with **admin rights**.

@@ -20,7 +20,7 @@ COVER_FLAGS   := -default $(COVER_DEFAULT) $(foreach p,$(STRICT_PKGS),$(if $(wil
 VERSION ?= dev
 GOARCHES := amd64 arm64
 
-.PHONY: check test cover vet staticcheck vulncheck actionlint build web-install web-check web-e2e
+.PHONY: check test cover vet staticcheck vulncheck actionlint build web-install web-check web-e2e e2e
 
 ## check: everything that must be green before a commit
 check: vet staticcheck cover vulncheck actionlint
@@ -64,3 +64,8 @@ web-check:
 ## web-e2e: Playwright in de and en under a random Ingress path
 web-e2e:
 	cd web && pnpm e2e
+
+## e2e: scenarios of docs/TESTING.md section 3 against Home Assistant and the release
+## image (podman, or docker with E2E_RUNTIME=docker)
+e2e:
+	cd e2e && go test -tags e2e -count=1 -timeout 25m -v .
