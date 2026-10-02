@@ -40,16 +40,24 @@ var (
 // critical actions only with UICritical. At least one channel is required.
 type Approver struct {
 	UserID     string
-	Devices    []string // notify services, e.g. mobile_app_pixel_9 for notify.mobile_app_pixel_9
+	Devices    []Device
 	UI         bool
 	UICritical bool
 	Language   string // "", "de" or "en"; "" means the household language
 	CreatedAt  time.Time
 }
 
+// Device is a device with the Home Assistant Companion App. Critical tells whether it
+// also gets critical requests: a phone asks for unlocking before a button counts (iOS),
+// the Mac app and Android do not, so the UI proposes off for those.
+type Device struct {
+	Service  string // notify service, e.g. mobile_app_pixel_9 for notify.mobile_app_pixel_9
+	Critical bool
+}
+
 // Channels is how one approver is reached for one request.
 type Channels struct {
-	Devices []string
+	Devices []string // notify services
 	UI      bool
 }
 
@@ -58,11 +66,17 @@ func (c Channels) Reachable() bool {
 	return len(c.Devices) > 0 || c.UI
 }
 
-// Channels returns the channels of ap for a request: every device always, the UI only
-// for an administrator and, for a critical action, only with UICritical (a phone asks
-// for unlocking, the UI cannot).
+// Channels returns the channels of ap for a request: every device, for a critical
+// action only those with Critical; the UI only for an administrator and, for a critical
+// action, only with UICritical (a browser asks for no unlocking).
 func (ap Approver) Channels(critical, admin bool) Channels {
-	return Channels{Devices: ap.Devices, UI: ap.UI && admin && (!critical || ap.UICritical)}
+	var devices []string
+	for _, d := range ap.Devices {
+		if !critical || d.Critical {
+			devices = append(devices, d.Service)
+		}
+	}
+	return Channels{Devices: devices, UI: ap.UI && admin && (!critical || ap.UICritical)}
 }
 
 // Reach tells whether a person can be reached for ordinary and for critical requests.
@@ -93,7 +107,8 @@ func (ap Approver) validate() error {
 		return fmt.Errorf("%w: more than %d devices", ErrInvalidApprover, maxDevices)
 	}
 	for i, d := range ap.Devices {
-		if !notifyServicePattern.MatchString(d) || slices.Contains(ap.Devices[:i], d) {
+		if !notifyServicePattern.MatchString(d.Service) ||
+			slices.ContainsFunc(ap.Devices[:i], func(other Device) bool { return other.Service == d.Service }) {
 			return fmt.Errorf("%w: device", ErrInvalidApprover)
 		}
 	}
@@ -141,7 +156,8 @@ func (a *Approvers) Put(ctx context.Context, ap Approver) error {
 		return fmt.Errorf("approval: store devices: %w", err)
 	}
 	for _, d := range ap.Devices {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO approver_devices (user_id, notify_service) VALUES (?, ?)`, ap.UserID, d); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO approver_devices (user_id, notify_service, critical) VALUES (?, ?, ?)`,
+			ap.UserID, d.Service, d.Critical); err != nil {
 			return fmt.Errorf("approval: store devices: %w", err)
 		}
 	}
@@ -153,7 +169,7 @@ func (a *Approvers) Put(ctx context.Context, ap Approver) error {
 
 // List returns the approvers by user ID, each with their devices in name order.
 func (a *Approvers) List(ctx context.Context) ([]Approver, error) {
-	rows, err := a.db.QueryContext(ctx, `SELECT a.user_id, a.language, a.ui, a.ui_critical, a.created_at, d.notify_service
+	rows, err := a.db.QueryContext(ctx, `SELECT a.user_id, a.language, a.ui, a.ui_critical, a.created_at, d.notify_service, d.critical
 		FROM approvers a LEFT JOIN approver_devices d USING (user_id) ORDER BY a.user_id, d.notify_service`)
 	if err != nil {
 		return nil, fmt.Errorf("approval: list approvers: %w", err)
@@ -163,17 +179,19 @@ func (a *Approvers) List(ctx context.Context) ([]Approver, error) {
 	for rows.Next() {
 		var ap Approver
 		var created string
-		var device sql.NullString
-		if err := rows.Scan(&ap.UserID, &ap.Language, &ap.UI, &ap.UICritical, &created, &device); err != nil {
+		var service sql.NullString
+		var critical sql.NullBool
+		if err := rows.Scan(&ap.UserID, &ap.Language, &ap.UI, &ap.UICritical, &created, &service, &critical); err != nil {
 			return nil, fmt.Errorf("approval: list approvers: %w", err)
 		}
+		device := Device{Service: service.String, Critical: critical.Bool}
 		if n := len(list); n > 0 && list[n-1].UserID == ap.UserID {
-			list[n-1].Devices = append(list[n-1].Devices, device.String)
+			list[n-1].Devices = append(list[n-1].Devices, device)
 			continue
 		}
 		ap.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-		if device.Valid {
-			ap.Devices = []string{device.String}
+		if service.Valid {
+			ap.Devices = []Device{device}
 		}
 		list = append(list, ap)
 	}

@@ -159,7 +159,7 @@ func onOff(on bool) string {
 func approverCommand(ctx context.Context, e env, args []string) int {
 	switch {
 	case (len(args) == 3 || len(args) == 4) && args[0] == "add":
-		ap := approval.Approver{UserID: args[1], Devices: strings.Split(args[2], ",")}
+		ap := approval.Approver{UserID: args[1], Devices: parseDevices(args[2])}
 		if len(args) == 4 {
 			ap.Language = args[3]
 		}
@@ -184,17 +184,34 @@ func approverCommand(ctx context.Context, e env, args []string) int {
 	case len(args) == 2 && args[0] == "remove":
 		return withState(ctx, e, func(s *state) error { return s.approvers.Remove(ctx, args[1]) })
 	default:
-		return usageError(e, "approver needs add USER_ID NOTIFY_SERVICE[,NOTIFY_SERVICE…] [de|en], list or remove USER_ID")
+		return usageError(e, "approver needs add USER_ID NOTIFY_SERVICE[:no-critical][,…] [de|en], list or remove USER_ID")
 	}
 }
 
-func devicesText(devices []string) string {
+// noCritical marks a device without critical requests (Mac app, Android: no unlocking).
+const noCritical = ":no-critical"
+
+// parseDevices reads SERVICE[:no-critical],…; anything else is left for the validation
+// to refuse.
+func parseDevices(arg string) []approval.Device {
+	var out []approval.Device
+	for _, part := range strings.Split(arg, ",") {
+		service, without := strings.CutSuffix(part, noCritical)
+		out = append(out, approval.Device{Service: service, Critical: !without})
+	}
+	return out
+}
+
+func devicesText(devices []approval.Device) string {
 	if len(devices) == 0 {
 		return "-"
 	}
 	out := make([]string, len(devices))
 	for i, d := range devices {
-		out[i] = "notify." + d
+		out[i] = "notify." + d.Service
+		if !d.Critical {
+			out[i] += noCritical
+		}
 	}
 	return strings.Join(out, ",")
 }

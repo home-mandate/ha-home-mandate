@@ -120,7 +120,9 @@ checked on every request.
 ## 7. Approval requests ("ask")
 
 - Sent via `notify.mobile_app_<device>` to every device (up to 5) of the approvers selected
-  in the settings: phones, tablets, the Companion App on a Mac.
+  in the settings: phones, tablets, the Companion App on a Mac. Each device has its own switch
+  for critical requests; critical requests go only to devices where it is on. The UI
+  proposes on for phones and off for the Mac app (no unlocking, see below).
 - Action identifiers contain a random nonce (128 bits): `HM_APPROVE_<nonce>`, `HM_DENY_<nonce>`.
 - Handling of the `mobile_app_notification_action` event: the nonce must be open and
   `context.user_id` must belong to an approver; otherwise the answer is discarded and logged.

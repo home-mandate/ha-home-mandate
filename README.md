@@ -84,12 +84,15 @@ may not approve also warns the approvers. The agent's reason is shown as its cla
 a fact. The first answer counts.
 
 ```bash
-home-mandate approver add USER_ID mobile_app_pixel_9,mobile_app_mac [de|en]   # up to 5 devices
+home-mandate approver add USER_ID mobile_app_pixel_9,mobile_app_mac:no-critical [de|en]   # up to 5 devices
 ```
 
 `USER_ID` is the Home Assistant user ID; it must also be listed in the mandate's
 `approvers`. Without a language, the language of the Home Assistant configuration applies.
-Any device with the Home Assistant Companion App counts, including the Mac app.
+Any device with the Home Assistant Companion App counts, including the Mac app. Critical
+actions (unlocking a door, disarming the alarm …) go only to devices without
+`:no-critical`: an iPhone asks for unlocking before a button counts, the Mac app and Android
+do not. The UI proposes `no-critical` for the Mac app.
 
 Approvers who are Home Assistant administrators can additionally answer in the Home-Mandate
 UI; this is switched on per person in the UI, for critical actions separately, because a
@@ -107,7 +110,7 @@ home-mandate mandate template list | remove NAME
 home-mandate agent list | revoke CLIENT_ID   # revoking takes effect with the next request
 home-mandate mandate import mandate.json     # or - for stdin; validated against mandate-spec
 home-mandate mandate list | revoke ID
-home-mandate approver add USER_ID NOTIFY_SERVICE[,NOTIFY_SERVICE…] [de|en] | list | remove USER_ID
+home-mandate approver add USER_ID NOTIFY_SERVICE[:no-critical][,…] [de|en] | list | remove USER_ID
 home-mandate emergency-stop on | off | status   # on: all tokens revoked, all agents blocked
 home-mandate audit verify | export           # hash chain check, JSON Lines export
 ```

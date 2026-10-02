@@ -98,8 +98,8 @@ func newEnv(t *testing.T, maxTimeout time.Duration) env {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	approvers := NewApprovers(st.DB())
-	for _, a := range []Approver{{UserID: u1, Devices: []string{"mobile_app_markus"}, Language: "de"},
-		{UserID: u2, Devices: []string{"mobile_app_anna"}}, {UserID: u3, Devices: []string{"mobile_app_guest"}}} {
+	for _, a := range []Approver{{UserID: u1, Devices: phones("mobile_app_markus"), Language: "de"},
+		{UserID: u2, Devices: phones("mobile_app_anna")}, {UserID: u3, Devices: phones("mobile_app_guest")}} {
 		if err := approvers.Put(context.Background(), a); err != nil {
 			t.Fatal(err)
 		}
@@ -107,6 +107,15 @@ func newEnv(t *testing.T, maxTimeout time.Duration) env {
 	n := newFakeNotifier()
 	svc := New(Config{Approvers: approvers, Notifier: n, Language: func() i18n.Lang { return i18n.EN }, MaxTimeout: maxTimeout})
 	return env{svc: svc, notifier: n, approvers: approvers}
+}
+
+// phones are devices that may also answer critical requests (default of a phone).
+func phones(services ...string) []Device {
+	out := make([]Device, len(services))
+	for i, s := range services {
+		out[i] = Device{Service: s, Critical: true}
+	}
+	return out
 }
 
 func request() Request {

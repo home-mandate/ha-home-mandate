@@ -188,6 +188,8 @@ func TestCommandErrors(t *testing.T) {
 		{[]string{"approver", "add", "u1", "notify.x"}, exitFailure},
 		{[]string{"approver", "add", "u1", "mobile_app_a,mobile_app_a"}, exitFailure},
 		{[]string{"approver", "add", "u1", ","}, exitFailure},
+		{[]string{"approver", "add", "u1", "mobile_app_a:critical"}, exitFailure},
+		{[]string{"approver", "add", "u1", "mobile_app_a:no-critical:no-critical"}, exitFailure},
 		{[]string{"approver", "remove", "none"}, exitFailure},
 		{[]string{"emergency-stop", "maybe"}, exitUsage},
 		{[]string{"emergency-stop", "on", "now"}, exitUsage},
@@ -280,10 +282,10 @@ func TestTemplateCommands(t *testing.T) {
 
 func TestApproverCommands(t *testing.T) {
 	c := newCLI(t)
-	c.mustRun("", "approver", "add", "1a2b3c", "mobile_app_pixel_9,mobile_app_mac", "de")
+	c.mustRun("", "approver", "add", "1a2b3c", "mobile_app_pixel_9,mobile_app_mac:no-critical", "de")
 	c.mustRun("", "approver", "add", "4d5e6f", "mobile_app_iphone")
 	out := c.mustRun("", "approver", "list")
-	if out != "1a2b3c\tnotify.mobile_app_mac,notify.mobile_app_pixel_9\tde\t-\n4d5e6f\tnotify.mobile_app_iphone\thousehold\t-\n" {
+	if out != "1a2b3c\tnotify.mobile_app_mac:no-critical,notify.mobile_app_pixel_9\tde\t-\n4d5e6f\tnotify.mobile_app_iphone\thousehold\t-\n" {
 		t.Errorf("approver list = %q", out)
 	}
 	// The UI channel is set in the UI only (administrators); adding devices on the
@@ -293,7 +295,7 @@ func TestApproverCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.approvers.Put(context.Background(), approval.Approver{UserID: "4d5e6f", Devices: []string{"mobile_app_iphone"},
+	if err := s.approvers.Put(context.Background(), approval.Approver{UserID: "4d5e6f", Devices: []approval.Device{{Service: "mobile_app_iphone", Critical: true}},
 		UI: true, UICritical: true}); err != nil {
 		t.Fatal(err)
 	}

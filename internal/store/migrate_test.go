@@ -205,8 +205,9 @@ func upTo(t *testing.T, version int) fstest.MapFS {
 	return out
 }
 
-// Migration 8 (decision F2) keeps every approver's phone as their first device; the UI
-// channel starts switched off, and the database refuses ui_critical without ui.
+// Migration 8 (decision F2) keeps every approver's phone as their first device, with
+// critical requests; the UI channel starts switched off, and the database refuses
+// ui_critical without ui.
 func TestApproverChannelsMigrationKeepsPhones(t *testing.T) {
 	ctx := context.Background()
 	db := openRaw(t)
@@ -220,7 +221,7 @@ func TestApproverChannelsMigrationKeepsPhones(t *testing.T) {
 	if err := migrate(ctx, db, embeddedMigrations()); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := db.Query(`SELECT a.user_id, d.notify_service, a.language, a.ui, a.ui_critical
+	rows, err := db.Query(`SELECT a.user_id, d.notify_service, a.language, a.ui, a.ui_critical, d.critical
 		FROM approvers a JOIN approver_devices d USING (user_id) ORDER BY a.user_id`)
 	if err != nil {
 		t.Fatal(err)
@@ -229,13 +230,14 @@ func TestApproverChannelsMigrationKeepsPhones(t *testing.T) {
 	var got []string
 	for rows.Next() {
 		var user, service, lang string
-		var ui, uiCritical int
-		if err := rows.Scan(&user, &service, &lang, &ui, &uiCritical); err != nil {
+		var ui, uiCritical, critical int
+		if err := rows.Scan(&user, &service, &lang, &ui, &uiCritical, &critical); err != nil {
 			t.Fatal(err)
 		}
-		got = append(got, fmt.Sprint(user, service, lang, ui, uiCritical))
+		got = append(got, fmt.Sprintf("%s %s %q ui=%d ui_critical=%d critical=%d", user, service, lang, ui, uiCritical, critical))
 	}
-	if want := []string{"u1mobile_app_pixelde0 0", "u2mobile_app_iphone0 0"}; !slices.Equal(got, want) {
+	// The phones of before keep critical requests; the UI starts switched off.
+	if want := []string{`u1 mobile_app_pixel "de" ui=0 ui_critical=0 critical=1`, `u2 mobile_app_iphone "" ui=0 ui_critical=0 critical=1`}; !slices.Equal(got, want) {
 		t.Errorf("after migration %q, want %q", got, want)
 	}
 	if _, err := db.Exec(`UPDATE approvers SET ui_critical = 1 WHERE user_id = 'u1'`); err == nil {

@@ -107,6 +107,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - More than 2 pending approval requests of one agent → refused
 - No approver set up or reachable → denied at once
 - Approver without any channel, more than 5 devices, duplicate device, critical actions in the UI without the UI channel → refused when saving
+- Critical request → never sent to a device without critical requests; a person with only such devices (and no UI for critical actions) counts as unreachable for it
 - UI channel for someone who is no administrator → refused when saving (`CheckUI`, called by the API); at the time of a request or answer → no UI channel (also when the check fails)
 - Answer in the UI by someone who is no approver of the request (also Home-Mandate's own HA user) → refused, request stays open
 - Answer in the UI to a critical action without "critical actions in the UI" → refused, request stays open

@@ -27,23 +27,23 @@ func newApprovers(t *testing.T) (*Approvers, func() error) {
 func TestApprovers(t *testing.T) {
 	a, _ := newApprovers(t)
 	ctx := context.Background()
-	if err := a.Put(ctx, Approver{UserID: u2, Devices: []string{"mobile_app_anna"}}); err != nil {
+	if err := a.Put(ctx, Approver{UserID: u2, Devices: phones("mobile_app_anna")}); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.Put(ctx, Approver{UserID: u1, Devices: []string{"mobile_app_old", "mobile_app_mac"}, UI: true, Language: "en"}); err != nil {
+	if err := a.Put(ctx, Approver{UserID: u1, Devices: phones("mobile_app_old", "mobile_app_mac"), UI: true, Language: "en"}); err != nil {
 		t.Fatal(err)
 	}
 	// Replacing keeps one entry with the new values, devices included.
-	if err := a.Put(ctx, Approver{UserID: u1, Devices: []string{"mobile_app_markus", "mobile_app_mac"}, UI: true, UICritical: true,
-		Language: "de"}); err != nil {
+	if err := a.Put(ctx, Approver{UserID: u1, Devices: []Device{{Service: "mobile_app_markus", Critical: true}, {Service: "mobile_app_mac"}},
+		UI: true, UICritical: true, Language: "de"}); err != nil {
 		t.Fatal(err)
 	}
 	list, err := a.List(ctx)
-	if err != nil || len(list) != 2 || list[0].UserID != u1 || !slices.Equal(list[0].Devices, []string{"mobile_app_mac", "mobile_app_markus"}) ||
+	if err != nil || len(list) != 2 || list[0].UserID != u1 || !slices.Equal(list[0].Devices, []Device{{Service: "mobile_app_mac"}, {Service: "mobile_app_markus", Critical: true}}) ||
 		!list[0].UI || !list[0].UICritical || list[0].Language != "de" || list[0].CreatedAt.IsZero() {
 		t.Fatalf("list = %+v, %v", list, err)
 	}
-	if !slices.Equal(list[1].Devices, []string{"mobile_app_anna"}) || list[1].UI || list[1].UICritical {
+	if !slices.Equal(list[1].Devices, phones("mobile_app_anna")) || list[1].UI || list[1].UICritical {
 		t.Errorf("second = %+v", list[1])
 	}
 	// A person may answer in the UI only, without any device.
@@ -71,10 +71,10 @@ func TestApprovers(t *testing.T) {
 // Combination table "saving" (F2): at least one channel, at most five devices, no
 // duplicates, ui_critical only together with ui.
 func TestPutApproverChannels(t *testing.T) {
-	devices := func(n int) []string {
-		out := make([]string, n)
+	devices := func(n int) []Device {
+		out := make([]Device, n)
 		for i := range out {
-			out[i] = "mobile_app_" + string(rune('a'+i))
+			out[i] = Device{Service: "mobile_app_" + string(rune('a'+i)), Critical: i%2 == 0}
 		}
 		return out
 	}
@@ -84,6 +84,7 @@ func TestPutApproverChannels(t *testing.T) {
 		ok   bool
 	}{
 		{"one device", Approver{Devices: devices(1)}, true},
+		{"only a device without critical actions", Approver{Devices: []Device{{Service: "mobile_app_mac"}}}, true},
 		{"five devices", Approver{Devices: devices(5)}, true},
 		{"UI only", Approver{UI: true}, true},
 		{"UI only, also critical", Approver{UI: true, UICritical: true}, true},
@@ -94,11 +95,12 @@ func TestPutApproverChannels(t *testing.T) {
 		{"critical in the UI without UI", Approver{UICritical: true}, false},
 		{"critical in the UI without UI, with device", Approver{Devices: devices(1), UICritical: true}, false},
 		{"six devices", Approver{Devices: devices(6)}, false},
-		{"duplicate device", Approver{Devices: []string{"mobile_app_a", "mobile_app_a"}}, false},
-		{"empty device name", Approver{Devices: []string{""}}, false},
-		{"device with notify prefix", Approver{Devices: []string{"notify.mobile_app_x"}}, false},
-		{"device upper case", Approver{Devices: []string{"Mobile"}}, false},
-		{"device too long", Approver{Devices: []string{strings.Repeat("a", 65)}}, false},
+		{"duplicate device", Approver{Devices: phones("mobile_app_a", "mobile_app_a")}, false},
+		{"duplicate device, differing switch", Approver{Devices: []Device{{Service: "mobile_app_a", Critical: true}, {Service: "mobile_app_a"}}}, false},
+		{"empty device name", Approver{Devices: phones("")}, false},
+		{"device with notify prefix", Approver{Devices: phones("notify.mobile_app_x")}, false},
+		{"device upper case", Approver{Devices: phones("Mobile")}, false},
+		{"device too long", Approver{Devices: phones(strings.Repeat("a", 65))}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -119,11 +121,11 @@ func TestPutApproverChannels(t *testing.T) {
 func TestPutApproverRejects(t *testing.T) {
 	a, _ := newApprovers(t)
 	for name, ap := range map[string]Approver{
-		"empty user":         {Devices: []string{"mobile_app_x"}},
-		"user with space":    {UserID: "a b", Devices: []string{"mobile_app_x"}},
-		"long user":          {UserID: strings.Repeat("a", 65), Devices: []string{"mobile_app_x"}},
-		"unknown language":   {UserID: u1, Devices: []string{"mobile_app_x"}, Language: "fr"},
-		"language with tail": {UserID: u1, Devices: []string{"mobile_app_x"}, Language: "de-DE"},
+		"empty user":         {Devices: phones("mobile_app_x")},
+		"user with space":    {UserID: "a b", Devices: phones("mobile_app_x")},
+		"long user":          {UserID: strings.Repeat("a", 65), Devices: phones("mobile_app_x")},
+		"unknown language":   {UserID: u1, Devices: phones("mobile_app_x"), Language: "fr"},
+		"language with tail": {UserID: u1, Devices: phones("mobile_app_x"), Language: "de-DE"},
 	} {
 		if err := a.Put(context.Background(), ap); !errors.Is(err, ErrInvalidApprover) {
 			t.Errorf("%s: %v", name, err)
@@ -139,12 +141,12 @@ func TestCheckUI(t *testing.T) {
 		admin bool
 		ok    bool
 	}{
-		{Approver{Devices: []string{"mobile_app_a"}}, false, true},
-		{Approver{Devices: []string{"mobile_app_a"}}, true, true},
+		{Approver{Devices: phones("mobile_app_a")}, false, true},
+		{Approver{Devices: phones("mobile_app_a")}, true, true},
 		{Approver{UI: true}, true, true},
 		{Approver{UI: true, UICritical: true}, true, true},
 		{Approver{UI: true}, false, false},
-		{Approver{Devices: []string{"mobile_app_a"}, UI: true, UICritical: true}, false, false},
+		{Approver{Devices: phones("mobile_app_a"), UI: true, UICritical: true}, false, false},
 	}
 	for _, c := range cases {
 		err := CheckUI(c.ap, c.admin)
@@ -154,68 +156,113 @@ func TestCheckUI(t *testing.T) {
 	}
 }
 
-// configs are the eight valid channel configurations: 0, 1 or 2 devices × UI ×
-// critical actions in the UI.
+// Devices of the combination tables: P a phone (critical actions too, the default for
+// phones), M the Mac app (no critical actions, its default: no unlocking).
+var (
+	devP = Device{Service: "mobile_app_phone", Critical: true}
+	devM = Device{Service: "mobile_app_mac"}
+)
+
+// configs are the eleven valid channel configurations: devices none, P, M or P+M × UI
+// off, on or on for critical actions too (none + off has no channel and is invalid).
 var configs = map[string]Approver{
-	"UI":             {UI: true},
-	"UI+crit":        {UI: true, UICritical: true},
-	"1 dev":          {Devices: []string{"mobile_app_a"}},
-	"1 dev, UI":      {Devices: []string{"mobile_app_a"}, UI: true},
-	"1 dev, UI+crit": {Devices: []string{"mobile_app_a"}, UI: true, UICritical: true},
-	"2 dev":          {Devices: []string{"mobile_app_a", "mobile_app_b"}},
-	"2 dev, UI":      {Devices: []string{"mobile_app_a", "mobile_app_b"}, UI: true},
-	"2 dev, UI+crit": {Devices: []string{"mobile_app_a", "mobile_app_b"}, UI: true, UICritical: true},
+	"P":           {Devices: []Device{devP}},
+	"M":           {Devices: []Device{devM}},
+	"PM":          {Devices: []Device{devP, devM}},
+	"-, UI":       {UI: true},
+	"-, UI+crit":  {UI: true, UICritical: true},
+	"P, UI":       {Devices: []Device{devP}, UI: true},
+	"P, UI+crit":  {Devices: []Device{devP}, UI: true, UICritical: true},
+	"M, UI":       {Devices: []Device{devM}, UI: true},
+	"M, UI+crit":  {Devices: []Device{devM}, UI: true, UICritical: true},
+	"PM, UI":      {Devices: []Device{devP, devM}, UI: true},
+	"PM, UI+crit": {Devices: []Device{devP, devM}, UI: true, UICritical: true},
+}
+
+// notified names the devices of a channel set: "-", "P", "M" or "PM".
+func notified(services []string) string {
+	out := ""
+	for _, s := range services {
+		switch s {
+		case devP.Service:
+			out += "P"
+		case devM.Service:
+			out += "M"
+		default:
+			out += "?"
+		}
+	}
+	if out == "" {
+		return "-"
+	}
+	return out
 }
 
 // Combination table "channels" (F2): every valid configuration × administrator now ×
-// critical action. Devices always get every request; the UI only an administrator,
-// and a critical one only with ui_critical.
+// critical action. Ordinary requests go to every device, critical ones only to devices
+// with critical actions; the UI only for an administrator, a critical request only with
+// ui_critical.
 func TestChannelsCombinations(t *testing.T) {
 	cases := []struct {
 		config          string
 		admin, critical bool
-		devices         int
+		devices         string
 		ui, reachable   bool
 	}{
-		{"UI", false, false, 0, false, false},
-		{"UI", false, true, 0, false, false},
-		{"UI", true, false, 0, true, true},
-		{"UI", true, true, 0, false, false},
+		{"P", false, false, "P", false, true},
+		{"P", false, true, "P", false, true},
+		{"P", true, false, "P", false, true},
+		{"P", true, true, "P", false, true},
 
-		{"UI+crit", false, false, 0, false, false},
-		{"UI+crit", false, true, 0, false, false},
-		{"UI+crit", true, false, 0, true, true},
-		{"UI+crit", true, true, 0, true, true},
+		{"M", false, false, "M", false, true},
+		{"M", false, true, "-", false, false},
+		{"M", true, false, "M", false, true},
+		{"M", true, true, "-", false, false},
 
-		{"1 dev", false, false, 1, false, true},
-		{"1 dev", false, true, 1, false, true},
-		{"1 dev", true, false, 1, false, true},
-		{"1 dev", true, true, 1, false, true},
+		{"PM", false, false, "PM", false, true},
+		{"PM", false, true, "P", false, true},
+		{"PM", true, false, "PM", false, true},
+		{"PM", true, true, "P", false, true},
 
-		{"1 dev, UI", false, false, 1, false, true},
-		{"1 dev, UI", false, true, 1, false, true},
-		{"1 dev, UI", true, false, 1, true, true},
-		{"1 dev, UI", true, true, 1, false, true},
+		{"-, UI", false, false, "-", false, false},
+		{"-, UI", false, true, "-", false, false},
+		{"-, UI", true, false, "-", true, true},
+		{"-, UI", true, true, "-", false, false},
 
-		{"1 dev, UI+crit", false, false, 1, false, true},
-		{"1 dev, UI+crit", false, true, 1, false, true},
-		{"1 dev, UI+crit", true, false, 1, true, true},
-		{"1 dev, UI+crit", true, true, 1, true, true},
+		{"-, UI+crit", false, false, "-", false, false},
+		{"-, UI+crit", false, true, "-", false, false},
+		{"-, UI+crit", true, false, "-", true, true},
+		{"-, UI+crit", true, true, "-", true, true},
 
-		{"2 dev", false, false, 2, false, true},
-		{"2 dev", false, true, 2, false, true},
-		{"2 dev", true, false, 2, false, true},
-		{"2 dev", true, true, 2, false, true},
+		{"P, UI", false, false, "P", false, true},
+		{"P, UI", false, true, "P", false, true},
+		{"P, UI", true, false, "P", true, true},
+		{"P, UI", true, true, "P", false, true},
 
-		{"2 dev, UI", false, false, 2, false, true},
-		{"2 dev, UI", false, true, 2, false, true},
-		{"2 dev, UI", true, false, 2, true, true},
-		{"2 dev, UI", true, true, 2, false, true},
+		{"P, UI+crit", false, false, "P", false, true},
+		{"P, UI+crit", false, true, "P", false, true},
+		{"P, UI+crit", true, false, "P", true, true},
+		{"P, UI+crit", true, true, "P", true, true},
 
-		{"2 dev, UI+crit", false, false, 2, false, true},
-		{"2 dev, UI+crit", false, true, 2, false, true},
-		{"2 dev, UI+crit", true, false, 2, true, true},
-		{"2 dev, UI+crit", true, true, 2, true, true},
+		{"M, UI", false, false, "M", false, true},
+		{"M, UI", false, true, "-", false, false},
+		{"M, UI", true, false, "M", true, true},
+		{"M, UI", true, true, "-", false, false},
+
+		{"M, UI+crit", false, false, "M", false, true},
+		{"M, UI+crit", false, true, "-", false, false},
+		{"M, UI+crit", true, false, "M", true, true},
+		{"M, UI+crit", true, true, "-", true, true},
+
+		{"PM, UI", false, false, "PM", false, true},
+		{"PM, UI", false, true, "P", false, true},
+		{"PM, UI", true, false, "PM", true, true},
+		{"PM, UI", true, true, "P", false, true},
+
+		{"PM, UI+crit", false, false, "PM", false, true},
+		{"PM, UI+crit", false, true, "P", false, true},
+		{"PM, UI+crit", true, false, "PM", true, true},
+		{"PM, UI+crit", true, true, "P", true, true},
 	}
 	if len(cases) != len(configs)*4 {
 		t.Fatalf("%d cases, want every combination (%d)", len(cases), len(configs)*4)
@@ -225,10 +272,14 @@ func TestChannelsCombinations(t *testing.T) {
 		if !ok {
 			t.Fatalf("unknown config %q", c.config)
 		}
+		ap.UserID = u1
+		if err := ap.validate(); err != nil {
+			t.Fatalf("%s is no valid configuration: %v", c.config, err)
+		}
 		got := ap.Channels(c.critical, c.admin)
-		if len(got.Devices) != c.devices || !slices.Equal(got.Devices, ap.Devices) || got.UI != c.ui || got.Reachable() != c.reachable {
-			t.Errorf("%s, admin=%v, critical=%v: %+v reachable=%v, want %d devices, ui=%v, reachable=%v",
-				c.config, c.admin, c.critical, got, got.Reachable(), c.devices, c.ui, c.reachable)
+		if notified(got.Devices) != c.devices || got.UI != c.ui || got.Reachable() != c.reachable {
+			t.Errorf("%s, admin=%v, critical=%v: devices %s, ui=%v, reachable=%v; want %s, %v, %v", c.config, c.admin, c.critical,
+				notified(got.Devices), got.UI, got.Reachable(), c.devices, c.ui, c.reachable)
 		}
 	}
 }
@@ -241,22 +292,28 @@ func TestReachCombinations(t *testing.T) {
 		admin            bool
 		normal, critical bool
 	}{
-		{"UI", false, false, false},
-		{"UI", true, true, false},
-		{"UI+crit", false, false, false},
-		{"UI+crit", true, true, true},
-		{"1 dev", false, true, true},
-		{"1 dev", true, true, true},
-		{"1 dev, UI", false, true, true},
-		{"1 dev, UI", true, true, true},
-		{"1 dev, UI+crit", false, true, true},
-		{"1 dev, UI+crit", true, true, true},
-		{"2 dev", false, true, true},
-		{"2 dev", true, true, true},
-		{"2 dev, UI", false, true, true},
-		{"2 dev, UI", true, true, true},
-		{"2 dev, UI+crit", false, true, true},
-		{"2 dev, UI+crit", true, true, true},
+		{"P", false, true, true},
+		{"P", true, true, true},
+		{"M", false, true, false},
+		{"M", true, true, false},
+		{"PM", false, true, true},
+		{"PM", true, true, true},
+		{"-, UI", false, false, false},
+		{"-, UI", true, true, false},
+		{"-, UI+crit", false, false, false},
+		{"-, UI+crit", true, true, true},
+		{"P, UI", false, true, true},
+		{"P, UI", true, true, true},
+		{"P, UI+crit", false, true, true},
+		{"P, UI+crit", true, true, true},
+		{"M, UI", false, true, false},
+		{"M, UI", true, true, false},
+		{"M, UI+crit", false, true, false},
+		{"M, UI+crit", true, true, true},
+		{"PM, UI", false, true, true},
+		{"PM, UI", true, true, true},
+		{"PM, UI+crit", false, true, true},
+		{"PM, UI+crit", true, true, true},
 	}
 	if len(cases) != len(configs)*2 {
 		t.Fatalf("%d cases, want %d", len(cases), len(configs)*2)
@@ -272,7 +329,7 @@ func TestApproversReportDatabaseErrors(t *testing.T) {
 	a, closeDB := newApprovers(t)
 	_ = closeDB()
 	ctx := context.Background()
-	if err := a.Put(ctx, Approver{UserID: u1, Devices: []string{"mobile_app_x"}}); err == nil {
+	if err := a.Put(ctx, Approver{UserID: u1, Devices: phones("mobile_app_x")}); err == nil {
 		t.Error("Put succeeded")
 	}
 	if _, err := a.List(ctx); err == nil {

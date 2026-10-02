@@ -126,9 +126,9 @@ func (e *channelEnv) waitOpen(t *testing.T, n int) []Open {
 // leaves the request open.
 func TestAnswerInTheUICombinations(t *testing.T) {
 	uiConfigs := map[string]Approver{
-		"no UI":   {Devices: []string{"mobile_app_x"}},
-		"UI":      {Devices: []string{"mobile_app_x"}, UI: true},
-		"UI+crit": {Devices: []string{"mobile_app_x"}, UI: true, UICritical: true},
+		"no UI":   {Devices: phones("mobile_app_x")},
+		"UI":      {Devices: phones("mobile_app_x"), UI: true},
+		"UI+crit": {Devices: phones("mobile_app_x"), UI: true, UICritical: true},
 	}
 	cases := []struct {
 		member          bool
@@ -229,7 +229,7 @@ func TestUIAnswerChecksTheCurrentState(t *testing.T) {
 	for name, change := range map[string]func(e *channelEnv, t *testing.T){
 		"no longer administrator": func(e *channelEnv, _ *testing.T) { e.admins.put(u2, false) },
 		"UI switched off": func(e *channelEnv, t *testing.T) {
-			e.put(t, Approver{UserID: u2, Devices: []string{"mobile_app_anna"}})
+			e.put(t, Approver{UserID: u2, Devices: phones("mobile_app_anna")})
 		},
 		"approver removed": func(e *channelEnv, t *testing.T) {
 			if err := e.approvers.Remove(context.Background(), u2); err != nil {
@@ -243,7 +243,7 @@ func TestUIAnswerChecksTheCurrentState(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newChannelEnv(t, time.Minute)
-			e.put(t, Approver{UserID: u2, Devices: []string{"mobile_app_anna"}, UI: true})
+			e.put(t, Approver{UserID: u2, Devices: phones("mobile_app_anna"), UI: true})
 			e.admins.put(u2, true)
 			ch := e.ask(request())
 			open := e.waitOpen(t, 1)[0]
@@ -271,7 +271,7 @@ func (failingList) List(context.Context) ([]Approver, error) {
 // Negative catalog: unknown, guessed or empty request IDs and users.
 func TestUIAnswerRejectsUnknownRequestsAndUsers(t *testing.T) {
 	e := newChannelEnv(t, time.Minute)
-	e.put(t, Approver{UserID: u2, Devices: []string{"mobile_app_anna"}, UI: true})
+	e.put(t, Approver{UserID: u2, Devices: phones("mobile_app_anna"), UI: true})
 	e.admins.put(u2, true)
 	ch := e.ask(request())
 	open := e.waitOpen(t, 1)[0]
@@ -334,7 +334,7 @@ func TestSecondAnswerAfterTheEnd(t *testing.T) {
 				e := newChannelEnv(t, time.Minute)
 				var buf safeBuffer
 				e.svc.cfg.Logger = slog.New(slog.NewTextHandler(&buf, nil))
-				e.put(t, Approver{UserID: u2, Devices: []string{"mobile_app_anna"}, UI: true})
+				e.put(t, Approver{UserID: u2, Devices: phones("mobile_app_anna"), UI: true})
 				e.admins.put(u2, true)
 				req := request()
 				if end.want.Outcome == OutcomeTimeout {
@@ -372,7 +372,7 @@ func TestSecondAnswerAfterTheEnd(t *testing.T) {
 // the caller of Answer learns which.
 func TestPhoneAndUIRace(t *testing.T) {
 	e := newChannelEnv(t, time.Minute)
-	e.put(t, Approver{UserID: u2, Devices: []string{"mobile_app_anna"}, UI: true})
+	e.put(t, Approver{UserID: u2, Devices: phones("mobile_app_anna"), UI: true})
 	e.admins.put(u2, true)
 	for range 50 {
 		ch := e.ask(request())
@@ -495,7 +495,7 @@ func TestBellCombinations(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			e := newChannelEnv(t, time.Minute)
 			e.bellOn = c.bellOn
-			e.put(t, Approver{UserID: u2, Devices: []string{"mobile_app_anna"}, UI: true})
+			e.put(t, Approver{UserID: u2, Devices: phones("mobile_app_anna"), UI: true})
 			e.admins.put(u2, c.uiActive)
 			ch := e.ask(request())
 			id := e.waitOpen(t, 1)[0].ID
@@ -548,7 +548,7 @@ func TestBellIsClearedAtEveryEnd(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			e := newChannelEnv(t, time.Minute)
 			e.bellOn = true
-			e.put(t, Approver{UserID: u2, Devices: []string{"mobile_app_anna"}, UI: true})
+			e.put(t, Approver{UserID: u2, Devices: phones("mobile_app_anna"), UI: true})
 			e.admins.put(u2, true)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -602,7 +602,7 @@ func TestBellFailures(t *testing.T) {
 // afterwards change nothing.
 func TestCancel(t *testing.T) {
 	e := newChannelEnv(t, time.Minute)
-	e.put(t, Approver{UserID: u2, Devices: []string{"mobile_app_anna"}, UI: true})
+	e.put(t, Approver{UserID: u2, Devices: phones("mobile_app_anna"), UI: true})
 	e.admins.put(u2, true)
 	reqA, reqB := request(), request()
 	reqA.ClientID, reqB.ClientID = "hm-client:a", "hm-client:b"
@@ -651,7 +651,7 @@ func TestOpenRequest(t *testing.T) {
 	e := newChannelEnv(t, time.Hour)
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 	e.svc.cfg.Now = func() time.Time { return now }
-	e.put(t, Approver{UserID: u2, Devices: []string{"mobile_app_anna"}, UI: true})
+	e.put(t, Approver{UserID: u2, Devices: phones("mobile_app_anna"), UI: true})
 	e.admins.put(u2, true)
 	req := request()
 	req.Timeout = 90 * time.Second
@@ -705,7 +705,7 @@ func TestBellErrorsAreLogged(t *testing.T) {
 // stop nobody gets a "please approve", and the result is the cancellation.
 func TestCancelDuringDelivery(t *testing.T) {
 	e := newChannelEnv(t, time.Minute)
-	e.put(t, Approver{UserID: u1, Devices: []string{"mobile_app_a", "mobile_app_b", "mobile_app_c"}})
+	e.put(t, Approver{UserID: u1, Devices: phones("mobile_app_a", "mobile_app_b", "mobile_app_c")})
 	var once sync.Once
 	e.notifier.before = func(string) { once.Do(func() { e.svc.CancelAll() }) }
 	req := request()
@@ -728,7 +728,7 @@ func TestCancelDuringDelivery(t *testing.T) {
 // channel; an answer from their phone then counts as from a stranger.
 func TestWithdrawnApprover(t *testing.T) {
 	e := newChannelEnv(t, time.Minute)
-	e.put(t, Approver{UserID: u2, Devices: []string{"mobile_app_anna"}, UI: true})
+	e.put(t, Approver{UserID: u2, Devices: phones("mobile_app_anna"), UI: true})
 	e.admins.put(u2, true)
 	ch := e.ask(request())
 	id := e.waitOpen(t, 1)[0].ID
@@ -751,7 +751,7 @@ func TestWithdrawnApprover(t *testing.T) {
 // Negative catalog: phone, UI and cancellation at the same moment → exactly one result.
 func TestThreeWayRace(t *testing.T) {
 	e := newChannelEnv(t, time.Minute)
-	e.put(t, Approver{UserID: u2, Devices: []string{"mobile_app_anna"}, UI: true})
+	e.put(t, Approver{UserID: u2, Devices: phones("mobile_app_anna"), UI: true})
 	e.admins.put(u2, true)
 	for range 30 {
 		ch := e.ask(request())
@@ -780,5 +780,29 @@ func TestThreeWayRace(t *testing.T) {
 		if winners != 1 {
 			t.Fatalf("result %+v, UI %v, cancelled %d: %d winners", a.res, uiErr, cancelled, winners)
 		}
+	}
+}
+
+// A critical request goes only to devices with critical actions: the Mac app of u1 gets
+// the ordinary request, not the critical one. Without any such device and without the
+// UI, nobody can be reached for a critical request.
+func TestCriticalRequestsSkipDevicesWithoutCritical(t *testing.T) {
+	e := newChannelEnv(t, time.Minute)
+	e.put(t, Approver{UserID: u1, Devices: []Device{devP, devM}})
+	req := request()
+	req.Approvers = []string{u1}
+	for _, critical := range []bool{false, true} {
+		req.Critical = critical
+		ch := e.ask(req)
+		e.waitOpen(t, 1)
+		e.svc.CancelAll()
+		wait(t, ch)
+	}
+	if got := []int{countRequests(e.notifier, devP.Service), countRequests(e.notifier, devM.Service)}; got[0] != 2 || got[1] != 1 {
+		t.Errorf("requests to phone and Mac = %v, want [2 1]", got)
+	}
+	e.put(t, Approver{UserID: u1, Devices: []Device{devM}})
+	if _, err := e.svc.Ask(context.Background(), req); !errors.Is(err, ErrNoApprover) {
+		t.Errorf("critical with only the Mac app: %v", err)
 	}
 }

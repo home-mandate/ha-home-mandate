@@ -1,12 +1,15 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 -- Approval channels per person (decision F2): any number of mobile_app devices (phone,
--- Mac app, tablet) instead of exactly one, and optionally answering in the Home-Mandate
--- UI, for critical actions only with ui_critical. At least one channel is checked in Go.
+-- Mac app, tablet) instead of exactly one, each with or without critical requests, and
+-- optionally answering in the Home-Mandate UI, for critical actions only with
+-- ui_critical. At least one channel is checked in Go. Existing devices are phones and
+-- keep critical requests.
 
 -- +goose Up
 CREATE TABLE approver_devices (
     user_id        TEXT NOT NULL REFERENCES approvers (user_id) ON DELETE CASCADE,
     notify_service TEXT NOT NULL,
+    critical       INTEGER NOT NULL DEFAULT 1 CHECK (critical IN (0, 1)),
     PRIMARY KEY (user_id, notify_service)
 ) STRICT;
 
