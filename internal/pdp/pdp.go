@@ -66,6 +66,7 @@ func New(cfg Config) *PDP {
 type Decision struct {
 	Result            evaluator.Result
 	Resource          evaluator.Resource
+	Action            string
 	Known             bool // the entity is in the catalog
 	Time              time.Time
 	TimeZone          string
@@ -77,7 +78,7 @@ type Decision struct {
 // Decide evaluates action on entityID for the agent clientID. A store error is returned
 // together with a deny decision.
 func (p *PDP) Decide(ctx context.Context, clientID, entityID, action string) (Decision, error) {
-	d := Decision{Time: p.cfg.Now(), TimeZone: p.cfg.TimeZone(), Resource: evaluator.Resource{EntityID: entityID}}
+	d := Decision{Time: p.cfg.Now(), TimeZone: p.cfg.TimeZone(), Resource: evaluator.Resource{EntityID: entityID}, Action: action}
 	if dev, ok := p.cfg.Catalog.Lookup(entityID); ok {
 		d.Known, d.Resource.Category, d.Resource.Area = true, dev.Category, dev.Area
 	}
