@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	github.com/coder/websocket v1.8.15
-	github.com/mandate-spec/mandate-spec v0.1.0-alpha.2
+	github.com/mandate-spec/mandate-spec v0.1.0-alpha.3
 	github.com/pressly/goose/v3 v3.28.0
 	modernc.org/sqlite v1.60.1
 )

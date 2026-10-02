@@ -53,7 +53,6 @@ for admins. Home-Mandate sends only a fixed, allowlisted set of WebSocket comman
 |---|---|---|
 | `mandate-spec` | Vendor-neutral specification, schema, conformance cases, reference evaluation, test tool | CC BY 4.0 / Apache 2.0 |
 | `home-mandate` (this one) | Gateway, local UI, Home Assistant app, relay | AGPL-3.0 |
-| `home-mandate-cloud` (private) | Portal, website, billing, operations | proprietary |
 
 Home-Mandate embeds the reference evaluation from `mandate-spec` as a Go module and must pass
 all conformance cases.

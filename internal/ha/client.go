@@ -77,6 +77,10 @@ type Config struct {
 	RootCAs *x509.CertPool
 	// Logger receives connection events; nothing is logged when nil.
 	Logger *slog.Logger
+	// OnConnect, if set, runs in its own goroutine after every successful
+	// authentication, e.g. to reload state that may have changed while disconnected.
+	// Its context ends with the connection.
+	OnConnect func(ctx context.Context)
 
 	ReadLimit    int64 // maximum size of one message in bytes
 	AuthTimeout  time.Duration
@@ -310,6 +314,9 @@ func (c *Client) session(ctx context.Context) (connectedFor time.Duration, err e
 	wg.Go(func() { readErr <- c.readLoop(sctx, conn) })
 	wg.Go(func() { c.resubscribe(sctx) })
 	wg.Go(func() { c.pingLoop(sctx, conn) })
+	if c.cfg.OnConnect != nil {
+		wg.Go(func() { c.cfg.OnConnect(sctx) })
+	}
 
 	err = <-readErr
 	cancel()

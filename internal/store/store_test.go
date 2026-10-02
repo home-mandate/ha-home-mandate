@@ -27,6 +27,16 @@ func openTemp(t *testing.T) (*store.Store, string) {
 	return s, path
 }
 
+func reopen(t *testing.T, path string) *store.Store {
+	t.Helper()
+	s, err := store.Open(context.Background(), path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
 func TestOpenCreatesDatabaseWithOwnerOnlyPermissions(t *testing.T) {
 	_, path := openTemp(t)
 

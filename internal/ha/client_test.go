@@ -751,3 +751,47 @@ func TestConcurrentRequestsUseIncreasingIDs(t *testing.T) {
 		t.Errorf("ids not strictly increasing in arrival order: %v", ids)
 	}
 }
+
+func TestOnConnectRunsAfterEveryConnectionAndCanUseTheClient(t *testing.T) {
+	f := newFakeHA(t)
+	f.handle("get_config", func(fakeMsg) (any, *CommandError) { return map[string]any{"time_zone": "Europe/Berlin"}, nil })
+	calls := make(chan string, 4)
+	var c *Client
+	cfg := testConfig(f.url())
+	cfg.OnConnect = func(ctx context.Context) {
+		conf, err := c.GetConfig(ctx)
+		if err != nil {
+			calls <- "error: " + err.Error()
+			return
+		}
+		calls <- conf.TimeZone
+	}
+	c, err := New(cfg) // assigned before Run starts, so OnConnect sees it
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = c.Run(ctx)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	for i := 1; i <= 2; i++ {
+		select {
+		case got := <-calls:
+			if got != "Europe/Berlin" {
+				t.Fatalf("connection %d: OnConnect got %q", i, got)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("connection %d: OnConnect not called", i)
+		}
+		if i == 1 {
+			f.dropAll()
+		}
+	}
+}
