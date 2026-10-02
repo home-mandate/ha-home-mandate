@@ -73,4 +73,53 @@ describe('run', () => {
       rmSync(dist, { recursive: true });
     }
   });
+
+  function withMockChunk(content: string, test: (dist: string) => void) {
+    const dist = mkdtempSync(join(tmpdir(), 'dist-'));
+    try {
+      mkdirSync(join(dist, 'assets'));
+      writeFileSync(join(dist, 'assets', 'mock-Ab12.js'), content);
+      test(dist);
+    } finally {
+      rmSync(dist, { recursive: true });
+    }
+  }
+
+  it('rejects any mock chunk in a release build', () => {
+    withMockChunk('const x = 1;', (dist) => {
+      expect(run(dist)).toEqual([`${join('assets', 'mock-Ab12.js')}: mock client in a release build`]);
+    });
+  });
+
+  it('allows the fixture hosts in the mock chunk of a test build, and nothing else', () => {
+    withMockChunk('"https://home.example:8765/mcp" "https://claude.ai/oauth/x" "https://mandate-spec.org/mandate/v0"', (dist) => {
+      expect(run(dist, { fixtures: true })).toEqual([]);
+    });
+    withMockChunk('"https://evil.example.com/x.js"', (dist) => {
+      expect(run(dist, { fixtures: true })).toEqual([`${join('assets', 'mock-Ab12.js')}: external reference https://evil.example.com/x.js`]);
+    });
+  });
+
+  it('finds the mock client in a release build even when it was merged into another chunk', () => {
+    const dist = mkdtempSync(join(tmpdir(), 'dist-'));
+    try {
+      mkdirSync(join(dist, 'assets'));
+      writeFileSync(join(dist, 'assets', 'index-1.js'), 'window.hmMock = control;');
+      expect(run(dist)).toEqual([`${join('assets', 'index-1.js')}: mock client in a release build`]);
+      expect(run(dist, { fixtures: true })).toEqual([]);
+    } finally {
+      rmSync(dist, { recursive: true });
+    }
+  });
+
+  it('allows fixture hosts only in the mock chunk', () => {
+    const dist = mkdtempSync(join(tmpdir(), 'dist-'));
+    try {
+      mkdirSync(join(dist, 'assets'));
+      writeFileSync(join(dist, 'assets', 'index-1.js'), '"https://claude.ai/x"');
+      expect(run(dist, { fixtures: true })).toEqual([`${join('assets', 'index-1.js')}: external reference https://claude.ai/x`]);
+    } finally {
+      rmSync(dist, { recursive: true });
+    }
+  });
 });

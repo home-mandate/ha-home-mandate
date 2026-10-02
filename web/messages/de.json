@@ -561,5 +561,11 @@
   "change_from_to": "v{version}: {from}",
   "countdown_seconds_left": "{count, plural, one {Noch {count, number} Sekunde} other {Noch {count, number} Sekunden}}",
   "countdown_expired": "Zeit abgelaufen",
-  "common_copy_failed": "Kopieren war nicht möglich. Der Text ist markiert, kopiere ihn mit Strg+C."
+  "common_copy_failed": "Kopieren war nicht möglich. Der Text ist markiert, kopiere ihn mit Strg+C.",
+  "skip_to_content": "Zum Inhalt springen",
+  "banner_conn_title": "Verbindung zu Home-Mandate unterbrochen",
+  "banner_conn_body": "Diese Anzeige ist auf dem Stand von {time}. Es wird erneut verbunden … Mandate und Not-Aus wirken weiter.",
+  "banner_tls_title": "Kein TLS-Zertifikat",
+  "app_error_title": "Home-Mandate ist gerade nicht erreichbar",
+  "estop_failed": "Not-Aus konnte nicht ausgelöst werden. Bitte sofort erneut versuchen."
 }

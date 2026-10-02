@@ -2,7 +2,7 @@
 
 // Serves dist/ the way Home Assistant Ingress does: under a per-installation path, with
 // the Content Security Policy the gateway will send (internal/webui, week 4).
-// Usage: INGRESS_PATH=/api/hassio_ingress/<token>/ PORT=4173 node scripts/serve-ingress.ts
+// Usage: INGRESS_PATH=/api/hassio_ingress/<token>/ PORT=4173 [DIST=dist-mock] node scripts/serve-ingress.ts
 
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -47,7 +47,7 @@ export function contentType(file: string): string {
 }
 
 if (import.meta.main) {
-  const dist = join(process.cwd(), 'dist');
+  const dist = join(process.cwd(), process.env.DIST ?? 'dist');
   const prefix = normalizePrefix(process.env.INGRESS_PATH ?? '/');
   const port = Number(process.env.PORT ?? 4173);
   createServer((req, res) => {

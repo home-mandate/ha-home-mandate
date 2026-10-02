@@ -7,7 +7,7 @@ import svelte from 'eslint-plugin-svelte';
 import globals from 'globals';
 
 export default defineConfig(
-  { ignores: ['dist/', 'dist-pseudo/', 'coverage/', 'src/lib/paraglide/', 'playwright-report/', 'test-results/'] },
+  { ignores: ['dist/', 'dist-pseudo/', 'dist-mock/', 'coverage/', 'src/lib/paraglide/', 'playwright-report/', 'test-results/'] },
   js.configs.recommended,
   ts.configs.recommended,
   svelte.configs.recommended,

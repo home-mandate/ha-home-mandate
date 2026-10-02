@@ -1,0 +1,75 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!--
+  Banners under the header, in the order of design README section 5: emergency stop ›
+  audit chain broken › Home Assistant unreachable › TLS missing; then the lost live
+  connection (README section 7), shown only after 5 s. They leave when the cause is gone.
+-->
+<script lang="ts">
+  import type { SystemStatus } from '../api/types.ts';
+  import { formatNumber, formatTime } from '../format.ts';
+  import { m } from '../i18n.ts';
+  import Banner from './Banner.svelte';
+
+  /** README section 7: the connection banner shows after 5 s without the stream. */
+  const CONNECTION_GRACE_MS = 5000;
+
+  interface Props {
+    system: SystemStatus;
+    /** Browser time the live stream was lost; null while connected. */
+    downSince: number | null;
+    /** Current browser time; ticks so the 5 s grace can pass. */
+    now: number;
+    locale: string;
+    timeZone: string;
+    onliftestop: () => void;
+    onchain: (seq: number) => void;
+  }
+
+  let { system, downSince, now, locale, timeZone, onliftestop, onchain }: Props = $props();
+
+  const ctx = $derived({ locale, timeZone });
+  /** A time from the server; an unreadable one shows nothing instead of breaking the frame. */
+  function at(iso: string | null): string {
+    const date = iso ? new Date(iso) : null;
+    return date && !Number.isNaN(date.getTime()) ? formatTime(date, ctx) : '';
+  }
+  const brokenAt = $derived(system.chain.valid ? null : system.chain.broken_at_seq);
+  const connectionLost = $derived(downSince !== null && now - downSince >= CONNECTION_GRACE_MS);
+</script>
+
+<div class="stack">
+  {#if system.emergency_stop.active}
+    <Banner
+      flush
+      kind="estop"
+      title={m.banner_estop_title()}
+      body={m.banner_estop_body({ time: at(system.emergency_stop.since) })}
+      action={{ label: m.banner_estop_action(), onclick: onliftestop }}
+    />
+  {/if}
+  {#if brokenAt !== null}
+    <Banner
+      flush
+      kind="critical"
+      title={m.banner_chain_title({ number: formatNumber(brokenAt, ctx) })}
+      body={m.banner_chain_body()}
+      action={{ label: m.banner_chain_action(), onclick: () => onchain(brokenAt) }}
+    />
+  {/if}
+  {#if !system.ha.connected}
+    <Banner flush kind="warning" title={m.banner_ha_title()} body={m.banner_ha_body({ time: at(system.ha.since) })} />
+  {/if}
+  {#if !system.tls.present}
+    <Banner flush kind="warning" title={m.banner_tls_title()} body={m.set_tls_missing()} />
+  {/if}
+  {#if connectionLost && downSince !== null}
+    <Banner flush kind="warning" title={m.banner_conn_title()} body={m.banner_conn_body({ time: formatTime(new Date(downSince), ctx) })} />
+  {/if}
+</div>
+
+<style>
+  .stack {
+    display: flex;
+    flex-direction: column;
+  }
+</style>

@@ -3,7 +3,8 @@
 // Checks the production build (docs/TESTING.md section 4, UI): no references to other
 // hosts, only relative asset paths (Ingress serves the UI under a per-installation
 // path), and nothing inline that a CSP without 'unsafe-inline' would block.
-// Run after `vite build` with: node scripts/check-dist.ts [dir], dir defaults to dist
+// Run after `vite build` with: node scripts/check-dist.ts [dir] [--fixtures]; dir defaults to
+// dist, --fixtures marks a test build (mock client with example data) like dist-mock.
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -35,10 +36,28 @@ export function isAllowedUrl(raw: string): boolean {
   return ALLOWED_ORIGINS.some((a) => url.origin === a.origin && url.pathname.startsWith(a.path));
 }
 
-export function checkFile(name: string, content: string): string[] {
+/** The mock client (test builds only) holds example data with these hosts; nothing loads them. */
+const FIXTURE_ORIGINS = new Set(['https://home.example:8765', 'https://claude.ai', 'https://mandate-spec.org', 'https://agent.example']);
+const MOCK_CHUNK = /(^|[\\/])mock-[\w-]+\.js$/;
+/** Strings only the mock client and its fixtures contain, wherever a bundler puts them. */
+const MOCK_MARKERS = ['hmMock', 'csrf-fixture-token'];
+
+function isFixtureUrl(raw: string): boolean {
+  try {
+    return FIXTURE_ORIGINS.has(new URL(raw).origin);
+  } catch {
+    return false;
+  }
+}
+
+export function checkFile(name: string, content: string, fixtures = false): string[] {
   const problems: string[] = [];
+  const mockChunk = MOCK_CHUNK.test(name);
+  if (!fixtures && (mockChunk || MOCK_MARKERS.some((marker) => content.includes(marker)))) {
+    return [`${name}: mock client in a release build`];
+  }
   for (const [url] of content.matchAll(ABSOLUTE_URL)) {
-    if (!isAllowedUrl(url)) problems.push(`${name}: external reference ${url}`);
+    if (!isAllowedUrl(url) && !(mockChunk && isFixtureUrl(url))) problems.push(`${name}: external reference ${url}`);
   }
   for (const [url] of content.matchAll(PROTOCOL_RELATIVE)) {
     problems.push(`${name}: external reference ${url}`);
@@ -69,17 +88,20 @@ function checkHtml(name: string, html: string): string[] {
   return problems;
 }
 
-export function run(dist: string): string[] {
+/** run checks every text file; `fixtures` marks a test build that may contain the mock client. */
+export function run(dist: string, options: { fixtures?: boolean } = {}): string[] {
   return readdirSync(dist, { recursive: true, withFileTypes: true })
     .filter((e) => e.isFile() && !BINARY.test(e.name))
     .flatMap((e) => {
       const path = join(e.parentPath, e.name);
-      return checkFile(relative(dist, path), readFileSync(path, 'utf8'));
+      return checkFile(relative(dist, path), readFileSync(path, 'utf8'), options.fixtures);
     });
 }
 
 if (import.meta.main) {
-  const problems = run(join(process.cwd(), process.argv[2] ?? 'dist'));
+  const args = process.argv.slice(2);
+  const dir = args.find((a) => !a.startsWith('--')) ?? 'dist';
+  const problems = run(join(process.cwd(), dir), { fixtures: args.includes('--fixtures') });
   for (const p of problems) console.error(p);
   if (problems.length > 0) process.exit(1);
   console.log('dist: ok');

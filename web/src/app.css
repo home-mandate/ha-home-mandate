@@ -5,6 +5,7 @@
 @import './lib/tokens/tokens.css';
 
 :root {
+  --hm-page-pad: var(--hm-space-8);
   font-family: var(--hm-font-sans);
   font-size: 100%;
   line-height: var(--hm-line-height-normal);
@@ -14,6 +15,18 @@
 
 body {
   margin: 0;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 100dvh;
+}
+
+@media (max-width: 767px) {
+  :root {
+    --hm-page-pad: var(--hm-space-4);
+  }
 }
 
 /* Visible focus on every interactive element (design README section 4). */

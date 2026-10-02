@@ -24,7 +24,8 @@ export default defineConfig({
   webServer: {
     command: 'node scripts/serve-ingress.ts',
     url: `http://127.0.0.1:${port}${ingressPath}`,
-    env: { INGRESS_PATH: ingressPath, PORT: String(port) },
+    // The UI needs data: the static test build runs against the mock client.
+    env: { INGRESS_PATH: ingressPath, PORT: String(port), DIST: 'dist-mock' },
     reuseExistingServer: false,
   },
 });

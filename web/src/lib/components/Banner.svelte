@@ -12,14 +12,16 @@
     title?: string;
     body: string;
     action?: { label: string; onclick: () => void };
+    /** Full width under the header: no radius, only a bottom border. */
+    flush?: boolean;
   }
 
-  let { kind, title, body, action }: Props = $props();
+  let { kind, title, body, action, flush = false }: Props = $props();
 
   const ICONS: Record<Props['kind'], IconName> = { info: 'info', warning: 'warning', critical: 'warning', estop: 'power' };
 </script>
 
-<div class="banner {kind}" role={kind === 'info' ? 'status' : 'alert'}>
+<div class="banner {kind}" class:flush role={kind === 'info' ? 'status' : 'alert'}>
   <span class="icon"><Icon name={ICONS[kind]} /></span>
   <div class="text">
     {#if title}<strong>{title}</strong>{/if}
@@ -37,6 +39,15 @@
     padding: var(--hm-space-3) var(--hm-space-4);
     border-radius: 10px;
     border: var(--hm-border-width) solid;
+  }
+  .flush {
+    border-radius: 0;
+    border-inline: none;
+    border-block-start: none;
+    padding-inline: var(--hm-page-pad, var(--hm-space-8));
+  }
+  .flush .text {
+    flex-basis: 240px;
   }
   .icon {
     display: flex;

@@ -14,3 +14,5 @@ web/coverage/
 web/test-results/
 web/playwright-report/
 web/dist-pseudo/
+web/dist-mock/
+web/.env*.local

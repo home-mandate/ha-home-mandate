@@ -1,38 +1,165 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/svelte';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import App from './App.svelte';
+import { createMockClient, type MockOptions } from './lib/api/mock.ts';
+import type { ApiClient, EventHandlers } from './lib/api/client.ts';
+import { AppState } from './lib/app/state.svelte.ts';
 import { setLocale } from './lib/paraglide/runtime.js';
 
-afterEach(() => {
+beforeEach(() => {
+  setLocale('en', { reload: false });
+  // jsdom has no animation frames; a browser does (Playwright covers the real path).
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(performance.now()), 16));
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => clearTimeout(id));
+});
+afterEach(async () => {
   cleanup();
   window.location.hash = '';
+  // Let the hashchange of this reset fire now, not into the next test's app.
+  await new Promise((r) => setTimeout(r, 0));
+  document.body.replaceChildren();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
-describe('App', () => {
-  it('shows the overview in English', () => {
-    setLocale('en', { reload: false });
-    render(App);
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Overview');
-    expect(screen.getByRole('navigation', { name: 'Sections' })).toBeTruthy();
+async function start(options: MockOptions = {}, hash = '') {
+  window.location.hash = hash;
+  const api = createMockClient(options);
+  const app = new AppState(api);
+  render(App, { app });
+  await app.start();
+  await tick();
+  return { api, app };
+}
+
+const navigate = async (hash: string) => {
+  window.location.hash = hash;
+  window.dispatchEvent(new HashChangeEvent('hashchange'));
+  await tick();
+};
+
+describe('App frame', () => {
+  it('shows the sections with the current one marked, and the page title', async () => {
+    await start({}, '#/mandates/mandate-voice');
+    const nav = screen.getByRole('navigation', { name: 'Sections' });
+    const links = within(nav).getAllByRole('link');
+    expect(links.map((l) => l.textContent)).toEqual(['Overview', 'Agents', 'Mandates', 'Audit log', 'Settings']);
+    expect(within(nav).getByRole('link', { name: 'Mandates' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Mandates');
   });
 
-  it('shows the overview in German', () => {
-    setLocale('de', { reload: false });
-    render(App);
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Übersicht');
-  });
-
-  it('shows a not-found page for unknown routes and follows hash changes', async () => {
-    setLocale('en', { reload: false });
-    window.location.hash = '#/nowhere';
-    render(App);
+  it('shows not found with a way back, and follows hash changes', async () => {
+    await start({}, '#/nowhere');
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Page not found');
+    expect(screen.getByRole('link', { name: 'Go to overview' }).getAttribute('href')).toBe('#/');
+    await navigate('#/settings');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Settings');
+  });
 
-    window.location.hash = '#/';
-    window.dispatchEvent(new HashChangeEvent('hashchange'));
-    await Promise.resolve();
-    expect((await screen.findByRole('heading', { level: 1 })).textContent).toBe('Overview');
+  it('triggers the emergency stop through the hold sheet', async () => {
+    const { app } = await start();
+    await fireEvent.click(screen.getByRole('button', { name: 'Emergency stop' }));
+    const sheet = await screen.findByRole('alertdialog', { name: 'Trigger emergency stop?' });
+    expect(within(sheet).getByRole('button', { name: /Press and hold/ })).toBeTruthy();
+    // Assistive technology: one click starts the run (HoldButton); here the result matters.
+    await app.setEmergencyStop(true);
+    await tick();
+    expect(screen.getByRole('button', { name: 'Emergency stop on' })).toBeTruthy();
+    expect(screen.getAllByRole('alert').some((a) => a.textContent?.includes('Emergency stop active'))).toBe(true);
+  });
+
+  it('sends the active emergency stop button to lifting it in the settings', async () => {
+    const { app } = await start();
+    await app.setEmergencyStop(true);
+    await tick();
+    await fireEvent.click(screen.getByRole('button', { name: 'Emergency stop on' }));
+    expect(window.location.hash).toBe('#/settings/estop');
+  });
+
+  it('orders the banners: emergency stop, chain, Home Assistant', async () => {
+    const { api, app } = await start();
+    api.control.setHaConnected(false);
+    api.control.breakChain(18342);
+    await app.setEmergencyStop(true);
+    await tick();
+    // The toast region is an (empty) alert too; the banners carry a title.
+    const titles = screen
+      .getAllByRole('alert')
+      .map((a) => a.querySelector('strong')?.textContent)
+      .filter(Boolean);
+    expect(titles).toEqual(['Emergency stop active', 'Audit chain broken at entry no. 18,342', 'Home Assistant unreachable']);
+  });
+
+  it('opens the broken entry from the chain banner', async () => {
+    const { api } = await start();
+    api.control.breakChain(7);
+    await tick();
+    await fireEvent.click(screen.getByRole('button', { name: 'Go to entry' }));
+    expect(window.location.hash).toBe('#/audit/7');
+  });
+
+  it('shows the lost connection only after 5 s', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    vi.setSystemTime(new Date('2026-10-02T17:42:00Z'));
+    let handlers: EventHandlers | null = null;
+    const base = createMockClient();
+    const api: ApiClient = { ...base, events: (h) => ((handlers = h), h.onState('open'), { reconnect() {}, close() {} }) };
+    const app = new AppState(api);
+    render(App, { app });
+    await app.start();
+    (handlers as unknown as EventHandlers).onState('closed');
+    vi.advanceTimersByTime(4000);
+    await tick();
+    expect(screen.queryByText('Connection to Home-Mandate lost')).toBeNull();
+    vi.advanceTimersByTime(1000);
+    await tick();
+    expect(screen.getByText('Connection to Home-Mandate lost')).toBeTruthy();
+  });
+
+  it('shows no access without sections or emergency stop for a non-admin', async () => {
+    await start({ failures: { session: 'forbidden' } });
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('No access');
+    expect(screen.queryByRole('navigation')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Emergency stop/ })).toBeNull();
+  });
+
+  it('says what keeps working when the service cannot be reached', async () => {
+    await start({ failures: { system: 'unavailable' } });
+    const alerts = screen.getAllByRole('alert').map((a) => a.textContent ?? '');
+    expect(alerts.some((t) => t.includes('keep working'))).toBe(true);
+  });
+
+  it('keeps the sheet open and reports inside it when triggering fails', async () => {
+    const api = createMockClient({ failures: { setEmergencyStop: 'unavailable' } });
+    const app = new AppState(api);
+    render(App, { app });
+    await app.start();
+    await tick();
+    await fireEvent.click(screen.getByRole('button', { name: 'Emergency stop' }));
+    const sheet = await screen.findByRole('alertdialog');
+    const hold = within(sheet).getByRole('button', { name: /Press and hold/ });
+    // Assistive technology path, in real time: a click without a hold runs the 2 s on its own.
+    await fireEvent.click(hold, { detail: 0 });
+    await vi.waitFor(() => expect(within(sheet).getByRole('alert').textContent).toContain('could not be triggered'), {
+      timeout: 4000,
+    });
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+  });
+
+  it('moves focus to the content and updates the title on navigation', async () => {
+    await start();
+    await navigate('#/agents');
+    expect(document.activeElement?.id).toBe('main');
+    expect(document.title).toBe('Agents – Home-Mandate');
+  });
+
+  it('moves focus to the content with the skip link', async () => {
+    await start();
+    await fireEvent.click(screen.getByRole('link', { name: 'Skip to content' }));
+    expect(document.activeElement?.id).toBe('main');
+    expect(window.location.hash).toBe('');
   });
 });
