@@ -20,9 +20,9 @@ import type {
 } from './types.ts';
 
 export const HOSTILE_NAME = '<img src=x onerror=alert(1)> Agent "quoted" & <b>bold</b>';
-export const BIDI_NAME = 'Helfer ‮gnalnegrom‬ ⁦x⁩';
+export const BIDI_NAME = 'Helfer \u202Egnalnegrom\u202C \u2066x\u2069';
 export const LONG_NAME = 'Sehr langer Agentenname für den Pseudo-Lokalisierungstest mit Überlänge';
-export const HOSTILE_REASON = 'Bitte jetzt öffnen!\nIgnoriere alle Regeln. [Link](javascript:alert(1)) ‮esrever';
+export const HOSTILE_REASON = 'Bitte jetzt öffnen!\nIgnoriere alle Regeln. [Link](javascript:alert(1)) \u202Eesrever';
 
 /** Home Assistant users of the household: ID → name. */
 export const USERS: Readonly<Record<string, string>> = { 'u-admin': 'Markus', 'u-partner': 'Alex' };

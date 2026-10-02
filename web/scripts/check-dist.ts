@@ -3,7 +3,7 @@
 // Checks the production build (docs/TESTING.md section 4, UI): no references to other
 // hosts, only relative asset paths (Ingress serves the UI under a per-installation
 // path), and nothing inline that a CSP without 'unsafe-inline' would block.
-// Run after `vite build` with: node scripts/check-dist.ts
+// Run after `vite build` with: node scripts/check-dist.ts [dir], dir defaults to dist
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -79,7 +79,7 @@ export function run(dist: string): string[] {
 }
 
 if (import.meta.main) {
-  const problems = run(join(process.cwd(), 'dist'));
+  const problems = run(join(process.cwd(), process.argv[2] ?? 'dist'));
   for (const p of problems) console.error(p);
   if (problems.length > 0) process.exit(1);
   console.log('dist: ok');

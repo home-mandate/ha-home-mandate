@@ -149,11 +149,17 @@ Every line is at least one test. New attack ideas are added here before they are
 
 Every commit automatically checks:
 - **Completeness:** every key exists in `de` and `en`; no orphaned keys.
-- **Placeholders:** same variables in all languages, valid plural variants.
+- **Placeholders:** same variables in all languages; every message is valid ICU MessageFormat,
+  every plural or select has an `other` case, and numbers are written `{count, number}` (never
+  `#`, which would not be formatted for the locale).
+- **Usage:** every catalog key is used in the sources. Keys of screens not built yet are listed
+  in `web/scripts/i18n-pending.json`; a listed key that is used, or that left the catalog, fails
+  the check. The list must be empty for the release.
 - **No hard-coded texts:** lint rule against visible strings in Svelte components outside the
   message catalogs.
-- **Pseudo-localization:** an artificial locale with texts lengthened by 40 % and special
-  characters; Playwright checks that nothing is truncated or overflows.
+- **Pseudo-localization:** a test build (`pnpm build:pseudo`) with texts lengthened by 40 % and
+  accented characters; Playwright checks that nothing is truncated or overflows. The release
+  build does not contain it.
 - **Formatting:** unit tests for date, time, numbers and relative times in `de-DE` and
   `en-US`, each with a household time zone that differs from the test machine's time zone;
   edge case DST change on 2026-10-25.

@@ -1,0 +1,292 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Design tokens from the Claude Design handoff (single source of all values). Components use
+   only var(--hm-*), never literal colours, sizes or durations. */
+/* Home-Mandate · design tokens v0.1
+   Target: web/src/lib/tokens/tokens.css — CSS custom properties only.
+   Theme: prefers-color-scheme; [data-hm-theme] forces a theme (used by previews / tests). */
+
+:root {
+  color-scheme: light dark;
+
+  /* Type — system stack: no bytes shipped, CSP-trivial, native next to HA, OS fonts cover Arabic/Hebrew for RTL */
+  --hm-font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --hm-font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", "Noto Sans Mono", Menlo, Consolas, monospace;
+  --hm-font-size-xs: 0.8125rem;   /* 13 – minimum, meta only */
+  --hm-font-size-sm: 0.875rem;    /* 14 – labels, table cells */
+  --hm-font-size-md: 1rem;        /* 16 – body */
+  --hm-font-size-lg: 1.125rem;    /* 18 – card titles */
+  --hm-font-size-xl: 1.375rem;    /* 22 – section titles, tile values */
+  --hm-font-size-2xl: 1.75rem;    /* 28 – page titles */
+  --hm-font-size-3xl: 2.125rem;   /* 34 – status block, countdown */
+  --hm-line-height-tight: 1.25;
+  --hm-line-height-normal: 1.5;
+  --hm-font-weight-regular: 400;
+  --hm-font-weight-medium: 500;
+  --hm-font-weight-semibold: 600;
+
+  /* Space — 4px base */
+  --hm-space-0-5: 2px;
+  --hm-space-1: 4px;
+  --hm-space-2: 8px;
+  --hm-space-3: 12px;
+  --hm-space-4: 16px;
+  --hm-space-5: 20px;
+  --hm-space-6: 24px;
+  --hm-space-8: 32px;
+  --hm-space-10: 40px;
+  --hm-space-12: 48px;
+  --hm-space-16: 64px;
+
+  /* Radius */
+  --hm-radius-sm: 4px;
+  --hm-radius-md: 8px;
+  --hm-radius-lg: 12px;
+  --hm-radius-xl: 16px;
+  --hm-radius-pill: 999px;
+
+  /* Sizes */
+  --hm-size-touch: 44px;          /* min hit target (WCAG 2.5.8 + brief) */
+  --hm-size-control: 40px;        /* desktop control height; padded to 44 hit area */
+  --hm-size-control-sm: 32px;
+  --hm-size-icon: 20px;
+  --hm-border-width: 1px;
+  --hm-focus-width: 2px;
+  --hm-focus-offset: 2px;
+  --hm-content-max: 1280px;
+
+  /* Motion — orientation only */
+  --hm-motion-duration-fast: 120ms;
+  --hm-motion-duration-base: 200ms;
+  --hm-motion-duration-slow: 320ms;
+  --hm-motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --hm-motion-easing-enter: cubic-bezier(0, 0, 0, 1);
+  --hm-motion-easing-exit: cubic-bezier(0.4, 0, 1, 1);
+  --hm-motion-hold-confirm: 2000ms; /* emergency stop press-and-hold */
+
+  /* Breakpoints (reference; media queries need literals) */
+  --hm-bp-sm: 480px;
+  --hm-bp-md: 768px;
+  --hm-bp-lg: 1024px;
+  --hm-bp-xl: 1280px;
+
+  /* Layers */
+  --hm-z-sticky: 10;
+  --hm-z-banner: 20;
+  --hm-z-dialog: 100;
+  --hm-z-toast: 200;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --hm-motion-duration-fast: 0ms;
+    --hm-motion-duration-base: 0ms;
+    --hm-motion-duration-slow: 0ms;
+  }
+}
+
+/* ---------- Light ---------- */
+:root,
+[data-hm-theme="light"] {
+  --hm-color-bg: #f5f6f8;
+  --hm-color-surface: #ffffff;
+  --hm-color-surface-raised: #ffffff;
+  --hm-color-surface-sunken: #eef0f3;
+  --hm-color-surface-hover: #f0f2f5;
+  --hm-color-surface-pressed: #e4e7ec;
+
+  --hm-color-text: #1a1e26;
+  --hm-color-text-muted: #4f5766;
+  --hm-color-text-subtle: #646c7b;
+  --hm-color-text-disabled: #9aa1ad;
+  --hm-color-text-on-accent: #ffffff;
+
+  --hm-color-border-subtle: #e6e8ec;
+  --hm-color-border: #d3d7de;
+  --hm-color-border-strong: #858d9b;   /* control outlines, ≥3:1 */
+
+  --hm-color-accent: #2f55c4;
+  --hm-color-accent-hover: #2646a6;
+  --hm-color-accent-pressed: #1f3a8a;
+  --hm-color-accent-subtle: #e8eefc;
+  --hm-color-accent-text: #2a4db3;
+  --hm-color-focus: #2f55c4;
+
+  /* Decisions */
+  --hm-color-allow-fg: #1d6a4f;
+  --hm-color-allow-bg: #e4f3ec;
+  --hm-color-allow-border: #8fcbb2;
+  --hm-color-allow-solid: #1d6a4f;
+  --hm-color-ask-fg: #8a4f00;
+  --hm-color-ask-bg: #fdf0d8;
+  --hm-color-ask-border: #e5b766;
+  --hm-color-ask-solid: #8a4f00;
+  --hm-color-deny-fg: #a2342a;
+  --hm-color-deny-bg: #fbe9e6;
+  --hm-color-deny-border: #e3a59d;
+  --hm-color-deny-solid: #a2342a;
+  --hm-color-default-fg: #596171;
+  --hm-color-default-bg: #f3f4f6;
+  --hm-color-default-border: #858d9b;  /* always dashed; ≥3:1 */
+  --hm-color-default-solid: #596171;
+  --hm-color-critical-fg: #6a3db0;
+  --hm-color-critical-bg: #f0e9fb;
+  --hm-color-critical-border: #bfa3e9;
+  --hm-color-critical-solid: #6a3db0;
+  --hm-color-on-decision: #ffffff;
+
+  /* Feedback */
+  --hm-color-info-fg: #2a4db3;
+  --hm-color-info-bg: #e8eefc;
+  --hm-color-info-border: #a9bcef;
+  --hm-color-warning-fg: #8a4f00;
+  --hm-color-warning-bg: #fdf0d8;
+  --hm-color-warning-border: #e5b766;
+  --hm-color-positive-fg: #1d6a4f;
+  --hm-color-positive-bg: #e4f3ec;
+  --hm-color-danger-fg: #b3261e;
+  --hm-color-danger-bg: #fdecea;
+  --hm-color-danger-border: #e8a09a;
+  --hm-color-danger-solid: #b3261e;
+  --hm-color-danger-solid-hover: #8f1f18;
+  --hm-color-on-danger: #ffffff;
+
+  --hm-color-skeleton: #e6e9ee;
+  --hm-color-overlay: rgb(15 18 25 / 0.45);
+
+  --hm-shadow-sm: 0 1px 2px rgb(16 24 40 / 0.06), 0 1px 1px rgb(16 24 40 / 0.04);
+  --hm-shadow-md: 0 4px 12px rgb(16 24 40 / 0.08), 0 1px 3px rgb(16 24 40 / 0.06);
+  --hm-shadow-lg: 0 16px 40px rgb(16 24 40 / 0.16), 0 2px 6px rgb(16 24 40 / 0.08);
+}
+
+/* ---------- Dark ---------- */
+[data-hm-theme="dark"] {
+  --hm-color-bg: #111419;
+  --hm-color-surface: #191d24;
+  --hm-color-surface-raised: #20252e;
+  --hm-color-surface-sunken: #0d1014;
+  --hm-color-surface-hover: #232933;
+  --hm-color-surface-pressed: #2b323d;
+  --hm-color-text: #e8ebf0;
+  --hm-color-text-muted: #b0b7c3;
+  --hm-color-text-subtle: #949cab;
+  --hm-color-text-disabled: #5d6574;
+  --hm-color-text-on-accent: #0d1530;
+  --hm-color-border-subtle: #262c36;
+  --hm-color-border: #343b47;
+  --hm-color-border-strong: #6f7889;
+  --hm-color-accent: #8fa8ff;
+  --hm-color-accent-hover: #a9bcff;
+  --hm-color-accent-pressed: #7590f0;
+  --hm-color-accent-subtle: #1d2747;
+  --hm-color-accent-text: #a3b8ff;
+  --hm-color-focus: #a3b8ff;
+  --hm-color-allow-fg: #86d3b3;
+  --hm-color-allow-bg: #15302a;
+  --hm-color-allow-border: #2e5e4d;
+  --hm-color-allow-solid: #86d3b3;
+  --hm-color-ask-fg: #f2c372;
+  --hm-color-ask-bg: #33270f;
+  --hm-color-ask-border: #6b5122;
+  --hm-color-ask-solid: #f2c372;
+  --hm-color-deny-fg: #f4a59b;
+  --hm-color-deny-bg: #3a1d1a;
+  --hm-color-deny-border: #713c35;
+  --hm-color-deny-solid: #f4a59b;
+  --hm-color-default-fg: #a1a9b7;
+  --hm-color-default-bg: #1c2028;
+  --hm-color-default-border: #6f7889;
+  --hm-color-default-solid: #a1a9b7;
+  --hm-color-critical-fg: #c9adff;
+  --hm-color-critical-bg: #2a2142;
+  --hm-color-critical-border: #574491;
+  --hm-color-critical-solid: #c9adff;
+  --hm-color-on-decision: #111419;
+  --hm-color-info-fg: #a3b8ff;
+  --hm-color-info-bg: #1d2747;
+  --hm-color-info-border: #3a4b85;
+  --hm-color-warning-fg: #f2c372;
+  --hm-color-warning-bg: #33270f;
+  --hm-color-warning-border: #6b5122;
+  --hm-color-positive-fg: #86d3b3;
+  --hm-color-positive-bg: #15302a;
+  --hm-color-danger-fg: #f4a59b;
+  --hm-color-danger-bg: #3a1d1a;
+  --hm-color-danger-border: #713c35;
+  --hm-color-danger-solid: #f28b82;
+  --hm-color-danger-solid-hover: #f6a39b;
+  --hm-color-on-danger: #2a0d0a;
+  --hm-color-skeleton: #262c36;
+  --hm-color-overlay: rgb(0 0 0 / 0.6);
+  --hm-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --hm-shadow-md: 0 4px 12px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.3);
+  --hm-shadow-lg: 0 16px 40px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.4);
+}
+
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-hm-theme="light"]) {
+    --hm-color-bg: #111419;
+    --hm-color-surface: #191d24;
+    --hm-color-surface-raised: #20252e;
+    --hm-color-surface-sunken: #0d1014;
+    --hm-color-surface-hover: #232933;
+    --hm-color-surface-pressed: #2b323d;
+    --hm-color-text: #e8ebf0;
+    --hm-color-text-muted: #b0b7c3;
+    --hm-color-text-subtle: #949cab;
+    --hm-color-text-disabled: #5d6574;
+    --hm-color-text-on-accent: #0d1530;
+    --hm-color-border-subtle: #262c36;
+    --hm-color-border: #343b47;
+    --hm-color-border-strong: #6f7889;
+    --hm-color-accent: #8fa8ff;
+    --hm-color-accent-hover: #a9bcff;
+    --hm-color-accent-pressed: #7590f0;
+    --hm-color-accent-subtle: #1d2747;
+    --hm-color-accent-text: #a3b8ff;
+    --hm-color-focus: #a3b8ff;
+    --hm-color-allow-fg: #86d3b3;
+    --hm-color-allow-bg: #15302a;
+    --hm-color-allow-border: #2e5e4d;
+    --hm-color-allow-solid: #86d3b3;
+    --hm-color-ask-fg: #f2c372;
+    --hm-color-ask-bg: #33270f;
+    --hm-color-ask-border: #6b5122;
+    --hm-color-ask-solid: #f2c372;
+    --hm-color-deny-fg: #f4a59b;
+    --hm-color-deny-bg: #3a1d1a;
+    --hm-color-deny-border: #713c35;
+    --hm-color-deny-solid: #f4a59b;
+    --hm-color-default-fg: #a1a9b7;
+    --hm-color-default-bg: #1c2028;
+    --hm-color-default-border: #6f7889;
+    --hm-color-default-solid: #a1a9b7;
+    --hm-color-critical-fg: #c9adff;
+    --hm-color-critical-bg: #2a2142;
+    --hm-color-critical-border: #574491;
+    --hm-color-critical-solid: #c9adff;
+    --hm-color-on-decision: #111419;
+    --hm-color-info-fg: #a3b8ff;
+    --hm-color-info-bg: #1d2747;
+    --hm-color-info-border: #3a4b85;
+    --hm-color-warning-fg: #f2c372;
+    --hm-color-warning-bg: #33270f;
+    --hm-color-warning-border: #6b5122;
+    --hm-color-positive-fg: #86d3b3;
+    --hm-color-positive-bg: #15302a;
+    --hm-color-danger-fg: #f4a59b;
+    --hm-color-danger-bg: #3a1d1a;
+    --hm-color-danger-border: #713c35;
+    --hm-color-danger-solid: #f28b82;
+    --hm-color-danger-solid-hover: #f6a39b;
+    --hm-color-on-danger: #2a0d0a;
+    --hm-color-skeleton: #262c36;
+    --hm-color-overlay: rgb(0 0 0 / 0.6);
+    --hm-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+    --hm-shadow-md: 0 4px 12px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.3);
+    --hm-shadow-lg: 0 16px 40px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.4);
+  }
+}
+
+/* RTL: icons that imply direction carry data-rtl-mirror */
+[dir="rtl"] [data-rtl-mirror] { transform: scaleX(-1); }

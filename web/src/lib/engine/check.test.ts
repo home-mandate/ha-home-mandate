@@ -71,7 +71,7 @@ describe('checkDraft', () => {
     ['no approvers', { ...valid, approval: { ...valid.approval, approvers: [] } }, '/approval/approvers required'],
     ['duplicate approver', { ...valid, approval: { ...valid.approval, approvers: ['u1', 'u1'] } }, '/approval/approvers/1 duplicate'],
     ['approver longer than 64 characters', { ...valid, approval: { ...valid.approval, approvers: ['x'.repeat(65)] } }, '/approval/approvers/0 format'],
-    ['approver with bidi override', { ...valid, approval: { ...valid.approval, approvers: ['u‮1'] } }, '/approval/approvers/0 format'],
+    ['approver with bidi override', { ...valid, approval: { ...valid.approval, approvers: ['u\u202E1'] } }, '/approval/approvers/0 format'],
     ['valid_from format', { ...valid, valid_from: '2026-10-01' }, '/valid_from format'],
     ['expires before valid_from', { ...valid, expires: '2026-09-30T00:00:00Z' }, '/expires order'],
     ['expires equal valid_from', { ...valid, expires: '2026-10-01T02:00:00+02:00' }, '/expires order'],

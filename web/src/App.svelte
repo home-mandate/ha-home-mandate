@@ -1,14 +1,8 @@
 <script lang="ts">
-  import { m } from './lib/paraglide/messages.js';
-  import { getLocale } from './lib/paraglide/runtime.js';
+  import { m } from './lib/i18n.ts';
   import { parseHash, type Route } from './lib/router.ts';
-  import { formatDate } from './lib/format.ts';
 
-  // Release of v0.1: 31 October, 00:30 in Berlin (still 30 October in New York).
-  // The household time zone comes from Home Assistant later.
-  const release = new Date('2026-10-30T23:30:00Z');
-  const timeZone = 'Europe/Berlin';
-
+  // Interim shell until the frame of the design (header, banners, emergency stop) follows.
   let route: Route = $state(parseHash(window.location.hash));
 
   function onHashChange() {
@@ -19,19 +13,18 @@
 <svelte:window onhashchange={onHashChange} />
 
 <header>
-  <strong>{m.app_title()}</strong>
-  <nav>
+  <strong>{m.app_name()}</strong>
+  <nav aria-label={m.nav_label()}>
     <a href="#/">{m.nav_overview()}</a>
   </nav>
 </header>
 
 <main>
   {#if route.name === 'home'}
-    <h1>{m.home_heading()}</h1>
-    <p>{m.home_intro()}</p>
-    <p>{m.home_release({ date: formatDate(release, { locale: getLocale(), timeZone }) })}</p>
+    <h1>{m.overview_title()}</h1>
   {:else}
-    <h1>{m.not_found_heading()}</h1>
-    <p><a href="#/">{m.not_found_back()}</a></p>
+    <h1>{m.notfound_title()}</h1>
+    <p>{m.notfound_body()}</p>
+    <p><a href="#/">{m.notfound_back()}</a></p>
   {/if}
 </main>

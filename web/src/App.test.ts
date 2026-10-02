@@ -14,15 +14,14 @@ describe('App', () => {
   it('shows the overview in English', () => {
     setLocale('en', { reload: false });
     render(App);
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Mandates for your AI agents');
-    expect(screen.getByText(/Release v0\.1 is planned for October 31, 2026\./)).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Overview');
+    expect(screen.getByRole('navigation', { name: 'Sections' })).toBeTruthy();
   });
 
   it('shows the overview in German', () => {
     setLocale('de', { reload: false });
     render(App);
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Mandate für deine KI-Agenten');
-    expect(screen.getByText(/Release v0\.1 ist für 31\. Oktober 2026 geplant\./)).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Übersicht');
   });
 
   it('shows a not-found page for unknown routes and follows hash changes', async () => {
@@ -34,6 +33,6 @@ describe('App', () => {
     window.location.hash = '#/';
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     await Promise.resolve();
-    expect((await screen.findByRole('heading', { level: 1 })).textContent).toBe('Mandates for your AI agents');
+    expect((await screen.findByRole('heading', { level: 1 })).textContent).toBe('Overview');
   });
 });

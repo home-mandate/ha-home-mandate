@@ -3,7 +3,7 @@
 import { mount } from 'svelte';
 import App from './App.svelte';
 import { baseLocale, locales, setLocale } from './lib/paraglide/runtime.js';
-import { m } from './lib/paraglide/messages.js';
+import { m } from './lib/i18n.ts';
 import { resolveLocale } from './lib/locale.ts';
 import './app.css';
 
@@ -11,7 +11,7 @@ import './app.css';
 const locale = resolveLocale(undefined, navigator.languages, locales, baseLocale);
 setLocale(locale, { reload: false });
 document.documentElement.lang = locale;
-document.title = m.app_title();
+document.title = m.app_name();
 
 const target = document.getElementById('app');
 if (!target) {
