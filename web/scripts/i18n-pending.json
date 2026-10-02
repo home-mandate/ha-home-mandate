@@ -117,8 +117,6 @@
   "consent_signed_in",
   "consent_switch",
   "consent_title",
-  "critical_desc",
-  "critical_override_on",
   "day_today",
   "day_yesterday",
   "denied_because",
@@ -160,7 +158,6 @@
   "lang_de",
   "lang_en",
   "load_more",
-  "mandates_unassigned",
   "mcp_endpoint_help",
   "mcp_endpoint_label",
   "onboarding_body",
@@ -322,8 +319,5 @@
   "status_connected",
   "status_disconnected",
   "status_estop_blocked",
-  "toast_copied",
-  "tpl_empty_desc",
-  "tpl_read_only_desc",
-  "tpl_voice_desc"
+  "toast_copied"
 ]
