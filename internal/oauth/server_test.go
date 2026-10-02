@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -657,10 +658,20 @@ func TestPagesFollowTheBrowserLanguage(t *testing.T) {
 	}
 }
 
+// Unauthenticated requests cannot fill the session store: one sender gets at most
+// maxSessionsPerSender sessions, all together at most maxSessions.
 func TestTooManySignInsInProgress(t *testing.T) {
 	h := newHarness(t)
 	_, challenge := pkce()
-	for range maxSessions {
+	for range maxSessionsPerSender {
+		h.browser().get(authorizeQuery(challenge, nil))
+	}
+	if res := h.browser().get(PairPath); res.status != http.StatusServiceUnavailable {
+		t.Errorf("one sender over its limit: status %d", res.status)
+	}
+	senders := 0
+	h.server.clientAddr = func(*http.Request) string { senders++; return fmt.Sprint("10.0.", senders/250, ".", senders%250) }
+	for range maxSessions - maxSessionsPerSender {
 		h.browser().get(authorizeQuery(challenge, nil))
 	}
 	if res := h.browser().get(authorizeQuery(challenge, nil)); res.status != http.StatusServiceUnavailable {
@@ -688,4 +699,28 @@ type failingTokens struct{}
 
 func (failingTokens) Refresh(context.Context, string, string, string) (agent.TokenPair, error) {
 	return agent.TokenPair{}, errors.New("database is locked")
+}
+
+// Two decisions posted at the same time in one session admit one agent.
+func TestConcurrentConsentDecidesOnce(t *testing.T) {
+	h := newHarness(t)
+	b := h.browser()
+	_, challenge := pkce()
+	page := b.consentAs(challenge, "admin-code")
+	form := url.Values{"csrf": {csrfOf(t, page.body)}, "action": {"approve"}, "name": {"x"}, "template": {"voice-assistant"}}
+	var wg sync.WaitGroup
+	results := make([]response, 8)
+	for i := range results {
+		wg.Go(func() { results[i] = b.post(ConsentPath, form) })
+	}
+	wg.Wait()
+	codes := 0
+	for _, res := range results {
+		if strings.Contains(res.location, "code=") {
+			codes++
+		}
+	}
+	if codes != 1 {
+		t.Errorf("%d codes issued", codes)
+	}
 }

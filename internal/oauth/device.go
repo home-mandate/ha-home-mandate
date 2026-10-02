@@ -17,6 +17,7 @@ const (
 	deviceTTL        = 10 * time.Minute
 	deviceInterval   = 5 * time.Second
 	maxGrants        = 20
+	maxGrantsPerHost = 3                      // pending pairings of one sender
 	userCodeAlphabet = "BCDFGHJKLMNPQRSTVWXZ" // no vowels, no look-alikes (RFC 8628 section 6.1)
 	userCodeLen      = 8                      // 20^8 ≈ 2^34.6
 
@@ -36,6 +37,7 @@ const (
 
 // deviceGrant is a pending pairing, keyed by the hash of its device code.
 type deviceGrant struct {
+	sender   string // address of the agent that asked
 	client   Client
 	resource string
 	userCode string // hashKey of the normalized user code
@@ -79,12 +81,18 @@ func (s *Server) deviceAuthorization(w http.ResponseWriter, r *http.Request) {
 			delete(s.grants, k)
 		}
 	}
-	if len(s.grants) >= maxGrants {
+	sender, fromSender := s.clientAddr(r), 0
+	for _, g := range s.grants {
+		if g.sender == sender {
+			fromSender++
+		}
+	}
+	if len(s.grants) >= maxGrants || fromSender >= maxGrantsPerHost {
 		s.mu.Unlock()
 		oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable")
 		return
 	}
-	s.grants[hashKey(deviceCode)] = &deviceGrant{client: client, resource: resource, userCode: hashKey(userCode),
+	s.grants[hashKey(deviceCode)] = &deviceGrant{sender: sender, client: client, resource: resource, userCode: hashKey(userCode),
 		expires: now.Add(deviceTTL), interval: deviceInterval, status: grantPending}
 	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -149,7 +157,12 @@ func (s *Server) pollDevice(w http.ResponseWriter, r *http.Request, form map[str
 	case g.status == grantApproved:
 		delete(s.grants, key)
 		s.mu.Unlock()
-		s.admit(w, r, g.client, g.resource, g.decision)
+		if s.admit(w, r, g.client, g.resource, g.decision) {
+			// The human's decision stays valid when the server failed; the agent retries.
+			s.mu.Lock()
+			s.grants[key] = g
+			s.mu.Unlock()
+		}
 	case !g.lastPoll.IsZero() && now.Sub(g.lastPoll) < g.interval:
 		g.interval += deviceInterval
 		g.lastPoll = now
@@ -258,7 +271,7 @@ func (s *Server) pairSession(r *http.Request) (pairSession, bool) {
 func (s *Server) pairPage(w http.ResponseWriter, r *http.Request) {
 	ps, found := s.pairSession(r)
 	if !found || ps.user == nil {
-		id, sess, err := s.sessions.create(purposePair, nil)
+		id, sess, err := s.sessions.create(s.clientAddr(r), purposePair, nil)
 		if err != nil {
 			s.fail(w, r, http.StatusServiceUnavailable, i18n.PageBusy)
 			return

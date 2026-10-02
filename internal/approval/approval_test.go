@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -350,7 +351,7 @@ func TestSanitize(t *testing.T) {
 		"bidi\u202eoverride":             "bidi override",
 		"zero\u200bwidth":                "zero width",
 		"line\u2028sep":                  "line sep",
-		"**bold** _it_ `code` [x](y)":    "bold it code x y",
+		"**bold** _it_ `code` [x](y)":    "bold _it_ code x y",
 		"see https://evil.example.org/a": "see https evil.example.org/a",
 		"<script>alert(1)</script>":      "script alert 1 /script",
 		"{device}":                       "device",
@@ -366,4 +367,100 @@ func TestSanitize(t *testing.T) {
 	if n := buildRequest(i18n.EN, req, "00112233445566778899aabbccddeeff"); strings.Contains(n.Message, "claim") {
 		t.Errorf("empty reason shown: %q", n.Message)
 	}
+}
+
+// Every approver is asked once, even if the mandate names them twice; Home-Mandate's own
+// Home Assistant user is never asked, so its token cannot approve.
+func TestRecipients(t *testing.T) {
+	e := newEnv(t, time.Minute)
+	e.svc.cfg.ServiceUser = func() string { return u2 }
+	req := request()
+	req.Approvers = []string{u1, u1, u2}
+	ch := e.ask(req)
+	nonce := nonceOf(t, e.notifier.next(t))
+	e.svc.HandleEvent(event("HM_APPROVE_"+nonce, u2))
+	if a := wait(t, ch); a.res.Outcome != OutcomeInvalidResponse {
+		t.Errorf("answer of the service user = %+v", a.res)
+	}
+	if n := countRequests(e.notifier, "mobile_app_anna"); n != 0 {
+		t.Error("the service user was asked")
+	}
+	if n := countRequests(e.notifier, ""); n != 1 {
+		t.Errorf("%d requests sent, want 1", n)
+	}
+	req.Approvers = []string{u2}
+	if _, err := e.svc.Ask(context.Background(), req); !errors.Is(err, ErrNoApprover) {
+		t.Errorf("only the service user: %v", err)
+	}
+}
+
+// countRequests counts the approval requests (with buttons) sent, to service if set.
+func countRequests(f *fakeNotifier, service string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, s := range f.sent {
+		if len(s.n.Actions) > 0 && (service == "" || s.service == service) {
+			n++
+		}
+	}
+	return n
+}
+
+// The human sees the service data that will be sent, not only the action.
+func TestParametersAreShown(t *testing.T) {
+	req := request()
+	req.Params = map[string]any{"temperature": 21.5, "hvac_mode": "heat", "note": "**x** https://evil.example.org"}
+	msg := buildRequest(i18n.EN, req, "00112233445566778899aabbccddeeff").Message
+	if !strings.Contains(msg, "Parameters: hvac_mode=heat, note=x https evil.example.org, temperature=21.5") {
+		t.Errorf("message = %q", msg)
+	}
+	if strings.Contains(buildRequest(i18n.EN, request(), "00112233445566778899aabbccddeeff").Message, "Parameters") {
+		t.Error("empty parameters shown")
+	}
+}
+
+func TestDefaultUpperLimit(t *testing.T) {
+	if s := New(Config{}); s.cfg.MaxTimeout != defaultMaxTimeout || s.cfg.Logger == nil {
+		t.Errorf("config = %+v", s.cfg)
+	}
+}
+
+// Negative catalog: a second answer and an answer after the timeout are discarded and
+// logged (without the nonce).
+func TestDiscardedAnswersAreLogged(t *testing.T) {
+	var buf safeBuffer
+	e := newEnv(t, 100*time.Millisecond)
+	e.svc.cfg.Logger = slog.New(slog.NewTextHandler(&buf, nil))
+	ch := e.ask(request())
+	nonce := nonceOf(t, e.notifier.next(t))
+	e.svc.HandleEvent(event("HM_APPROVE_"+nonce, u1))
+	e.svc.HandleEvent(event("HM_DENY_"+nonce, u2))
+	wait(t, ch)
+	ch = e.ask(request())
+	late := nonceOf(t, e.notifier.next(t))
+	e.notifier.next(t)
+	wait(t, ch)
+	e.svc.HandleEvent(event("HM_APPROVE_"+late, u1))
+	out := buf.String()
+	if strings.Count(out, "approval answer discarded") != 2 || !strings.Contains(out, u2) || strings.Contains(out, nonce) || strings.Contains(out, late) {
+		t.Errorf("log:\n%s", out)
+	}
+}
+
+type safeBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *safeBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *safeBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

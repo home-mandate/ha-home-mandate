@@ -3,6 +3,7 @@
 package oauth
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
@@ -68,9 +69,11 @@ func pkceMatches(verifier, challenge string) bool {
 	return equalSecret(base64.RawURLEncoding.EncodeToString(sum[:]), challenge)
 }
 
-// admit carries out the human's decision and returns the agent's first tokens.
-func (s *Server) admit(w http.ResponseWriter, r *http.Request, client Client, resource string, d decision) {
-	a, tokens, err := s.cfg.Admission.Admit(r.Context(), admission.Request{DisplayName: d.name, Template: d.template,
+// admit carries out the human's decision and returns the agent's first tokens. It
+// reports whether the failure was on the server side, so that a pairing can be retried;
+// the admission is not cancelled when the agent disconnects.
+func (s *Server) admit(w http.ResponseWriter, r *http.Request, client Client, resource string, d decision) (serverError bool) {
+	a, tokens, err := s.cfg.Admission.Admit(context.WithoutCancel(r.Context()), admission.Request{DisplayName: d.name, Template: d.template,
 		OAuthClient: client.ID, ClientVerified: client.Verified, Resource: resource,
 		By: audit.Actor{Kind: audit.ActorUser, ID: d.by.ID}})
 	switch {
@@ -84,7 +87,9 @@ func (s *Server) admit(w http.ResponseWriter, r *http.Request, client Client, re
 	default:
 		s.cfg.Logger.Error("admission failed", "oauth_client", client.ID, "error", err)
 		oauthError(w, http.StatusInternalServerError, "server_error")
+		return true
 	}
+	return false
 }
 
 func (s *Server) refresh(w http.ResponseWriter, r *http.Request, form map[string]string) {

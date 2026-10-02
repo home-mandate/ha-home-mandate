@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -74,9 +75,11 @@ type Config struct {
 type Server struct {
 	cfg      Config
 	sessions *sessions
-	pages    *template.Template
 	secure   bool   // cookies only over TLS
 	cookie   string // session cookie name
+
+	// clientAddr identifies the sender of a request for per-sender limits.
+	clientAddr func(*http.Request) string
 
 	mu      sync.Mutex
 	codes   map[string]*authCode
@@ -105,8 +108,8 @@ func New(cfg Config) *Server {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	s := &Server{cfg: cfg, sessions: newSessions(cfg.Now), pages: pages, codes: map[string]*authCode{},
-		grants: map[string]*deviceGrant{}}
+	s := &Server{cfg: cfg, sessions: newSessions(cfg.Now), codes: map[string]*authCode{},
+		grants: map[string]*deviceGrant{}, clientAddr: remoteHost}
 	s.secure = strings.HasPrefix(cfg.PublicURL, "https://")
 	s.cookie = "hm_session"
 	if s.secure {
@@ -207,7 +210,7 @@ func (p page) T(key i18n.Key, kv ...string) string {
 // a form on the page may lead to (the agent's redirect URI after the consent).
 func (s *Server) render(w http.ResponseWriter, status int, name string, p page, formTarget string) {
 	var buf bytes.Buffer
-	if err := s.pages.ExecuteTemplate(&buf, name, p); err != nil {
+	if err := pages.ExecuteTemplate(&buf, name, p); err != nil {
 		s.cfg.Logger.Error("rendering a page failed", "page", name, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -280,6 +283,15 @@ func (s *Server) setCookie(w http.ResponseWriter, value string) {
 func (s *Server) clearCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{Name: s.cookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.secure,
 		SameSite: http.SameSiteLaxMode})
+}
+
+// remoteHost is the IP address of the sender, without the port.
+func remoteHost(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 func (s *Server) sessionID(r *http.Request) string {

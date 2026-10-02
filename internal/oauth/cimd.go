@@ -35,6 +35,7 @@ const (
 	cimdMaxBytes    = 5 << 10
 	cimdCacheTTL    = time.Hour
 	cimdCacheSize   = 100
+	cimdParallel    = 4 // concurrent fetches; more are refused, not queued
 	maxClientIDLen  = 255
 	maxClientName   = 80
 	maxRedirectURIs = 10
@@ -68,6 +69,8 @@ type CIMDResolver struct {
 	allowAddr func(netip.Addr) bool
 	anyPort   bool
 
+	fetching chan struct{} // semaphore of cimdParallel
+
 	mu    sync.Mutex
 	cache map[string]cachedClient
 }
@@ -79,7 +82,8 @@ type cachedClient struct {
 
 // NewCIMDResolver returns a resolver; roots nil means the system roots.
 func NewCIMDResolver(roots *x509.CertPool) *CIMDResolver {
-	r := &CIMDResolver{now: time.Now, allowAddr: publicAddr, cache: map[string]cachedClient{}}
+	r := &CIMDResolver{now: time.Now, allowAddr: publicAddr, cache: map[string]cachedClient{},
+		fetching: make(chan struct{}, cimdParallel)}
 	dialer := &net.Dialer{Timeout: cimdTimeout, Control: r.control}
 	r.client = &http.Client{
 		Timeout: cimdTimeout,
@@ -210,6 +214,12 @@ type metadata struct {
 }
 
 func (r *CIMDResolver) fetch(ctx context.Context, clientID string, u *url.URL) (Client, error) {
+	select {
+	case r.fetching <- struct{}{}:
+		defer func() { <-r.fetching }()
+	default:
+		return Client{}, fmt.Errorf("%w: too many metadata fetches in progress", ErrInvalidClient)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, clientID, nil)
 	if err != nil {
 		return Client{}, ErrInvalidClient
@@ -277,11 +287,15 @@ func uniqueTopLevelKeys(data []byte) error {
 	return nil
 }
 
+// hostPattern is a host name or IP literal with an optional port: nothing that could
+// end a Content-Security-Policy directive (the redirect origin goes into form-action).
+var hostPattern = regexp.MustCompile(`^([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(:[0-9]{1,5})?$`)
+
 // validRedirectURI accepts https URIs and http URIs on loopback (RFC 8252), without
 // fragment or user info.
 func validRedirectURI(uri string) bool {
 	u, err := url.Parse(uri)
-	if err != nil || u.Host == "" || u.User != nil || u.Fragment != "" || strings.Contains(uri, "#") {
+	if err != nil || !hostPattern.MatchString(u.Host) || u.User != nil || u.Fragment != "" || strings.Contains(uri, "#") {
 		return false
 	}
 	return u.Scheme == "https" || u.Scheme == "http" && loopbackHost(u.Hostname())

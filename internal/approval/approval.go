@@ -17,7 +17,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +52,8 @@ const (
 
 	warnTimeout = 10 * time.Second
 	unknownUser = "unknown"
+
+	defaultMaxTimeout = 2 * time.Minute
 )
 
 var noncePattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
@@ -75,16 +79,20 @@ type Config struct {
 	// MaxTimeout is the upper limit of a wait (HM_APPROVAL_TIMEOUT); a mandate may only
 	// shorten it.
 	MaxTimeout time.Duration
-	Logger     *slog.Logger
-	Now        func() time.Time
+	// ServiceUser returns Home-Mandate's own Home Assistant user, which never approves:
+	// whoever holds its token must not be able to answer.
+	ServiceUser func() string
+	Logger      *slog.Logger
+	Now         func() time.Time
 }
 
 // Request is one action waiting for a human.
 type Request struct {
-	Agent     string // display name of the agent
-	Device    string // friendly name or entity ID
-	Action    string // vocabulary action
-	Reason    string // the agent's claim, untrusted
+	Agent     string         // display name of the agent
+	Device    string         // friendly name or entity ID
+	Action    string         // vocabulary action
+	Reason    string         // the agent's claim, untrusted
+	Params    map[string]any // the service data that will be sent, shown to the human
 	Approvers []string
 	Timeout   time.Duration // from the mandate's approval settings
 }
@@ -120,6 +128,9 @@ func New(cfg Config) *Service {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.MaxTimeout <= 0 {
+		cfg.MaxTimeout = defaultMaxTimeout
+	}
 	return &Service{cfg: cfg, pending: map[string]*pending{}}
 }
 
@@ -132,13 +143,20 @@ func (s *Service) Ask(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 	p := &pending{approvers: map[string]bool{}, req: req, result: make(chan Result, 1)}
+	service := ""
+	if s.cfg.ServiceUser != nil {
+		service = s.cfg.ServiceUser()
+	}
 	for _, a := range all {
-		for _, id := range req.Approvers {
-			if a.UserID == id {
-				p.approvers[id] = true
-				p.recipients = append(p.recipients, a)
-			}
+		if !slices.Contains(req.Approvers, a.UserID) || p.approvers[a.UserID] {
+			continue
 		}
+		if a.UserID == service {
+			s.cfg.Logger.Warn("Home-Mandate's own Home Assistant user is set up as approver; it is never asked")
+			continue
+		}
+		p.approvers[a.UserID] = true
+		p.recipients = append(p.recipients, a)
 	}
 	if len(p.recipients) == 0 {
 		return Result{}, ErrNoApprover
@@ -272,6 +290,9 @@ func buildRequest(lang i18n.Lang, req Request, nonce string) ha.Notification {
 	agentName, device := sanitize(req.Agent, maxName), sanitize(req.Device, maxName)
 	lines := []string{i18n.T(lang, i18n.ApprovalMessage, i18n.Args{"agent": agentName, "device": device,
 		"action": i18n.ActionName(lang, req.Action)})}
+	if params := formatParams(req.Params); params != "" {
+		lines = append(lines, i18n.T(lang, i18n.ApprovalParams, i18n.Args{"params": params}))
+	}
 	if reason := sanitize(req.Reason, maxReason); reason != "" {
 		lines = append(lines, i18n.T(lang, i18n.ApprovalReason, i18n.Args{"reason": reason}))
 	}
@@ -286,8 +307,19 @@ func buildRequest(lang i18n.Lang, req Request, nonce string) ha.Notification {
 	}
 }
 
-// markup are characters that format text or build links in Markdown or HTML.
-const markup = "*_~`[]()<>#|\\{}"
+// formatParams shows the service data as sorted name=value pairs, sanitized.
+func formatParams(params map[string]any) string {
+	parts := make([]string, 0, len(params))
+	for _, k := range slices.Sorted(maps.Keys(params)) {
+		parts = append(parts, sanitize(k, maxName)+"="+sanitize(fmt.Sprint(params[k]), maxName))
+	}
+	return sanitize(strings.Join(parts, ", "), maxReason)
+}
+
+// markup are characters that format text or build links in Markdown or HTML. The
+// underscore stays: it is part of identifiers such as hvac_mode, and notifications are
+// not rendered as Markdown.
+const markup = "*~`[]()<>#|\\{}"
 
 // sanitize makes untrusted text safe to show to a human: control, format and separator
 // characters and markup become spaces, "://" is broken so no link can be clicked,

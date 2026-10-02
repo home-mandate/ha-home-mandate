@@ -23,13 +23,34 @@ import (
 // errAsk tells performAction that a human must confirm; it never reaches the agent.
 var errAsk = errors.New("ask")
 
-// maxReasonRunes bounds the reason an agent may give; the human sees at most 200 runes.
-const maxReasonRunes = 1000
+const (
+	// maxReasonRunes bounds the reason an agent may give; the human sees at most 200.
+	maxReasonRunes = 1000
+	// maxPendingAsks bounds the approval requests one agent may have waiting, against
+	// flooding the approvers and holding many requests open.
+	maxPendingAsks = 2
+)
 
 // askHuman asks the approvers of the mandate and executes only after a valid
 // confirmation. Every outcome is in the audit log with the approval.
-func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, d pdp.Decision, call ha.ServiceCall, reason string) (*sdk.CallToolResult, actionOut, error) {
-	req := approval.Request{Agent: a.DisplayName, Device: d.Resource.EntityID, Action: d.Action, Reason: reason}
+func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, reason string) (*sdk.CallToolResult, actionOut, error) {
+	g.mu.Lock()
+	if g.pendingAsks[a.ClientID] >= maxPendingAsks {
+		g.mu.Unlock()
+		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval})
+		return nil, actionOut{}, errors.New(codeDenied + ": approval_pending")
+	}
+	g.pendingAsks[a.ClientID]++
+	g.mu.Unlock()
+	defer func() {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		if g.pendingAsks[a.ClientID]--; g.pendingAsks[a.ClientID] == 0 {
+			delete(g.pendingAsks, a.ClientID)
+		}
+	}()
+
+	req := approval.Request{Agent: a.DisplayName, Device: d.Resource.EntityID, Action: d.Action, Reason: reason, Params: call.Data}
 	if dev, ok := g.cfg.Catalog.Lookup(d.Resource.EntityID); ok {
 		if name, _ := dev.Attributes["friendly_name"].(string); name != "" {
 			req.Device = name
@@ -50,7 +71,7 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, d pdp.Decision, c
 	var code string
 	switch res.Outcome {
 	case approval.OutcomeApproved:
-		return g.afterApproval(ctx, a, d, call, appr)
+		return g.afterApproval(ctx, a, token, d, call, appr)
 	case approval.OutcomeRejected:
 		code = "approval_rejected"
 	case approval.OutcomeInvalidResponse:
@@ -63,15 +84,27 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, d pdp.Decision, c
 }
 
 // afterApproval checks again what may have changed while the human decided: the
-// emergency stop, the mandate (a revoked agent's mandate denies) and the connection.
-func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, d pdp.Decision, call ha.ServiceCall, appr *audit.Approval) (*sdk.CallToolResult, actionOut, error) {
+// emergency stop, the agent's token (revoked, e.g. after refresh token reuse), the
+// mandate (a revoked agent's mandate denies) and the connection.
+func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, appr *audit.Approval) (*sdk.CallToolResult, actionOut, error) {
 	if g.stopped(ctx) {
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop}, appr)
 		return nil, actionOut{}, errors.New(codeDenied + ": emergency_stop")
 	}
+	if _, err := g.cfg.Agents.Authenticate(ctx, token, g.cfg.Resource); err != nil {
+		if !errors.Is(err, agent.ErrUnauthorized) {
+			g.cfg.Logger.Error("token check after an approval failed", "error", err)
+		}
+		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication}, appr)
+		return nil, actionOut{}, errors.New(codeDenied + ": unauthorized")
+	}
 	snap, err := g.cfg.PDP.Snapshot(ctx, a.ClientID)
-	now := snap.Decide(d.Resource.EntityID, d.Action)
-	if err != nil || now.Result.Decision == evaluator.Deny || now.Result.MandateDigest != d.Result.MandateDigest {
+	if err != nil {
+		g.cfg.Logger.Error("loading the mandate after an approval failed", "error", err)
+		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: "mandate_unavailable"}, appr)
+		return nil, actionOut{}, errors.New(codeUnavailable)
+	}
+	if now := snap.Decide(d.Resource.EntityID, d.Action); now.Result.Decision == evaluator.Deny || now.Result.MandateDigest != d.Result.MandateDigest {
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate}, appr)
 		return nil, actionOut{}, errors.New(codeDenied + ": mandate_changed")
 	}

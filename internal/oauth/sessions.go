@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	sessionTTL  = 10 * time.Minute
-	maxSessions = 200
-	secretBytes = 32
+	sessionTTL           = 10 * time.Minute
+	maxSessions          = 200
+	maxSessionsPerSender = 10
+	secretBytes          = 32
 )
 
 // errTooManySessions means the in-memory session store is full.
@@ -33,6 +34,7 @@ const (
 // for at most sessionTTL, and admits at most one agent.
 type session struct {
 	expires time.Time
+	sender  string // address the sign-in started from
 	purpose string
 	haState string   // pending Home Assistant sign-in; cleared when used
 	user    *ha.User // set after a successful sign-in by an administrator
@@ -55,16 +57,23 @@ func newSessions(now func() time.Time) *sessions {
 	return &sessions{byID: map[[32]byte]*session{}, now: now}
 }
 
-// create starts a session and returns its cookie value.
-func (s *sessions) create(purpose string, authz *authzRequest) (string, *session, error) {
+// create starts a session for sender and returns its cookie value. One sender cannot
+// fill the store: it may hold maxSessionsPerSender sessions.
+func (s *sessions) create(sender, purpose string, authz *authzRequest) (string, *session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dropExpired()
-	if len(s.byID) >= maxSessions {
+	fromSender := 0
+	for _, sess := range s.byID {
+		if sess.sender == sender {
+			fromSender++
+		}
+	}
+	if len(s.byID) >= maxSessions || fromSender >= maxSessionsPerSender {
 		return "", nil, errTooManySessions
 	}
 	id := newSecret()
-	sess := &session{expires: s.now().Add(sessionTTL), purpose: purpose, haState: newSecret(), csrf: newSecret(), authz: authz}
+	sess := &session{expires: s.now().Add(sessionTTL), sender: sender, purpose: purpose, haState: newSecret(), csrf: newSecret(), authz: authz}
 	s.byID[sha256.Sum256([]byte(id))] = sess
 	return id, sess, nil
 }
@@ -103,6 +112,20 @@ func (s *sessions) rotate(id string) (string, bool) {
 	sess.csrf = newSecret()
 	s.byID[sha256.Sum256([]byte(newID))] = sess
 	return newID, true
+}
+
+// take removes the session if csrf is its CSRF token. Only the first of several
+// concurrent decisions in one session gets true: a session admits at most one agent.
+func (s *sessions) take(id, csrf string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := sha256.Sum256([]byte(id))
+	sess, ok := s.byID[key]
+	if !ok || !s.now().Before(sess.expires) || !equalSecret(sess.csrf, csrf) {
+		return false
+	}
+	delete(s.byID, key)
+	return true
 }
 
 func (s *sessions) delete(id string) {

@@ -122,7 +122,7 @@ func TestNewDefaults(t *testing.T) {
 func TestSessionRotationOfAnExpiredSession(t *testing.T) {
 	clock := &testClock{now: time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)}
 	s := newSessions(clock.Now)
-	id, _, err := s.create(purposePair, nil)
+	id, _, err := s.create("10.0.0.1", purposePair, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,5 +174,23 @@ func TestSignInWithUnreachableHomeAssistant(t *testing.T) {
 	f.srv.Close()
 	if _, err := s.SignIn(context.Background(), "code"); !errors.Is(err, ErrSignInFailed) {
 		t.Errorf("SignIn = %v", err)
+	}
+}
+
+// Metadata fetches are bounded; more at the same time are refused, not queued.
+func TestCIMDFetchesAreBounded(t *testing.T) {
+	c, r := newCIMDServer(t)
+	id := c.json("/client.json", goodDoc)
+	for range cimdParallel {
+		r.fetching <- struct{}{}
+	}
+	if _, err := r.Resolve(context.Background(), id); !errors.Is(err, ErrInvalidClient) {
+		t.Errorf("Resolve while busy = %v", err)
+	}
+	for range cimdParallel {
+		<-r.fetching
+	}
+	if _, err := r.Resolve(context.Background(), id); err != nil {
+		t.Errorf("Resolve after = %v", err)
 	}
 }

@@ -79,7 +79,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		s.redirectError(w, r, authz, "invalid_target")
 		return
 	}
-	id, sess, err := s.sessions.create(purposeAuthorize, authz)
+	id, sess, err := s.sessions.create(s.clientAddr(r), purposeAuthorize, authz)
 	if err != nil {
 		s.fail(w, r, http.StatusServiceUnavailable, i18n.PageBusy)
 		return
@@ -95,7 +95,11 @@ func (s *Server) redirectError(w http.ResponseWriter, r *http.Request, authz *au
 }
 
 func (s *Server) redirectToClient(w http.ResponseWriter, r *http.Request, authz *authzRequest, params url.Values, status int) {
-	u, _ := url.Parse(authz.redirectURI) // validated against the registered URIs
+	u, err := url.Parse(authz.redirectURI) // validated against the registered URIs
+	if err != nil {
+		s.fail(w, r, http.StatusBadRequest, i18n.PageInvalidClient)
+		return
+	}
 	q := u.Query()
 	for k, v := range params {
 		q[k] = v
@@ -253,7 +257,10 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	id := s.sessionID(r)
 	switch form["action"] {
 	case "deny":
-		s.endSession(w, id)
+		if !s.decide(w, id, form["csrf"]) {
+			s.fail(w, r, http.StatusForbidden, i18n.PageSessionExpired)
+			return
+		}
 		if st.authz != nil {
 			s.redirectToClient(w, r, st.authz, url.Values{"error": {"access_denied"}}, http.StatusSeeOther)
 			return
@@ -272,7 +279,10 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		d := decision{name: name, template: tmpl, by: st.user}
-		s.endSession(w, id)
+		if !s.decide(w, id, form["csrf"]) {
+			s.fail(w, r, http.StatusForbidden, i18n.PageSessionExpired)
+			return
+		}
 		if st.authz != nil {
 			code, err := s.issueCode(*st.authz, d)
 			if err != nil {
@@ -290,6 +300,15 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.fail(w, r, http.StatusBadRequest, i18n.PageInvalidRequest)
 	}
+}
+
+// decide ends the session for the decision; false if another request decided first.
+func (s *Server) decide(w http.ResponseWriter, id, csrf string) bool {
+	if !s.sessions.take(id, csrf) {
+		return false
+	}
+	s.clearCookie(w)
+	return true
 }
 
 // issueCode stores an authorization code for the decision and returns it.

@@ -80,6 +80,7 @@ type gateway struct {
 	catalog  *catalog.Catalog
 	timeZone atomic.Value // string; empty until Home Assistant answered get_config
 	language atomic.Value // string; household language from get_config
+	self     atomic.Value // string; Home-Mandate's own Home Assistant user
 	server   *http.Server
 	listener net.Listener
 }
@@ -88,6 +89,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	g := &gateway{state: s, logger: logger}
 	g.timeZone.Store("")
 	g.language.Store("")
+	g.self.Store("")
 	client, err := ha.New(ha.Config{URL: s.cfg.HAURL, Token: s.cfg.HAToken, RootCAs: s.cfg.HARootCAs, Logger: logger,
 		OnConnect: g.onConnect, OnDisconnect: g.onDisconnect})
 	if err != nil {
@@ -102,7 +104,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 
 	approvals := approval.New(approval.Config{Approvers: s.approvers, Notifier: client, Language: g.householdLanguage,
-		MaxTimeout: s.cfg.ApprovalTimeout, Logger: logger})
+		MaxTimeout: s.cfg.ApprovalTimeout, ServiceUser: g.serviceUser, Logger: logger})
 	if _, err := client.SubscribeEvents(ctx, ha.EventMobileAppNotificationAction, approvals.HandleEvent); err != nil {
 		return nil, fmt.Errorf("subscribe %s: %w", ha.EventMobileAppNotificationAction, err)
 	}
@@ -122,7 +124,11 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	gw := mcp.New(mcp.Config{Resource: resource, ResourceMetadataURL: metadata, Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
 		Limiter: ratelimit.New(nil), Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
-	g.server = &http.Server{Handler: gw.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
+	handler, err := withOAuth(s, gw.Handler(), resource, logger)
+	if err != nil {
+		return nil, err
+	}
+	g.server = &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: writeTimeout(s.cfg.ApprovalTimeout), IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10,
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelWarn)}
 	if g.listener, err = listen(s.cfg, g.server, logger); err != nil {
@@ -188,6 +194,11 @@ func (g *gateway) householdLanguage() i18n.Lang {
 	return i18n.Pick(g.language.Load().(string))
 }
 
+// serviceUser is Home-Mandate's own Home Assistant user, which never approves.
+func (g *gateway) serviceUser() string {
+	return g.self.Load().(string)
+}
+
 // writeTimeout lets a perform_action wait for an approval: the longest wait plus time
 // for the action itself.
 func writeTimeout(approval time.Duration) time.Duration {
@@ -210,6 +221,11 @@ func (g *gateway) onConnect(ctx context.Context) {
 	}
 	g.timeZone.Store(cfg.TimeZone)
 	g.language.Store(cfg.Language)
+	if u, err := g.client.CurrentUser(ctx); err != nil {
+		g.logger.Warn("cannot read Home-Mandate's own Home Assistant user", "error", err)
+	} else {
+		g.self.Store(u.ID)
+	}
 }
 
 func (g *gateway) run(ctx context.Context) int {

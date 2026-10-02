@@ -124,6 +124,7 @@ type Gateway struct {
 
 	mu           sync.Mutex
 	rateLimitLog map[string]time.Time // last rate-limit entry per agent
+	pendingAsks  map[string]int       // approval requests waiting, per agent
 	rejectedLog  time.Time            // last auth.rejected entry for an invalid token
 }
 
@@ -138,7 +139,7 @@ func New(cfg Config) *Gateway {
 	if cfg.CallTimeout <= 0 {
 		cfg.CallTimeout = defaultCallTimeout
 	}
-	g := &Gateway{cfg: cfg, rateLimitLog: map[string]time.Time{}, server: sdk.NewServer(&sdk.Implementation{Name: "home-mandate", Version: cfg.Version}, nil)}
+	g := &Gateway{cfg: cfg, rateLimitLog: map[string]time.Time{}, pendingAsks: map[string]int{}, server: sdk.NewServer(&sdk.Implementation{Name: "home-mandate", Version: cfg.Version}, nil)}
 	sdk.AddTool(g.server, &sdk.Tool{Name: "list_devices",
 		Description: "Lists the devices you may read, with category, area and state."}, g.listDevices)
 	sdk.AddTool(g.server, &sdk.Tool{Name: "get_state",
@@ -172,7 +173,17 @@ func (g *Gateway) verify(ctx context.Context, token string, _ *http.Request) (*s
 		g.recordRejectedToken(ctx)
 		return nil, sdkauth.ErrInvalidToken
 	}
-	return &sdkauth.TokenInfo{UserID: a.ClientID, Extra: map[string]any{"agent": a}}, nil
+	// The token stays with the request so that it can be checked again after a human
+	// approved; it is never logged.
+	return &sdkauth.TokenInfo{UserID: a.ClientID, Extra: map[string]any{"agent": a, "token": token}}, nil
+}
+
+func tokenOf(req *sdk.CallToolRequest) string {
+	if req == nil || req.Extra == nil || req.Extra.TokenInfo == nil {
+		return ""
+	}
+	token, _ := req.Extra.TokenInfo.Extra["token"].(string)
+	return token
 }
 
 // recordRejectedToken logs at most one auth.rejected entry per interval: an invalid
@@ -396,7 +407,7 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 		return nil, actionOut{}, errors.New(code)
 	}
 	if ask {
-		return g.askHuman(ctx, a, d, call, in.Reason)
+		return g.askHuman(ctx, a, tokenOf(req), d, call, in.Reason)
 	}
 	return g.execute(ctx, a, d, call, nil)
 }

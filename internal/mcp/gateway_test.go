@@ -128,6 +128,7 @@ type harness struct {
 	pdp      *pdp.PDP
 	mandates *mandate.Store
 	approver Approver
+	decider  Decider // replaces pdp when set
 
 	mu sync.Mutex
 	tz string
@@ -182,7 +183,11 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 
 // serve starts a gateway on the harness with auditor and returns its URL.
 func (h *harness) serve(auditor Auditor) string {
-	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: h.pdp, Approvals: h.approver, Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test"})
+	var decider Decider = h.pdp
+	if h.decider != nil {
+		decider = h.decider
+	}
+	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test"})
 	srv := httptest.NewServer(g.Handler())
 	h.t.Cleanup(srv.Close)
 	return srv.URL + Path

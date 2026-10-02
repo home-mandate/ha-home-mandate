@@ -89,6 +89,7 @@ func TestResolveRejectsBadDocuments(t *testing.T) {
 		"redirect fragment":     c.json("/h", strings.Replace(goodDoc, `"https://app.example.org/cb"`, `"https://app.example.org/cb#x"`, 1)),
 		"relative redirect":     c.json("/i", strings.Replace(goodDoc, `"https://app.example.org/cb"`, `"/cb"`, 1)),
 		"custom scheme":         c.json("/j", strings.Replace(goodDoc, `"https://app.example.org/cb"`, `"com.example:/cb"`, 1)),
+		"directive in host":     c.json("/m", strings.Replace(goodDoc, `"https://app.example.org/cb"`, `"https://a.example;sandbox/cb"`, 1)),
 		"too large":             c.json("/k", `{"client_id":"$ID","pad":"`+strings.Repeat("x", 6<<10)+`"}`),
 		"unknown":               c.srv.URL + "/missing",
 		"duplicate keys":        c.json("/l", `{"client_id":"https://evil.example.org/c","client_id":"$ID","redirect_uris":[]}`),

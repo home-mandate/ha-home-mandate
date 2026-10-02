@@ -67,6 +67,19 @@ func CurrentUser(ctx context.Context, wsURL string, roots *x509.CertPool, token 
 	}
 }
 
+// CurrentUser returns the user of the client's own access token: Home-Mandate's Home
+// Assistant user.
+func (c *Client) CurrentUser(ctx context.Context) (User, error) {
+	u, err := call[User](ctx, c, "auth/current_user")
+	if err != nil {
+		return User{}, err
+	}
+	if u.ID == "" {
+		return User{}, fmt.Errorf("%w: current user without id", ErrProtocol)
+	}
+	return u, nil
+}
+
 func decodeUser(m message) (User, error) {
 	if !m.Success {
 		if m.Error != nil {

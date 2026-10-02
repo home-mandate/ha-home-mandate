@@ -12,6 +12,7 @@ import (
 
 	"github.com/home-mandate/home-mandate/internal/approval"
 	"github.com/home-mandate/home-mandate/internal/ha"
+	"github.com/home-mandate/home-mandate/internal/pdp"
 )
 
 // fakeApprover answers with result, after running during (e.g. to change the world
@@ -213,5 +214,107 @@ func TestApprovalTimeout(t *testing.T) {
 		if got := approvalTimeout(in); got != want {
 			t.Errorf("approvalTimeout(%q) = %v, want %v", in, got, want)
 		}
+	}
+}
+
+// An agent may have at most maxPendingAsks approval requests waiting.
+func TestPendingAsksAreBounded(t *testing.T) {
+	release := make(chan struct{})
+	f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeRejected, By: approverID, At: answeredAt}}
+	f.during = func() { <-release }
+	h := approvalHarness(t, f)
+	results := make(chan string, maxPendingAsks)
+	for range maxPendingAsks {
+		go func() { results <- unlock(h, nil) }()
+	}
+	waitFor(t, func() bool { return len(f.requests()) == maxPendingAsks })
+	if errText := unlock(h, nil); errText != "denied: approval_pending" {
+		t.Errorf("third request = %q", errText)
+	}
+	close(release)
+	for range maxPendingAsks {
+		if r := <-results; r != "denied: approval_rejected" {
+			t.Errorf("waiting request = %q", r)
+		}
+	}
+	// The slots are free again.
+	f.during = nil
+	if errText := unlock(h, nil); errText != "denied: approval_rejected" {
+		t.Errorf("after the others = %q", errText)
+	}
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A token revoked while the human decides (e.g. after refresh token reuse) stops the
+// action.
+func TestRevokedTokenAfterApproval(t *testing.T) {
+	f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: answeredAt}}
+	h := approvalHarness(t, f)
+	f.during = func() { _, _ = h.db.Exec(`UPDATE tokens SET revoked_at = '2026-10-13T12:00:00Z'`) }
+	if errText := unlock(h, nil); errText != "denied: unauthorized" {
+		t.Errorf("perform_action = %q", errText)
+	}
+	if calls := h.ha.recorded(); len(calls) != 0 {
+		t.Error("Home Assistant called")
+	}
+	if e := h.lastEntry(); path(e, "result", "denied_by") != "authentication" || path(e, "approval", "outcome") != "approved" {
+		t.Errorf("audit entry = %v", e)
+	}
+}
+
+// failingDecider loads the mandate once, then fails.
+type failingDecider struct {
+	Decider
+	calls int
+}
+
+func (f *failingDecider) Snapshot(ctx context.Context, clientID string) (*pdp.Snapshot, error) {
+	f.calls++
+	snap, err := f.Decider.Snapshot(ctx, clientID)
+	if f.calls > 1 {
+		return snap, errors.New("database is locked")
+	}
+	return snap, err
+}
+
+func TestMandateUnavailableAfterApproval(t *testing.T) {
+	f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: answeredAt}}
+	h := newHarness(t, nil)
+	h.approver, h.decider = f, &failingDecider{Decider: h.pdp}
+	h.url = h.serve(h.log)
+	if errText := unlock(h, nil); errText != "unavailable" {
+		t.Errorf("perform_action = %q", errText)
+	}
+	if e := h.lastEntry(); path(e, "result", "error") != "mandate_unavailable" || len(h.ha.recorded()) != 0 {
+		t.Errorf("audit entry = %v", e)
+	}
+}
+
+// The human sees the service data that will be executed.
+func TestApprovalShowsTheServiceData(t *testing.T) {
+	f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeRejected, By: approverID, At: answeredAt}}
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = append([]any{map[string]any{"id": "r-ask-light", "resource": map[string]any{"entity_id": "light.kitchen"},
+			"actions": []any{"set"}, "decision": "ask"}}, d["rules"].([]any)...)
+	})
+	h.approver = f
+	h.url = h.serve(h.log)
+	_, errText := h.call(h.session(), "perform_action", map[string]any{"entity_id": "light.kitchen", "action": "set",
+		"params": map[string]any{"brightness_pct": 40}})
+	if errText != "denied: approval_rejected" {
+		t.Fatalf("perform_action = %q", errText)
+	}
+	if reqs := f.requests(); len(reqs) != 1 || reqs[0].Params["brightness_pct"] != 40 {
+		t.Errorf("asked = %+v", reqs)
 	}
 }

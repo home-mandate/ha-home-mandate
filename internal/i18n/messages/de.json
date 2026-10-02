@@ -53,5 +53,6 @@
   "page_pair_code": "Code",
   "page_pair_submit": "Weiter",
   "page_pair_invalid": "Der Code ist falsch, abgelaufen oder schon benutzt.",
-  "page_pair_locked": "Zu viele Fehlversuche. Bitte warte zehn Minuten."
+  "page_pair_locked": "Zu viele Fehlversuche. Bitte warte zehn Minuten.",
+  "approval_params": "Parameter: {params}"
 }

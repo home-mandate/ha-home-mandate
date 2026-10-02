@@ -78,3 +78,24 @@ func TestCurrentUserTimesOut(t *testing.T) {
 		t.Error("CurrentUser succeeded")
 	}
 }
+
+func TestClientCurrentUser(t *testing.T) {
+	f := newFakeHA(t)
+	f.handle("auth/current_user", func(fakeMsg) (any, *CommandError) {
+		return map[string]any{"id": "hm-service", "name": "Home-Mandate", "is_admin": true}, nil
+	})
+	c, _ := startClient(t, testConfig(f.url()))
+	waitReady(t, c)
+	u, err := c.CurrentUser(context.Background())
+	if err != nil || u.ID != "hm-service" {
+		t.Errorf("CurrentUser = %+v, %v", u, err)
+	}
+	f.handle("auth/current_user", func(fakeMsg) (any, *CommandError) { return map[string]any{}, nil })
+	if _, err := c.CurrentUser(context.Background()); !errors.Is(err, ErrProtocol) {
+		t.Errorf("without id: %v", err)
+	}
+	f.handle("auth/current_user", func(fakeMsg) (any, *CommandError) { return nil, &CommandError{Code: "x"} })
+	if _, err := c.CurrentUser(context.Background()); err == nil {
+		t.Error("error result accepted")
+	}
+}

@@ -3,7 +3,9 @@
 // Package admission admits agents: a human who signed in picks a mandate template, and
 // the agent, its mandate (an instance of the template) and its first tokens are created
 // in one transaction (ARCHITECTURE section 6, decision W2). Templates are stored here;
-// they are not mandates and are never evaluated themselves.
+// they are not mandates and are never evaluated themselves. Admissions are in the audit
+// log (agent.registered, mandate.created); template changes are local settings for which
+// SPEC-v0 has no event type.
 package admission
 
 import (
@@ -141,8 +143,8 @@ func (s *Store) RemoveTemplate(ctx context.Context, name string) error {
 }
 
 // Admit registers the agent, stores its mandate from the template and issues its first
-// tokens, in one transaction: if anything fails, nothing remains. Every change is in
-// the audit log with the human as actor.
+// tokens, in one transaction: if anything fails, nothing remains. Registration and
+// mandate are in the audit log with the human as actor.
 func (s *Store) Admit(ctx context.Context, req Request) (agent.Agent, agent.TokenPair, error) {
 	if req.By.Kind == "" || req.By.ID == "" {
 		return agent.Agent{}, agent.TokenPair{}, errors.New("admission: no actor")

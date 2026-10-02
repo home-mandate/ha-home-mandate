@@ -156,3 +156,34 @@ func TestWriteTimeoutCoversTheApprovalWait(t *testing.T) {
 		t.Errorf("writeTimeout(10s) = %v", got)
 	}
 }
+
+// The gateway that serve starts serves the authorization server next to /mcp; checked on
+// newGateway itself, not only on withOAuth.
+func TestNewGatewayServesOAuth(t *testing.T) {
+	c := newCLI(t)
+	s, err := openStore(context.Background(), c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.store.Close()
+	s.cfg = config.Config{Mode: config.ModeContainer, HAURL: "ws://localhost:1/api/websocket", HAToken: "t",
+		MCPAddr: "127.0.0.1:0", PublicURL: "http://localhost:8765", HABrowserURL: "http://localhost:1",
+		HAHTTPURL: "http://localhost:1", ApprovalTimeout: 2 * time.Minute}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	g, err := newGateway(ctx, s, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.listener.Close()
+	for path, want := range map[string]int{"/.well-known/oauth-authorization-server": http.StatusOK, "/mcp": http.StatusUnauthorized} {
+		rec := httptest.NewRecorder()
+		g.server.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != want {
+			t.Errorf("%s: %d, want %d", path, rec.Code, want)
+		}
+	}
+	if g.server.WriteTimeout != 150*time.Second {
+		t.Errorf("write timeout %v", g.server.WriteTimeout)
+	}
+}

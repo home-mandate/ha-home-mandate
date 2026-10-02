@@ -5,6 +5,8 @@ package oauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -269,8 +271,17 @@ func TestDeviceAuthorizationRejects(t *testing.T) {
 			t.Errorf("%s: %d %v", name, status, out)
 		}
 	}
-	// Bounded number of pending pairings.
-	for range maxGrants - 1 {
+	// One sender may hold maxGrantsPerHost pending pairings.
+	for range maxGrantsPerHost - 1 {
+		h.device("n8n-kitchen")
+	}
+	if status, a := h.requestDevice(url.Values{"client_id": {"n8n-kitchen"}}); status != http.StatusServiceUnavailable || a.Error != "temporarily_unavailable" {
+		t.Errorf("over the limit of one sender: %d %+v", status, a)
+	}
+	// Bounded number of pending pairings overall.
+	senders := 0
+	h.server.clientAddr = func(*http.Request) string { senders++; return fmt.Sprint("10.0.0.", senders) }
+	for range maxGrants - maxGrantsPerHost {
 		h.device("n8n-kitchen")
 	}
 	if status, a := h.requestDevice(url.Values{"client_id": {"n8n-kitchen"}}); status != http.StatusServiceUnavailable || a.Error != "temporarily_unavailable" {
@@ -301,5 +312,25 @@ func TestUserCodes(t *testing.T) {
 		if got := normalizeUserCode(in); got != want {
 			t.Errorf("normalizeUserCode(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// A server error while redeeming an approved pairing keeps the human's decision: the
+// agent's next poll succeeds.
+func TestDevicePollRetriesAfterAServerError(t *testing.T) {
+	h := newHarness(t)
+	a := h.device("n8n-kitchen")
+	b, page := h.pairBrowser("admin-code")
+	b.enterCode(page, a.UserCode)
+	consent := b.get(ConsentPath)
+	b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, consent.body)}, "action": {"approve"}, "name": {"Kitchen"}, "template": {"voice-assistant"}})
+	h.server.cfg.Admission = brokenAdmission{Admitter: h.adm, admitErr: errors.New("database is locked")}
+	if status, out := h.poll(a, "n8n-kitchen"); status != http.StatusInternalServerError || out["error"] != "server_error" {
+		t.Fatalf("poll with a broken database = %d %v", status, out)
+	}
+	h.server.cfg.Admission = h.adm
+	h.clock.Add(deviceInterval * 3)
+	if status, out := h.poll(a, "n8n-kitchen"); status != http.StatusOK {
+		t.Errorf("poll after recovery = %d %v", status, out)
 	}
 }
