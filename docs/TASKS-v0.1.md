@@ -22,13 +22,13 @@ Two repositories: **[S]** = `mandate-spec`, **[H]** = `home-mandate`.
 
 ## Week 2 · 10-06 – 10-12 · Decision and enforcement
 
-- [ ] [H] `internal/catalog`: HA entities → category, area, actions (spec section 5), including `gate` via device_class
-- [ ] [H] `internal/mandate`: storing, versioning, validating; evaluation via `mandate-spec/evaluator`
-- [ ] [H] `internal/pdp`: AuthZEN endpoint, bound internally only, `ask` in the response context; all conformance cases additionally run against this endpoint
-- [ ] [H] `internal/mcp`: `list_devices`, `get_state`, `perform_action`, `list_my_permissions`
-- [ ] [H] PEP path: token → rate limit → catalog → PDP → execution → audit log
-- [ ] [H] `internal/ratelimit`, `internal/audit` (hash-chained, chain verification, 30 days)
-- [ ] [H] E2E environment per `docs/TESTING.md` section 3; E2E scenarios 1, 5, 8, 12 green; negative tests for the MCP interface
+- [x] [H] `internal/catalog`: HA entities → category, area, actions (spec section 5), including `gate` via device_class
+- [x] [H] `internal/mandate`: storing, versioning, validating; evaluation via `mandate-spec/evaluator`
+- [x] [H] `internal/pdp`: AuthZEN endpoint, bound internally only, `ask` in the response context; all conformance cases additionally run against this endpoint
+- [x] [H] `internal/mcp`: `list_devices`, `get_state`, `perform_action`, `list_my_permissions`
+- [x] [H] PEP path: token → rate limit → catalog → PDP → execution → audit log
+- [x] [H] `internal/ratelimit`, `internal/audit` (hash-chained, chain verification, 30 days)
+- [x] [H] E2E environment per `docs/TESTING.md` section 3; E2E scenarios 1, 5, 8, 12 green; negative tests for the MCP interface
 
 ## Week 3 · 10-13 – 10-19 · Agent onboarding and approval requests
 

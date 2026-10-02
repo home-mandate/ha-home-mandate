@@ -96,6 +96,11 @@ Every line is at least one test. New attack ideas are added here before they are
 - Entity outside the mandate in `get_state` → identical response as for a non-existent entity
 - Oversized requests, deeply nested JSON → rejected
 - Attempt to reach administrative functions via MCP → not present
+- Read decision `ask`: device not listed in `list_devices`; `ask` or `deny` on an unreadable entity → same answer as for a non-existent one
+- Audit log not writable → nothing executed, nothing read
+- Service parameters outside the declared list, type or range; parameters that widen the target (`entity_id`, `area_id`, …) → rejected before Home Assistant
+- Attributes carrying access tokens (`entity_picture`, `…token…`, `token=` in values) → never returned
+- Agent above its rate limit or without a mandate → refused; refusals logged at most once a minute
 
 **UI**
 - Request without CSRF token → rejected
