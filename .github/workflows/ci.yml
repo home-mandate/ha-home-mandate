@@ -1,10 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 name: CI
 
+# Every push to any branch runs the unit stage (Go checks, govulncheck, build, web checks).
+# Pull requests against main (every push into them) and pushes to main additionally run the
+# integration stage: container image, Playwright and E2E against Home Assistant. main is
+# protected: changes only via squash-merged pull requests with all checks green.
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -77,6 +84,8 @@ jobs:
 
   e2e-web:
     name: Web E2E (Playwright, de + en)
+    # Integration stage: pull requests, main and manual runs; not plain feature pushes.
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -94,6 +103,8 @@ jobs:
 
   image:
     name: Container image
+    # Integration stage: pull requests, main and manual runs; not plain feature pushes.
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -105,6 +116,8 @@ jobs:
 
   e2e:
     name: E2E (Home Assistant + release image)
+    # Integration stage: pull requests, main and manual runs; not plain feature pushes.
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
