@@ -42,6 +42,12 @@ const navigate = async (hash: string) => {
 };
 
 describe('App frame', () => {
+  it('shows the overview at the start', async () => {
+    await start();
+    expect(screen.getByRole('heading', { level: 1, name: 'Overview' })).toBeTruthy();
+    expect(await screen.findByRole('region', { name: 'Status at a glance' })).toBeTruthy();
+  });
+
   it('shows the sections with the current one marked, and the page title', async () => {
     await start({}, '#/mandates');
     const nav = screen.getByRole('navigation', { name: 'Sections' });

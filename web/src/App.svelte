@@ -18,6 +18,7 @@
   import MandateEditor from './lib/pages/MandateEditor.svelte';
   import MandateList from './lib/pages/MandateList.svelte';
   import MandateVersions from './lib/pages/MandateVersions.svelte';
+  import Overview from './lib/pages/Overview.svelte';
   import Placeholder from './lib/pages/Placeholder.svelte';
   import { getLocale } from './lib/paraglide/runtime.js';
   import { href, parseHash, sectionOf, type Route, type Section } from './lib/router.ts';
@@ -130,6 +131,8 @@
       body={m.notfound_body()}
       cta={{ href: '#/', label: m.notfound_back() }}
     />
+  {:else if route.name === 'overview'}
+    <Overview {app} {now} />
   {:else if route.name === 'mandates'}
     <MandateList {app} {now} />
   {:else if route.name === 'mandate'}

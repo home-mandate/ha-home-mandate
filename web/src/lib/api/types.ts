@@ -406,10 +406,16 @@ export interface ApprovalRequest {
   critical: boolean;
   /** The agent's claim, sanitized by the server; untrusted. */
   reason: string | null;
-  /** Names of the approvers the notification went to. */
+  /** Names of the approvers the request reached (any channel). */
   recipients: string[];
   created_at: string;
   expires_at: string;
+  /**
+   * The signed-in person may answer this request here now (decision F2): an approver of
+   * it with the UI channel, and for a critical action with UI for critical actions too.
+   * The server checks again when the answer comes.
+   */
+  can_answer: boolean;
 }
 
 export interface ApprovalHistoryEntry {
@@ -419,8 +425,8 @@ export interface ApprovalHistoryEntry {
   entity_id: string;
   device_name: string;
   action: string;
-  /** emergency_stop: the stop ended the request before an answer. */
-  outcome: ApprovalOutcome | 'emergency_stop';
+  /** emergency_stop / revoked: the stop or the agent's revocation ended the request before an answer (F1). */
+  outcome: ApprovalOutcome | 'emergency_stop' | 'revoked';
   by_name: string | null;
   created_at: string;
   answered_at: string;
@@ -463,9 +469,11 @@ export interface AuditEntry {
     resource: { entity_id: string; category?: string; area?: string };
     action: string;
   };
-  mandate?: { id: string; digest: string; previous_digest?: string };
+  /** version: number of the mandate version with this digest (added by the API, not part of the chain; F4). */
+  mandate?: { id: string; digest: string; previous_digest?: string; version?: number };
   evaluation?: { decision: Decision; reason: Reason; rule_id: string | null; approval_timeout?: string };
-  approval?: { outcome: ApprovalOutcome; by?: string; by_name?: string; at: string };
+  /** via: the channel the answer came through, push or ui (decision F2). */
+  approval?: { outcome: ApprovalOutcome; by?: string; by_name?: string; via?: 'push' | 'ui'; at: string };
   result?: { status: ResultStatus; denied_by?: DeniedBy; error?: string; duration_ms?: number };
   truncated?: { up_to_seq: number; last_digest: string };
   /** Digest of this entry and of the one before (technical details). */

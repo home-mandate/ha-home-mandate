@@ -194,6 +194,7 @@ export const approvalsOpenFixture: ApprovalRequest[] = [
     recipients: ['Markus'],
     created_at: '2026-10-02T17:41:30Z',
     expires_at: '2026-10-02T17:43:30Z',
+    can_answer: false,
   },
 ];
 

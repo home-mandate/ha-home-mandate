@@ -75,7 +75,10 @@ describe('createMockClient: agents and pairing', () => {
     const { events } = listen(api);
     const agent = await api.revokeAgent('https://claude.ai/oauth/claude-code-client-metadata');
     expect(agent).toMatchObject({ status: 'revoked', mandate: { status: 'revoked' } });
-    expect((await api.approvals()).open).toEqual([]);
+    const approvals = await api.approvals();
+    expect(approvals.open).toEqual([]);
+    // F1: the revocation ends the request; it is not a "rejected" by a person.
+    expect(approvals.history[0]).toMatchObject({ outcome: 'revoked', by_name: null });
     expect(types(events)).toEqual(['mandates.changed', 'approval.closed', 'audit.appended', 'agents.changed']);
   });
 

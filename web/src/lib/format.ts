@@ -58,3 +58,8 @@ function dayNumber(d: Date, timeZone: string): number {
   const part = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === type)?.value);
   return Date.UTC(part('year'), part('month') - 1, part('day')) / DAY;
 }
+
+/** formatList joins names, e.g. "Anna und Jonas". */
+export function formatList(values: readonly string[], ctx: FormatContext): string {
+  return new Intl.ListFormat(ctx.locale, { style: 'long', type: 'conjunction' }).format(values);
+}

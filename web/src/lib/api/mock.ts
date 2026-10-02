@@ -364,7 +364,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       const agent = state.agents.find((a) => a.client_id === clientId) ?? fail('not_found');
       if (agent.mandate) setMandateStatus(agent.mandate.id, 'revoked');
       state = { ...state, agents: state.agents.map((a) => (a.client_id === clientId ? { ...a, status: 'revoked' as const } : a)) };
-      for (const r of state.approvals.open.filter((x) => x.agent.client_id === clientId)) closeApproval(r.id, 'rejected', null);
+      for (const r of state.approvals.open.filter((x) => x.agent.client_id === clientId)) closeApproval(r.id, 'revoked', null);
       log('agent.revoked', { agent: { client_id: agent.client_id, display_name: agent.display_name } });
       emit({ type: 'agents.changed' });
       return copy(state.agents.find((a) => a.client_id === clientId) ?? fail('internal'));
