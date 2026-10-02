@@ -10,6 +10,8 @@ import type {
   ApiErrorBody,
   ApiErrorCode,
   ApplyTemplate,
+  ApprovalAnswer,
+  ApprovalHistoryEntry,
   Approvals,
   ApproverList,
   ApproverUpdate,
@@ -72,6 +74,7 @@ export interface ApiClient {
   putSettings(defaults: Defaults): Promise<Defaults>;
 
   approvals(): Promise<Approvals>;
+  answerApproval(id: string, approve: boolean): Promise<ApprovalHistoryEntry>;
 
   audit(query: AuditQuery): Promise<AuditPage>;
   verifyAudit(): Promise<AuditVerification>;
@@ -293,6 +296,7 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
     putSettings: (defaults) => request('PUT', 'settings', defaults),
 
     approvals: () => get('approvals'),
+    answerApproval: (id, approve) => request('POST', `approvals/${segment(id)}/answer`, { approve } satisfies ApprovalAnswer),
 
     audit: (q) => get(`audit${auditQuery(q)}`),
     verifyAudit: () => request('POST', 'audit/verify'),

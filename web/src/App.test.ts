@@ -47,6 +47,8 @@ describe('App frame', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Audit log' })).toBeTruthy();
     await navigate('#/audit/9');
     expect(await screen.findByRole('heading', { level: 1, name: 'Entry no. 9' })).toBeTruthy();
+    await navigate('#/audit/requests');
+    expect(await screen.findByRole('region', { name: 'History' })).toBeTruthy();
   });
 
   it('shows the overview at the start', async () => {

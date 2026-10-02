@@ -649,5 +649,10 @@
   "audit_field_device": "Device",
   "audit_field_action": "Action",
   "audit_field_actor": "Triggered by",
-  "audit_seq_short": "No. {number}"
+  "audit_seq_short": "No. {number}",
+  "result_revoked": "Declined because the agent was revoked",
+  "request_gone": "This approval was already answered or has ended.",
+  "request_answer_failed": "The answer couldn’t be sent. Answering on the phone still works.",
+  "request_closed_live": "Approval for {device} ended: {result}",
+  "request_confirm_label": "Confirm approval"
 }

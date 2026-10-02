@@ -21,6 +21,7 @@
   import AuditLog from './lib/pages/AuditLog.svelte';
   import MandateVersions from './lib/pages/MandateVersions.svelte';
   import Overview from './lib/pages/Overview.svelte';
+  import Requests from './lib/pages/Requests.svelte';
   import Placeholder from './lib/pages/Placeholder.svelte';
   import { getLocale } from './lib/paraglide/runtime.js';
   import { href, parseHash, sectionOf, type Route, type Section } from './lib/router.ts';
@@ -137,6 +138,8 @@
     <Overview {app} {now} />
   {:else if route.name === 'audit'}
     {#key href(route)}<AuditLog {app} {now} query={route.query} />{/key}
+  {:else if route.name === 'requests'}
+    <Requests {app} />
   {:else if route.name === 'audit_entry'}
     {#key route.seq}<AuditEntry {app} seq={route.seq} />{/key}
   {:else if route.name === 'mandates'}

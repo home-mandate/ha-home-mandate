@@ -106,7 +106,7 @@ interface State {
 export interface MockControls {
   emit(event: ServerEvent): void;
   openApproval(request: ApprovalRequest): void;
-  closeApproval(id: string, outcome: ApprovalHistoryEntry['outcome'], byName: string | null): void;
+  closeApproval(id: string, outcome: ApprovalHistoryEntry['outcome'], byName: string | null, via?: 'push' | 'ui'): void;
   setHaConnected(connected: boolean): void;
   breakChain(seq: number): void;
 }
@@ -312,9 +312,9 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     return key;
   }
 
-  function closeApproval(id: string, outcome: ApprovalHistoryEntry['outcome'], byName: string | null): void {
+  function closeApproval(id: string, outcome: ApprovalHistoryEntry['outcome'], byName: string | null, via?: 'push' | 'ui'): ApprovalHistoryEntry | null {
     const request = state.approvals.open.find((r) => r.id === id);
-    if (!request) return;
+    if (!request) return null;
     const entry: ApprovalHistoryEntry = {
       seq: (state.audit.at(-1)?.seq ?? 0) + 1,
       agent: request.agent,
@@ -325,9 +325,11 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       by_name: byName,
       created_at: request.created_at,
       answered_at: now().toISOString(),
+      ...(via ? { via } : {}),
     };
     state = { ...state, approvals: { open: state.approvals.open.filter((r) => r.id !== id), history: [entry, ...state.approvals.history] } };
     emit({ type: 'approval.closed', id, entry });
+    return entry;
   }
 
   const control: MockControls = {
@@ -481,6 +483,11 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 
     async approvals() {
       return copy(state.approvals);
+    },
+    async answerApproval(id, approve) {
+      // Unknown, ended and not answerable look alike (no probing of IDs).
+      const request = state.approvals.open.find((r) => r.id === id && r.can_answer) ?? fail('not_found');
+      return copy(closeApproval(request.id, approve ? 'approved' : 'rejected', user().name, 'ui') ?? fail('not_found'));
     },
 
     async audit(query) {

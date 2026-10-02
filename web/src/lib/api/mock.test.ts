@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { ApiError } from './client.ts';
 import { approvalsOpenFixture, voiceAssistantDraft } from './fixtures.ts';
 import { createMockClient, MOCK_EXPIRED_CODE, MOCK_PAIRING_CODE } from './mock.ts';
-import type { Rule, ServerEvent } from './types.ts';
+import type { ApprovalRequest, Rule, ServerEvent } from './types.ts';
 
 const criticalRule: Rule = {
   id: 'door-open',
@@ -349,5 +349,30 @@ describe('createMockClient: approvals, settings, audit, approvers, emergency sto
     const api = createMockClient();
     api.control.setHaConnected(false);
     expect((await api.system()).ha.connected).toBe(false);
+  });
+});
+
+describe('createMockClient: answering approvals in the UI (F2)', () => {
+  it('closes a request the person may answer, as an answer in the UI with their name', async () => {
+    const api = createMockClient();
+    const { events } = listen(api);
+    api.control.openApproval({ ...(approvalsOpenFixture[0] as ApprovalRequest), id: 'apr-ui', can_answer: true });
+    const entry = await api.answerApproval('apr-ui', true);
+    expect(entry).toMatchObject({ outcome: 'approved', by_name: 'Markus', via: 'ui' });
+    const approvals = await api.approvals();
+    expect(approvals.open.map((r) => r.id)).toEqual(['apr-1']);
+    expect(approvals.history[0]).toMatchObject({ outcome: 'approved', via: 'ui' });
+    expect(types(events)).toContain('approval.closed');
+    expect(await api.answerApproval('apr-1', true).catch((e: unknown) => e)).toMatchObject({ code: 'not_found' });
+  });
+
+  it('answers not_found alike for unknown, answered and not answerable requests', async () => {
+    const api = createMockClient();
+    api.control.openApproval({ ...(approvalsOpenFixture[0] as ApprovalRequest), id: 'apr-ui', can_answer: true });
+    await api.answerApproval('apr-ui', false);
+    for (const id of ['nope', 'apr-ui', 'apr-1']) {
+      await expect(api.answerApproval(id, true)).rejects.toMatchObject({ code: 'not_found', status: 404 });
+    }
+    expect((await api.approvals()).open.map((r) => r.id)).toEqual(['apr-1']);
   });
 });

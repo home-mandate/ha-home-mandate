@@ -428,6 +428,8 @@ export interface ApprovalHistoryEntry {
   /** emergency_stop / revoked: the stop or the agent's revocation ended the request before an answer (F1). */
   outcome: ApprovalOutcome | 'emergency_stop' | 'revoked';
   by_name: string | null;
+  /** Channel of the answer (decision F2); absent without an answer by a person. */
+  via?: 'push' | 'ui';
   created_at: string;
   answered_at: string;
 }
@@ -436,6 +438,16 @@ export interface Approvals {
   open: ApprovalRequest[];
   /** Up to 50 most recent. */
   history: ApprovalHistoryEntry[];
+}
+
+/**
+ * POST api/approvals/{id}/answer: an answer given in the UI (decision F2). The server
+ * checks again that the signed-in person may answer this request here now; for an unknown
+ * or ended request and for one the person may not answer it says not_found alike, so IDs
+ * cannot be probed. Answers the closed request.
+ */
+export interface ApprovalAnswer {
+  approve: boolean;
 }
 
 // ---------------------------------------------------------------------------

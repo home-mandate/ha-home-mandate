@@ -649,5 +649,10 @@
   "audit_field_device": "Gerät",
   "audit_field_action": "Aktion",
   "audit_field_actor": "Ausgelöst von",
-  "audit_seq_short": "Nr. {number}"
+  "audit_seq_short": "Nr. {number}",
+  "result_revoked": "Durch Entziehen des Agenten abgelehnt",
+  "request_gone": "Diese Rückfrage ist schon beantwortet oder beendet.",
+  "request_answer_failed": "Die Antwort konnte nicht gesendet werden. Am Handy geht es weiterhin.",
+  "request_closed_live": "Rückfrage zu {device} beendet: {result}",
+  "request_confirm_label": "Freigabe bestätigen"
 }
