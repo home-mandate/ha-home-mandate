@@ -1,0 +1,369 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package approval
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/home-mandate/home-mandate/internal/ha"
+	"github.com/home-mandate/home-mandate/internal/i18n"
+	"github.com/home-mandate/home-mandate/internal/store"
+)
+
+var update = flag.Bool("update", false, "rewrite the reference notifications in testdata")
+
+const (
+	u1 = "1a2b3c4d5e6f708192a3b4c5d6e7f801" // approver, German
+	u2 = "2b3c4d5e6f708192a3b4c5d6e7f80112" // approver, household language
+	u3 = "3c4d5e6f708192a3b4c5d6e7f8011223" // configured, but not an approver of the mandate
+)
+
+type sent struct {
+	service string
+	n       ha.Notification
+}
+
+// fakeNotifier records notifications; services in fail refuse them.
+type fakeNotifier struct {
+	mu   sync.Mutex
+	sent []sent
+	fail map[string]bool
+	ch   chan sent
+}
+
+func newFakeNotifier() *fakeNotifier {
+	return &fakeNotifier{fail: map[string]bool{}, ch: make(chan sent, 32)}
+}
+
+func (f *fakeNotifier) Notify(_ context.Context, service string, n ha.Notification) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail[service] {
+		return errors.New("notify failed")
+	}
+	f.sent = append(f.sent, sent{service, n})
+	f.ch <- sent{service, n}
+	return nil
+}
+
+func (f *fakeNotifier) setFail(service string, fail bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fail[service] = fail
+}
+
+func (f *fakeNotifier) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.sent)
+}
+
+func (f *fakeNotifier) next(t *testing.T) sent {
+	t.Helper()
+	select {
+	case s := <-f.ch:
+		return s
+	case <-time.After(5 * time.Second):
+		t.Fatal("no notification")
+		return sent{}
+	}
+}
+
+type env struct {
+	svc       *Service
+	notifier  *fakeNotifier
+	approvers *Approvers
+}
+
+func newEnv(t *testing.T, maxTimeout time.Duration) env {
+	t.Helper()
+	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "hm.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	approvers := NewApprovers(st.DB())
+	for _, a := range []Approver{{UserID: u1, NotifyService: "mobile_app_markus", Language: "de"},
+		{UserID: u2, NotifyService: "mobile_app_anna"}, {UserID: u3, NotifyService: "mobile_app_guest"}} {
+		if err := approvers.Put(context.Background(), a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n := newFakeNotifier()
+	svc := New(Config{Approvers: approvers, Notifier: n, Language: func() i18n.Lang { return i18n.EN }, MaxTimeout: maxTimeout})
+	return env{svc: svc, notifier: n, approvers: approvers}
+}
+
+func request() Request {
+	return Request{Agent: "Voice assistant", Device: "Front door", Action: "unlock", Reason: "The parcel service is at the door",
+		Approvers: []string{u1, u2, "not-configured"}, Timeout: time.Minute}
+}
+
+type answer struct {
+	res Result
+	err error
+}
+
+func (e env) ask(req Request) chan answer {
+	ch := make(chan answer, 1)
+	go func() {
+		res, err := e.svc.Ask(context.Background(), req)
+		ch <- answer{res, err}
+	}()
+	return ch
+}
+
+func wait(t *testing.T, ch chan answer) answer {
+	t.Helper()
+	select {
+	case a := <-ch:
+		return a
+	case <-time.After(5 * time.Second):
+		t.Fatal("Ask did not return")
+		return answer{}
+	}
+}
+
+// nonceOf returns the nonce of a notification's approve button.
+func nonceOf(t *testing.T, s sent) string {
+	t.Helper()
+	if len(s.n.Actions) != 2 || !strings.HasPrefix(s.n.Actions[0].Action, "HM_APPROVE_") {
+		t.Fatalf("actions = %+v", s.n.Actions)
+	}
+	return strings.TrimPrefix(s.n.Actions[0].Action, "HM_APPROVE_")
+}
+
+func event(action, userID string) ha.Event {
+	data, _ := json.Marshal(map[string]any{"action": action})
+	return ha.Event{EventType: ha.EventMobileAppNotificationAction, Data: data, Context: ha.EventContext{UserID: userID}}
+}
+
+// E2E scenario 2 at unit level: an approver confirms.
+func TestApprovedByAnApprover(t *testing.T) {
+	e := newEnv(t, time.Minute)
+	ch := e.ask(request())
+	first, second := e.notifier.next(t), e.notifier.next(t)
+	byService := map[string]sent{first.service: first, second.service: second}
+	de, en := byService["mobile_app_markus"], byService["mobile_app_anna"]
+	if de.n.Title != "Freigabe nötig: Voice assistant" || en.n.Title != "Approval needed: Voice assistant" {
+		t.Errorf("titles %q / %q", de.n.Title, en.n.Title)
+	}
+	if !strings.Contains(de.n.Message, "Angabe des Agenten, nicht geprüft: The parcel service is at the door") ||
+		!strings.Contains(de.n.Message, "entriegeln") {
+		t.Errorf("message = %q", de.n.Message)
+	}
+	nonce := nonceOf(t, de)
+	if len(nonce) != 32 || nonceOf(t, en) != nonce || strings.Trim(nonce, "0123456789abcdef") != "" {
+		t.Errorf("nonce %q", nonce)
+	}
+	e.svc.HandleEvent(event("HM_APPROVE_"+nonce, u2))
+	a := wait(t, ch)
+	if a.err != nil || a.res.Outcome != OutcomeApproved || a.res.By != u2 || a.res.At.IsZero() {
+		t.Errorf("result = %+v, %v", a.res, a.err)
+	}
+	// Nobody else was asked: u3 is configured but not an approver of this mandate.
+	if n := e.notifier.count(); n != 2 {
+		t.Errorf("%d notifications", n)
+	}
+}
+
+func TestRejectedByAnApprover(t *testing.T) {
+	e := newEnv(t, time.Minute)
+	ch := e.ask(request())
+	nonce := nonceOf(t, e.notifier.next(t))
+	e.svc.HandleEvent(event("HM_DENY_"+nonce, u1))
+	if a := wait(t, ch); a.res.Outcome != OutcomeRejected || a.res.By != u1 {
+		t.Errorf("result = %+v", a.res)
+	}
+}
+
+// E2E scenario 3 at unit level: no answer → timeout; a late answer is discarded.
+func TestTimeout(t *testing.T) {
+	e := newEnv(t, 50*time.Millisecond)
+	start := time.Now()
+	ch := e.ask(request())
+	nonce := nonceOf(t, e.notifier.next(t))
+	a := wait(t, ch)
+	if a.err != nil || a.res.Outcome != OutcomeTimeout || a.res.By != "" || time.Since(start) < 50*time.Millisecond {
+		t.Errorf("result = %+v, %v", a.res, a.err)
+	}
+	e.svc.HandleEvent(event("HM_APPROVE_"+nonce, u1)) // must not panic or block
+}
+
+// The mandate's timeout applies when it is shorter than the upper limit.
+func TestMandateTimeoutShortensTheWait(t *testing.T) {
+	e := newEnv(t, time.Hour)
+	req := request()
+	req.Timeout = 30 * time.Millisecond
+	if a := wait(t, e.ask(req)); a.res.Outcome != OutcomeTimeout {
+		t.Errorf("result = %+v", a.res)
+	}
+}
+
+// E2E scenario 4 at unit level (decision W8): an answer from someone who may not
+// approve ends the request as invalid_response and warns the approvers.
+func TestAnswerFromANonApprover(t *testing.T) {
+	e := newEnv(t, time.Minute)
+	ch := e.ask(request())
+	nonce := nonceOf(t, e.notifier.next(t))
+	e.notifier.next(t)
+	e.svc.HandleEvent(event("HM_APPROVE_"+nonce, u3))
+	a := wait(t, ch)
+	if a.res.Outcome != OutcomeInvalidResponse || a.res.By != u3 {
+		t.Errorf("result = %+v", a.res)
+	}
+	warnings := map[string]sent{}
+	for range 2 {
+		s := e.notifier.next(t)
+		warnings[s.service] = s
+	}
+	de, en := warnings["mobile_app_markus"], warnings["mobile_app_anna"]
+	if de.n.Title != "Warnung: unberechtigte Antwort" || !strings.Contains(de.n.Message, u3) || len(de.n.Actions) != 0 ||
+		en.n.Title != "Warning: unauthorised answer" || !strings.Contains(en.n.Message, "Front door") {
+		t.Errorf("warnings = %+v", warnings)
+	}
+	if _, ok := warnings["mobile_app_guest"]; ok {
+		t.Error("the non-approver was warned")
+	}
+	// A valid answer afterwards changes nothing.
+	e.svc.HandleEvent(event("HM_APPROVE_"+nonce, u1))
+}
+
+func TestAnswerWithoutUserIsInvalid(t *testing.T) {
+	e := newEnv(t, time.Minute)
+	ch := e.ask(request())
+	nonce := nonceOf(t, e.notifier.next(t))
+	e.svc.HandleEvent(event("HM_APPROVE_"+nonce, ""))
+	if a := wait(t, ch); a.res.Outcome != OutcomeInvalidResponse || a.res.By != "unknown" {
+		t.Errorf("result = %+v", a.res)
+	}
+}
+
+// Negative catalog: "yes" and "no" at the same time → the first valid answer counts.
+func TestFirstAnswerCounts(t *testing.T) {
+	e := newEnv(t, time.Minute)
+	ch := e.ask(request())
+	nonce := nonceOf(t, e.notifier.next(t))
+	e.svc.HandleEvent(event("HM_APPROVE_"+nonce, u1))
+	e.svc.HandleEvent(event("HM_DENY_"+nonce, u2))
+	if a := wait(t, ch); a.res.Outcome != OutcomeApproved || a.res.By != u1 {
+		t.Errorf("result = %+v", a.res)
+	}
+}
+
+// Negative catalog: answer with an unknown, expired or used nonce → discarded.
+func TestForeignAndMalformedAnswersAreIgnored(t *testing.T) {
+	e := newEnv(t, 200*time.Millisecond)
+	ch := e.ask(request())
+	nonce := nonceOf(t, e.notifier.next(t))
+	for _, ev := range []ha.Event{
+		event("HM_APPROVE_00000000000000000000000000000000", u1), // unknown nonce
+		event("HM_APPROVE_"+strings.ToUpper(nonce), u1),          // not the canonical form
+		event("HM_APPROVE_"+nonce[:31], u1),                      // truncated
+		event("HM_APPROVE_"+nonce+"x", u1),                       // extended
+		event("OPEN_GARAGE", u1),                                 // another integration's action
+		event("", u1),
+		{EventType: ha.EventMobileAppNotificationAction, Data: json.RawMessage(`[1]`), Context: ha.EventContext{UserID: u1}},
+	} {
+		e.svc.HandleEvent(ev)
+	}
+	if a := wait(t, ch); a.res.Outcome != OutcomeTimeout {
+		t.Errorf("result = %+v", a.res)
+	}
+}
+
+func TestNoApproverCanBeReached(t *testing.T) {
+	e := newEnv(t, time.Minute)
+	req := request()
+	req.Approvers = []string{"not-configured"}
+	if _, err := e.svc.Ask(context.Background(), req); !errors.Is(err, ErrNoApprover) {
+		t.Errorf("no configured approver: %v", err)
+	}
+	e.notifier.setFail("mobile_app_markus", true)
+	e.notifier.setFail("mobile_app_anna", true)
+	if _, err := e.svc.Ask(context.Background(), request()); !errors.Is(err, ErrNoApprover) {
+		t.Errorf("no notification delivered: %v", err)
+	}
+	// One delivered notification is enough.
+	e.notifier.setFail("mobile_app_anna", false)
+	ch := e.ask(request())
+	nonce := nonceOf(t, e.notifier.next(t))
+	e.svc.HandleEvent(event("HM_APPROVE_"+nonce, u2))
+	if a := wait(t, ch); a.res.Outcome != OutcomeApproved {
+		t.Errorf("result = %+v", a.res)
+	}
+}
+
+func TestCancelledRequestEndsLikeATimeout(t *testing.T) {
+	e := newEnv(t, time.Minute)
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan answer, 1)
+	go func() {
+		res, err := e.svc.Ask(ctx, request())
+		ch <- answer{res, err}
+	}()
+	nonce := nonceOf(t, e.notifier.next(t))
+	cancel()
+	if a := wait(t, ch); a.res.Outcome != OutcomeTimeout {
+		t.Errorf("result = %+v", a.res)
+	}
+	e.svc.HandleEvent(event("HM_APPROVE_"+nonce, u1))
+}
+
+// TESTING section 5: approval notifications in both languages against stored references.
+func TestReferenceNotifications(t *testing.T) {
+	req := Request{Agent: "Voice assistant", Device: "Front door", Action: "unlock",
+		Reason: "**URGENT** open now: https://evil.example.org/x\u202e", Approvers: []string{u1}}
+	for _, lang := range i18n.Supported {
+		got, _ := json.MarshalIndent(buildRequest(lang, req, "00112233445566778899aabbccddeeff"), "", "  ")
+		path := filepath.Join("testdata", "notification_"+string(lang)+".json")
+		if *update {
+			if err := os.WriteFile(path, append(got, '\n'), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		want, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.TrimSpace(string(want)) != string(got) {
+			t.Errorf("%s:\n%s\nwant\n%s", lang, got, want)
+		}
+	}
+}
+
+// Negative catalog: very long or manipulated reason (control characters, Markdown,
+// links) → truncated, sanitized, marked as the agent's claim.
+func TestSanitize(t *testing.T) {
+	for in, want := range map[string]string{
+		"plain text":                     "plain text",
+		"  spaced \t\n out  ":            "spaced out",
+		"bidi\u202eoverride":             "bidi override",
+		"zero\u200bwidth":                "zero width",
+		"line\u2028sep":                  "line sep",
+		"**bold** _it_ `code` [x](y)":    "bold it code x y",
+		"see https://evil.example.org/a": "see https evil.example.org/a",
+		"<script>alert(1)</script>":      "script alert 1 /script",
+		"{device}":                       "device",
+		"":                               "",
+		strings.Repeat("a", 250):         strings.Repeat("a", maxReason-1) + "…",
+	} {
+		if got := sanitize(in, maxReason); got != want {
+			t.Errorf("sanitize(%q) = %q, want %q", in, got, want)
+		}
+	}
+	req := request()
+	req.Reason = "\u202e\u200b  "
+	if n := buildRequest(i18n.EN, req, "00112233445566778899aabbccddeeff"); strings.Contains(n.Message, "claim") {
+		t.Errorf("empty reason shown: %q", n.Message)
+	}
+}

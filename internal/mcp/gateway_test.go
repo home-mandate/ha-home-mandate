@@ -116,16 +116,18 @@ func (f *fakeHA) recorded() []ha.ServiceCall {
 }
 
 type harness struct {
-	t       *testing.T
-	url     string
-	token   string
-	agent   agent.Agent
-	agents  *agent.Store
-	ha      *fakeHA
-	catalog *fakeCatalog
-	log     *audit.Log
-	db      *sql.DB
-	pdp     *pdp.PDP
+	t        *testing.T
+	url      string
+	token    string
+	agent    agent.Agent
+	agents   *agent.Store
+	ha       *fakeHA
+	catalog  *fakeCatalog
+	log      *audit.Log
+	db       *sql.DB
+	pdp      *pdp.PDP
+	mandates *mandate.Store
+	approver Approver
 
 	mu sync.Mutex
 	tz string
@@ -163,7 +165,7 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 		t.Fatal(err)
 	}
 
-	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), tz: "Europe/Berlin",
+	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin",
 		ha: &fakeHA{connected: true},
 		catalog: &fakeCatalog{ready: true, devices: map[string]catalog.Device{
 			"light.kitchen":            {EntityID: "light.kitchen", Category: "light", Area: "kitchen", State: "off", Attributes: map[string]any{"friendly_name": "Kitchen"}},
@@ -180,7 +182,7 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 
 // serve starts a gateway on the harness with auditor and returns its URL.
 func (h *harness) serve(auditor Auditor) string {
-	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: h.pdp, Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test"})
+	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: h.pdp, Approvals: h.approver, Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test"})
 	srv := httptest.NewServer(g.Handler())
 	h.t.Cleanup(srv.Close)
 	return srv.URL + Path

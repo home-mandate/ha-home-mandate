@@ -1,0 +1,16 @@
+{
+  "Title": "Freigabe nötig: Voice assistant",
+  "Message": "Voice assistant möchte an „Front door“ ausführen: entriegeln.\nAngabe des Agenten, nicht geprüft: URGENT open now: https evil.example.org/x\nOhne Antwort wird die Anfrage abgelehnt.",
+  "Actions": [
+    {
+      "Action": "HM_APPROVE_00112233445566778899aabbccddeeff",
+      "Title": "Erlauben",
+      "Destructive": false
+    },
+    {
+      "Action": "HM_DENY_00112233445566778899aabbccddeeff",
+      "Title": "Ablehnen",
+      "Destructive": true
+    }
+  ]
+}

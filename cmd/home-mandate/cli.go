@@ -15,6 +15,7 @@ import (
 
 	"github.com/home-mandate/home-mandate/internal/admission"
 	"github.com/home-mandate/home-mandate/internal/agent"
+	"github.com/home-mandate/home-mandate/internal/approval"
 	"github.com/home-mandate/home-mandate/internal/audit"
 	"github.com/home-mandate/home-mandate/internal/config"
 	"github.com/home-mandate/home-mandate/internal/mandate"
@@ -38,6 +39,7 @@ type state struct {
 	agents    *agent.Store
 	mandates  *mandate.Store
 	admission *admission.Store
+	approvers *approval.Approvers
 }
 
 // openState opens the database for the administration commands; they need the data
@@ -63,7 +65,7 @@ func openStore(ctx context.Context, dataDir string) (*state, error) {
 	log := audit.New(st.DB(), household)
 	agents, mandates := agent.New(st.DB(), log), mandate.New(st.DB(), log, household)
 	return &state{store: st, household: household, log: log, agents: agents, mandates: mandates,
-		admission: admission.New(st.DB(), agents, mandates, household)}, nil
+		admission: admission.New(st.DB(), agents, mandates, household), approvers: approval.NewApprovers(st.DB())}, nil
 }
 
 // withState opens the state, runs fn and reports its error.
@@ -147,6 +149,34 @@ func onOff(on bool) string {
 		return "on"
 	}
 	return "off"
+}
+
+// approverCommand manages who receives approval requests (local settings until the UI).
+func approverCommand(ctx context.Context, e env, args []string) int {
+	switch {
+	case (len(args) == 3 || len(args) == 4) && args[0] == "add":
+		ap := approval.Approver{UserID: args[1], NotifyService: args[2]}
+		if len(args) == 4 {
+			ap.Language = args[3]
+		}
+		return withState(ctx, e, func(s *state) error { return s.approvers.Put(ctx, ap) })
+	case len(args) == 1 && args[0] == "list":
+		return withState(ctx, e, func(s *state) error {
+			list, err := s.approvers.List(ctx)
+			for _, ap := range list {
+				lang := ap.Language
+				if lang == "" {
+					lang = "household"
+				}
+				fmt.Fprintf(e.stdout, "%s\tnotify.%s\t%s\n", ap.UserID, ap.NotifyService, lang)
+			}
+			return err
+		})
+	case len(args) == 2 && args[0] == "remove":
+		return withState(ctx, e, func(s *state) error { return s.approvers.Remove(ctx, args[1]) })
+	default:
+		return usageError(e, "approver needs add USER_ID NOTIFY_SERVICE [de|en], list or remove USER_ID")
+	}
 }
 
 func mandateCommand(ctx context.Context, e env, args []string) int {

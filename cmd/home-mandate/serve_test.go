@@ -147,3 +147,12 @@ func TestWithOAuth(t *testing.T) {
 		t.Error("plaintext Home Assistant accepted")
 	}
 }
+
+func TestWriteTimeoutCoversTheApprovalWait(t *testing.T) {
+	if got := writeTimeout(2 * time.Minute); got != 150*time.Second {
+		t.Errorf("writeTimeout(2m) = %v", got)
+	}
+	if got := writeTimeout(10 * time.Second); got != time.Minute {
+		t.Errorf("writeTimeout(10s) = %v", got)
+	}
+}

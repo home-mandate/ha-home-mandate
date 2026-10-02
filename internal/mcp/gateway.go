@@ -2,8 +2,9 @@
 
 // Package mcp is the MCP server for agents and the Policy Enforcement Point. Every tool
 // call that touches a device goes token (bound to this resource) → emergency stop →
-// availability → PDP → rate limit → (ask is refused until approval requests exist) →
-// execution → audit log. Administrative functions do not exist here.
+// availability → PDP → rate limit → (ask: parameters checked, a human confirms, then
+// emergency stop and mandate checked again) → execution → audit log. Administrative
+// functions do not exist here.
 package mcp
 
 import (
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -22,6 +24,7 @@ import (
 	"github.com/mandate-spec/mandate-spec/evaluator"
 
 	"github.com/home-mandate/home-mandate/internal/agent"
+	"github.com/home-mandate/home-mandate/internal/approval"
 	"github.com/home-mandate/home-mandate/internal/audit"
 	"github.com/home-mandate/home-mandate/internal/catalog"
 	"github.com/home-mandate/home-mandate/internal/ha"
@@ -86,6 +89,10 @@ type (
 		Append(ctx context.Context, e audit.Entry) (int64, error)
 		WithEntry(ctx context.Context, e audit.Entry, action func() error) error
 	}
+	// Approver asks a human to confirm an action with the decision ask.
+	Approver interface {
+		Ask(ctx context.Context, req approval.Request) (approval.Result, error)
+	}
 )
 
 // Config wires the gateway.
@@ -96,12 +103,14 @@ type Config struct {
 	// ResourceMetadataURL is announced in WWW-Authenticate on 401 (RFC 9728).
 	ResourceMetadataURL string
 
-	Agents      Authenticator
-	PDP         Decider
-	Catalog     Catalog
-	HA          Executor
-	Limiter     Limiter
-	Audit       Auditor
+	Agents  Authenticator
+	PDP     Decider
+	Catalog Catalog
+	HA      Executor
+	Limiter Limiter
+	Audit   Auditor
+	// Approvals asks humans for ask decisions; nil refuses every ask.
+	Approvals   Approver
 	Logger      *slog.Logger
 	Version     string
 	Now         func() time.Time
@@ -135,7 +144,8 @@ func New(cfg Config) *Gateway {
 	sdk.AddTool(g.server, &sdk.Tool{Name: "get_state",
 		Description: "Returns the state of one device."}, g.getState)
 	sdk.AddTool(g.server, &sdk.Tool{Name: "perform_action",
-		Description: "Performs an action on one device, e.g. turn_on or unlock. Some actions need a human to confirm."}, g.performAction)
+		Description: "Performs an action on one device, e.g. turn_on or unlock. Some actions need a human to confirm; " +
+			"then the call waits for the answer and you should give a short reason."}, g.performAction)
 	sdk.AddTool(g.server, &sdk.Tool{Name: "list_my_permissions",
 		Description: "Lists what you may do on which device: allow (immediately) or ask (a human confirms)."}, g.listPermissions)
 	return g
@@ -220,6 +230,7 @@ type (
 		EntityID string         `json:"entity_id" jsonschema:"entity ID, e.g. lock.front_door"`
 		Action   string         `json:"action" jsonschema:"action from the device category, e.g. turn_on"`
 		Params   map[string]any `json:"params,omitempty" jsonschema:"parameters of the action, e.g. brightness_pct"`
+		Reason   string         `json:"reason,omitempty" jsonschema:"why you want this; shown to the human who confirms, marked as your claim"`
 	}
 	deviceOut struct {
 		EntityID string `json:"entity_id"`
@@ -363,11 +374,13 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 	if err != nil {
 		return nil, actionOut{}, err
 	}
-	if !entityIDPattern.MatchString(in.EntityID) || !actionPattern.MatchString(in.Action) || in.Action == "read" {
+	if !entityIDPattern.MatchString(in.EntityID) || !actionPattern.MatchString(in.Action) || in.Action == "read" ||
+		utf8.RuneCountInString(in.Reason) > maxReasonRunes {
 		return nil, actionOut{}, errors.New(codeInvalidParams)
 	}
 	d, err := g.enforce(ctx, a, in.EntityID, in.Action)
-	if err != nil {
+	ask := errors.Is(err, errAsk)
+	if err != nil && !ask {
 		return nil, actionOut{}, err
 	}
 	call, err := buildCall(in.EntityID, d.Resource.Category, in.Action, in.Params)
@@ -382,16 +395,21 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 		}
 		return nil, actionOut{}, errors.New(code)
 	}
-	return g.execute(ctx, a, d, call)
+	if ask {
+		return g.askHuman(ctx, a, d, call, in.Reason)
+	}
+	return g.execute(ctx, a, d, call, nil)
 }
 
 // execute calls Home Assistant only while its "executed" entry is being written in the
 // same transaction: no entry, no execution. A failed call rolls the entry back and is
 // logged as failed.
-func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, call ha.ServiceCall) (*sdk.CallToolResult, actionOut, error) {
+func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, call ha.ServiceCall, appr *audit.Approval) (*sdk.CallToolResult, actionOut, error) {
 	start := g.cfg.Now()
 	executed := false
-	err := g.cfg.Audit.WithEntry(context.WithoutCancel(ctx), g.entry(a, d, true, audit.Result{Status: audit.StatusExecuted}), func() error {
+	e := g.entry(a, d, true, audit.Result{Status: audit.StatusExecuted})
+	e.Approval = appr
+	err := g.cfg.Audit.WithEntry(context.WithoutCancel(ctx), e, func() error {
 		cctx, cancel := context.WithTimeout(ctx, g.cfg.CallTimeout)
 		defer cancel()
 		if err := g.cfg.HA.CallService(cctx, call); err != nil {
@@ -418,7 +436,7 @@ func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, ca
 	}
 	g.cfg.Logger.Warn("service call failed", "entity_id", call.EntityID, "service", call.Service, "error", actionErr.Err)
 	took := max(g.cfg.Now().Sub(start).Milliseconds(), 0)
-	_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusFailed, Error: code, DurationMs: took})
+	_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: code, DurationMs: took}, appr)
 	return nil, actionOut{}, errors.New(codeFailed)
 }
 
@@ -457,11 +475,14 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 		readable = snap.Decide(entityID, "read").Result.Decision != evaluator.Deny
 	}
 	if d.Result.Decision == evaluator.Ask {
+		if readable && action != "read" && g.cfg.Approvals != nil {
+			return d, errAsk // the caller asks a human after checking the parameters
+		}
 		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval})
 		if !readable {
 			return pdp.Decision{}, errors.New(codeNotFound)
 		}
-		return pdp.Decision{}, errors.New(codeApprovalRequired + ": confirmation by a human is not available yet")
+		return pdp.Decision{}, errors.New(codeApprovalRequired + ": reading this device needs a confirmation, which v0.1 does not ask for")
 	}
 	_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate})
 	if !readable {
@@ -487,7 +508,19 @@ func (g *Gateway) recordRateLimited(ctx context.Context, a agent.Agent, d pdp.De
 
 // record writes a decision entry; a failure is logged and returned.
 func (g *Gateway) record(ctx context.Context, a agent.Agent, d pdp.Decision, withEvaluation bool, result audit.Result) error {
-	if _, err := g.cfg.Audit.Append(context.WithoutCancel(ctx), g.entry(a, d, withEvaluation, result)); err != nil {
+	return g.append(ctx, g.entry(a, d, withEvaluation, result))
+}
+
+// recordApproval writes a decision entry with the outcome of an approval request (nil
+// if none was asked).
+func (g *Gateway) recordApproval(ctx context.Context, a agent.Agent, d pdp.Decision, result audit.Result, appr *audit.Approval) error {
+	e := g.entry(a, d, true, result)
+	e.Approval = appr
+	return g.append(ctx, e)
+}
+
+func (g *Gateway) append(ctx context.Context, e audit.Entry) error {
+	if _, err := g.cfg.Audit.Append(context.WithoutCancel(ctx), e); err != nil {
 		g.cfg.Logger.Error("audit log write failed", "error", err)
 		return err
 	}

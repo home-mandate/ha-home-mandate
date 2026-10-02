@@ -181,6 +181,10 @@ func TestCommandErrors(t *testing.T) {
 		{[]string{"agent", "fly"}, exitUsage},
 		{[]string{"agent", "add", "--name", "x"}, exitUsage}, // agents are admitted via OAuth only
 		{[]string{"emergency-stop"}, exitUsage},
+		{[]string{"approver"}, exitUsage},
+		{[]string{"approver", "add", "u1"}, exitUsage},
+		{[]string{"approver", "add", "u1", "notify.x"}, exitFailure},
+		{[]string{"approver", "remove", "none"}, exitFailure},
 		{[]string{"emergency-stop", "maybe"}, exitUsage},
 		{[]string{"emergency-stop", "on", "now"}, exitUsage},
 		{[]string{"agent", "revoke"}, exitUsage},
@@ -267,5 +271,19 @@ func TestTemplateCommands(t *testing.T) {
 	c.mustRun("", "mandate", "template", "remove", "voice-assistant")
 	if out := c.mustRun("", "mandate", "template", "list"); out != "" {
 		t.Errorf("template list after remove = %q", out)
+	}
+}
+
+func TestApproverCommands(t *testing.T) {
+	c := newCLI(t)
+	c.mustRun("", "approver", "add", "1a2b3c", "mobile_app_pixel_9", "de")
+	c.mustRun("", "approver", "add", "4d5e6f", "mobile_app_iphone")
+	out := c.mustRun("", "approver", "list")
+	if out != "1a2b3c\tnotify.mobile_app_pixel_9\tde\n4d5e6f\tnotify.mobile_app_iphone\thousehold\n" {
+		t.Errorf("approver list = %q", out)
+	}
+	c.mustRun("", "approver", "remove", "1a2b3c")
+	if out := c.mustRun("", "approver", "list"); strings.Contains(out, "1a2b3c") {
+		t.Errorf("after remove: %q", out)
 	}
 }

@@ -6,6 +6,7 @@
 //	home-mandate household          print the household principal
 //	home-mandate agent …            list and revoke agents (local administration only)
 //	home-mandate emergency-stop …   block all agents at once, or release the stop
+//	home-mandate approver …         who receives approval requests, on which phone
 //	home-mandate mandate …          manage mandates (local administration only)
 //	home-mandate audit verify|export
 //
@@ -38,6 +39,7 @@ const usage = `Usage:
   home-mandate household
   home-mandate agent list | revoke CLIENT_ID
   home-mandate emergency-stop on | off | status
+  home-mandate approver add USER_ID NOTIFY_SERVICE [de|en] | list | remove USER_ID
   home-mandate mandate import FILE|- | list | revoke ID
   home-mandate mandate template import NAME FILE|- | list | remove NAME
   home-mandate audit verify | export
@@ -108,6 +110,8 @@ func run(ctx context.Context, args []string, e env) int {
 		return agentCommand(ctx, e, rest)
 	case "emergency-stop":
 		return emergencyStopCommand(ctx, e, rest)
+	case "approver":
+		return approverCommand(ctx, e, rest)
 	case "mandate":
 		return mandateCommand(ctx, e, rest)
 	case "audit":

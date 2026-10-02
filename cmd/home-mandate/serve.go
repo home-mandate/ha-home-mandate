@@ -15,10 +15,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/home-mandate/home-mandate/internal/approval"
 	"github.com/home-mandate/home-mandate/internal/audit"
 	"github.com/home-mandate/home-mandate/internal/catalog"
 	"github.com/home-mandate/home-mandate/internal/config"
 	"github.com/home-mandate/home-mandate/internal/ha"
+	"github.com/home-mandate/home-mandate/internal/i18n"
 	"github.com/home-mandate/home-mandate/internal/mcp"
 	"github.com/home-mandate/home-mandate/internal/oauth"
 	"github.com/home-mandate/home-mandate/internal/pdp"
@@ -30,6 +32,8 @@ const (
 	retention       = 30 * 24 * time.Hour
 	retentionEvery  = 24 * time.Hour
 	shutdownTimeout = 5 * time.Second
+	minWriteTimeout = 60 * time.Second
+	approvalSlack   = 30 * time.Second
 )
 
 // registryEvents keep the catalog current (ARCHITECTURE section 11.2).
@@ -75,6 +79,7 @@ type gateway struct {
 	client   *ha.Client
 	catalog  *catalog.Catalog
 	timeZone atomic.Value // string; empty until Home Assistant answered get_config
+	language atomic.Value // string; household language from get_config
 	server   *http.Server
 	listener net.Listener
 }
@@ -82,6 +87,7 @@ type gateway struct {
 func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, error) {
 	g := &gateway{state: s, logger: logger}
 	g.timeZone.Store("")
+	g.language.Store("")
 	client, err := ha.New(ha.Config{URL: s.cfg.HAURL, Token: s.cfg.HAToken, RootCAs: s.cfg.HARootCAs, Logger: logger,
 		OnConnect: g.onConnect, OnDisconnect: g.onDisconnect})
 	if err != nil {
@@ -93,6 +99,12 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		if _, err := client.SubscribeEvents(ctx, event, g.catalog.HandleEvent); err != nil {
 			return nil, fmt.Errorf("subscribe %s: %w", event, err)
 		}
+	}
+
+	approvals := approval.New(approval.Config{Approvers: s.approvers, Notifier: client, Language: g.householdLanguage,
+		MaxTimeout: s.cfg.ApprovalTimeout, Logger: logger})
+	if _, err := client.SubscribeEvents(ctx, ha.EventMobileAppNotificationAction, approvals.HandleEvent); err != nil {
+		return nil, fmt.Errorf("subscribe %s: %w", ha.EventMobileAppNotificationAction, err)
 	}
 
 	decider := pdp.New(pdp.Config{Principal: s.household, Mandates: s.mandates, Catalog: g.catalog, TimeZone: g.householdTimeZone})
@@ -109,9 +121,9 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		resource, metadata = s.cfg.PublicURL+mcp.Path, s.cfg.PublicURL+"/.well-known/oauth-protected-resource"+mcp.Path
 	}
 	gw := mcp.New(mcp.Config{Resource: resource, ResourceMetadataURL: metadata, Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
-		Limiter: ratelimit.New(nil), Audit: s.log, Logger: logger, Version: version})
+		Limiter: ratelimit.New(nil), Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
 	g.server = &http.Server{Handler: gw.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
-		WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10,
+		WriteTimeout: writeTimeout(s.cfg.ApprovalTimeout), IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10,
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelWarn)}
 	if g.listener, err = listen(s.cfg, g.server, logger); err != nil {
 		return nil, err
@@ -170,6 +182,18 @@ func (g *gateway) householdTimeZone() string {
 	return g.timeZone.Load().(string)
 }
 
+// householdLanguage is the language of approval requests for approvers without their
+// own setting (decision 5: Home Assistant does not reveal a user's language).
+func (g *gateway) householdLanguage() i18n.Lang {
+	return i18n.Pick(g.language.Load().(string))
+}
+
+// writeTimeout lets a perform_action wait for an approval: the longest wait plus time
+// for the action itself.
+func writeTimeout(approval time.Duration) time.Duration {
+	return max(minWriteTimeout, approval+approvalSlack)
+}
+
 // onDisconnect stops decisions until the catalog and the time zone are reloaded.
 func (g *gateway) onDisconnect() {
 	g.catalog.Invalidate()
@@ -185,6 +209,7 @@ func (g *gateway) onConnect(ctx context.Context) {
 		return
 	}
 	g.timeZone.Store(cfg.TimeZone)
+	g.language.Store(cfg.Language)
 }
 
 func (g *gateway) run(ctx context.Context) int {
