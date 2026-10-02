@@ -269,3 +269,19 @@ func TestList(t *testing.T) {
 		t.Errorf("List = %+v, %v", list, err)
 	}
 }
+
+func TestRevokedAgentRevokesItsMandate(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a := e.agent(t, "Voice assistant")
+	if _, err := e.mandates.Put(ctx, voiceAssistant(t, a.ClientID, nil), admin); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.agents.Revoke(ctx, a.ClientID, admin); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := e.mandates.ForAgent(ctx, a.ClientID)
+	if err != nil || loaded.Status != evaluator.StatusRevoked {
+		t.Errorf("ForAgent after agent revocation = %v, %v; want revoked", loaded.Status, err)
+	}
+}

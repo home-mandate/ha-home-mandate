@@ -314,3 +314,46 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 		time.Sleep(2 * time.Millisecond)
 	}
 }
+
+// blockingSource stops inside GetStates until released, to deliver events mid-refresh.
+type blockingSource struct {
+	*fakeSource
+	entered, release chan struct{}
+}
+
+func (b blockingSource) GetStates(ctx context.Context) ([]ha.State, error) {
+	states, err := b.fakeSource.GetStates(ctx)
+	b.entered <- struct{}{}
+	<-b.release
+	return states, err
+}
+
+func TestEventsDuringARefreshAreNotLost(t *testing.T) {
+	src := blockingSource{fakeSource: house(), entered: make(chan struct{}), release: make(chan struct{})}
+	c := New(src, nil)
+	done := make(chan error, 1)
+	go func() { done <- c.Refresh(context.Background()) }()
+	<-src.entered // the snapshot (kitchen light "off") is fetched; now the light turns on
+	c.HandleEvent(event(t, "state_changed", map[string]any{
+		"entity_id": "light.kitchen",
+		"new_state": map[string]any{"entity_id": "light.kitchen", "state": "on"},
+	}))
+	close(src.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := c.Lookup("light.kitchen"); d.State != "on" {
+		t.Errorf("light.kitchen is %q after the refresh, want the newer state on", d.State)
+	}
+}
+
+func TestInvalidateUntilTheNextRefresh(t *testing.T) {
+	c := loaded(t, house())
+	c.Invalidate()
+	if c.Ready() {
+		t.Error("ready after Invalidate")
+	}
+	if err := c.Refresh(context.Background()); err != nil || !c.Ready() {
+		t.Errorf("not ready after a refresh: %v", err)
+	}
+}

@@ -795,3 +795,18 @@ func TestOnConnectRunsAfterEveryConnectionAndCanUseTheClient(t *testing.T) {
 		}
 	}
 }
+
+func TestOnDisconnectRunsAfterALostConnection(t *testing.T) {
+	f := newFakeHA(t)
+	lost := make(chan struct{}, 4)
+	cfg := testConfig(f.url())
+	cfg.OnDisconnect = func() { lost <- struct{}{} }
+	c, _ := startClient(t, cfg)
+	waitReady(t, c)
+	f.dropAll()
+	select {
+	case <-lost:
+	case <-time.After(5 * time.Second):
+		t.Fatal("OnDisconnect not called")
+	}
+}

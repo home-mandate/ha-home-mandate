@@ -81,6 +81,9 @@ type Config struct {
 	// authentication, e.g. to reload state that may have changed while disconnected.
 	// Its context ends with the connection.
 	OnConnect func(ctx context.Context)
+	// OnDisconnect, if set, runs after a connection was lost, before reconnecting. It
+	// must return quickly.
+	OnDisconnect func()
 
 	ReadLimit    int64 // maximum size of one message in bytes
 	AuthTimeout  time.Duration
@@ -322,6 +325,9 @@ func (c *Client) session(ctx context.Context) (connectedFor time.Duration, err e
 	cancel()
 	_ = conn.CloseNow()
 	c.disconnected()
+	if c.cfg.OnDisconnect != nil {
+		c.cfg.OnDisconnect()
+	}
 	wg.Wait()
 	return time.Since(start), err
 }

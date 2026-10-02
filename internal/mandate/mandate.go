@@ -188,11 +188,12 @@ func (s *Store) Revoke(ctx context.Context, id string, by audit.Actor) error {
 // ForAgent returns the current mandate of an agent for evaluation.
 func (s *Store) ForAgent(ctx context.Context, clientID string) (Loaded, error) {
 	var info Info
-	var updatedAt, document string
-	err := s.db.QueryRowContext(ctx, `SELECT m.id, m.client_id, m.status, m.current_digest, m.max_actions_per_hour, m.updated_at, v.document
+	var updatedAt, document, agentStatus string
+	err := s.db.QueryRowContext(ctx, `SELECT m.id, m.client_id, m.status, m.current_digest, m.max_actions_per_hour, m.updated_at, v.document, a.status
 		FROM mandates m JOIN mandate_versions v ON v.mandate_id = m.id AND v.digest = m.current_digest
+		JOIN agents a ON a.client_id = m.client_id
 		WHERE m.client_id = ? ORDER BY v.version DESC LIMIT 1`, clientID).
-		Scan(&info.ID, &info.ClientID, &info.Status, &info.Digest, &info.MaxActionsPerHour, &updatedAt, &document)
+		Scan(&info.ID, &info.ClientID, &info.Status, &info.Digest, &info.MaxActionsPerHour, &updatedAt, &document, &agentStatus)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Loaded{}, ErrNotFound
 	}
@@ -204,8 +205,9 @@ func (s *Store) ForAgent(ctx context.Context, clientID string) (Loaded, error) {
 	if err != nil {
 		return Loaded{}, err
 	}
+	// A revoked agent revokes its mandate for every evaluation, also over the PDP endpoint.
 	status := evaluator.StatusActive
-	if info.Status != StatusActive {
+	if info.Status != StatusActive || agentStatus != StatusActive {
 		status = evaluator.StatusRevoked
 	}
 	return Loaded{Info: info, Mandate: m, Status: status}, nil

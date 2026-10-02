@@ -76,6 +76,10 @@ type Catalog struct {
 	devices    map[string]Device
 	entityArea map[string]string // entity → area from the registries
 	disabled   map[string]bool
+	// While a refresh fetches, state changes are also kept here and applied on top of
+	// the new snapshot, so that an older snapshot never overwrites a newer event.
+	refreshing bool
+	pending    []stateChange
 
 	refresh chan struct{}
 }
@@ -122,8 +126,32 @@ func clone(d Device) Device {
 	return d
 }
 
+type stateChange struct {
+	entityID string
+	state    *ha.State // nil: removed
+}
+
+// maxPending bounds the events kept during one refresh.
+const maxPending = 10000
+
+// Invalidate marks the catalog as not ready, e.g. after the connection to Home
+// Assistant was lost and events may be missing; the next refresh makes it ready again.
+func (c *Catalog) Invalidate() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ready = false
+}
+
 // Refresh reloads states and registries. On failure the last snapshot stays.
 func (c *Catalog) Refresh(ctx context.Context) error {
+	c.mu.Lock()
+	c.refreshing, c.pending = true, nil
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.refreshing, c.pending = false, nil
+		c.mu.Unlock()
+	}()
 	states, err := c.src.GetStates(ctx)
 	if err != nil {
 		return fmt.Errorf("catalog: states: %w", err)
@@ -163,7 +191,14 @@ func (c *Catalog) Refresh(ctx context.Context) error {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.devices, c.entityArea, c.disabled, c.ready = snapshot, entityArea, disabled, true
+	if len(c.pending) >= maxPending {
+		return fmt.Errorf("catalog: too many changes during refresh")
+	}
+	c.devices, c.entityArea, c.disabled = snapshot, entityArea, disabled
+	for _, ch := range c.pending {
+		c.applyLocked(ch)
+	}
+	c.ready = true
 	return nil
 }
 
@@ -191,16 +226,24 @@ func (c *Catalog) HandleEvent(e ha.Event) {
 		c.log.Warn("ignored malformed state_changed event")
 		return
 	}
+	ch := stateChange{entityID: data.EntityID, state: data.NewState}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.ready || c.disabled[data.EntityID] {
+	if c.refreshing && len(c.pending) < maxPending {
+		c.pending = append(c.pending, ch)
+	}
+	c.applyLocked(ch)
+}
+
+func (c *Catalog) applyLocked(ch stateChange) {
+	if c.disabled[ch.entityID] {
 		return
 	}
-	if data.NewState == nil {
-		delete(c.devices, data.EntityID)
+	if ch.state == nil {
+		delete(c.devices, ch.entityID)
 		return
 	}
-	c.devices[data.EntityID] = device(*data.NewState, c.entityArea[data.EntityID])
+	c.devices[ch.entityID] = device(*ch.state, c.entityArea[ch.entityID])
 }
 
 // RequestRefresh schedules a refresh by Run; it never blocks.
