@@ -194,11 +194,25 @@ func TestCommandErrors(t *testing.T) {
 	}
 }
 
-func TestCommandsNeedAValidConfiguration(t *testing.T) {
+func TestAdministrationNeedsNoHomeAssistantCredentials(t *testing.T) {
 	c := newCLI(t)
-	c.envVars["HM_HA_URL"] = ""
-	code, _, stderr := c.run("", "agent", "list")
-	if code != exitFailure || !strings.Contains(stderr, "HM_HA_URL") || strings.Contains(stderr, "test-token") {
-		t.Errorf("exit %d, stderr %q", code, stderr)
+	c.envVars["HM_HA_URL"], c.envVars["HM_HA_TOKEN"] = "", ""
+	if code, _, stderr := c.run("", "agent", "list"); code != exitOK {
+		t.Errorf("agent list without HA credentials: exit %d, %s", code, stderr)
+	}
+	c.envVars["HM_DATA_DIR"] = "relative"
+	if code, _, stderr := c.run("", "agent", "list"); code != exitFailure || !strings.Contains(stderr, "HM_DATA_DIR") {
+		t.Errorf("relative data dir: exit %d, %s", code, stderr)
+	}
+}
+
+func TestImportLimitsTheFileSize(t *testing.T) {
+	c := newCLI(t)
+	path := filepath.Join(t.TempDir(), "huge.json")
+	if err := os.WriteFile(path, []byte(`{"x":"`+strings.Repeat("a", 300<<10)+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, stderr := c.run("", "mandate", "import", path); code != exitFailure || !strings.Contains(stderr, "too large") {
+		t.Errorf("exit %d, %s", code, stderr)
 	}
 }

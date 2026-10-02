@@ -168,8 +168,9 @@ func TestScenario05CameraIsDeniedAndHidden(t *testing.T) {
 
 // Scenario 8: above the rate limit, requests are refused from request n+1 and logged.
 func TestScenario08RateLimit(t *testing.T) {
+	// Readiness is checked with another agent: list calls count against the limit too.
+	ready(t, session(t, newAgent(t, "Probe", nil)))
 	s := session(t, newAgent(t, "Limited", func(d map[string]any) { d["limits"] = map[string]any{"max_actions_per_hour": 3} }))
-	ready(t, s)
 	for i := range 3 {
 		if _, errText := call(t, s, "get_state", map[string]any{"entity_id": "light.bed_light"}); errText != "" {
 			t.Fatalf("request %d: %q", i+1, errText)

@@ -216,3 +216,35 @@ func TestLoadContainerModeCAFile(t *testing.T) {
 		}
 	}
 }
+
+func TestDataDirNeedsNoCredentials(t *testing.T) {
+	for _, tc := range []struct {
+		env  map[string]string
+		want string
+		ok   bool
+	}{
+		{map[string]string{}, "/data", true},
+		{map[string]string{"SUPERVISOR_TOKEN": "x", "HM_DATA_DIR": "/elsewhere"}, "/data", true},
+		{map[string]string{"HM_DATA_DIR": "/var/lib/hm"}, "/var/lib/hm", true},
+		{map[string]string{"HM_DATA_DIR": "data"}, "", false},
+	} {
+		got, err := DataDir(env(tc.env))
+		if got != tc.want || (err == nil) != tc.ok {
+			t.Errorf("DataDir(%v) = %q, %v", tc.env, got, err)
+		}
+	}
+}
+
+func TestPDPAddrMustBeLoopback(t *testing.T) {
+	base := map[string]string{"HM_HA_URL": "ws://localhost:8123/api/websocket", "HM_HA_TOKEN": "t"}
+	for addr, ok := range map[string]bool{"127.0.0.1:9000": true, "0.0.0.0:9000": false, ":9000": false, "x": false} {
+		m := map[string]string{"HM_PDP_ADDR": addr}
+		for k, v := range base {
+			m[k] = v
+		}
+		cfg, err := Load(env(m), files(nil))
+		if (err == nil) != ok || ok && cfg.PDPAddr != addr {
+			t.Errorf("HM_PDP_ADDR=%s: %+v, %v", addr, cfg.PDPAddr, err)
+		}
+	}
+}

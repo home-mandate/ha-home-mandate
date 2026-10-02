@@ -60,7 +60,9 @@ type Config struct {
 	TLSCert, TLSKey string
 	// MCPAddr is the listen address of the MCP endpoint; without TLS it is a loopback
 	// address (decision 1: no plaintext on the LAN).
-	MCPAddr         string
+	MCPAddr string
+	// PDPAddr, if set, serves the AuthZEN endpoint for other gateways; loopback only.
+	PDPAddr         string
 	ApprovalTimeout time.Duration
 	LogLevel        slog.Level
 }
@@ -69,6 +71,22 @@ type Config struct {
 func (c Config) String() string {
 	return fmt.Sprintf("mode=%s data=%s ha=%s token=%s tls=%t mcp=%s approval=%s log=%s",
 		c.Mode, c.DataDir, c.HAURL, c.HAToken, c.TLSCert != "", c.MCPAddr, c.ApprovalTimeout, c.LogLevel)
+}
+
+// DataDir returns the data directory without reading the rest of the configuration, so
+// that the administration commands need no Home Assistant credentials.
+func DataDir(getenv func(string) string) (string, error) {
+	if getenv("SUPERVISOR_TOKEN") != "" {
+		return appDataDir, nil
+	}
+	dir := getenv("HM_DATA_DIR")
+	if dir == "" {
+		return appDataDir, nil
+	}
+	if !filepath.IsAbs(dir) {
+		return "", fmt.Errorf("%w: HM_DATA_DIR must be absolute", ErrInvalid)
+	}
+	return dir, nil
 }
 
 // Load reads the configuration. getenv and readFile are os.Getenv and os.ReadFile in
@@ -154,6 +172,11 @@ func loadContainer(getenv func(string) string, readFile func(string) ([]byte, er
 	}
 	if cfg.MCPAddr, err = mcpAddr(getenv("HM_MCP_ADDR"), cfg.TLSCert != ""); err != nil {
 		return Config{}, err
+	}
+	if cfg.PDPAddr = getenv("HM_PDP_ADDR"); cfg.PDPAddr != "" {
+		if _, err := mcpAddr(cfg.PDPAddr, false); err != nil {
+			return Config{}, fmt.Errorf("%w: HM_PDP_ADDR must be a loopback address", ErrInvalid)
+		}
 	}
 	cfg.ApprovalTimeout = DefaultApprovalTimeout
 	if s := getenv("HM_APPROVAL_TIMEOUT"); s != "" {

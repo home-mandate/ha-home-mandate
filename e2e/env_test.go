@@ -166,8 +166,11 @@ func makeCertificates() error {
 		"key.pem":  pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
 	}
 	for name, data := range files {
-		// Readable inside the containers; the directory itself is private to this run.
-		if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+		mode := os.FileMode(0o644)
+		if name == "key.pem" {
+			mode = 0o600 // the containers run as root (rootless: mapped to this user)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), data, mode); err != nil {
 			return err
 		}
 	}
@@ -276,7 +279,7 @@ func onboard() error {
 	}
 	env.haToken = llat
 	env.secrets = append(env.secrets, llat, tokens.AccessToken)
-	return os.WriteFile(filepath.Join(env.certs, "ha-token"), []byte(llat), 0o644)
+	return os.WriteFile(filepath.Join(env.certs, "ha-token"), []byte(llat), 0o600)
 }
 
 func longLivedToken(accessToken string) (string, error) {

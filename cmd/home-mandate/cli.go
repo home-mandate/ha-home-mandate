@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -42,12 +43,18 @@ type state struct {
 	mandates  *mandate.Store
 }
 
+// openState opens the database for the administration commands; they need the data
+// directory only, no Home Assistant credentials.
 func openState(ctx context.Context, e env) (*state, error) {
-	cfg, err := config.Load(e.getenv, e.readFile)
+	dir, err := config.DataDir(e.getenv)
 	if err != nil {
 		return nil, err
 	}
-	st, err := store.Open(ctx, filepath.Join(cfg.DataDir, databaseFile))
+	return openStore(ctx, dir)
+}
+
+func openStore(ctx context.Context, dataDir string) (*state, error) {
+	st, err := store.Open(ctx, filepath.Join(dataDir, databaseFile))
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +64,7 @@ func openState(ctx context.Context, e env) (*state, error) {
 		return nil, err
 	}
 	log := audit.New(st.DB(), household)
-	return &state{cfg: cfg, store: st, household: household, log: log,
+	return &state{store: st, household: household, log: log,
 		agents: agent.New(st.DB(), log), mandates: mandate.New(st.DB(), log, household)}, nil
 }
 
@@ -164,10 +171,16 @@ func mandateCommand(ctx context.Context, e env, args []string) int {
 // readDocument reads a mandate from a file or stdin, at most one byte more than the
 // size limit so that the evaluator reports an oversized mandate.
 func readDocument(e env, name string) ([]byte, error) {
+	r := e.stdin
 	if name != "-" {
-		return e.readFile(name)
+		f, err := os.Open(name)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		r = f
 	}
-	return io.ReadAll(io.LimitReader(e.stdin, evaluator.MaxMandateBytes+1))
+	return io.ReadAll(io.LimitReader(r, evaluator.MaxMandateBytes+1))
 }
 
 func auditCommand(ctx context.Context, e env, args []string) int {

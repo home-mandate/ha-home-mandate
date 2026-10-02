@@ -49,6 +49,7 @@ from Playwright's CDN, for tests only.
 | `HM_DATA_DIR` | Data directory, default `/data` |
 | `HM_TLS_CERT`, `HM_TLS_KEY` | Certificate for the MCP endpoint (TLS 1.3); without it, MCP listens on localhost only |
 | `HM_MCP_ADDR` | Listen address of the MCP endpoint, default `:8765` with TLS, `127.0.0.1:8765` without |
+| `HM_PDP_ADDR` | Optional loopback address for the AuthZEN evaluation endpoint, for other gateways on the same host |
 | `HM_LOG_LEVEL` | `debug`, `info`, `warning` or `error` |
 
 Agents connect to `https://<host>:8765/mcp` with a bearer token.
@@ -56,7 +57,7 @@ Agents connect to `https://<host>:8765/mcp` with a bearer token.
 ## Administration until the UI exists
 
 The administration commands work on the local database only; they are not reachable over
-the network. Run them inside the container, e.g. `docker exec -i home-mandate /home-mandate …`.
+the network and need no Home Assistant credentials, only `HM_DATA_DIR`. Run them inside the container, e.g. `docker exec -i home-mandate /home-mandate …`.
 
 ```bash
 home-mandate household                       # principal to use in mandates

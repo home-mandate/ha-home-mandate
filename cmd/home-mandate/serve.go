@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,7 +37,14 @@ var registryEvents = []string{"entity_registry_updated", "device_registry_update
 // serve runs the gateway until ctx ends. It refuses to start with a broken audit log
 // and ends with exitFailure when Home Assistant rejects the access token.
 func serve(ctx context.Context, e env) int {
-	s, err := openState(ctx, e)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel() // also stops what a failed start-up already started
+	cfg, err := config.Load(e.getenv, e.readFile)
+	if err != nil {
+		fmt.Fprintln(e.stderr, "home-mandate:", err)
+		return exitFailure
+	}
+	s, err := openStore(ctx, cfg.DataDir)
 	if ctx.Err() != nil {
 		return exitOK // stopped during start-up
 	}
@@ -45,6 +53,7 @@ func serve(ctx context.Context, e env) int {
 		return exitFailure
 	}
 	defer s.store.Close()
+	s.cfg = cfg
 	logger := slog.New(slog.NewJSONHandler(e.stderr, &slog.HandlerOptions{Level: s.cfg.LogLevel}))
 
 	if r, err := s.log.Verify(ctx); err != nil || !r.Valid {
@@ -72,7 +81,8 @@ type gateway struct {
 func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, error) {
 	g := &gateway{state: s, logger: logger}
 	g.timeZone.Store("")
-	client, err := ha.New(ha.Config{URL: s.cfg.HAURL, Token: s.cfg.HAToken, RootCAs: s.cfg.HARootCAs, Logger: logger, OnConnect: g.onConnect})
+	client, err := ha.New(ha.Config{URL: s.cfg.HAURL, Token: s.cfg.HAToken, RootCAs: s.cfg.HARootCAs, Logger: logger,
+		OnConnect: g.onConnect, OnDisconnect: g.onDisconnect})
 	if err != nil {
 		return nil, err
 	}
@@ -85,11 +95,13 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 
 	decider := pdp.New(pdp.Config{Principal: s.household, Mandates: s.mandates, Catalog: g.catalog, TimeZone: g.householdTimeZone})
-	addr, err := decider.ListenAndServe(ctx, "127.0.0.1:0")
-	if err != nil {
-		return nil, err
+	if s.cfg.PDPAddr != "" { // the AuthZEN endpoint for other gateways is opt-in
+		addr, err := decider.ListenAndServe(ctx, s.cfg.PDPAddr)
+		if err != nil {
+			return nil, err
+		}
+		logger.Info("PDP listening on loopback", "addr", addr)
 	}
-	logger.Info("PDP listening on loopback", "addr", addr)
 
 	gw := mcp.New(mcp.Config{Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
 		Limiter: ratelimit.New(nil), Audit: s.log, Logger: logger, Version: version})
@@ -133,6 +145,12 @@ func (g *gateway) householdTimeZone() string {
 	return g.timeZone.Load().(string)
 }
 
+// onDisconnect stops decisions until the catalog and the time zone are reloaded.
+func (g *gateway) onDisconnect() {
+	g.catalog.Invalidate()
+	g.timeZone.Store("")
+}
+
 // onConnect reloads what may have changed while disconnected.
 func (g *gateway) onConnect(ctx context.Context) {
 	g.catalog.RequestRefresh()
@@ -147,22 +165,30 @@ func (g *gateway) onConnect(ctx context.Context) {
 func (g *gateway) run(ctx context.Context) int {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go g.catalog.Run(ctx, catalogDebounce)
-	go g.retention(ctx)
-	go func() {
+	var wg sync.WaitGroup
+	var serveFailed atomic.Bool
+	wg.Go(func() { g.catalog.Run(ctx, catalogDebounce) })
+	wg.Go(func() { g.retention(ctx) })
+	wg.Go(func() {
 		if err := g.server.Serve(g.listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			g.logger.Error("MCP endpoint stopped", "error", err)
+			serveFailed.Store(true)
 			cancel()
 		}
-	}()
+	})
 	g.logger.Info("home-mandate started", "version", version, "mode", g.state.cfg.Mode, "household", g.state.household)
 
 	err := g.client.Run(ctx)
+	cancel()
 	shutdownCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer stop()
 	_ = g.server.Shutdown(shutdownCtx)
-	if errors.Is(err, ha.ErrAuthInvalid) {
+	wg.Wait() // nothing may use the database after this returns
+	switch {
+	case errors.Is(err, ha.ErrAuthInvalid):
 		g.logger.Error("Home Assistant rejected the access token")
+		return exitFailure
+	case serveFailed.Load():
 		return exitFailure
 	}
 	return exitOK
