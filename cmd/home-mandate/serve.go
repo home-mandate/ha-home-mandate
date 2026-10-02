@@ -72,7 +72,7 @@ type gateway struct {
 func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, error) {
 	g := &gateway{state: s, logger: logger}
 	g.timeZone.Store("")
-	client, err := ha.New(ha.Config{URL: s.cfg.HAURL, Token: s.cfg.HAToken, Logger: logger, OnConnect: g.onConnect})
+	client, err := ha.New(ha.Config{URL: s.cfg.HAURL, Token: s.cfg.HAToken, RootCAs: s.cfg.HARootCAs, Logger: logger, OnConnect: g.onConnect})
 	if err != nil {
 		return nil, err
 	}

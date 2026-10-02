@@ -3,9 +3,16 @@
 package config
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
 	"io/fs"
 	"log/slog"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -154,5 +161,58 @@ func TestErrorsNeverContainTheToken(t *testing.T) {
 	cfg, _ := Load(env(map[string]string{"HM_HA_URL": "ws://localhost/api/websocket", "HM_HA_TOKEN": "very-secret-token"}), files(nil))
 	if strings.Contains(cfg.String(), "very-secret-token") {
 		t.Errorf("String() leaks the token: %s", cfg.String())
+	}
+}
+
+// testCA returns a freshly generated self-signed certificate in PEM.
+func testCA(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test CA"},
+		NotBefore: time.Now(), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
+func TestLoadContainerModeCAFile(t *testing.T) {
+	base := map[string]string{"HM_HA_URL": "wss://ha.local:8123/api/websocket", "HM_HA_TOKEN": "t"}
+	with := func(k, v string) map[string]string {
+		m := map[string]string{k: v}
+		for kk, vv := range base {
+			m[kk] = vv
+		}
+		return m
+	}
+	cfg, err := Load(env(base), files(nil))
+	if err != nil || cfg.HARootCAs != nil {
+		t.Fatalf("without CA file: %v, %v", cfg.HARootCAs, err)
+	}
+	for name, tc := range map[string]struct {
+		file    string
+		content string
+		ok      bool
+	}{
+		"relative":    {"ca.pem", testCA(t), false},
+		"missing":     {"/missing.pem", "", false},
+		"not PEM":     {"/ca.pem", "hello", false},
+		"certificate": {"/ca.pem", testCA(t), true},
+	} {
+		fsys := map[string]string{}
+		if tc.content != "" {
+			fsys[tc.file] = tc.content
+		}
+		cfg, err := Load(env(with("HM_HA_CA_FILE", tc.file)), files(fsys))
+		if tc.ok != (err == nil) || tc.ok && cfg.HARootCAs == nil {
+			t.Errorf("%s: %v, %v", name, cfg.HARootCAs, err)
+		}
+		if !tc.ok && !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: %v, want ErrInvalid", name, err)
+		}
 	}
 }

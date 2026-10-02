@@ -7,6 +7,7 @@ package config
 
 import (
 	"bytes"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,6 +53,9 @@ type Config struct {
 	DataDir string
 	HAURL   string
 	HAToken ha.Secret
+	// HARootCAs replaces the system roots for wss:// to Home Assistant (HM_HA_CA_FILE),
+	// e.g. for a self-signed certificate. Nil means the system roots.
+	HARootCAs *x509.CertPool
 	// TLSCert and TLSKey are absolute paths, both set or both empty.
 	TLSCert, TLSKey string
 	// MCPAddr is the listen address of the MCP endpoint; without TLS it is a loopback
@@ -140,6 +144,9 @@ func loadContainer(getenv func(string) string, readFile func(string) ([]byte, er
 	if !filepath.IsAbs(cfg.DataDir) {
 		return Config{}, fmt.Errorf("%w: HM_DATA_DIR must be absolute", ErrInvalid)
 	}
+	if cfg.HARootCAs, err = caPool(getenv("HM_HA_CA_FILE"), readFile); err != nil {
+		return Config{}, err
+	}
 	cfg.TLSCert, cfg.TLSKey = getenv("HM_TLS_CERT"), getenv("HM_TLS_KEY")
 	if (cfg.TLSCert == "") != (cfg.TLSKey == "") ||
 		cfg.TLSCert != "" && (!filepath.IsAbs(cfg.TLSCert) || !filepath.IsAbs(cfg.TLSKey)) {
@@ -180,6 +187,25 @@ func containerToken(getenv func(string) string, readFile func(string) ([]byte, e
 		return "", fmt.Errorf("%w: HM_HA_TOKEN or HM_HA_TOKEN_FILE is required", ErrInvalid)
 	}
 	return ha.Secret(token), nil
+}
+
+// caPool reads PEM certificates to trust for Home Assistant; "" means system roots.
+func caPool(file string, readFile func(string) ([]byte, error)) (*x509.CertPool, error) {
+	if file == "" {
+		return nil, nil
+	}
+	if !filepath.IsAbs(file) {
+		return nil, fmt.Errorf("%w: HM_HA_CA_FILE must be absolute", ErrInvalid)
+	}
+	data, err := readFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("%w: HM_HA_CA_FILE: %w", ErrInvalid, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(data) {
+		return nil, fmt.Errorf("%w: HM_HA_CA_FILE contains no PEM certificate", ErrInvalid)
+	}
+	return pool, nil
 }
 
 // mcpAddr refuses a plaintext listener outside loopback (decision 1).
