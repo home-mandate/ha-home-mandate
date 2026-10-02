@@ -22,7 +22,7 @@ describe('clientIdentity', () => {
     expect(clientIdentity('https://')).toBeNull();
     expect(clientIdentity('')).toBeNull();
     expect(clientIdentity('аpple')).toBeNull();
-    expect(clientIdentity('pair‮evil')).toBeNull();
+    expect(clientIdentity('pair\u202Eevil')).toBeNull();
     expect(clientIdentity('UPPER')).toBeNull();
   });
 });

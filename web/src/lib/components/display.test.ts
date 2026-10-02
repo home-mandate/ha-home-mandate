@@ -213,7 +213,7 @@ describe('untrusted agent text', () => {
   it('strips bidi overrides and line breaks from the reason', () => {
     const { container } = render(ReasonBox, { reason: HOSTILE_REASON });
     const quote = container.querySelector('blockquote bdi') as HTMLElement;
-    expect(quote.textContent).not.toMatch(/[‪-‮\n]/);
+    expect(quote.textContent).not.toMatch(/[\u202A-\u202E\n]/);
     expect(quote.textContent).toContain('[Link](javascript:alert(1))');
     expect(container.querySelector('a')).toBeNull();
     expect(container.querySelector('figcaption')?.textContent).toContain('unverified');
