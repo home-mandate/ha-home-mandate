@@ -13,6 +13,7 @@
   import Button from '../Button.svelte';
   import SelectField from '../SelectField.svelte';
   import ToggleChip from '../ToggleChip.svelte';
+  import { cleanUntrusted } from '../../untrusted.ts';
 
   type Option = { value: string; label: string };
 
@@ -39,7 +40,21 @@
   };
 
   const periods = $derived(PERIODS.map((p) => ({ value: p, label: PERIOD_LABELS[p]() })));
-  const agentOptions = $derived([{ value: '', label: m.filter_agent_all() }, ...agents]);
+  // A value from the URL that is not among the options is still shown (cleaned), so a
+  // crafted link cannot filter the list invisibly.
+  const unknownAgent = $derived(filters.agent !== null && !agents.some((a) => a.value === filters.agent));
+  const unknownDevice = $derived(
+    filters.device !== null && !areas.some((a) => a.value === filters.device) && !devices.some((d) => d.value === filters.device),
+  );
+  const agentOptions = $derived([
+    { value: '', label: m.filter_agent_all() },
+    ...(unknownAgent && filters.agent ? [{ value: filters.agent, label: cleanUntrusted(filters.agent) }] : []),
+    ...agents,
+  ]);
+  const deviceOptions = $derived([
+    { value: '', label: m.filter_device_all() },
+    ...(unknownDevice && filters.device ? [{ value: filters.device, label: cleanUntrusted(filters.device) }] : []),
+  ]);
   const types = $derived([{ value: 'all', label: m.filter_types_all() }, ...EVENTS.map((e) => ({ value: e, label: eventLabel(e) }))]);
   const groups = $derived([
     { label: m.filter_areas(), options: areas },
@@ -60,7 +75,9 @@
 <div class="filters" role="search" aria-label={m.filter_label()}>
   {#if compact}
     <button type="button" class="toggle" aria-expanded={open} aria-controls="{id}-fields" onclick={() => (open = !open)}>
-      {m.filter_label()}{#if count > 0}<span class="badge">{count}</span>{/if}
+      {m.filter_label()}{#if count > 0}<span class="badge" aria-hidden="true">{count}</span><span class="hm-visually-hidden"
+          >{m.filter_active_count({ count })}</span
+        >{/if}
     </button>
   {/if}
   {#if !compact || open}
@@ -70,7 +87,7 @@
       <SelectField
         label={m.filter_device()}
         value={filters.device ?? ''}
-        options={[{ value: '', label: m.filter_device_all() }]}
+        options={deviceOptions}
         {groups}
         onchange={(v) => set({ device: v || null })}
       />
@@ -87,7 +104,8 @@
   </fieldset>
   <div class="foot">
     <span role="status">{total === null ? '' : m.filter_results({ count: total })}</span>
-    {#if count > 0}<Button variant="text" onclick={() => onchange({ ...DEFAULT_FILTERS })}>{m.filter_reset()}</Button>{/if}
+    <!-- Always there (disabled without filters), so resetting does not drop the focus. -->
+    <Button variant="text" disabled={count === 0} onclick={() => onchange({ ...DEFAULT_FILTERS })}>{m.filter_reset()}</Button>
   </div>
 </div>
 
@@ -117,6 +135,9 @@
     display: flex;
     gap: var(--hm-space-2);
     overflow-x: auto;
+    /* room for the focus ring inside the scroll container */
+    padding: 4px;
+    margin: -4px;
   }
   .foot {
     display: flex;

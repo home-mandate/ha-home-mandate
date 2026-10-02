@@ -20,14 +20,14 @@
     <h2 id="{id}-title">{m.onboarding_title()}</h2>
     <p>{m.onboarding_body()}</p>
   </div>
-  <ol>
+  <ol role="list">
     <li>
-      <span class="step">1</span>
+      <span class="step" aria-hidden="true">1</span>
       <div class="text"><strong>{m.onboarding_step1_title()}</strong><span>{m.onboarding_step1_body()}</span></div>
       <a class="primary" href={href({ name: 'pair' })}><Icon name="plus" />{m.onboarding_step1_action()}</a>
     </li>
     <li>
-      <span class="step">2</span>
+      <span class="step" aria-hidden="true">2</span>
       <div class="text"><strong>{m.onboarding_step2_title()}</strong><span>{m.onboarding_step2_body()}</span></div>
       <div class="locked">
         <Button disabled aria-describedby="{id}-lock">{m.onboarding_step2_action()}</Button>

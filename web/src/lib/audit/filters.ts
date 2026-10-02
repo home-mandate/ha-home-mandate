@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Filters of the audit log (design README 6.8). They live in the URL query, so a filtered
-// view can be bookmarked and the back button works; anything unknown in the URL is
-// ignored, never guessed. The period is counted back from the server's clock.
+// view can be bookmarked and shared; they replace the current history entry (no step per
+// filter change). Anything unknown in the URL is ignored, never guessed. The period is
+// counted back from the server's clock.
 
 import type { AuditEvent, AuditQuery, DecisionFilter } from '../api/types.ts';
 

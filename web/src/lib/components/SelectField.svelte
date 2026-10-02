@@ -32,7 +32,7 @@
       onchange={() => onchange?.(value)}
     >
       {#each options as option (option.value)}<option value={option.value}>{option.label}</option>{/each}
-      {#each groups as group (group.label)}
+      {#each groups.filter((g) => g.options.length > 0) as group (group.label)}
         <optgroup label={group.label}>
           {#each group.options as option (option.value)}<option value={option.value}>{option.label}</option>{/each}
         </optgroup>

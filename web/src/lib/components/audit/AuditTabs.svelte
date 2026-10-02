@@ -22,7 +22,9 @@
 <nav aria-label={m.audit_title()}>
   <a href={href({ name: 'audit', query: {} })} aria-current={current === 'events' ? 'page' : undefined}>{m.audit_tab_events()}</a>
   <a href={href({ name: 'requests' })} aria-current={current === 'requests' ? 'page' : undefined}
-    >{m.audit_tab_requests()}{#if badge}<span class="badge">{badge}</span>{/if}</a
+    >{m.audit_tab_requests()}{#if badge}<span class="badge" aria-hidden="true">{badge}</span><span class="hm-visually-hidden"
+          >{m.audit_tab_pending_count({ count: badge })}</span
+        >{/if}</a
   >
 </nav>
 
@@ -32,6 +34,8 @@
     gap: var(--hm-space-4);
     border-block-end: var(--hm-border-width) solid var(--hm-color-border-subtle);
     overflow-x: auto;
+    /* room for the focus ring inside the scroll container */
+    padding-block-start: 4px;
   }
   a {
     display: inline-flex;
@@ -49,6 +53,11 @@
     color: var(--hm-color-accent-text);
     border-block-end-color: var(--hm-color-accent);
     font-weight: 600;
+  }
+  @media (forced-colors: active) {
+    a[aria-current='page'] {
+      border-block-end-color: Highlight;
+    }
   }
   a:focus-visible {
     outline: var(--hm-focus-width) solid var(--hm-color-focus);

@@ -7,9 +7,9 @@ import { expect, pageScroll, test } from './support.ts';
 
 const text = {
   de: { open: /^Offen/, history: 'Verlauf', decline: 'Ablehnen', approve: 'Freigeben', yes: 'Ja, freigeben', confirm: 'Freigabe bestätigen',
-    declined: /^Abgelehnt von Markus · in Home-Mandate/, approved: /^Freigegeben von Markus · in Home-Mandate/ },
+    declined: /^Abgelehnt von \u2068?Markus\u2069? · in Home-Mandate/, approved: /^Freigegeben von \u2068?Markus\u2069? · in Home-Mandate/ },
   en: { open: /^Pending/, history: 'History', decline: 'Decline', approve: 'Approve', yes: 'Yes, approve', confirm: 'Confirm approval',
-    declined: /^Declined by Markus · in Home-Mandate/, approved: /^Approved by Markus · in Home-Mandate/ },
+    declined: /^Declined by \u2068?Markus\u2069? · in Home-Mandate/, approved: /^Approved by \u2068?Markus\u2069? · in Home-Mandate/ },
 } as const;
 
 type Lang = keyof typeof text;
@@ -60,8 +60,27 @@ test('approves with the keyboard only, after the inline confirmation', async ({ 
   await page.keyboard.press('Enter');
   const group = pending.getByRole('group', { name: t.confirm });
   await expect(group.getByRole('button', { name: t.yes })).toBeFocused();
+  // The confirmation counts only after a short pause.
+  await page.waitForTimeout(700);
   await page.keyboard.press('Enter');
   await expect(page.getByRole('region', { name: t.history }).getByText(t.approved)).toBeVisible();
+});
+
+test('a quick second Enter (held key, double press) does not approve', async ({ page }, info) => {
+  const t = text[info.project.name as Lang];
+  await page.goto('./#/audit/requests');
+  await answerable(page, 'apr-held');
+  const pending = page.getByRole('region', { name: t.open });
+  const history = page.getByRole('region', { name: t.history });
+  await expect(history.getByRole('listitem')).toHaveCount(5);
+  await pending.getByRole('button', { name: t.approve, exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+  await page.keyboard.down('Enter');
+  await page.keyboard.up('Enter');
+  await page.waitForTimeout(300);
+  await expect(history.getByRole('listitem')).toHaveCount(5);
+  await expect(pending.getByRole('group', { name: t.confirm })).toBeVisible();
 });
 
 test('mobile: a switch between pending and history, nothing scrolls sideways', async ({ page }, info) => {
@@ -72,6 +91,6 @@ test('mobile: a switch between pending and history, nothing scrolls sideways', a
   await expect(tabs.getByRole('tab')).toHaveCount(2);
   expect(await pageScroll(page)).toBe(0);
   await tabs.getByRole('tab', { name: t.history }).click();
-  await expect(page.getByRole('region', { name: t.history }).getByRole('listitem')).toHaveCount(5);
+  await expect(page.getByRole('tabpanel', { name: t.history }).getByRole('listitem')).toHaveCount(5);
   expect(await pageScroll(page)).toBe(0);
 });

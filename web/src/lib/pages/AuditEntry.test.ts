@@ -27,7 +27,7 @@ describe('AuditEntry', () => {
   it('shows one entry on its own page with a way back', async () => {
     await start(9);
     const detail = await screen.findByRole('article', { name: 'Entry no. 9' });
-    expect(within(detail).getByText('Declined by Alex')).toBeTruthy();
+    expect(detail.textContent?.replace(/[\u2068\u2069]/g, '')).toContain('Declined by Alex');
     expect(within(detail).getByText('Allowed, but the action is critical, so approval was requested.')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Audit log' }).getAttribute('href')).toBe('#/audit');
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Entry no. 9');
@@ -41,7 +41,7 @@ describe('AuditEntry', () => {
   it('warns when the entry does not fit the chain', async () => {
     await start(12, {}, (api) => api.control.breakChain(12));
     const detail = await screen.findByRole('article', { name: 'Entry no. 12' });
-    expect(within(detail).getByRole('alert').textContent).toContain('doesn’t fit the chain');
+    expect(within(detail).getByText('This entry doesn’t fit the chain. Its content may have been altered.')).toBeTruthy();
     expect(within(detail).getByText('Emergency stop triggered')).toBeTruthy();
     expect(within(detail).getByText('Markus')).toBeTruthy();
   });

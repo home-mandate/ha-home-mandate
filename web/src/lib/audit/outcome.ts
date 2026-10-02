@@ -6,7 +6,7 @@
 
 import type { AuditEntry, AuditEvent, Reason } from '../api/types.ts';
 import { m } from '../i18n.ts';
-import { cleanUntrusted } from '../untrusted.ts';
+import { cleanUntrusted, isolate } from '../untrusted.ts';
 
 export interface Outcome {
   tone: 'positive' | 'danger' | 'warning' | 'ask';
@@ -48,12 +48,15 @@ export function eventLabel(event: AuditEvent): string {
   return EVENTS[event]();
 }
 
+/** reasonText explains a reason code; a code the UI does not know is shown cleaned. */
 export function reasonText(reason: Reason): string {
-  return REASONS[reason]();
+  const text = REASONS[reason] as (() => string) | undefined;
+  return text ? text() : cleanUntrusted(reason);
 }
 
+/** person is who answered, isolated: a right-to-left name cannot reorder the sentence. */
 function person(approval: NonNullable<AuditEntry['approval']>): string {
-  return cleanUntrusted(approval.by_name ?? approval.by ?? '');
+  return isolate(approval.by_name ?? approval.by ?? '');
 }
 
 /** outcomeOf says what happened with a request; null for administrative events. */

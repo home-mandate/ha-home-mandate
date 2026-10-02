@@ -52,11 +52,11 @@
 </script>
 
 <div class="head">
-  <svelte:element this={level === 1 ? 'h1' : 'h2'} id={headingId} class="title">{m.audit_detail_title({ number: entry.seq })}</svelte:element>
+  <svelte:element this={level === 1 ? 'h1' : 'h2'} id={headingId} class="title" tabindex="-1">{m.audit_detail_title({ number: entry.seq })}</svelte:element>
   <span class="when">{formatDateTime(new Date(entry.recorded_at), ctx)}</span>
 </div>
 
-{#if broken}<p class="broken" role="alert"><Icon name="warning" size={16} />{m.audit_entry_broken()}</p>{/if}
+{#if broken}<p class="broken"><Icon name="warning" size={16} />{m.audit_entry_broken()}</p>{/if}
 
 <div class="summary">
   {#if decision}<DecisionBadge kind={decision} />{:else}<span class="event"><Icon name="history" />{eventLabel(entry.event)}</span>{/if}
@@ -66,7 +66,7 @@
 <dl>
   {#if actor && entry.event !== 'decision'}
     <dt>{m.audit_field_actor()}</dt>
-    <dd>{actor}</dd>
+    <dd><bdi>{actor}</bdi></dd>
   {/if}
   {#if entry.agent}
     <dt>{m.audit_field_agent()}</dt>
@@ -74,13 +74,13 @@
   {/if}
   {#if entry.request}
     <dt>{m.audit_field_device()}</dt>
-    <dd>{deviceName(entry.request.resource.entity_id, catalog)}<code>{cleanUntrusted(entry.request.resource.entity_id)}</code></dd>
+    <dd><bdi>{deviceName(entry.request.resource.entity_id, catalog)}</bdi><code>{cleanUntrusted(entry.request.resource.entity_id)}</code></dd>
     <dt>{m.audit_field_action()}</dt>
     <dd>{actionLabel(entry.request.resource.category, entry.request.action)}</dd>
   {/if}
   {#if entry.evaluation}
     <dt>{m.audit_reason_label()}</dt>
-    <dd>{reasonText(entry.evaluation.reason)}<code>{entry.evaluation.reason}</code></dd>
+    <dd>{reasonText(entry.evaluation.reason)}</dd>
     {#if entry.evaluation.rule_id}
       <dt>{m.audit_rule()}</dt>
       <dd><code>{cleanUntrusted(entry.evaluation.rule_id)}</code></dd>
@@ -115,7 +115,7 @@
     <dd><code>{entry.prev ?? NONE}</code></dd>
     {#if entry.evaluation}
       <dt>{m.audit_code()}</dt>
-      <dd><code>{entry.evaluation.reason}</code></dd>
+      <dd><code>{cleanUntrusted(entry.evaluation.reason)}</code></dd>
     {/if}
   </dl>
 </details>
@@ -129,6 +129,9 @@
   .title {
     margin: 0;
     font-size: var(--hm-font-size-xl);
+  }
+  .title:focus {
+    outline: none;
   }
   .when {
     color: var(--hm-color-text-muted);

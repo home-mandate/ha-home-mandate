@@ -36,6 +36,9 @@
   const TICK_MS = 1000;
 
   let route: Route = $state(parseHash(window.location.hash));
+  /** Counts navigations: pages that keep their state in the URL themselves (audit
+   *  filters via replaceState) are rebuilt on every real navigation, also to an equal URL. */
+  let visits = $state(0);
   let now = $state(Date.now());
   let sheet = $state(false);
   let firing = $state(false);
@@ -59,6 +62,7 @@
   /** Navigation: the page title follows, focus moves to the content so screen readers hear the change. */
   function navigated() {
     route = parseHash(window.location.hash);
+    visits++;
     const page = section ? TITLES[section]() : m.notfound_title();
     document.title = `${page} – ${m.app_name()}`;
     // Never pull focus out of the open emergency stop sheet (it would cancel a running hold).
@@ -137,7 +141,7 @@
   {:else if route.name === 'overview'}
     <Overview {app} {now} />
   {:else if route.name === 'audit'}
-    {#key href(route)}<AuditLog {app} {now} query={route.query} />{/key}
+    {#key visits}<AuditLog {app} {now} query={route.query} />{/key}
   {:else if route.name === 'requests'}
     <Requests {app} />
   {:else if route.name === 'audit_entry'}

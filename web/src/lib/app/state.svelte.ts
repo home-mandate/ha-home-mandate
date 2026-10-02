@@ -8,7 +8,7 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { ApiError, type ApiClient } from '../api/client.ts';
 import type { EventsConnection, EventsState } from '../api/events.ts';
-import type { ServerEvent, Session, SystemStatus } from '../api/types.ts';
+import type { ChainStatus, ServerEvent, Session, SystemStatus } from '../api/types.ts';
 import type { UnsavedMandate } from '../mandate/versions.ts';
 import { clockOffset } from '../ui/countdown.ts';
 import { Bus } from './bus.ts';
@@ -96,6 +96,11 @@ export class AppState {
     } catch {
       // The banner follows with the next system event or reload.
     }
+  }
+
+  /** setChain takes the result of a chain verification into the system status. */
+  setChain(chain: ChainStatus): void {
+    if (this.system) this.system = { ...this.system, chain };
   }
 
   #emit(topic: Topic, event?: unknown): void {

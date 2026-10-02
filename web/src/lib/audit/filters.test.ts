@@ -33,6 +33,11 @@ describe('parseFilters', () => {
     expect(parseFilters({ seq: ['0'] }).seq).toBeNull();
   });
 
+  it('is safe against hostile or doubled values', () => {
+    const f = parseFilters({ agent: ['a', 'b'], seq: ['0x1'], decision: ['bogus', 'deny'], period: ['24h', '7d'], device: ['x'.repeat(600)] });
+    expect(f).toEqual({ ...DEFAULT_FILTERS, agent: 'a', period: '24h', decisions: ['deny'] });
+  });
+
   it('accepts every administrative event type', () => {
     for (const type of ['agent.registered', 'agent.revoked', 'mandate.created', 'mandate.updated', 'mandate.revoked',
       'emergency_stop.activated', 'emergency_stop.released', 'auth.rejected', 'log.truncated']) {

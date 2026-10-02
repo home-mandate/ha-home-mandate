@@ -32,7 +32,7 @@
   }
 </script>
 
-<ul>
+<ul role="list">
   {#each entries as entry (entry.seq)}
     {@const decision = decisionOf(entry)}
     <li>

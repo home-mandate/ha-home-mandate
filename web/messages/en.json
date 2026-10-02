@@ -654,5 +654,7 @@
   "request_gone": "This approval was already answered or has ended.",
   "request_answer_failed": "The answer couldn’t be sent. Answering on the phone still works.",
   "request_closed_live": "Approval for {device} ended: {result}",
-  "request_confirm_label": "Confirm approval"
+  "request_confirm_label": "Confirm approval",
+  "audit_tab_pending_count": "{count} pending",
+  "filter_active_count": "{count} active"
 }

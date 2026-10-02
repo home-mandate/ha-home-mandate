@@ -654,5 +654,7 @@
   "request_gone": "Diese Rückfrage ist schon beantwortet oder beendet.",
   "request_answer_failed": "Die Antwort konnte nicht gesendet werden. Am Handy geht es weiterhin.",
   "request_closed_live": "Rückfrage zu {device} beendet: {result}",
-  "request_confirm_label": "Freigabe bestätigen"
+  "request_confirm_label": "Freigabe bestätigen",
+  "audit_tab_pending_count": "{count} offen",
+  "filter_active_count": "{count} aktiv"
 }

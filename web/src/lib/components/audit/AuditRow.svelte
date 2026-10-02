@@ -40,7 +40,7 @@
   });
 </script>
 
-<a class="row" class:broken {href} aria-current={current ? 'true' : undefined} onclick={onselect}>
+<a class="row" class:broken {href} data-seq={entry.seq} aria-current={current ? 'true' : undefined} onclick={onselect}>
   <span class="when">
     <time datetime={entry.recorded_at}>{formatTime(new Date(entry.recorded_at), ctx)}</time>
     <span class="seq">{m.audit_seq_short({ number: entry.seq })}</span>
@@ -54,7 +54,7 @@
         <span class="event"><Icon name="history" size={16} />{eventLabel(entry.event)}</span>
       {/if}
     </span>
-    {#if what}<span class="what">{what}</span>{/if}
+    {#if what}<span class="what"><bdi>{what}</bdi></span>{/if}
   </span>
   {#if entry.event === 'decision'}
     <span class="decision">{#if decision}<DecisionBadge kind={decision} size="sm" />{/if}</span>
@@ -74,6 +74,8 @@
     border-inline-start: 3px solid transparent;
     color: inherit;
     text-decoration: none;
+    /* the sticky "new entries" pill never covers a focused row */
+    scroll-margin-block-start: 64px;
   }
   .row:hover {
     background: var(--hm-color-surface-hover);
@@ -84,6 +86,14 @@
   }
   .row[aria-current='true'] {
     background: var(--hm-color-accent-subtle);
+    border-inline-start-color: var(--hm-color-accent);
+  }
+  @media (forced-colors: active) {
+    .row[aria-current='true'] {
+      border-inline-start-color: Highlight;
+      outline: 2px solid Highlight;
+      outline-offset: -2px;
+    }
   }
   .row.broken {
     border-inline-start-color: var(--hm-color-danger-fg);

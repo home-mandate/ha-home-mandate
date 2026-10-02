@@ -7,7 +7,7 @@ import type { ApprovalHistoryEntry } from '../api/types.ts';
 import { answeredAfter } from '../audit/outcome.ts';
 import type { IconName } from '../components/Icon.svelte';
 import { m } from '../i18n.ts';
-import { cleanUntrusted } from '../untrusted.ts';
+import { isolate } from '../untrusted.ts';
 
 export interface HistoryOutcome {
   icon: IconName;
@@ -30,7 +30,7 @@ function answered(entry: ApprovalHistoryEntry, who: string): string {
 }
 
 export function historyOutcome(entry: ApprovalHistoryEntry): HistoryOutcome {
-  const person = cleanUntrusted(entry.by_name ?? '');
+  const person = isolate(entry.by_name ?? '');
   const plain = { hint: null, dashed: false };
   switch (entry.outcome) {
     case 'approved':

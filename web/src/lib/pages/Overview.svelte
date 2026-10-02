@@ -135,8 +135,7 @@
     <div class="lists">
       <section class="requests" aria-labelledby="{id}-requests">
         <div class="section-head">
-          <h2 id="{id}-requests">{m.requests_heading()}</h2>
-          <span class="count">{formatNumber(data.open.length, ctx)}</span>
+          <h2 id="{id}-requests">{m.requests_heading()} <span class="count">{formatNumber(data.open.length, ctx)}</span></h2>
         </div>
         {#if system && !system.ha.connected}
           <p class="note warning"><Icon name="warning" size={16} />{m.requests_ha_down()}</p>
@@ -150,9 +149,11 @@
         {:else}
           {#each data.open as request (request.id)}
             <RequestCard {request} areaName={areaName(request.area)} offsetMs={app.offsetMs} {ctx}>
-              {#if request.can_answer}
-                <a class="answer" href={href({ name: 'requests' })}>{m.request_answer_link()}</a>
-              {/if}
+              {#snippet children(titleId)}
+                {#if request.can_answer}
+                  <a class="answer" href={href({ name: 'requests' })} aria-describedby={titleId}>{m.request_answer_link()}</a>
+                {/if}
+              {/snippet}
             </RequestCard>
           {/each}
           <p class="note"><Icon name="info" size={16} />{answerHere ? m.request_ui_note() : m.request_phone_note()}</p>
@@ -276,7 +277,8 @@
     gap: var(--hm-space-1);
     color: var(--hm-color-positive-fg);
   }
-  .answer {
-    min-block-size: 44px;
+  .answer,
+  .section-head a {
+    min-block-size: var(--hm-size-touch);
   }
 </style>

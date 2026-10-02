@@ -8,6 +8,9 @@ import { answeredAfter, approvalText, eventLabel, outcomeOf, reasonText } from '
 
 beforeEach(() => setLocale('en', { reload: false }));
 
+/** iso is a name as the sentences show it: isolated (first strong isolate … pop). */
+const iso = (name: string) => `\u2068${name}\u2069`;
+
 const bySeq = (seq: number): AuditEntry => {
   const e = auditFixture.find((x) => x.seq === seq);
   if (!e) throw new Error(`no ${seq}`);
@@ -22,8 +25,8 @@ describe('outcomeOf', () => {
   });
 
   it('names who answered an approval, and how it ended otherwise', () => {
-    expect(outcomeOf(bySeq(8))).toEqual({ tone: 'positive', text: 'Executed', why: 'Approved by Markus' });
-    expect(outcomeOf(bySeq(9))).toEqual({ tone: 'danger', text: 'Declined by Alex', why: null });
+    expect(outcomeOf(bySeq(8))).toEqual({ tone: 'positive', text: 'Executed', why: `Approved by ${iso('Markus')}` });
+    expect(outcomeOf(bySeq(9))).toEqual({ tone: 'danger', text: `Declined by ${iso('Alex')}`, why: null });
     expect(outcomeOf(bySeq(4))).toEqual({ tone: 'danger', text: 'Timed out, declined', why: null });
     expect(outcomeOf(bySeq(10))).toEqual({ tone: 'warning', text: 'Invalid response discarded', why: null });
     expect(outcomeOf(bySeq(11))).toEqual({ tone: 'danger', text: 'Declined by emergency stop', why: null });
@@ -72,11 +75,11 @@ describe('reasonText', () => {
 describe('approvalText', () => {
   it('says who answered, where, and how fast', () => {
     const e = bySeq(8);
-    expect(approvalText(e)).toBe('Approved by Markus');
+    expect(approvalText(e)).toBe(`Approved by ${iso('Markus')}`);
     const ui: AuditEntry = { ...e, approval: { ...(e.approval as NonNullable<AuditEntry['approval']>), via: 'ui' } };
-    expect(approvalText(ui)).toBe('Approved by Markus · in Home-Mandate');
+    expect(approvalText(ui)).toBe(`Approved by ${iso('Markus')} · in Home-Mandate`);
     expect(approvalText({ ...e, approval: { ...(e.approval as NonNullable<AuditEntry['approval']>), via: 'push' } })).toBe(
-      'Approved by Markus · on the phone',
+      `Approved by ${iso('Markus')} · on the phone`,
     );
     expect(approvalText(bySeq(3))).toBeNull();
   });

@@ -47,6 +47,12 @@ describe('App frame', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Audit log' })).toBeTruthy();
     await navigate('#/audit/9');
     expect(await screen.findByRole('heading', { level: 1, name: 'Entry no. 9' })).toBeTruthy();
+    // A filter changes the URL without a navigation; the "Events" link resets it.
+    await navigate('#/audit');
+    await fireEvent.click(await screen.findByRole('button', { name: 'Ask first' }));
+    expect(window.location.hash).toBe('#/audit?decision=ask');
+    await navigate('#/audit');
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Ask first' }).getAttribute('aria-pressed')).toBe('false'));
     await navigate('#/audit/requests');
     expect(await screen.findByRole('region', { name: 'History' })).toBeTruthy();
   });

@@ -27,12 +27,14 @@
     offsetMs: number;
     ctx: FormatContext;
     now?: () => number;
-    children?: Snippet;
+    /** Actions; they get the ID of the card's heading, e.g. for aria-describedby. */
+    children?: Snippet<[string]>;
   }
 
   let { request, areaName, offsetMs, ctx, now = Date.now, children }: Props = $props();
 
   const SEPARATOR = ' · ';
+  const titleId = $props.id();
 
   const title = $derived(
     around(m.request_title({ agent: MARK, action: actionLabel(undefined, request.action), device: cleanUntrusted(request.device_name) })),
@@ -44,14 +46,14 @@
   const recipients = $derived(formatList(request.recipients.map((r) => cleanUntrusted(r)), ctx));
 </script>
 
-<article class="card">
+<article class="card" aria-labelledby={titleId}>
   <div class="body">
     <div class="meta">
       <DecisionBadge kind="ask" size="sm" />
       {#if request.critical}<DecisionBadge kind="critical" size="sm" />{/if}
       <span class="where">{where}</span>
     </div>
-    <h3>{title[0]}<AgentName name={request.agent.display_name} />{title[1]}</h3>
+    <h3 id={titleId}>{title[0]}<AgentName name={request.agent.display_name} />{title[1]}</h3>
     {#if identity}
       <div class="client">
         <span>{m.agent_client_id()}</span>
@@ -61,7 +63,7 @@
     {/if}
     {#if request.reason}<ReasonBox reason={request.reason} />{/if}
     {#if request.recipients.length > 0}<span class="sent">{m.request_sent_to({ names: recipients })}</span>{/if}
-    {#if children}<div class="actions">{@render children()}</div>{/if}
+    {#if children}<div class="actions">{@render children(titleId)}</div>{/if}
   </div>
   <Countdown expiresAt={request.expires_at} totalSeconds={total} {offsetMs} size="lg" {now} />
 </article>

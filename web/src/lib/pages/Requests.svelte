@@ -7,7 +7,7 @@
   leaves, the history grows and a live region says the result.
 -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { slide } from 'svelte/transition';
   import { ApiError } from '../api/client.ts';
   import { Loader } from '../app/loader.svelte.ts';
@@ -27,7 +27,7 @@
   import { href } from '../router.ts';
   import { DESKTOP, Media } from '../ui/media.svelte.ts';
   import { toasts } from '../ui/toasts.ts';
-  import { cleanUntrusted } from '../untrusted.ts';
+  import { cleanUntrusted, isolate } from '../untrusted.ts';
 
   interface Props {
     app: AppState;
@@ -50,14 +50,33 @@
   let tab = $state<'open' | 'history'>('open');
   let busy = $state<string | null>(null);
   let spoken = $state('');
+  let openHeading: HTMLElement | undefined = $state();
+  let openSection: HTMLElement | undefined = $state();
+  const TABS = ['open', 'history'] as const;
+  const TAB_LABELS: Record<(typeof TABS)[number], () => string> = {
+    open: () => m.requests_tab_open(),
+    history: () => m.requests_tab_history(),
+  };
 
   const loader = new Loader<Data>(async () => {
     const [approvals, catalog] = await Promise.all([app.api.approvals(), app.api.devices().catch(() => null)]);
     return { approvals, catalog };
   });
 
-  function announce(entry: ApprovalHistoryEntry) {
-    spoken = m.request_closed_live({ device: cleanUntrusted(entry.device_name), result: historyOutcome(entry).text });
+  /** announce says the end of a request once; the same text twice in a row is said again. */
+  async function announce(entry: ApprovalHistoryEntry) {
+    spoken = '';
+    await tick();
+    spoken = m.request_closed_live({ device: isolate(entry.device_name), result: historyOutcome(entry).text });
+  }
+
+  /** keepFocus moves the focus to the section heading when the focused card's request has ended. */
+  async function keepFocus() {
+    const focused = document.activeElement;
+    const card = focused instanceof HTMLElement && openSection?.contains(focused) ? focused.closest<HTMLElement>('[data-request]') : null;
+    if (!card || open.some((r) => r.id === card.dataset['request'])) return;
+    await tick();
+    openHeading?.focus();
   }
 
   onMount(() => {
@@ -65,8 +84,8 @@
     const stop = [
       app.on('approval.opened', reload),
       app.on('approval.closed', (event) => {
-        announce(event.entry);
-        reload();
+        void announce(event.entry);
+        void loader.run().then(keepFocus);
       }),
       app.on('reconnected', reload),
     ];
@@ -80,12 +99,27 @@
     try {
       await app.api.answerApproval(requestId, approve);
     } catch (err) {
-      const gone = err instanceof ApiError ? err.code === 'not_found' : (err as { code?: string }).code === 'not_found';
+      const gone = err instanceof ApiError && err.code === 'not_found';
       toasts.show({ kind: 'error', text: gone ? m.request_gone() : m.request_answer_failed() });
     } finally {
       busy = null;
     }
-    void loader.run();
+    await loader.run();
+    await keepFocus();
+  }
+
+  /** Tabs with arrow keys, Home and End; the selection follows the focus. */
+  async function tabKey(event: KeyboardEvent) {
+    const at = TABS.indexOf(tab);
+    const step = ({ ArrowRight: 1, ArrowLeft: -1, Home: -at, End: TABS.length - 1 - at } as Record<string, number>)[event.key];
+    if (step === undefined) return;
+    event.preventDefault();
+    const arrow = event.key === 'ArrowRight' || event.key === 'ArrowLeft';
+    const rtl = arrow && getComputedStyle(event.currentTarget as Element).direction === 'rtl';
+    const next = TABS[(at + (rtl ? -step : step) + TABS.length) % TABS.length] ?? 'open';
+    tab = next;
+    await tick();
+    document.getElementById(`${id}-tab-${next}`)?.focus();
   }
 
   const ctx = $derived({ locale: getLocale(), timeZone: app.session?.household.time_zone ?? 'UTC' });
@@ -96,8 +130,9 @@
   );
   const answerHere = $derived(open.some((r) => r.can_answer));
   const haDown = $derived(app.system ? !app.system.ha.connected : false);
-  const showOpen = $derived(desktop.matches || tab === 'open');
-  const showHistory = $derived(desktop.matches || tab === 'history');
+  const tabs = $derived(!desktop.matches);
+  const hideOpen = $derived(tabs && tab !== 'open');
+  const hideHistory = $derived(tabs && tab !== 'history');
   const leave = $derived(reduced.matches ? 0 : LEAVE_MS);
 
   function areaName(areaId: string | null): string | null {
@@ -106,7 +141,7 @@
   }
 </script>
 
-<div class="head"><h1>{m.audit_title()}</h1></div>
+<div class="head"><h1>{m.requests_title()}</h1></div>
 <AuditTabs current="requests" pending={data ? open.length : null} locale={ctx.locale} />
 
 <div class="hm-visually-hidden" aria-live="polite">{spoken}</div>
@@ -114,21 +149,32 @@
 {#if loader.status === 'error'}
   <ErrorState title={m.overview_error_title()} body={m.overview_error_body()} onretry={() => void loader.run()} />
 {:else if data}
-  {#if !desktop.matches}
-    <div class="switch" role="tablist">
-      <button type="button" role="tab" id="{id}-tab-open" aria-selected={tab === 'open'} aria-controls="{id}-open" onclick={() => (tab = 'open')}
-        >{m.requests_tab_open()}</button
-      >
-      <button type="button" role="tab" id="{id}-tab-history" aria-selected={tab === 'history'} aria-controls="{id}-history" onclick={() => (tab = 'history')}
-        >{m.requests_tab_history()}</button
-      >
+  {#if tabs}
+    <div class="switch" role="tablist" aria-label={m.requests_title()}>
+      {#each TABS as name (name)}
+        <button
+          type="button"
+          role="tab"
+          id="{id}-tab-{name}"
+          aria-selected={tab === name}
+          aria-controls="{id}-{name}"
+          tabindex={tab === name ? 0 : -1}
+          onclick={() => (tab = name)}
+          onkeydown={tabKey}>{TAB_LABELS[name]()}</button
+        >
+      {/each}
     </div>
   {/if}
 
   <div class="columns" class:split={desktop.matches}>
-    {#if showOpen}
-      <section id="{id}-open" aria-labelledby="{id}-open-h">
-        <h2 id="{id}-open-h">{m.requests_tab_open()} <span class="count">{new Intl.NumberFormat(ctx.locale).format(open.length)}</span></h2>
+    <section
+      id="{id}-open"
+      bind:this={openSection}
+      hidden={hideOpen}
+      role={tabs ? 'tabpanel' : undefined}
+      aria-labelledby={tabs ? `${id}-tab-open` : `${id}-open-h`}
+    >
+        <h2 id="{id}-open-h" tabindex="-1" bind:this={openHeading}>{m.requests_tab_open()} <span class="count">{new Intl.NumberFormat(ctx.locale).format(open.length)}</span></h2>
         {#if haDown}<p class="note warning"><Icon name="warning" size={16} />{m.requests_ha_down()}</p>{/if}
         {#if open.length === 0}
           <div class="empty">
@@ -138,21 +184,31 @@
           </div>
         {:else}
           {#each open as request (request.id)}
-            <div out:slide={{ duration: leave }}>
+            <div out:slide={{ duration: leave }} data-request={request.id}>
               <RequestCard {request} areaName={areaName(request.area)} offsetMs={app.offsetMs} {ctx}>
-                {#if request.can_answer}
-                  <RequestAnswer {request} busy={busy === request.id} onanswer={(approve) => void answer(request.id, approve)} />
-                {/if}
+                {#snippet children(titleId)}
+                  {#if request.can_answer}
+                    <RequestAnswer
+                      {request}
+                      busy={busy === request.id}
+                      describedBy={titleId}
+                      onanswer={(approve) => void answer(request.id, approve)}
+                    />
+                  {/if}
+                {/snippet}
               </RequestCard>
             </div>
           {/each}
           <p class="note"><Icon name="info" size={16} />{answerHere ? m.requests_ui_approve_note() : m.request_phone_note()}</p>
         {/if}
-      </section>
-    {/if}
+    </section>
 
-    {#if showHistory}
-      <section id="{id}-history" aria-labelledby="{id}-history-h">
+      <section
+        id="{id}-history"
+        hidden={hideHistory}
+        role={tabs ? 'tabpanel' : undefined}
+        aria-labelledby={tabs ? `${id}-tab-history` : `${id}-history-h`}
+      >
         <h2 id="{id}-history-h">{m.requests_tab_history()}</h2>
         {#if done.length === 0}
           <div class="empty">
@@ -161,7 +217,7 @@
             <span>{m.requests_history_empty_body()}</span>
           </div>
         {:else}
-          <ul>
+          <ul role="list">
             {#each done as entry (entry.seq)}
               {@const outcome = historyOutcome(entry)}
               <li class:dashed={outcome.dashed}>
@@ -182,7 +238,6 @@
           </ul>
         {/if}
       </section>
-    {/if}
   </div>
 {/if}
 
@@ -213,6 +268,14 @@
     color: var(--hm-color-text);
     font-weight: 600;
   }
+  @media (forced-colors: active) {
+    .switch button {
+      border: 1px solid ButtonText;
+    }
+    .switch button[aria-selected='true'] {
+      outline: 2px solid Highlight;
+    }
+  }
   .switch button:focus-visible {
     outline: var(--hm-focus-width) solid var(--hm-color-focus);
     outline-offset: 2px;
@@ -235,6 +298,12 @@
   h2 {
     margin: 0;
     font-size: var(--hm-font-size-xl);
+  }
+  h2:focus {
+    outline: none;
+  }
+  section[hidden] {
+    display: none;
   }
   .count,
   .note,

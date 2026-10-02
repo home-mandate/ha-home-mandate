@@ -6,7 +6,7 @@
   a pill offers them. A load error says that entries are still being written.
 -->
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { Loader } from '../app/loader.svelte.ts';
   import type { AppState } from '../app/state.svelte.ts';
   import type { AuditEntry, DeviceCatalog } from '../api/types.ts';
@@ -62,12 +62,18 @@
   let more = $state(false);
   let verifying = $state(false);
   let picked: AuditEntry | null = $state.raw(null);
+  /** The selected entry is neither in the list nor on the server (any more). */
+  let missing = $state(false);
+  let entriesSection: HTMLElement | undefined = $state();
+  /** Generation of the list: answers of an older one (filter changed, reloaded) are dropped. */
+  let gen = 0;
+  /** Entry that is being loaded alone, so the selection fetches it once. */
+  let requested: number | null = null;
 
   const serverNow = () => Date.now() - app.offsetMs;
 
   const list = new Loader<Page>(async () => {
     const page = await app.api.audit({ ...toAuditQuery(filters, serverNow()), limit: PAGE });
-    fresh = 0;
     return { entries: page.entries, total: page.total, next: page.next_before };
   });
 
@@ -93,8 +99,10 @@
     timer = setTimeout(async () => {
       const shown = list.data?.total;
       if (shown === undefined) return;
+      const g = gen;
       try {
         const page = await app.api.audit({ ...toAuditQuery(filters, serverNow()), limit: 1 });
+        if (g !== gen) return;
         fresh = Math.max(0, page.total - shown);
       } catch {
         // The next event tries again.
@@ -120,28 +128,50 @@
 
   /** apply changes the filters, keeps them in the URL (without a navigation) and reloads. */
   function apply(next: AuditFilters) {
+    gen++;
+    fresh = 0;
     filters = next;
     picked = null;
+    missing = false;
     window.history.replaceState(null, '', href({ name: 'audit', query: toQuery(next) }));
     list.data = null;
     void list.run();
   }
 
-  function select(event: MouseEvent, entry: AuditEntry) {
+  /** refresh loads the list from the top (the "new entries" pill) and moves the focus to it. */
+  async function refresh() {
+    gen++;
+    fresh = 0;
+    await list.run();
+    await tick();
+    entriesSection?.focus();
+  }
+
+  async function select(event: MouseEvent, entry: AuditEntry) {
     if (!desktop.matches) return; // mobile: the link opens the entry's own page
+    // Open in a new tab or window stays what the browser does.
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     filters = { ...filters, seq: entry.seq };
     picked = entry;
+    missing = false;
     window.history.replaceState(null, '', href({ name: 'audit', query: toQuery(filters) }));
+    await tick();
+    document.getElementById(`${id}-detail`)?.focus();
   }
 
   async function loadMore() {
     const page = list.data;
     if (!page || page.next === null || more) return;
     more = true;
+    const g = gen;
     try {
       const next = await app.api.audit({ ...toAuditQuery(filters, serverNow()), limit: PAGE, before: page.next });
+      if (g !== gen || list.data !== page) return; // the list changed meanwhile
       list.set({ entries: [...page.entries, ...next.entries], total: page.total, next: next.next_before });
+      const first = next.entries[0];
+      await tick();
+      if (first) entriesSection?.querySelector<HTMLElement>(`[data-seq="${first.seq}"]`)?.focus();
     } catch {
       toasts.show({ kind: 'error', text: m.audit_error_title() });
     } finally {
@@ -154,9 +184,7 @@
     verifying = true;
     try {
       const result = await app.api.verifyAudit();
-      if (app.system) {
-        app.system = { ...app.system, chain: { valid: result.valid, broken_at_seq: result.broken_at_seq, checked_at: result.checked_at } };
-      }
+      app.setChain({ valid: result.valid, broken_at_seq: result.broken_at_seq, checked_at: result.checked_at });
     } catch {
       toasts.show({ kind: 'error', text: m.audit_verify_failed() });
     } finally {
@@ -179,23 +207,35 @@
     };
   });
 
-  // The selected entry: from the list, or loaded alone (e.g. from a bookmark).
+  // The selected entry: from the list, or loaded alone once (e.g. from a bookmark).
   $effect(() => {
     const seq = filters.seq;
-    if (seq === null || picked?.seq === seq) return;
-    const known = list.data?.entries.find((e) => e.seq === seq);
-    if (known) {
-      picked = known;
-      return;
-    }
-    if (list.status !== 'ready') return;
-    app.api
-      .audit({ before: seq + 1, limit: 1 })
-      .then((page) => {
-        const entry = page.entries[0];
-        if (entry?.seq === seq && filters.seq === seq) picked = entry;
-      })
-      .catch(() => {});
+    const known = seq === null ? undefined : list.data?.entries.find((e) => e.seq === seq);
+    const ready = list.status === 'ready';
+    untrack(() => {
+      if (seq === null) return;
+      if (known) {
+        picked = known;
+        missing = false;
+        return;
+      }
+      if (!ready || picked?.seq === seq || requested === seq) return;
+      requested = seq;
+      app.api
+        .audit({ before: seq + 1, limit: 1 })
+        .then((page) => {
+          if (filters.seq !== seq) return;
+          const entry = page.entries[0];
+          if (entry?.seq === seq) picked = entry;
+          missing = entry?.seq !== seq;
+        })
+        .catch(() => {
+          if (filters.seq === seq) missing = true;
+        })
+        .finally(() => {
+          if (requested === seq) requested = null;
+        });
+    });
   });
 
   const isBroken = (entry: AuditEntry) => brokenAt !== null && entry.seq >= brokenAt;
@@ -209,11 +249,13 @@
   <h1>{m.audit_title()}</h1>
   {#if chain}
     <div class="chain" class:bad={brokenAt !== null}>
-      {#if brokenAt !== null}
-        <span><Icon name="warning" size={16} />{m.audit_chain_broken({ number: brokenAt })}</span>
-      {:else if chain.valid}
-        <span class="ok"><Icon name="check" size={16} />{m.audit_chain_ok()}</span>
-      {/if}
+      <span role="status">
+        {#if brokenAt !== null}
+          <span><Icon name="warning" size={16} />{m.audit_chain_broken({ number: brokenAt })}</span>
+        {:else if chain.valid}
+          <span class="ok"><Icon name="check" size={16} />{m.audit_chain_ok()}</span>
+        {/if}
+      </span>
       {#if checked}<span class="muted">{checked}</span>{/if}
       <Button variant="text" icon="refresh" busy={verifying} onclick={verify}>{m.audit_verify_now()}</Button>
     </div>
@@ -236,20 +278,27 @@
   <ErrorState title={m.audit_error_title()} body={m.audit_error_body()} onretry={() => void list.run()} />
 {:else}
   <div class="body" class:split={desktop.matches}>
-    <section class="entries" aria-label={m.audit_tab_events()} aria-busy={list.status === 'loading'}>
-      {#if fresh > 0}
-        <button type="button" class="pill" onclick={() => void list.run()}>
-          <Icon name="arrow" size={16} />{m.audit_new_entries({ count: fresh })}
-        </button>
-      {/if}
+    <section class="entries" aria-label={m.audit_tab_events()} aria-busy={list.status === 'loading'} tabindex="-1" bind:this={entriesSection}>
+      <div class="pill-slot" role="status">
+        {#if fresh > 0}
+          <button type="button" class="pill" onclick={() => void refresh()}>
+            <Icon name="arrow" size={16} />{m.audit_new_entries({ count: fresh })}
+          </button>
+        {/if}
+      </div>
       {#if list.data && list.data.entries.length === 0}
         <EmptyState icon="search" title={m.audit_empty_title()} body={m.audit_empty_body()}>
-          {#snippet action()}<Button onclick={() => apply(parseFilters({}))}>{m.filter_reset()}</Button>{/snippet}
+          {#snippet action()}<Button
+              onclick={() => {
+                apply(parseFilters({}));
+                entriesSection?.focus();
+              }}>{m.filter_reset()}</Button
+            >{/snippet}
         </EmptyState>
       {/if}
       {#each days as day (day.key)}
         <h2>{day.label}</h2>
-        <ol>
+        <ol role="list">
           {#each day.entries as entry (entry.seq)}
             <li>
               <AuditRow
@@ -265,7 +314,7 @@
           {/each}
         </ol>
       {/each}
-      {#if list.data?.next !== null && list.data}
+      {#if list.data && list.data.next !== null}
         <Button busy={more} onclick={loadMore}>{m.load_more()}</Button>
       {/if}
       <p class="foot">{m.audit_retention()}{SEPARATOR}{m.common_timezone_note({ tz: ctx.timeZone })}</p>
@@ -276,6 +325,8 @@
         <aside aria-labelledby="{id}-detail">
           <AuditDetail entry={picked} catalog={meta.data?.catalog ?? null} {ctx} broken={isBroken(picked)} headingId="{id}-detail" />
         </aside>
+      {:else if missing}
+        <p class="hint">{m.notfound_title()}</p>
       {:else}
         <p class="hint">{m.audit_select_hint()}</p>
       {/if}
@@ -362,11 +413,17 @@
     border-radius: var(--hm-radius-lg);
     background: var(--hm-color-surface);
   }
-  .pill {
-    align-self: center;
+  .entries:focus {
+    outline: none;
+  }
+  .pill-slot {
+    display: flex;
+    justify-content: center;
     position: sticky;
     inset-block-start: var(--hm-space-2);
     z-index: 1;
+  }
+  .pill {
     display: inline-flex;
     align-items: center;
     gap: var(--hm-space-1);
