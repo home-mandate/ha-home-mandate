@@ -122,7 +122,13 @@ checked on every request.
 - Sent via `notify.mobile_app_<device>` to every device (up to 5) of the approvers selected
   in the settings: phones, tablets, the Companion App on a Mac. Each device has its own switch
   for critical requests; critical requests go only to devices where it is on. The UI
-  proposes on for phones and off for the Mac app (no unlocking, see below).
+  proposes on only for iOS devices of the person themselves and off for everything else
+  (Android, the Mac app, unknown or someone else's devices: no unlocking, see below).
+  Switching it on without that proposal, or for answering in the UI, needs a confirmation;
+  so does a change after which critical requests would reach nobody.
+- Reach is reported per kind of request and channel: by push to a device, only in the UI
+  (seen only while Home-Mandate is open), or not at all. The settings warn when a kind of
+  request reaches nobody by push.
 - Action identifiers contain a random nonce (128 bits): `HM_APPROVE_<nonce>`, `HM_DENY_<nonce>`.
 - Handling of the `mobile_app_notification_action` event: the nonce must be open and
   `context.user_id` must belong to an approver; otherwise the answer is discarded and logged.

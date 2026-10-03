@@ -122,6 +122,10 @@ Every line is at least one test. New attack ideas are added here before they are
 - Answer on either channel after the timeout, a revocation or the emergency stop → no effect
 - Revocation or emergency stop in the gateway while a request is open → ended at once, no further notification sent, recorded without approval, denied with the cause
 - Approver removed while a request is open → their answer counts as one from anyone else
+- Approvers API (`PUT|DELETE api/approvers/{id}`, test): without an admin session or CSRF token → rejected; a device that is not in the registry, more than 5, a duplicate, no channel, `ui_critical` without `ui`, the UI channel for someone who is no administrator now (checked live, fail closed) → `invalid_input` naming only the field; Home-Mandate's own HA user as approver → refused; a change based on an outdated state → `conflict`
+- Reach per kind of request and channel (push, UI only, none) matches the channels and the admin role now; candidate devices carry their owner, and the suggestion for critical requests is on only for the person's own iOS devices
+- Test notification: only to the approver's stored devices, neutral text without action buttons or nonce, rate limited per approver and overall (`Retry-After`)
+- `system.ha.commands` is generated from the allowlist `internal/ha` really uses (a test fails when they differ); `licenses.txt` is served as `text/plain` with `nosniff`
 - Bell in Home Assistant (if switched on) → no agent name, device, reason, link, nonce or request ID in it; removed however the request ends
 
 **MCP interface**

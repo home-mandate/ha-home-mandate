@@ -45,7 +45,7 @@
   <details>
     <summary>{m.set_ha_why_list()}</summary>
     <ul role="list">
-      {#each ha.commands as command (command)}<li dir="ltr">{command}</li>{/each}
+      {#each ha.commands as command (command)}<li><span dir="ltr">{command}</span></li>{/each}
     </ul>
   </details>
 </div>

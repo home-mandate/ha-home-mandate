@@ -49,6 +49,21 @@ describe('checkFile', () => {
   });
 });
 
+describe('check-dist exceptions', () => {
+  it('allows the source code link only for the project repository', () => {
+    expect(isAllowedUrl('https://github.com/home-mandate/home-mandate')).toBe(true);
+    expect(isAllowedUrl('https://github.com/home-mandate/home-mandate/tree/main')).toBe(true);
+    expect(isAllowedUrl('https://github.com/home-mandate/home-mandate-evil')).toBe(false);
+    expect(isAllowedUrl('https://github.com/other/repo')).toBe(false);
+  });
+
+  it('skips the URLs of the top-level licenses.txt only, and still finds the mock in it', () => {
+    expect(checkFile('licenses.txt', 'see https://opensource.org/licenses/MIT')).toEqual([]);
+    expect(checkFile('assets/licenses.txt', 'see https://opensource.org/licenses/MIT')).not.toEqual([]);
+    expect(checkFile('licenses.txt', 'hmMock')).not.toEqual([]);
+  });
+});
+
 describe('isAllowedUrl', () => {
   it('rejects unparseable URLs', () => {
     expect(isAllowedUrl('http://')).toBe(false);

@@ -24,13 +24,17 @@ test('the section index moves to a section and its heading', async ({ page }, in
   await expect(page.getByRole('heading', { level: 2, name: t.mcp })).toBeFocused();
 });
 
-test('switches critical requests for a device with the keyboard and shows the new reach', async ({ page }, info) => {
+test('switches critical requests for a device with the keyboard, after the confirmation, and shows the new reach', async ({ page }, info) => {
   const t = text[info.project.name as Lang];
   await page.goto('./#/settings/approvers');
   const approvers = page.getByRole('region', { name: t.approvers });
   const toggle = approvers.getByRole('switch', { name: t.critical }).first();
   await toggle.focus();
   await page.keyboard.press('Space');
+  // The only way critical requests reach anyone: the change asks first (decision S10).
+  await expect(approvers.getByRole('button', { name: t.cancel })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Enter');
   await expect(toggle).toHaveAttribute('aria-checked', 'false');
   await expect(approvers.getByText(t.normalOnly)).toBeVisible();
 });

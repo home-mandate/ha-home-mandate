@@ -14,14 +14,16 @@
     action?: { label: string; onclick: () => void };
     /** Full width under the header: no radius, only a bottom border. */
     flush?: boolean;
+    /** Inside a page section, a standing fact rather than news: not announced on every visit. */
+    quiet?: boolean;
   }
 
-  let { kind, title, body, action, flush = false }: Props = $props();
+  let { kind, title, body, action, flush = false, quiet = false }: Props = $props();
 
   const ICONS: Record<Props['kind'], IconName> = { info: 'info', warning: 'warning', critical: 'warning', estop: 'power' };
 </script>
 
-<div class="banner {kind}" class:flush role={kind === 'info' ? 'status' : 'alert'}>
+<div class="banner {kind}" class:flush role={quiet ? undefined : kind === 'info' ? 'status' : 'alert'}>
   <span class="icon"><Icon name={ICONS[kind]} /></span>
   <div class="text">
     {#if title}<strong>{title}</strong>{/if}

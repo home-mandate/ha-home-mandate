@@ -5,26 +5,42 @@
 // server checks every save and computes each person's reach; nothing here decides who
 // gets a request.
 
-import type { Approver, ApproverCandidates, ApproverDevice, ApproverUpdate } from '../api/types.ts';
+import type { Approver, ApproverCandidates, ApproverDevice, ApproverUpdate, ReachChannel } from '../api/types.ts';
 
 /** At most this many devices per person (internal/approval). */
 export const MAX_DEVICES = 5;
 
-export type Summary = 'ok' | 'no_critical' | 'none';
+/**
+ * none: requests reach nobody; ui_only: only in an open Home-Mandate; no_critical: critical
+ * ones reach nobody; critical_ui_only: critical ones only in an open Home-Mandate; ok.
+ */
+export type Summary = 'none' | 'ui_only' | 'no_critical' | 'critical_ui_only' | 'ok';
 
 /** updateOf is the saved form of an approver. */
 export function updateOf(a: Approver): ApproverUpdate {
   return { devices: a.devices.map((d) => ({ ...d })), ui: a.ui, ui_critical: a.ui_critical, language: a.language };
 }
 
+type Candidate = ApproverCandidates['devices'][number];
+
 /**
- * newApprover is what "Add person" saves: the first free device with its suggestion, or
- * for an administrator without a free device the UI channel. null when neither works.
+ * suggestedCritical: critical requests start switched on only for the person's own device
+ * with the server's suggestion; someone else's device or an unknown owner starts off.
  */
-export function newApprover(isAdmin: boolean, free: ApproverCandidates['devices']): ApproverUpdate | null {
-  const [first] = free;
-  if (first) return { devices: [{ service: first.service, critical: first.suggest_critical }], ui: false, ui_critical: false, language: null };
-  return isAdmin ? { devices: [], ui: true, ui_critical: false, language: null } : null;
+export function suggestedCritical(device: Candidate, userId: string): boolean {
+  return device.suggest_critical && device.owner_user_id === userId;
+}
+
+/** ownDevices are the person's own devices, as the server knows them. */
+export function ownDevices(devices: readonly Candidate[], userId: string): Candidate[] {
+  return devices.filter((d) => d.owner_user_id === userId);
+}
+
+/** newApprover is what "Add person" saves: a chosen device, or (service null) only the UI. */
+export function newApprover(userId: string, device: Candidate | null): ApproverUpdate {
+  return device
+    ? { devices: [{ service: device.service, critical: suggestedCritical(device, userId) }], ui: false, ui_critical: false, language: null }
+    : { devices: [], ui: true, ui_critical: false, language: null };
 }
 
 /** freeDevices are the candidate devices the approver does not use yet. */
@@ -32,9 +48,9 @@ export function freeDevices(a: Pick<ApproverUpdate, 'devices'>, candidates: Appr
   return candidates.devices.filter((d) => !a.devices.some((x) => x.service === d.service));
 }
 
-/** withDevice adds a device with its suggestion for critical requests. */
-export function withDevice(u: ApproverUpdate, device: ApproverCandidates['devices'][number]): ApproverUpdate {
-  return { ...u, devices: [...u.devices, { service: device.service, critical: device.suggest_critical }] };
+/** withDevice adds a device for userId, with critical requests as suggestedCritical says. */
+export function withDevice(u: ApproverUpdate, device: Candidate, userId: string): ApproverUpdate {
+  return { ...u, devices: [...u.devices, { service: device.service, critical: suggestedCritical(device, userId) }] };
 }
 
 /** withoutDevice removes a device. */
@@ -52,13 +68,30 @@ export function withUi(u: ApproverUpdate, ui: boolean): ApproverUpdate {
   return { ...u, ui, ui_critical: ui && u.ui_critical };
 }
 
-/** summary says whether normal and critical requests reach anyone, from the server's reach. */
+/** summary says how normal and critical requests reach anyone, from the server's reach (decision S9). */
 export function summary(approvers: readonly Approver[]): Summary {
-  if (!approvers.some((a) => a.reach.normal)) return 'none';
-  return approvers.some((a) => a.reach.critical) ? 'ok' : 'no_critical';
+  const best = (kind: 'normal' | 'critical'): ReachChannel =>
+    approvers.some((a) => a.reach[kind] === 'push') ? 'push' : approvers.some((a) => a.reach[kind] === 'ui') ? 'ui' : 'none';
+  const normal = best('normal');
+  const critical = best('critical');
+  if (normal === 'none') return 'none';
+  if (normal === 'ui') return 'ui_only';
+  if (critical === 'none') return 'no_critical';
+  return critical === 'ui' ? 'critical_ui_only' : 'ok';
 }
 
-/** isLastReachable tells whether removing a would leave nobody who gets requests. */
+/** isLastReachable tells whether removing userId would leave nobody who gets requests. */
 export function isLastReachable(approvers: readonly Approver[], userId: string): boolean {
-  return approvers.filter((a) => a.user_id !== userId && a.reach.normal).length === 0;
+  return !approvers.some((a) => a.user_id !== userId && a.reach.normal !== 'none');
+}
+
+/** isLastCritical tells whether userId is the only one critical requests reach. */
+export function isLastCritical(approvers: readonly Approver[], userId: string): boolean {
+  const me = approvers.find((a) => a.user_id === userId);
+  return me !== undefined && me.reach.critical !== 'none' && !approvers.some((a) => a.user_id !== userId && a.reach.critical !== 'none');
+}
+
+/** canGetCritical tells whether a saved form still has a channel for critical requests. */
+export function canGetCritical(u: ApproverUpdate): boolean {
+  return u.devices.some((d) => d.critical) || (u.ui && u.ui_critical);
 }

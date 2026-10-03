@@ -3,7 +3,10 @@
 
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
-import { ICONS_LICENSE, licenses } from './scripts/licenses.ts';
+import { fileURLToPath } from 'node:url';
+import { licenses } from './scripts/licenses.ts';
+
+const ICONS_LICENSE = fileURLToPath(new URL('./src/lib/icons/LICENSE-mdi.txt', import.meta.url));
 
 export default defineConfig({
   // Relative paths: Home Assistant Ingress serves the UI under a per-installation path.

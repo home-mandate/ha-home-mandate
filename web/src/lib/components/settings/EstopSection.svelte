@@ -30,8 +30,11 @@
   let failed = $state(false);
   let cancel: HTMLButtonElement | undefined = $state();
   let liftButton: HTMLButtonElement | undefined = $state();
+  let triggerButton: HTMLButtonElement | undefined = $state();
+  let done = $state('');
 
   async function ask() {
+    done = '';
     confirming = true;
     failed = false;
     await tick();
@@ -51,6 +54,9 @@
     try {
       await onlift();
       confirming = false;
+      done = m.set_estop_lifted();
+      await tick();
+      triggerButton?.focus();
     } catch {
       failed = true;
     } finally {
@@ -81,8 +87,9 @@
   {/if}
 {:else}
   <p class="desc">{m.set_estop_off_desc()}</p>
-  <Button variant="danger" icon="power" onclick={ontrigger}>{m.set_estop_trigger()}</Button>
+  <Button variant="danger" icon="power" bind:element={triggerButton} onclick={ontrigger}>{m.set_estop_trigger()}</Button>
 {/if}
+<p class="hm-visually-hidden" role="status">{done}</p>
 
 <style>
   .desc {

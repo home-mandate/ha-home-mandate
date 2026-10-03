@@ -37,6 +37,7 @@ import type {
   Approver,
   ApproverList,
   ApproverUpdate,
+  ReachChannel,
   AuditEntry,
   AuditEvent,
   AuditQuery,
@@ -178,12 +179,16 @@ function checkApprover(update: ApproverUpdate, admin: boolean, known: readonly s
   if (update.ui && !admin) fail('invalid_input', '/ui');
 }
 
-/** reachOf is what the server reports: devices always, the UI only for an admin (critical only with ui_critical). */
+/**
+ * reachOf is what the server reports per kind of request (decision S9): by push when a
+ * device gets it, else in the UI for an admin (critical only with ui_critical), else none.
+ */
 function reachOf(update: ApproverUpdate, admin: boolean): Approver['reach'] {
   const ui = update.ui && admin;
+  const channel = (push: boolean, inUi: boolean): ReachChannel => (push ? 'push' : inUi ? 'ui' : 'none');
   return {
-    normal: update.devices.length > 0 || ui,
-    critical: update.devices.some((d) => d.critical) || (ui && update.ui_critical),
+    normal: channel(update.devices.length > 0, ui),
+    critical: channel(update.devices.some((d) => d.critical), ui && update.ui_critical),
   };
 }
 

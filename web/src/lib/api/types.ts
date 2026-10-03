@@ -586,19 +586,27 @@ export interface Approver {
   ui_critical: boolean;
   /** null means the household language. */
   language: Language | null;
-  /** Computed by the server from the channels and the person's admin role now; the UI does not recompute it. */
-  reach: { normal: boolean; critical: boolean };
+  /**
+   * How requests reach the person, computed by the server from the channels and the admin
+   * role now (decision S9); the UI does not recompute it. push: a device gets it; ui: only
+   * in Home-Mandate, seen only while it is open; none: not at all.
+   */
+  reach: { normal: ReachChannel; critical: ReachChannel };
 }
+
+export type ReachChannel = 'push' | 'ui' | 'none';
 
 export interface ApproverCandidates {
   /** People from person.* with a Home Assistant user; is_admin decides whether the UI channel is offered. */
   people: { user_id: string; name: string; is_admin: boolean }[];
   /**
    * Devices with the Home Assistant app. suggest_critical comes from the device registry:
-   * on for phones, off for the Mac app and Android (no unlocking for notification buttons).
-   * name is Home Assistant's device name (untrusted text).
+   * on only for iOS, which asks for unlocking before a notification button counts; off for
+   * Android, the Mac app and anything unknown (decision S11).
+   * name is Home Assistant's device name (untrusted text; the app's user can set it).
+   * owner_user_id: the Home Assistant user the app is signed in with; null if unknown.
    */
-  devices: { service: string; name: string; suggest_critical: boolean }[];
+  devices: { service: string; name: string; suggest_critical: boolean; owner_user_id: string | null }[];
 }
 
 export interface ApproverList {

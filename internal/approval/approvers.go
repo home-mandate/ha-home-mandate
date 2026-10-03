@@ -49,7 +49,7 @@ type Approver struct {
 
 // Device is a device with the Home Assistant Companion App. Critical tells whether it
 // also gets critical requests: a phone asks for unlocking before a button counts (iOS),
-// the Mac app and Android do not, so the UI proposes off for those.
+// the Mac app and Android do not, so the UI proposes on only for iOS (decision S11).
 type Device struct {
 	Service  string // notify service, e.g. mobile_app_pixel_9 for notify.mobile_app_pixel_9
 	Critical bool

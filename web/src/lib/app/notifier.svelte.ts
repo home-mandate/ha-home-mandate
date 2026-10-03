@@ -17,7 +17,7 @@ export interface NotifyEnv {
   hidden: () => boolean;
 }
 
-const KEY = 'hm.notify';
+const KEY = 'hm-notify';
 /** One notification at a time: a newer request replaces the older one. */
 const TAG = 'hm-approval';
 
@@ -57,7 +57,12 @@ export class BrowserNotifier {
   async enable(): Promise<void> {
     const api = this.#env.Notification;
     if (!api) return;
-    const permission = api.permission === 'granted' ? 'granted' : await api.requestPermission();
+    let permission: NotificationPermission;
+    try {
+      permission = api.permission === 'granted' ? 'granted' : await api.requestPermission();
+    } catch {
+      permission = 'default'; // refused by policy or the browser: stays off
+    }
     store(this.#env, permission === 'granted');
     this.state = this.#current(permission === 'granted', permission);
   }
@@ -75,10 +80,15 @@ export class BrowserNotifier {
     const api = this.#env.Notification;
     this.state = this.#current(this.state === 'on');
     if (!api || this.state !== 'on' || !this.#env.hidden() || !request.can_answer) return;
-    const note = new api(text.title, { body: text.body, tag: TAG });
-    note.onclick = () => {
-      note.close();
-      open();
-    };
+    try {
+      const note = new api(text.title, { body: text.body, tag: TAG });
+      note.onclick = () => {
+        note.close();
+        open();
+      };
+    } catch {
+      // Some browsers only show notifications through a service worker (Android Chrome).
+      this.state = 'unsupported';
+    }
   }
 }

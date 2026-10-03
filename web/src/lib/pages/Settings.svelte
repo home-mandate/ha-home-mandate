@@ -53,30 +53,48 @@
   ];
 
   const defaults = new Loader<Defaults>(() => app.api.settings());
+  /** Saves of the defaults run one after another, each on the last answer, so none undoes another. */
+  let saving: Promise<unknown> = Promise.resolve();
   onMount(() => {
-    const stop = [app.on('settings.changed', () => void defaults.run())];
-    void defaults.run();
+    const load = () => void defaults.run();
+    const stop = [app.on('settings.changed', load), app.on('reconnected', load)];
+    load();
     return () => stop.forEach((off) => off());
   });
 
   const ctx = $derived({ locale: getLocale(), timeZone: app.session?.household.time_zone ?? 'UTC' });
   const browserLanguage = $derived(resolveLocale(undefined, navigator.languages, locales, baseLocale) as Language);
 
+  function show(key: SettingsSection) {
+    const heading = document.getElementById(`${uid}-${key}`);
+    heading?.scrollIntoView?.({ block: 'start' });
+    heading?.focus();
+  }
+
   // The section from the URL: scroll there and give its heading the focus.
   $effect(() => {
     const key = section;
     if (key === null) return;
-    void tick().then(() => {
-      const heading = document.getElementById(`${uid}-${key}`);
-      heading?.scrollIntoView?.({ block: 'start' });
-      heading?.focus();
-    });
+    let live = true;
+    void tick().then(() => live && show(key));
+    return () => (live = false);
   });
 
-  async function saveDefaults(patch: Partial<Defaults>) {
-    const current = defaults.data;
-    if (!current) return;
-    defaults.set(await app.api.putSettings({ ...current, ...patch }));
+  /** A click on the section already in the URL changes no hash; it still goes there. */
+  function again(event: MouseEvent, key: SettingsSection) {
+    if (key !== section || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    show(key);
+  }
+
+  function saveDefaults(patch: Partial<Defaults>): Promise<void> {
+    const run = saving.then(async () => {
+      const current = defaults.data;
+      if (!current) throw new Error('defaults not loaded');
+      defaults.set(await app.api.putSettings({ ...current, ...patch }));
+    });
+    saving = run.catch(() => {});
+    return run;
   }
 
   async function bell(on: boolean) {
@@ -99,12 +117,17 @@
 </script>
 
 <PageHeader title={m.settings_title()} />
+<p class="hint">{m.settings_autosave()}</p>
 
 <div class="layout">
   <nav aria-label={m.settings_nav_label()}>
     <ul role="list">
       {#each SECTIONS as s (s.key)}
-        <li><a href={href({ name: 'settings', section: s.key })} aria-current={section === s.key ? 'location' : undefined}>{s.title()}</a></li>
+        <li>
+          <a href={href({ name: 'settings', section: s.key })} aria-current={section === s.key ? 'location' : undefined} onclick={(e) => again(e, s.key)}
+            >{s.title()}</a
+          >
+        </li>
       {/each}
     </ul>
   </nav>
@@ -129,6 +152,8 @@
           {:else}
             <Skeleton lines={['60%', '40%']} />
           {/if}
+        {:else if s.key !== 'retention' && !app.system}
+          <Skeleton lines={['50%', '70%']} />
         {:else if s.key === 'ha' && app.system}
           <HaSection ha={app.system.ha} {ctx} />
         {:else if s.key === 'mcp' && app.system}
@@ -172,7 +197,9 @@
     display: flex;
     gap: var(--hm-space-2);
     margin: 0;
-    padding: 4px;
+    /* room for the focus ring inside the scroll container */
+    padding: 8px;
+    margin: -8px;
     list-style: none;
     overflow-x: auto;
   }
@@ -222,12 +249,20 @@
   h2:focus {
     outline: none;
   }
+  h2:focus-visible {
+    outline: var(--hm-focus-width) solid var(--hm-color-focus);
+    outline-offset: 4px;
+  }
+  .hint {
+    margin: 0;
+    color: var(--hm-color-text-muted);
+  }
   .text {
     margin: 0;
   }
   @media (forced-colors: active) {
     nav a[aria-current='location'] {
-      outline: 2px solid Highlight;
+      border: 2px solid Highlight;
     }
   }
 </style>

@@ -138,7 +138,14 @@
       <span class="glass"><Icon name="search" /></span>
       <input type="search" bind:value={query} placeholder={m.matrix_filter()} aria-label={m.matrix_filter()} />
     </div>
-    <Switch bind:checked={onlyChanges} label={m.preview_only_changes({ version })} onchange={() => (opened = null)} />
+    <Switch
+      checked={onlyChanges}
+      label={m.preview_only_changes({ version })}
+      onchange={(on) => {
+        onlyChanges = on;
+        opened = null;
+      }}
+    />
   </div>
 
   <div class="tally">

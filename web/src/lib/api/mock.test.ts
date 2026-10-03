@@ -427,12 +427,13 @@ describe('createMockClient: approvals, settings, audit, approvers, emergency sto
   // F2 "Erreichbarkeit", as the server reports it: devices always; the UI only for an
   // admin, for critical requests only with ui_critical; critical on a device only with its switch.
   it.each([
-    [[dev('mobile_app_pixel_9')], false, false, { normal: true, critical: true }],
-    [[dev('mobile_app_macbook', false)], false, false, { normal: true, critical: false }],
-    [[dev('mobile_app_macbook', false)], true, false, { normal: true, critical: false }],
-    [[dev('mobile_app_macbook', false)], true, true, { normal: true, critical: true }],
-    [[], true, false, { normal: true, critical: false }],
-    [[], true, true, { normal: true, critical: true }],
+    [[dev('mobile_app_pixel_9')], false, false, { normal: 'push', critical: 'push' }],
+    [[dev('mobile_app_pixel_9')], true, true, { normal: 'push', critical: 'push' }],
+    [[dev('mobile_app_macbook', false)], false, false, { normal: 'push', critical: 'none' }],
+    [[dev('mobile_app_macbook', false)], true, false, { normal: 'push', critical: 'none' }],
+    [[dev('mobile_app_macbook', false)], true, true, { normal: 'push', critical: 'ui' }],
+    [[], true, false, { normal: 'ui', critical: 'none' }],
+    [[], true, true, { normal: 'ui', critical: 'ui' }],
   ] as const)('reports how %j (ui %s, critical %s) reaches the admin', async (devices, ui, uiCritical, reach) => {
     const api = createMockClient();
     const list = await api.putApprover('u-admin', { devices: [...devices], ui, ui_critical: uiCritical, language: null });
@@ -442,7 +443,9 @@ describe('createMockClient: approvals, settings, audit, approvers, emergency sto
   it('offers devices with a name and a suggestion for critical requests, and says who is an admin', async () => {
     const { candidates } = await createMockClient().approvers();
     expect(candidates.devices.find((d) => d.service === 'mobile_app_macbook')).toMatchObject({ suggest_critical: false });
-    expect(candidates.devices.find((d) => d.service === 'mobile_app_pixel_9')).toMatchObject({ name: 'Pixel 9', suggest_critical: true });
+    // Decision S11: only iOS gets the suggestion; Android (Pixel) and the Mac do not.
+    expect(candidates.devices.find((d) => d.service === 'mobile_app_pixel_9')).toMatchObject({ name: 'Pixel 9', suggest_critical: false });
+    expect(candidates.devices.find((d) => d.service === 'mobile_app_iphone')).toMatchObject({ suggest_critical: true, owner_user_id: 'u-partner' });
     expect(candidates.people.map((p) => [p.user_id, p.is_admin])).toEqual([
       ['u-admin', true],
       ['u-partner', false],

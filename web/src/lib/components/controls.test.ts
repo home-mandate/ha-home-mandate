@@ -200,8 +200,20 @@ describe('Switch and ToggleChip', () => {
     const sw = screen.getByRole('switch', { name: 'Allow critical actions' });
     expect(sw.getAttribute('aria-checked')).toBe('false');
     await fireEvent.click(sw);
-    expect(sw.getAttribute('aria-checked')).toBe('true');
+    // Controlled: it reports the wish; the caller decides and passes the new state.
+    expect(sw.getAttribute('aria-checked')).toBe('false');
     expect(onchange).toHaveBeenCalledWith(true);
+  });
+
+  it('ignores clicks on a disabled switch but stays focusable', async () => {
+    const onchange = vi.fn();
+    render(Switch, { checked: false, label: 'Off for now', disabled: true, onchange });
+    const sw = screen.getByRole('switch', { name: 'Off for now' });
+    expect(sw.getAttribute('aria-disabled')).toBe('true');
+    await fireEvent.click(sw);
+    expect(onchange).not.toHaveBeenCalled();
+    sw.focus();
+    expect(document.activeElement).toBe(sw);
   });
 
   it('toggles a chip with aria-pressed and marks critical actions', async () => {

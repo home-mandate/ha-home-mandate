@@ -10,7 +10,7 @@ const request = (canAnswer: boolean): ApprovalRequest => ({ ...(approvalsOpenFix
 
 function browser(permission: NotificationPermission, answer: NotificationPermission = 'granted', saved: string | null = null) {
   const shown: { title: string; options?: NotificationOptions; note: { onclick: (() => void) | null; close: () => void } }[] = [];
-  const memory = new Map<string, string>(saved ? [['hm.notify', saved]] : []);
+  const memory = new Map<string, string>(saved ? [['hm-notify', saved]] : []);
   let hidden = true;
   const Notification = Object.assign(
     function (this: unknown, title: string, options?: NotificationOptions) {
@@ -37,7 +37,7 @@ describe('BrowserNotifier', () => {
     expect(b.shown).toHaveLength(0);
     await n.enable();
     expect(n.state).toBe('on');
-    expect(b.memory.get('hm.notify')).toBe('on');
+    expect(b.memory.get('hm-notify')).toBe('on');
     expect(new BrowserNotifier(b.env).state).toBe('off'); // the permission is still "default" in this fake
   });
 
@@ -80,12 +80,33 @@ describe('BrowserNotifier', () => {
     const n = new BrowserNotifier(b.env);
     n.disable();
     expect(n.state).toBe('off');
-    expect(b.memory.has('hm.notify')).toBe(false);
+    expect(b.memory.has('hm-notify')).toBe(false);
     await n.enable();
     b.setPermission('denied');
     n.notify(request(true), TEXT, () => {});
     expect(n.state).toBe('blocked');
     expect(b.shown).toHaveLength(0);
+  });
+
+  it('never throws: a browser that refuses the constructor or the question', async () => {
+    const throwing = Object.assign(
+      function () {
+        throw new TypeError('Illegal constructor');
+      },
+      { permission: 'granted', requestPermission: async () => 'granted' },
+    ) as unknown as typeof globalThis.Notification;
+    const memory = new Map([['hm-notify', 'on']]);
+    const storage = { getItem: (k: string) => memory.get(k) ?? null, setItem: () => {}, removeItem: () => {} };
+    const n = new BrowserNotifier({ Notification: throwing, storage, hidden: () => true });
+    expect(() => n.notify(request(true), TEXT, () => {})).not.toThrow();
+    expect(n.state).toBe('unsupported');
+    const rejecting = Object.assign(function () {}, {
+      permission: 'default',
+      requestPermission: async () => Promise.reject(new Error('policy')),
+    }) as unknown as typeof globalThis.Notification;
+    const off = new BrowserNotifier({ Notification: rejecting, hidden: () => true });
+    await expect(off.enable()).resolves.toBeUndefined();
+    expect(off.state).toBe('off');
   });
 
   it('works without storage', async () => {

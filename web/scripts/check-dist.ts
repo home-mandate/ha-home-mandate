@@ -20,6 +20,8 @@ const ALLOWED_ORIGINS: { origin: string; path: string }[] = [
   // The source code link under "About" (AGPL section 13); a link the person may follow, nothing loads it.
   { origin: 'https://github.com', path: '/home-mandate/home-mandate' },
 ];
+/** Origins whose path must match exactly (not as a prefix): a repository, not every repository starting with its name. */
+const EXACT_PATHS = new Set(['https://github.com']);
 /** Base URLs the Paraglide runtime passes to new URL() for parsing; they load nothing. */
 const ALLOWED_URLS = new Set(['http://fallback.com/', 'http://example.com/']);
 
@@ -35,7 +37,9 @@ export function isAllowedUrl(raw: string): boolean {
   }
   if (ALLOWED_URLS.has(url.href)) return true;
   // new URL() resolves "..", so a doc-link prefix cannot be used to reach other paths.
-  return ALLOWED_ORIGINS.some((a) => url.origin === a.origin && url.pathname.startsWith(a.path));
+  return ALLOWED_ORIGINS.some((a) =>
+    url.origin === a.origin && (EXACT_PATHS.has(a.origin) ? url.pathname === a.path || url.pathname.startsWith(`${a.path}/`) : url.pathname.startsWith(a.path)),
+  );
 }
 
 /** The mock client (test builds only) holds example data with these hosts; nothing loads them. */
@@ -52,16 +56,16 @@ function isFixtureUrl(raw: string): boolean {
   }
 }
 
-/** The license texts (decision S8): plain text the page links to; their URLs load nothing. */
-const LICENSES = /(^|[\\/])licenses\.txt$/;
+/** The license texts at the top of the build (decision S8): plain text the page links to; their URLs load nothing. */
+const LICENSES = 'licenses.txt';
 
 export function checkFile(name: string, content: string, fixtures = false): string[] {
   const problems: string[] = [];
-  if (LICENSES.test(name)) return problems;
   const mockChunk = MOCK_CHUNK.test(name);
   if (!fixtures && (mockChunk || MOCK_MARKERS.some((marker) => content.includes(marker)))) {
     return [`${name}: mock client in a release build`];
   }
+  if (name === LICENSES) return problems;
   for (const [url] of content.matchAll(ABSOLUTE_URL)) {
     if (!isAllowedUrl(url) && !(mockChunk && isFixtureUrl(url))) problems.push(`${name}: external reference ${url}`);
   }

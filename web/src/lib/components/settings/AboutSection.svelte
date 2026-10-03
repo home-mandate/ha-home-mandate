@@ -26,11 +26,11 @@
       <dt>{m.set_version()}</dt>
       <dd class="mono">{version}</dd>
       <dt>{m.set_commit()}</dt>
-      <dd class="mono" dir="ltr">{commit}</dd>
+      <dd class="mono"><span dir="ltr">{commit}</span></dd>
       <dt>{m.set_license()}</dt>
-      <dd>{LICENSE} · <a href={SOURCE_URL} target="_blank" rel="noopener noreferrer">{m.set_source()}</a></dd>
+      <dd>{LICENSE} · <a href={SOURCE_URL} target="_blank" rel="noopener noreferrer">{m.set_source()}<span class="hm-visually-hidden"> {m.common_new_tab()}</span></a></dd>
       <dt>{m.set_licenses()}</dt>
-      <dd><a href="./licenses.txt" target="_blank" rel="noopener">{m.set_licenses_link()}</a></dd>
+      <dd><a href="./licenses.txt" target="_blank" rel="noopener">{m.set_licenses_link()}<span class="hm-visually-hidden"> {m.common_new_tab()}</span></a></dd>
     </dl>
   </div>
 </div>

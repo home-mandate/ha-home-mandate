@@ -1,7 +1,9 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!--
   On/off switch (role="switch"); tone "danger" when switching on weakens a protection.
-  Disabled stays focusable (aria-disabled), so its description says why.
+  Disabled stays focusable (aria-disabled), so its description says why. Controlled: it
+  shows the checked prop and reports a click through onchange; the caller decides (a save
+  that fails leaves the switch as the server has it).
 -->
 <script lang="ts">
   interface Props {
@@ -13,14 +15,12 @@
     onchange?: (checked: boolean) => void;
   }
 
-  let { checked = $bindable(), label, description, tone = 'accent', disabled = false, onchange }: Props = $props();
+  let { checked, label, description, tone = 'accent', disabled = false, onchange }: Props = $props();
 
   const id = $props.id();
 
   function toggle() {
-    if (disabled) return;
-    checked = !checked;
-    onchange?.(checked);
+    if (!disabled) onchange?.(!checked);
   }
 </script>
 
@@ -92,8 +92,7 @@
   .disabled {
     cursor: not-allowed;
   }
-  .disabled .label,
-  .disabled .desc {
+  .disabled .label {
     color: var(--hm-color-text-disabled);
   }
   button[aria-disabled='true'] {

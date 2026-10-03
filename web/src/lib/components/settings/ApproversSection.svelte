@@ -1,25 +1,29 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!--
   Approvers (design README 6.11 section 1; decisions F2, F5, S1–S4): whether normal and
-  critical requests reach anyone, one card per person, adding a person with a device (or,
-  for an administrator, only the UI), the neutral note in Home Assistant's bell, and
-  notifications in this browser for the signed-in person. Changes are saved at once; a
-  failed save shows inline and the list goes back to the server's state.
+  critical requests reach anyone, one card per person, adding a person, the neutral note in
+  Home Assistant's bell, and notifications in this browser for the signed-in person.
+  Changes run one after another, each on the state the server answered last, so quick
+  clicks never undo each other; controls stay usable meanwhile. A refused change is said
+  where it happened and the server's state shows again; a saved one is announced.
+  Adding a person needs an explicit device choice when none of the devices is theirs, so
+  nobody gets someone else's phone by default.
 -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { ApiError } from '../../api/client.ts';
   import type { ApproverList, ApproverUpdate } from '../../api/types.ts';
   import type { AppState } from '../../app/state.svelte.ts';
   import type { BrowserNotifier } from '../../app/notifier.svelte.ts';
   import { Loader } from '../../app/loader.svelte.ts';
   import { m } from '../../i18n.ts';
-  import { isLastReachable, summary } from '../../settings/approvers.ts';
+  import { isLastCritical, isLastReachable, newApprover, ownDevices, summary, updateOf } from '../../settings/approvers.ts';
   import { toasts } from '../../ui/toasts.ts';
   import { cleanUntrusted, isolate } from '../../untrusted.ts';
   import Banner from '../Banner.svelte';
   import Button from '../Button.svelte';
   import ErrorState from '../ErrorState.svelte';
+  import Icon from '../Icon.svelte';
   import SelectField from '../SelectField.svelte';
   import Skeleton from '../Skeleton.svelte';
   import Switch from '../Switch.svelte';
@@ -35,14 +39,21 @@
 
   let { app, notifier, bell, onbell }: Props = $props();
 
-  /** Value of the "only in Home-Mandate" choice when adding a person. */
-  const UI_ONLY = '';
+  /** Device choice "only in Home-Mandate" (administrators) and "nothing chosen yet". */
+  const UI_ONLY = 'ui';
+  const NONE = '';
+  const DEVICE_NAME_MAX = 60;
 
+  const id = $props.id();
   const list = new Loader<ApproverList>(() => app.api.approvers());
-  let busy = $state<string | null>(null);
+  let queue: Promise<void> = Promise.resolve();
   let errors = $state<Record<string, string>>({});
+  let addError = $state('');
+  let announcement = $state('');
   let person = $state('');
   let device = $state<string | null>(null);
+  let adding = $state(false);
+  let personSelect: HTMLElement | undefined = $state();
 
   const reload = () => void list.run();
   onMount(() => {
@@ -53,13 +64,27 @@
 
   const data = $derived(list.data);
   const overall = $derived(data ? summary(data.approvers) : null);
+  const people = $derived(new Map((data?.candidates.people ?? []).map((p) => [p.user_id, cleanUntrusted(p.name)])));
   const missing = $derived(data ? data.candidates.people.filter((p) => !data.approvers.some((a) => a.user_id === p.user_id)) : []);
   const chosen = $derived(missing.find((p) => p.user_id === person) ?? missing[0]);
-  const deviceOptions = $derived([
-    ...(data?.candidates.devices ?? []).map((d) => ({ value: d.service, label: cleanUntrusted(d.name) || d.service })),
-    ...(chosen?.is_admin ? [{ value: UI_ONLY, label: m.set_approver_ui() }] : []),
-  ]);
-  const chosenDevice = $derived(deviceOptions.some((o) => o.value === device) ? device : (deviceOptions[0]?.value ?? null));
+  const deviceOptions = $derived.by(() => {
+    if (!data || !chosen) return [];
+    const own = ownDevices(data.candidates.devices, chosen.user_id);
+    const others = data.candidates.devices.filter((d) => !own.includes(d));
+    const label = (d: (typeof others)[number]) => cleanUntrusted(d.name, DEVICE_NAME_MAX) || d.service;
+    const ownerOf = (d: (typeof others)[number]) => {
+      const owner = d.owner_user_id ? people.get(d.owner_user_id) : undefined;
+      return owner ? m.set_device_of({ person: isolate(owner) }) : m.set_device_unknown_owner();
+    };
+    return [
+      // Without an own device the person must choose: nothing is preselected.
+      ...(own.length === 0 && !chosen.is_admin ? [{ value: NONE, label: m.set_approver_device_label() + ' …' }] : []),
+      ...own.map((d) => ({ value: d.service, label: label(d) })),
+      ...(chosen.is_admin ? [{ value: UI_ONLY, label: m.set_approver_ui() }] : []),
+      ...others.map((d) => ({ value: d.service, label: `${label(d)} · ${ownerOf(d)}` })),
+    ];
+  });
+  const chosenDevice = $derived(deviceOptions.some((o) => o.value === device) ? (device as string) : (deviceOptions[0]?.value ?? NONE));
   const me = $derived(data?.approvers.find((a) => a.user_id === app.session?.user.id));
 
   function errorText(err: unknown): string {
@@ -70,22 +95,45 @@
     return m.set_approver_save_failed();
   }
 
-  async function run(userId: string, action: () => Promise<unknown>) {
-    if (busy) return;
-    busy = userId;
-    errors = { ...errors, [userId]: '' };
-    try {
-      await action();
-    } catch (err) {
-      errors = { ...errors, [userId]: errorText(err) };
-    } finally {
-      busy = null;
+  /** enqueue runs an action after the ones before it; the list is reloaded before the next starts. */
+  function enqueue(action: () => Promise<string>, onerror: (text: string) => void): Promise<void> {
+    queue = queue.then(async () => {
+      try {
+        announcement = await action();
+      } catch (err) {
+        onerror(errorText(err));
+      }
       await list.run();
-    }
+    });
+    return queue;
   }
 
-  const save = (userId: string, update: ApproverUpdate) => run(userId, () => app.api.putApprover(userId, update));
-  const remove = (userId: string) => run(userId, () => app.api.deleteApprover(userId));
+  function change(userId: string, name: string, edit: (u: ApproverUpdate) => ApproverUpdate) {
+    errors = { ...errors, [userId]: '' };
+    void enqueue(
+      async () => {
+        // The latest state the server gave, not the one the click saw.
+        const current = list.data?.approvers.find((a) => a.user_id === userId);
+        if (!current) throw new Error('gone');
+        await app.api.putApprover(userId, edit(updateOf(current)));
+        return m.set_approver_saved({ person: isolate(name) });
+      },
+      (text) => (errors = { ...errors, [userId]: text }),
+    );
+  }
+
+  async function remove(userId: string, name: string) {
+    await enqueue(
+      async () => {
+        await app.api.deleteApprover(userId);
+        return m.set_approver_removed({ person: isolate(name) });
+      },
+      (text) => (errors = { ...errors, [userId]: text }),
+    );
+    await tick();
+    // The card is gone: the focus goes to adding a person.
+    personSelect?.querySelector('select')?.focus();
+  }
 
   async function test(userId: string, name: string) {
     try {
@@ -96,32 +144,48 @@
     }
   }
 
-  function add() {
+  async function add() {
     const p = chosen;
-    if (!p || !data || chosenDevice === null) return;
-    const suggestion = data.candidates.devices.find((d) => d.service === chosenDevice);
-    const update: ApproverUpdate = suggestion
-      ? { devices: [{ service: suggestion.service, critical: suggestion.suggest_critical }], ui: false, ui_critical: false, language: null }
-      : { devices: [], ui: true, ui_critical: false, language: null };
-    person = '';
-    device = null;
-    void save(p.user_id, update);
+    if (!p || !data || chosenDevice === NONE || adding) return;
+    const candidate = data.candidates.devices.find((d) => d.service === chosenDevice) ?? null;
+    const update = newApprover(p.user_id, chosenDevice === UI_ONLY ? null : candidate);
+    adding = true;
+    addError = '';
+    let ok = false;
+    await enqueue(
+      async () => {
+        await app.api.putApprover(p.user_id, update);
+        ok = true;
+        return m.set_approver_added({ person: isolate(cleanUntrusted(p.name)) });
+      },
+      (text) => (addError = text),
+    );
+    adding = false;
+    if (ok) {
+      person = '';
+      device = null;
+    }
   }
 </script>
 
+<p class="hm-visually-hidden" role="status">{announcement}</p>
 <p class="desc">{m.set_approvers_desc()}</p>
 
-{#if list.status === 'error'}
+{#if list.status === 'error' && !data}
   <ErrorState title={m.settings_error_title()} body={m.settings_error_body()} onretry={reload} />
 {:else if !data}
   <Skeleton lines={['50%', '80%', '60%']} />
 {:else}
   {#if overall === 'none'}
-    <Banner kind="critical" body={m.set_approvers_min()} />
+    <Banner kind="critical" quiet body={m.set_approvers_min()} />
+  {:else if overall === 'ui_only'}
+    <Banner kind="warning" quiet body={m.set_approvers_reach_ui_only()} />
   {:else if overall === 'no_critical'}
-    <Banner kind="warning" body={m.set_approvers_reach_no_critical()} />
+    <Banner kind="warning" quiet body={m.set_approvers_reach_no_critical()} />
+  {:else if overall === 'critical_ui_only'}
+    <Banner kind="warning" quiet body={m.set_approvers_reach_critical_ui()} />
   {:else}
-    <p class="ok" role="status">{m.set_approvers_reach_ok()}</p>
+    <p class="ok">{m.set_approvers_reach_ok()}</p>
   {/if}
 
   <div class="cards">
@@ -130,32 +194,37 @@
         {approver}
         isAdmin={data.candidates.people.find((p) => p.user_id === approver.user_id)?.is_admin ?? false}
         candidates={data.candidates}
-        last={approver.reach.normal && isLastReachable(data.approvers, approver.user_id)}
-        busy={busy !== null}
+        {people}
+        last={approver.reach.normal !== 'none' && isLastReachable(data.approvers, approver.user_id)}
+        lastCritical={isLastCritical(data.approvers, approver.user_id)}
         error={errors[approver.user_id] ?? ''}
-        onsave={(u) => void save(approver.user_id, u)}
-        ontest={() => void test(approver.user_id, approver.name)}
-        onremove={() => void remove(approver.user_id)}
+        onchange={(edit) => change(approver.user_id, approver.name, edit)}
+        ontest={() => test(approver.user_id, approver.name)}
+        onremove={() => void remove(approver.user_id, approver.name)}
       />
     {/each}
   </div>
 
-  <div class="add">
+  <div class="add" role="group" aria-labelledby="{id}-add">
+    <span id="{id}-add" class="hm-visually-hidden">{m.set_approver_add()}</span>
     {#if missing.length === 0}
       <p class="muted">{m.set_approver_add_none()}</p>
     {:else}
-      <SelectField
-        label={m.set_approver_add_label()}
-        value={chosen?.user_id ?? ''}
-        options={missing.map((p) => ({ value: p.user_id, label: cleanUntrusted(p.name) }))}
-        onchange={(v) => (person = v)}
-      />
-      {#if deviceOptions.length > 0}
-        <SelectField label={m.set_approver_device_label()} value={chosenDevice ?? ''} options={deviceOptions} onchange={(v) => (device = v)} />
-        <Button icon="plus" busy={busy !== null && busy === chosen?.user_id} onclick={add}>{m.set_approver_add()}</Button>
-      {:else}
-        <p class="muted">{m.set_approver_no_device()}</p>
-      {/if}
+      <div class="add-row" bind:this={personSelect}>
+        <SelectField
+          label={m.set_approver_add_label()}
+          value={chosen?.user_id ?? ''}
+          options={missing.map((p) => ({ value: p.user_id, label: cleanUntrusted(p.name) }))}
+          onchange={(v) => (person = v)}
+        />
+        {#if deviceOptions.length > 0}
+          <SelectField label={m.set_approver_device_label()} value={chosenDevice} options={deviceOptions} onchange={(v) => (device = v)} />
+          <Button icon="plus" busy={adding} disabled={chosenDevice === NONE} onclick={add}>{m.set_approver_add()}</Button>
+        {:else}
+          <p class="muted">{m.set_approver_no_device()}</p>
+        {/if}
+      </div>
+      <p class="error" role="alert">{#if addError}<Icon name="warning" size={16} />{addError}{/if}</p>
     {/if}
   </div>
 {/if}
@@ -172,7 +241,7 @@
       {:else if notifier.state === 'blocked'}
         <span class="muted">{m.set_browser_notify_denied()}</span>
       {:else if notifier.state === 'on'}
-        <span role="status">{m.set_browser_notify_on()}</span>
+        <span>{m.set_browser_notify_on()}</span>
         <Button variant="text" onclick={() => notifier.disable()}>{m.set_browser_notify_off()}</Button>
       {:else}
         <Button onclick={() => void notifier.enable()}>{m.set_browser_notify_allow()}</Button>
@@ -199,12 +268,24 @@
   }
   .add {
     display: flex;
+    flex-direction: column;
+    gap: var(--hm-space-2);
+  }
+  .add-row {
+    display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
     gap: var(--hm-space-3);
   }
-  .add > :global(.field) {
+  .add-row > :global(.field) {
     flex: 1 1 200px;
+  }
+  .error {
+    display: flex;
+    gap: 6px;
+    margin: 0;
+    font-size: var(--hm-font-size-sm);
+    color: var(--hm-color-danger-fg);
   }
   .extra {
     display: flex;

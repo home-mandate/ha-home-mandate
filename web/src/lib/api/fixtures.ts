@@ -209,7 +209,7 @@ export const approversFixture: ApproverList = {
       ui: true,
       ui_critical: false,
       language: null,
-      reach: { normal: true, critical: true },
+      reach: { normal: 'push', critical: 'push' },
     },
   ],
   candidates: {
@@ -218,12 +218,12 @@ export const approversFixture: ApproverList = {
       { user_id: 'u-partner', name: 'Alex', is_admin: false },
     ],
     devices: [
-      { service: 'mobile_app_pixel_9', name: 'Pixel 9', suggest_critical: true },
-      { service: 'mobile_app_iphone', name: 'iPhone von Alex', suggest_critical: true },
-      { service: 'mobile_app_macbook', name: 'MacBook Pro', suggest_critical: false },
-      { service: 'mobile_app_tablet', name: 'Galaxy Tab', suggest_critical: false },
-      { service: 'mobile_app_watch', name: 'Watch', suggest_critical: true },
-      { service: 'mobile_app_car', name: 'Auto', suggest_critical: false },
+      { service: 'mobile_app_pixel_9', name: 'Pixel 9', suggest_critical: false, owner_user_id: 'u-admin' },
+      { service: 'mobile_app_iphone', name: 'iPhone von Alex', suggest_critical: true, owner_user_id: 'u-partner' },
+      { service: 'mobile_app_macbook', name: 'MacBook Pro', suggest_critical: false, owner_user_id: 'u-admin' },
+      { service: 'mobile_app_tablet', name: 'Galaxy Tab', suggest_critical: false, owner_user_id: null },
+      { service: 'mobile_app_watch', name: 'Watch', suggest_critical: false, owner_user_id: 'u-admin' },
+      { service: 'mobile_app_car', name: 'Auto', suggest_critical: false, owner_user_id: null },
     ],
   },
 };
