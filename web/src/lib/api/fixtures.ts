@@ -137,7 +137,7 @@ export const agentsFixture: Agent[] = [
     last_active_at: '2026-10-02T17:12:00Z',
     oauth_client: 'https://claude.ai/oauth/claude-code-client-metadata',
     client_verified: true,
-    redirect_uris: ['http://localhost:7438/callback'],
+    redirect_uris: ['https://agent.example/oauth/callback'],
     mandate: { id: 'mandate-claude', name: 'Claude Code', status: 'active' },
   }),
   agent({

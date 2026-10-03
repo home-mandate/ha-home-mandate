@@ -8,7 +8,7 @@
 <script lang="ts">
   import { m } from '../i18n.ts';
   import { cleanUntrusted } from '../untrusted.ts';
-  import { clientIdentity } from '../ui/identity.ts';
+  import ClientIdentity from './ClientIdentity.svelte';
 
   interface Props {
     name: string;
@@ -17,15 +17,11 @@
   }
 
   let { name, client }: Props = $props();
-
-  const identity = $derived(client === undefined ? null : clientIdentity(client));
 </script>
 
 <span class="agent"
   ><bdi class="name" title={m.agent_claim_label()}>{cleanUntrusted(name)}</bdi
-  >{#if identity?.verified}<span class="domain">{identity.text}</span
-    >{:else if identity}<span class="claimed"><bdi>{identity.text}</bdi> <span class="tag">{m.agent_claim_short()}</span></span
-    >{/if}</span
+  >{#if client !== undefined}<ClientIdentity {client} />{/if}</span
 >
 
 <style>
@@ -40,26 +36,5 @@
     text-decoration: underline dotted var(--hm-color-text-subtle);
     text-underline-offset: 4px;
     overflow-wrap: anywhere;
-  }
-  .domain {
-    font-family: var(--hm-font-mono);
-    font-size: var(--hm-font-size-xs);
-    font-weight: var(--hm-font-weight-semibold);
-    color: var(--hm-color-text);
-    overflow-wrap: anywhere;
-  }
-  .claimed {
-    font-size: var(--hm-font-size-xs);
-    color: var(--hm-color-text-subtle);
-    overflow-wrap: anywhere;
-  }
-  .tag {
-    display: inline-block;
-    padding-inline: 6px;
-    border-radius: var(--hm-radius-sm);
-    border: var(--hm-border-width) dotted var(--hm-color-border-strong);
-    font-size: 12px;
-    font-weight: var(--hm-font-weight-semibold);
-    color: var(--hm-color-text-muted);
   }
 </style>

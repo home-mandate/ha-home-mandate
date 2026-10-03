@@ -23,6 +23,8 @@
   import Overview from './lib/pages/Overview.svelte';
   import Requests from './lib/pages/Requests.svelte';
   import Placeholder from './lib/pages/Placeholder.svelte';
+  import AgentConnect from './lib/pages/AgentConnect.svelte';
+  import Agents from './lib/pages/Agents.svelte';
   import { getLocale } from './lib/paraglide/runtime.js';
   import { href, parseHash, sectionOf, type Route, type Section } from './lib/router.ts';
   import { toasts } from './lib/ui/toasts.ts';
@@ -146,6 +148,10 @@
     <Requests {app} />
   {:else if route.name === 'audit_entry'}
     {#key route.seq}<AuditEntry {app} seq={route.seq} />{/key}
+  {:else if route.name === 'agents'}
+    <Agents {app} {now} />
+  {:else if route.name === 'connect'}
+    <AgentConnect {app} />
   {:else if route.name === 'mandates'}
     <MandateList {app} {now} />
   {:else if route.name === 'mandate'}
