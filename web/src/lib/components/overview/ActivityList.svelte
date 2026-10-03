@@ -19,9 +19,11 @@
     ctx: FormatContext;
     /** Server time in ms, for relative times. */
     now: number;
+    /** False on an agent's own page, where every entry is that agent's. */
+    showAgent?: boolean;
   }
 
-  let { entries, catalog, ctx, now }: Props = $props();
+  let { entries, catalog, ctx, now, showAgent = true }: Props = $props();
 
   const SEPARATOR = ' · ';
 
@@ -41,7 +43,7 @@
         {#if isCriticalRequest(entry)}<span class="critical" title={m.critical_label()}><Icon name="critical" size={16} label={m.critical_label()} /></span>{/if}
       </span>
       <span class="what">
-        {#if entry.agent}<AgentName name={entry.agent.display_name ?? entry.agent.client_id} />{SEPARATOR}{/if}{what(entry)}
+        {#if showAgent && entry.agent}<AgentName name={entry.agent.display_name ?? entry.agent.client_id} />{SEPARATOR}{/if}{what(entry)}
       </span>
       <time datetime={entry.recorded_at} title={formatDateTime(new Date(entry.recorded_at), ctx)}
         >{formatRelative(new Date(entry.recorded_at), new Date(now), ctx)}</time

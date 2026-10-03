@@ -24,6 +24,7 @@
   import Requests from './lib/pages/Requests.svelte';
   import Placeholder from './lib/pages/Placeholder.svelte';
   import AgentConnect from './lib/pages/AgentConnect.svelte';
+  import AgentDetail from './lib/pages/AgentDetail.svelte';
   import AgentPair from './lib/pages/AgentPair.svelte';
   import Agents from './lib/pages/Agents.svelte';
   import { getLocale } from './lib/paraglide/runtime.js';
@@ -153,6 +154,8 @@
     <Agents {app} {now} />
   {:else if route.name === 'pair'}
     <AgentPair {app} {now} />
+  {:else if route.name === 'agent'}
+    {#key route.id}<AgentDetail {app} id={route.id} {now} />{/key}
   {:else if route.name === 'connect'}
     <AgentConnect {app} />
   {:else if route.name === 'mandates'}
