@@ -158,6 +158,57 @@ describe('SelectField', () => {
     await fireEvent.change(select, { target: { value: 'lock.front_door' } });
     expect(onchange).toHaveBeenCalledWith('lock.front_door');
   });
+
+  // Windows reports a change for every arrow key on a closed select (decision L4, 03.10.).
+  describe('browsing with the keyboard', () => {
+    const options = ['a', 'b', 'c', 'd'].map((v) => ({ value: v, label: v.toUpperCase() }));
+    const setup = () => {
+      vi.useFakeTimers();
+      const onchange = vi.fn();
+      const view = render(SelectField, { label: 'Letter', value: 'a', options, onchange });
+      const select = screen.getByLabelText('Letter') as HTMLSelectElement;
+      const arrow = async (to: string) => {
+        await fireEvent.keyDown(select, { key: 'ArrowDown' });
+        await fireEvent.change(select, { target: { value: to } });
+      };
+      return { onchange, select, arrow, view };
+    };
+
+    it('reports only where the arrows stop, 400 ms after the last one', async () => {
+      const { onchange, arrow } = setup();
+      await arrow('b');
+      await arrow('c');
+      vi.advanceTimersByTime(399);
+      expect(onchange).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(onchange.mock.calls).toEqual([['c']]);
+    });
+
+    it('takes the value at once on Enter and when leaving the field', async () => {
+      const { onchange, select, arrow } = setup();
+      await arrow('b');
+      await fireEvent.keyDown(select, { key: 'Enter' });
+      expect(onchange.mock.calls).toEqual([['b']]);
+      await arrow('d');
+      await fireEvent.blur(select);
+      expect(onchange.mock.calls).toEqual([['b'], ['d']]);
+      vi.advanceTimersByTime(1000);
+      expect(onchange).toHaveBeenCalledTimes(2);
+    });
+
+    it('takes a choice from the open list (pointer or touch) at once', async () => {
+      const { onchange, select } = setup();
+      await fireEvent.change(select, { target: { value: 'c' } });
+      expect(onchange.mock.calls).toEqual([['c']]);
+    });
+
+    it('reports a pending value when the field goes away', async () => {
+      const { onchange, arrow, view } = setup();
+      await arrow('b');
+      view.unmount();
+      expect(onchange.mock.calls).toEqual([['b']]);
+    });
+  });
 });
 
 describe('DecisionSegment', () => {

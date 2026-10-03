@@ -2,8 +2,12 @@
 <!--
   Native select, restyled (Components "Select"); area and device names stay untranslated.
   Options can follow in labelled groups (optgroup), e.g. areas and devices.
+  Some systems (Windows) report a change for every arrow key on a closed select. Browsing
+  with keys is therefore taken only 400 ms after the last key; Enter, leaving the field
+  and a choice from the open list (pointer, touch) are taken at once (decision L4).
 -->
 <script lang="ts">
+  import { onDestroy, untrack } from 'svelte';
   import Icon from './Icon.svelte';
 
   interface Props {
@@ -20,6 +24,50 @@
   let { label, value = $bindable(), options, groups = [], help, disabled = false, onchange }: Props = $props();
 
   const id = $props.id();
+  /** Pause after the last browsing key before its value counts. */
+  const SETTLE_MS = 400;
+  const BROWSE_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown']);
+
+  /** The option on screen; value and onchange follow when it is taken. */
+  let shown = $state(untrack(() => value));
+  let browsing = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  // A new value from outside replaces what is shown, unless a browse is still pending.
+  $effect(() => {
+    const outside = value;
+    untrack(() => {
+      if (timer === undefined) shown = outside;
+    });
+  });
+
+  function take() {
+    clearTimeout(timer);
+    timer = undefined;
+    if (shown === value) return;
+    value = shown;
+    onchange?.(shown);
+  }
+
+  function changed() {
+    if (!browsing) {
+      take();
+      return;
+    }
+    browsing = false;
+    clearTimeout(timer);
+    timer = setTimeout(take, SETTLE_MS);
+  }
+
+  function keydown(event: KeyboardEvent) {
+    if (event.key === 'Enter') take();
+    // Letters jump to an option as well; Space opens the list.
+    else browsing = BROWSE_KEYS.has(event.key) || (event.key.length === 1 && event.key !== ' ');
+  }
+
+  onDestroy(() => {
+    if (timer !== undefined) take();
+  });
 </script>
 
 <div class="field">
@@ -27,10 +75,13 @@
   <div class="control">
     <select
       {id}
-      bind:value
+      bind:value={shown}
       {disabled}
       aria-describedby={help ? `${id}-help` : undefined}
-      onchange={() => onchange?.(value)}
+      onkeydown={keydown}
+      onpointerdown={() => (browsing = false)}
+      onchange={changed}
+      onblur={() => timer !== undefined && take()}
     >
       {#each options as option (option.value)}<option value={option.value} lang={option.lang}>{option.label}</option>{/each}
       {#each groups.filter((g) => g.options.length > 0) as group (group.label)}
