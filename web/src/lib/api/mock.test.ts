@@ -22,6 +22,7 @@ function listen(api: ReturnType<typeof createMockClient>) {
   return { events, states, conn };
 }
 
+const NOW_ISO = '2026-10-02T17:42:00.000Z';
 const types = (events: ServerEvent[]) => events.map((e) => e.type);
 
 describe('createMockClient: basics', () => {
@@ -74,12 +75,29 @@ describe('createMockClient: agents and pairing', () => {
     const api = createMockClient();
     const { events } = listen(api);
     const agent = await api.revokeAgent('https://claude.ai/oauth/claude-code-client-metadata');
-    expect(agent).toMatchObject({ status: 'revoked', mandate: { status: 'revoked' } });
+    expect(agent).toMatchObject({ status: 'revoked', mandate: { status: 'revoked' }, revoked_at: NOW_ISO, revoked_by_name: 'Markus' });
     const approvals = await api.approvals();
     expect(approvals.open).toEqual([]);
     // F1: the revocation ends the request; it is not a "rejected" by a person.
     expect(approvals.history[0]).toMatchObject({ outcome: 'revoked', by_name: null });
     expect(types(events)).toEqual(['mandates.changed', 'approval.closed', 'audit.appended', 'agents.changed']);
+  });
+
+  it('reports activity from the log: requests on the household day and in the last hour, against the limit', async () => {
+    const agents = await createMockClient().agents();
+    const voice = agents.find((a) => a.client_id === 'pair:voice-assistant');
+    const claude = agents.find((a) => a.client_id.startsWith('https://claude.ai/'));
+    expect(voice).toMatchObject({ requests_today: 8, actions_last_hour: 1, mandate: { max_actions_per_hour: 60 } });
+    expect(claude).toMatchObject({ requests_today: 2, actions_last_hour: 0 });
+    expect(claude?.redirect_uris.length).toBeGreaterThan(0);
+    expect(voice?.redirect_uris).toEqual([]);
+    expect(agents.find((a) => a.status === 'revoked')).toMatchObject({ revoked_by_name: 'Markus' });
+  });
+
+  it('counts the household day, not the UTC day', async () => {
+    // 00:30 on 3 October in Berlin is still 2 October in UTC.
+    const api = createMockClient({ now: () => new Date('2026-10-02T22:30:00Z') });
+    expect((await api.agents()).find((a) => a.client_id === 'pair:voice-assistant')?.requests_today).toBe(0);
   });
 
   it('answers not_found for unknown identifiers', async () => {
@@ -92,7 +110,11 @@ describe('createMockClient: agents and pairing', () => {
 
   it('shows the agent behind a pairing code, ignoring case, spaces and dash', async () => {
     const api = createMockClient();
-    await expect(api.pairingCheck(' bcdf ghjk ')).resolves.toMatchObject({ claimed_name: 'Küchen-Tablet', client_verified: false });
+    await expect(api.pairingCheck(' bcdf ghjk ')).resolves.toMatchObject({
+      claimed_name: 'Küchen-Tablet',
+      client_verified: false,
+      requested_from: '192.168.1.42',
+    });
     await expect(api.pairingCheck(MOCK_EXPIRED_CODE)).rejects.toMatchObject({ code: 'pairing_code_expired', status: 410 });
   });
 
@@ -110,8 +132,9 @@ describe('createMockClient: agents and pairing', () => {
   it('admits the agent with a mandate from the template; the code works once', async () => {
     const api = createMockClient();
     const { events } = listen(api);
-    await api.pairingApprove({ code: MOCK_PAIRING_CODE, display_name: ' Tablet Küche ', template: 'read-only' });
+    const admitted = await api.pairingApprove({ code: MOCK_PAIRING_CODE, display_name: ' Tablet Küche ', template: 'read-only' });
     const agent = (await api.agents()).at(-1);
+    expect(admitted).toEqual(agent);
     expect(agent).toMatchObject({ display_name: 'Tablet Küche', status: 'active', mandate: { name: 'read-only', status: 'active' } });
     expect(types(events)).toContain('agents.changed');
     await expect(api.pairingApprove({ code: MOCK_PAIRING_CODE, display_name: 'x', template: 'read-only' })).rejects.toMatchObject({
@@ -238,7 +261,7 @@ describe('createMockClient: mandates and templates', () => {
     const created = await api.createMandate({ client_id: 'pair:voice-assistant', template: 'read-only', name: 'Neu' });
     expect(created.summary).toMatchObject({ name: 'Neu', client_id: 'pair:voice-assistant', status: 'active' });
     expect(created.document.created_at).toBe('2026-10-03T10:00:00.000Z');
-    expect((await api.agents())[0]?.mandate).toEqual({ id: created.summary.id, name: 'Neu', status: 'active' });
+    expect((await api.agents())[0]?.mandate).toEqual({ id: created.summary.id, name: 'Neu', status: 'active', max_actions_per_hour: 60 });
   });
 
   it('manages templates with U9 and tells listeners', async () => {

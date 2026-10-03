@@ -102,10 +102,20 @@ export const voiceAssistantMandate: MandateDocument = {
   created_at: '2026-10-01T08:00:00Z',
 };
 
-const agent = (a: Omit<Agent, 'created_by' | 'created_by_name' | 'client_verified'> & Partial<Agent>): Agent => ({
+type Defaulted = 'created_by' | 'created_by_name' | 'client_verified' | 'redirect_uris' | 'revoked_at' | 'revoked_by_name' | 'requests_today' | 'actions_last_hour' | 'mandate';
+type AgentInput = Omit<Agent, Defaulted> & Partial<Omit<Agent, 'mandate'>> & { mandate: { id: string; name: string; status: Agent['status'] } | null };
+
+/** Activity counts and the mandate's limit are filled in by the mock from the log and the mandate. */
+const agent = ({ mandate, ...a }: AgentInput): Agent => ({
   created_by: 'u-admin',
   created_by_name: 'Markus',
   client_verified: false,
+  redirect_uris: [],
+  revoked_at: null,
+  revoked_by_name: null,
+  requests_today: 0,
+  actions_last_hour: 0,
+  mandate: mandate && { ...mandate, max_actions_per_hour: null },
   ...a,
 });
 
@@ -127,12 +137,15 @@ export const agentsFixture: Agent[] = [
     last_active_at: '2026-10-02T17:12:00Z',
     oauth_client: 'https://claude.ai/oauth/claude-code-client-metadata',
     client_verified: true,
+    redirect_uris: ['http://localhost:7438/callback'],
     mandate: { id: 'mandate-claude', name: 'Claude Code', status: 'active' },
   }),
   agent({
     client_id: 'pair:old-bot',
     display_name: HOSTILE_NAME,
     status: 'revoked',
+    revoked_at: '2026-09-30T07:05:00Z',
+    revoked_by_name: 'Markus',
     created_at: '2026-09-29T18:00:00Z',
     last_active_at: '2026-09-30T07:00:00Z',
     oauth_client: 'old-bot',

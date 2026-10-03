@@ -114,12 +114,22 @@ export interface Agent {
   oauth_client: string;
   /** True only for a fetched and checked Client ID Metadata Document. */
   client_verified: boolean;
+  /** Redirect URIs registered through OAuth (browser sign-in); empty for pairing codes. Untrusted. */
+  redirect_uris: string[];
+  /** When and by whom the agent was revoked; null while active. */
+  revoked_at: string | null;
+  revoked_by_name: string | null;
+  /** Requests of the agent (any decision) on the current day in the household's time zone. */
+  requests_today: number;
+  /** Requests counted against the mandate's rate limit in the last 60 minutes. */
+  actions_last_hour: number;
   /**
    * The agent's current mandate. A revoked mandate stays visible here; null only if the
    * agent never had one. An active agent with a revoked mandate may do nothing; it gets a
-   * new mandate through POST api/mandates.
+   * new mandate through POST api/mandates. max_actions_per_hour: the mandate's rate limit,
+   * null without one.
    */
-  mandate: { id: string; name: string; status: MandateStatus } | null;
+  mandate: { id: string; name: string; status: MandateStatus; max_actions_per_hour: number | null } | null;
 }
 
 /** POST api/agents/revoke: revokes the agent, its tokens and its mandate at once. */
@@ -146,6 +156,8 @@ export interface PairingCandidate {
   client_verified: boolean;
   requested_at: string;
   expires_at: string;
+  /** Network address the pairing request came from (decision G4); only shown here, not logged in the audit. */
+  requested_from: string;
 }
 
 export interface PairingApprove extends PairingCode {

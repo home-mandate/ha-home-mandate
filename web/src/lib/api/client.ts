@@ -51,7 +51,8 @@ export interface ApiClient {
   agents(): Promise<Agent[]>;
   revokeAgent(clientId: string): Promise<Agent>;
   pairingCheck(code: string): Promise<PairingCandidate>;
-  pairingApprove(approve: PairingApprove): Promise<void>;
+  /** Admits the agent; answers with it (and its new mandate). */
+  pairingApprove(approve: PairingApprove): Promise<Agent>;
   pairingDeny(code: string): Promise<void>;
 
   devices(): Promise<DeviceCatalog>;

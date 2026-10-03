@@ -84,6 +84,7 @@ const pairingCandidate: PairingCandidate = {
   client_verified: false,
   requested_at: '2026-10-02T17:40:00Z',
   expires_at: '2026-10-02T17:50:00Z',
+  requested_from: '192.168.1.42',
 };
 
 interface StoredMandate {
@@ -122,6 +123,13 @@ export interface MockOptions {
   /** State the event stream reaches after connecting; default "open". */
   eventsState?: EventsState;
   now?: () => Date;
+}
+
+const HOUR_MS = 3_600_000;
+
+/** householdDay is the calendar day of a moment in the household's time zone, e.g. "2026-10-02". */
+function householdDay(at: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(at);
 }
 
 const normalizeCode = (code: string) => code.toUpperCase().replace(/[\s-]/g, '');
@@ -269,7 +277,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     state = {
       ...state,
       mandates: { ...state.mandates, [id]: m },
-      agents: state.agents.map((a) => (a.mandate?.id === id ? { ...a, mandate: { id, name: m.name, status: m.status } } : a)),
+      agents: state.agents.map((a) => (a.mandate?.id === id ? { ...a, mandate: { id, name: m.name, status: m.status, max_actions_per_hour: null } } : a)),
     };
     emit({ type: 'mandates.changed', id });
   }
@@ -296,6 +304,23 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     return detail(id);
   }
 
+  /**
+   * present is an agent as the API shows it: activity counted from the log (the household
+   * day in its time zone, the last 60 minutes) and the limit of its current mandate.
+   */
+  function present(a: Agent): Agent {
+    const at = now();
+    const day = householdDay(at, state.session.household.time_zone);
+    const requests = state.audit.filter((e) => e.event === 'decision' && e.agent?.client_id === a.client_id);
+    const mandate = a.mandate && { ...a.mandate, max_actions_per_hour: stored(a.mandate.id).versions[0]?.document.limits?.max_actions_per_hour ?? null };
+    return {
+      ...a,
+      mandate,
+      requests_today: requests.filter((e) => householdDay(new Date(e.recorded_at), state.session.household.time_zone) === day).length,
+      actions_last_hour: requests.filter((e) => at.getTime() - Date.parse(e.recorded_at) < HOUR_MS).length,
+    };
+  }
+
   function setMandateStatus(id: string, status: 'active' | 'revoked'): void {
     putStored(id, { ...stored(id), status });
   }
@@ -318,7 +343,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       created_at: createdAt,
     };
     const meta = { number: 1, digest: `sha256:mock-${counter}`, created_at: createdAt, created_by: user().id, created_by_name: user().name };
-    state = { ...state, agents: state.agents.map((a) => (a.client_id === clientId ? { ...a, mandate: { id, name: '', status: 'active' as const } } : a)) };
+    state = { ...state, agents: state.agents.map((a) => (a.client_id === clientId ? { ...a, mandate: { id, name: '', status: 'active' as const, max_actions_per_hour: null } } : a)) };
     putStored(id, { name: mandateName ?? name, status: 'active', versions: [{ meta, document }] });
     log('mandate.created', { agent: document.agent, mandate: { id, digest: meta.digest } });
     return id;
@@ -389,16 +414,17 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     },
 
     async agents() {
-      return copy(state.agents);
+      return copy(state.agents.map(present));
     },
     async revokeAgent(clientId) {
       const agent = state.agents.find((a) => a.client_id === clientId) ?? fail('not_found');
       if (agent.mandate) setMandateStatus(agent.mandate.id, 'revoked');
-      state = { ...state, agents: state.agents.map((a) => (a.client_id === clientId ? { ...a, status: 'revoked' as const } : a)) };
+      const revoked = { status: 'revoked' as const, revoked_at: now().toISOString(), revoked_by_name: user().name };
+      state = { ...state, agents: state.agents.map((a) => (a.client_id === clientId ? { ...a, ...revoked } : a)) };
       for (const r of state.approvals.open.filter((x) => x.agent.client_id === clientId)) closeApproval(r.id, 'revoked', null);
       log('agent.revoked', { agent: { client_id: agent.client_id, display_name: agent.display_name } });
       emit({ type: 'agents.changed' });
-      return copy(state.agents.find((a) => a.client_id === clientId) ?? fail('internal'));
+      return copy(present(state.agents.find((a) => a.client_id === clientId) ?? fail('internal')));
     },
     async pairingCheck(code) {
       checkPairing(code);
@@ -420,12 +446,18 @@ export function createMockClient(options: MockOptions = {}): MockClient {
         last_active_at: null,
         oauth_client: pairingCandidate.client,
         client_verified: false,
+        redirect_uris: [],
+        revoked_at: null,
+        revoked_by_name: null,
+        requests_today: 0,
+        actions_last_hour: 0,
         mandate: null,
       };
       state = { ...state, agents: [...state.agents, agent], pairing: { ...state.pairing, codes: { ...state.pairing.codes, [key]: 'expired' } } };
       log('agent.registered', { agent: { client_id: clientId, display_name: name } });
       createFromTemplate(clientId, req.template, req.mandate_name);
       emit({ type: 'agents.changed' });
+      return copy(present(state.agents.find((a) => a.client_id === clientId) ?? fail('internal')));
     },
     async pairingDeny(code) {
       const key = checkPairing(code);
