@@ -65,7 +65,7 @@
 
   const uid = $props.id();
   const NO_CATALOG: DeviceCatalog = { areas: [], devices: [] };
-  const NO_APPROVERS: ApproverList = { approvers: [], candidates: { people: [], notify_services: [] } };
+  const NO_APPROVERS: ApproverList = { approvers: [], candidates: { people: [], devices: [] } };
   /** From this many rules a search field appears above the list. */
   const SEARCH_FROM = 10;
   const NOT_IN_EFFECT: Record<EffectiveStatus, () => string> = {

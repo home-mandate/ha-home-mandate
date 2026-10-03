@@ -284,13 +284,13 @@ describe('createHttpClient', () => {
     await c.putTemplate('voice', { draft });
     await c.deleteTemplate('voice');
     await c.settings();
-    await c.putSettings({ approval_timeout: 'PT2M', max_actions_per_hour: 60 });
+    await c.putSettings({ approval_timeout: 'PT2M', max_actions_per_hour: 60, bell: false });
     await c.approvals();
     await c.answerApproval('apr 1', true);
     await c.audit({});
     await c.verifyAudit();
     await c.approvers();
-    await c.putApprover('u1', { notify_service: 'mobile_app_a', language: null });
+    await c.putApprover('u1', { devices: [{ service: 'mobile_app_a', critical: true }], ui: false, ui_critical: false, language: null });
     await c.testApprover('u1');
     await c.deleteApprover('u1');
     await c.setEmergencyStop(false);
@@ -315,13 +315,13 @@ describe('createHttpClient', () => {
       `PUT api/templates/voice ${JSON.stringify({ draft })}`,
       'DELETE api/templates/voice',
       'GET api/settings',
-      'PUT api/settings {"approval_timeout":"PT2M","max_actions_per_hour":60}',
+      'PUT api/settings {"approval_timeout":"PT2M","max_actions_per_hour":60,"bell":false}',
       'GET api/approvals',
       'POST api/approvals/apr%201/answer {"approve":true}',
       'GET api/audit',
       'POST api/audit/verify',
       'GET api/approvers',
-      'PUT api/approvers/u1 {"notify_service":"mobile_app_a","language":null}',
+      'PUT api/approvers/u1 {"devices":[{"service":"mobile_app_a","critical":true}],"ui":false,"ui_critical":false,"language":null}',
       'POST api/approvers/u1/test',
       'DELETE api/approvers/u1',
       'PUT api/emergency-stop {"active":false}',

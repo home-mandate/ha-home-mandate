@@ -34,7 +34,9 @@ import type {
   ApprovalHistoryEntry,
   ApprovalRequest,
   Approvals,
+  Approver,
   ApproverList,
+  ApproverUpdate,
   AuditEntry,
   AuditEvent,
   AuditQuery,
@@ -161,6 +163,28 @@ const draftOf = (d: MandateDocument): MandateDraft => ({
 function validate(draft: MandateDraft): void {
   const [first] = checkDraft(draft);
   if (first) fail('invalid_mandate', `/draft${first.field}`);
+}
+
+const MAX_DEVICES = 5;
+const SERVICE = /^[a-z0-9_]{1,64}$/;
+
+/** checkApprover applies the server's rules for saving an approver (decision F2). */
+function checkApprover(update: ApproverUpdate, admin: boolean, known: readonly string[]): void {
+  const services = update.devices.map((d) => d.service);
+  if (services.length > MAX_DEVICES || new Set(services).size !== services.length) fail('invalid_input', '/devices');
+  if (services.some((s) => !SERVICE.test(s) || !known.includes(s))) fail('invalid_input', '/devices');
+  if (services.length === 0 && !update.ui) fail('invalid_input', '/devices');
+  if (update.ui_critical && !update.ui) fail('invalid_input', '/ui_critical');
+  if (update.ui && !admin) fail('invalid_input', '/ui');
+}
+
+/** reachOf is what the server reports: devices always, the UI only for an admin (critical only with ui_critical). */
+function reachOf(update: ApproverUpdate, admin: boolean): Approver['reach'] {
+  const ui = update.ui && admin;
+  return {
+    normal: update.devices.length > 0 || ui,
+    critical: update.devices.some((d) => d.critical) || (ui && update.ui_critical),
+  };
 }
 
 /**
@@ -583,9 +607,11 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     async putApprover(userId, update) {
       const { candidates, approvers } = state.approvers;
       const person = candidates.people.find((p) => p.user_id === userId) ?? fail('invalid_input', '/user_id');
-      if (!candidates.notify_services.includes(update.notify_service)) fail('invalid_input', '/notify_service');
-      const others = approvers.filter((a) => a.user_id !== userId);
-      state = { ...state, approvers: { candidates, approvers: [...others, { user_id: userId, name: person.name, ...update }] } };
+      checkApprover(update, person.is_admin, candidates.devices.map((d) => d.service));
+      const approver: Approver = { user_id: userId, name: person.name, ...update, reach: reachOf(update, person.is_admin) };
+      const index = approvers.findIndex((a) => a.user_id === userId);
+      const next = index < 0 ? [...approvers, approver] : approvers.map((a, i) => (i === index ? approver : a));
+      state = { ...state, approvers: { candidates, approvers: next } };
       emit({ type: 'approvers.changed' });
       setSystem({ ...state.system, approvers_configured: state.approvers.approvers.length });
       return copy(state.approvers);

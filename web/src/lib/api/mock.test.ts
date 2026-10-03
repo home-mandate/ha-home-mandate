@@ -311,10 +311,10 @@ describe('createMockClient: approvals, settings, audit, approvers, emergency sto
 
   it('validates and stores the defaults', async () => {
     const api = createMockClient();
-    await expect(api.putSettings({ approval_timeout: 'PT5S', max_actions_per_hour: 60 })).rejects.toMatchObject({ field: '/approval_timeout' });
-    await expect(api.putSettings({ approval_timeout: 'PT2M', max_actions_per_hour: 0 })).rejects.toMatchObject({ field: '/max_actions_per_hour' });
-    await api.putSettings({ approval_timeout: 'PT5M', max_actions_per_hour: 30 });
-    expect(await api.settings()).toEqual({ approval_timeout: 'PT5M', max_actions_per_hour: 30 });
+    await expect(api.putSettings({ approval_timeout: 'PT5S', max_actions_per_hour: 60, bell: false })).rejects.toMatchObject({ field: '/approval_timeout' });
+    await expect(api.putSettings({ approval_timeout: 'PT2M', max_actions_per_hour: 0, bell: false })).rejects.toMatchObject({ field: '/max_actions_per_hour' });
+    await api.putSettings({ approval_timeout: 'PT5M', max_actions_per_hour: 30, bell: true });
+    expect(await api.settings()).toEqual({ approval_timeout: 'PT5M', max_actions_per_hour: 30, bell: true });
   });
 
   it('pages through the audit log newest first with a total', async () => {
@@ -388,17 +388,65 @@ describe('createMockClient: approvals, settings, audit, approvers, emergency sto
 
   it('manages approvers only from the candidates and updates the system count', async () => {
     const api = createMockClient();
-    const list = await api.putApprover('u-partner', { notify_service: 'mobile_app_iphone', language: 'en' });
+    const list = await api.putApprover('u-partner', { devices: [{ service: 'mobile_app_iphone', critical: true }], ui: false, ui_critical: false, language: 'en' });
     expect(list.approvers.map((a) => a.user_id)).toEqual(['u-admin', 'u-partner']);
     expect((await api.system()).approvers_configured).toBe(2);
-    await expect(api.putApprover('u-stranger', { notify_service: 'mobile_app_iphone', language: null })).rejects.toMatchObject({ field: '/user_id' });
-    await expect(api.putApprover('u-partner', { notify_service: 'persistent_notification', language: null })).rejects.toMatchObject({
-      field: '/notify_service',
+    await expect(api.putApprover('u-stranger', { devices: [{ service: 'mobile_app_iphone', critical: true }], ui: false, ui_critical: false, language: null })).rejects.toMatchObject({
+      field: '/user_id',
     });
     await expect(api.testApprover('u-partner')).resolves.toBeUndefined();
     await api.deleteApprover('u-partner');
     await expect(api.testApprover('u-partner')).rejects.toMatchObject({ code: 'not_found' });
     expect((await api.system()).approvers_configured).toBe(1);
+  });
+
+  const dev = (service: string, critical = true) => ({ service, critical });
+  const six = ['mobile_app_pixel_9', 'mobile_app_iphone', 'mobile_app_macbook', 'mobile_app_tablet', 'mobile_app_watch', 'mobile_app_car'];
+
+  // F2 "Speichern": devices 0/1/5/6, duplicate, pattern, unknown device, UI only for admins,
+  // critical in the UI only with the UI, at least one channel.
+  it.each([
+    ['one phone', 'u-partner', { devices: [dev('mobile_app_iphone')], ui: false, ui_critical: false }, null],
+    ['five devices', 'u-admin', { devices: six.slice(0, 5).map((s) => dev(s)), ui: false, ui_critical: false }, null],
+    ['six devices', 'u-admin', { devices: six.map((s) => dev(s)), ui: false, ui_critical: false }, '/devices'],
+    ['a duplicate', 'u-admin', { devices: [dev('mobile_app_iphone'), dev('mobile_app_iphone', false)], ui: false, ui_critical: false }, '/devices'],
+    ['a malformed service', 'u-admin', { devices: [dev('persistent_notification.x')], ui: false, ui_critical: false }, '/devices'],
+    ['an unknown device', 'u-admin', { devices: [dev('mobile_app_unknown')], ui: false, ui_critical: false }, '/devices'],
+    ['no channel', 'u-admin', { devices: [], ui: false, ui_critical: false }, '/devices'],
+    ['only the UI, admin', 'u-admin', { devices: [], ui: true, ui_critical: false }, null],
+    ['UI and critical, admin', 'u-admin', { devices: [], ui: true, ui_critical: true }, null],
+    ['critical in the UI without the UI', 'u-admin', { devices: [dev('mobile_app_iphone')], ui: false, ui_critical: true }, '/ui_critical'],
+    ['the UI for someone who is no admin', 'u-partner', { devices: [dev('mobile_app_iphone')], ui: true, ui_critical: false }, '/ui'],
+  ] as const)('saves an approver with %s, or names the field', async (_, user, update, field) => {
+    const api = createMockClient();
+    const put = api.putApprover(user, { ...update, devices: [...update.devices], language: null });
+    if (field === null) await expect(put).resolves.toBeDefined();
+    else await expect(put).rejects.toMatchObject({ code: 'invalid_input', field });
+  });
+
+  // F2 "Erreichbarkeit", as the server reports it: devices always; the UI only for an
+  // admin, for critical requests only with ui_critical; critical on a device only with its switch.
+  it.each([
+    [[dev('mobile_app_pixel_9')], false, false, { normal: true, critical: true }],
+    [[dev('mobile_app_macbook', false)], false, false, { normal: true, critical: false }],
+    [[dev('mobile_app_macbook', false)], true, false, { normal: true, critical: false }],
+    [[dev('mobile_app_macbook', false)], true, true, { normal: true, critical: true }],
+    [[], true, false, { normal: true, critical: false }],
+    [[], true, true, { normal: true, critical: true }],
+  ] as const)('reports how %j (ui %s, critical %s) reaches the admin', async (devices, ui, uiCritical, reach) => {
+    const api = createMockClient();
+    const list = await api.putApprover('u-admin', { devices: [...devices], ui, ui_critical: uiCritical, language: null });
+    expect(list.approvers.find((a) => a.user_id === 'u-admin')?.reach).toEqual(reach);
+  });
+
+  it('offers devices with a name and a suggestion for critical requests, and says who is an admin', async () => {
+    const { candidates } = await createMockClient().approvers();
+    expect(candidates.devices.find((d) => d.service === 'mobile_app_macbook')).toMatchObject({ suggest_critical: false });
+    expect(candidates.devices.find((d) => d.service === 'mobile_app_pixel_9')).toMatchObject({ name: 'Pixel 9', suggest_critical: true });
+    expect(candidates.people.map((p) => [p.user_id, p.is_admin])).toEqual([
+      ['u-admin', true],
+      ['u-partner', false],
+    ]);
   });
 
   it('switches the emergency stop, ends open requests and logs only real changes', async () => {

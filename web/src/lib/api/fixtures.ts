@@ -47,7 +47,27 @@ export const systemFixture: SystemStatus = {
   commit: 'da11343',
   server_time: NOW,
   retention_days: 30,
-  ha: { connected: true, since: '2026-10-01T06:12:00Z', version: '2026.9.4' },
+  ha: {
+    connected: true,
+    since: '2026-10-01T06:12:00Z',
+    version: '2026.9.4',
+    user_name: 'Home-Mandate',
+    commands: [
+      'auth/current_user',
+      'call_service',
+      'config/area_registry/list',
+      'config/device_registry/list',
+      'config/entity_registry/list',
+      'config/floor_registry/list',
+      'config/label_registry/list',
+      'get_config',
+      'get_states',
+      'ping',
+      'subscribe_entities',
+      'subscribe_events',
+      'unsubscribe_events',
+    ],
+  },
   mcp_url: 'https://home.example:8765/mcp',
   tls: { present: true, valid_until: '2026-12-24T10:00:00Z' },
   emergency_stop: { active: false, since: null, by_name: null },
@@ -55,7 +75,7 @@ export const systemFixture: SystemStatus = {
   approvers_configured: 1,
 };
 
-export const defaultsFixture: Defaults = { approval_timeout: 'PT2M', max_actions_per_hour: 60 };
+export const defaultsFixture: Defaults = { approval_timeout: 'PT2M', max_actions_per_hour: 60, bell: false };
 
 export const devicesFixture: DeviceCatalog = {
   areas: [
@@ -181,13 +201,30 @@ export const templatesFixture: Template[] = [
 ];
 
 export const approversFixture: ApproverList = {
-  approvers: [{ user_id: 'u-admin', name: 'Markus', notify_service: 'mobile_app_pixel_9', language: null }],
+  approvers: [
+    {
+      user_id: 'u-admin',
+      name: 'Markus',
+      devices: [{ service: 'mobile_app_pixel_9', critical: true }],
+      ui: true,
+      ui_critical: false,
+      language: null,
+      reach: { normal: true, critical: true },
+    },
+  ],
   candidates: {
     people: [
-      { user_id: 'u-admin', name: 'Markus' },
-      { user_id: 'u-partner', name: 'Alex' },
+      { user_id: 'u-admin', name: 'Markus', is_admin: true },
+      { user_id: 'u-partner', name: 'Alex', is_admin: false },
     ],
-    notify_services: ['mobile_app_pixel_9', 'mobile_app_iphone'],
+    devices: [
+      { service: 'mobile_app_pixel_9', name: 'Pixel 9', suggest_critical: true },
+      { service: 'mobile_app_iphone', name: 'iPhone von Alex', suggest_critical: true },
+      { service: 'mobile_app_macbook', name: 'MacBook Pro', suggest_critical: false },
+      { service: 'mobile_app_tablet', name: 'Galaxy Tab', suggest_critical: false },
+      { service: 'mobile_app_watch', name: 'Watch', suggest_critical: true },
+      { service: 'mobile_app_car', name: 'Auto', suggest_critical: false },
+    ],
   },
 };
 

@@ -78,7 +78,11 @@ export interface SystemStatus {
   /** Server clock, for countdowns that must not depend on the browser clock. */
   server_time: string;
   retention_days: number;
-  ha: { connected: boolean; since: string | null; version: string | null };
+  /**
+   * user_name: Home-Mandate's own Home Assistant user. commands: the fixed allowlist of
+   * WebSocket commands it may send (internal/ha), shown under "Why admin rights?".
+   */
+  ha: { connected: boolean; since: string | null; version: string | null; user_name: string | null; commands: string[] };
   /** URL agents connect to; null without TLS (MCP only on localhost then). */
   mcp_url: string | null;
   tls: { present: boolean; valid_until: string | null };
@@ -411,6 +415,11 @@ export interface Defaults {
   /** "PT…M…S"; capped by the server's HM_APPROVAL_TIMEOUT. */
   approval_timeout: string;
   max_actions_per_hour: number;
+  /**
+   * Also a neutral note in Home Assistant's notification bell while a request waits
+   * (decision F2 B2): no agent, device or reason in it, removed when the request ends.
+   */
+  bell: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -556,19 +565,40 @@ export interface AuditVerification extends ChainStatus {
 // Approvers: GET api/approvers, PUT|DELETE api/approvers/{user_id},
 // POST api/approvers/{user_id}/test (sends a test notification, no actions in it)
 
+/** A phone or computer with the Home Assistant app, as one approver uses it. */
+export interface ApproverDevice {
+  /** Service name without "notify.", e.g. "mobile_app_pixel_9". */
+  service: string;
+  /** Also critical requests (unlocking etc.); off for devices that ask for no unlocking (decision F2). */
+  critical: boolean;
+}
+
+/**
+ * Someone who answers approval requests (decision F2): on each of up to five devices, and
+ * if ui is set also in the Home-Mandate UI (administrators only), there for critical
+ * requests only with ui_critical. At least one channel.
+ */
 export interface Approver {
   user_id: string;
   name: string;
-  /** Service name without "notify.", e.g. "mobile_app_pixel_9". */
-  notify_service: string;
+  devices: ApproverDevice[];
+  ui: boolean;
+  ui_critical: boolean;
   /** null means the household language. */
   language: Language | null;
+  /** Computed by the server from the channels and the person's admin role now; the UI does not recompute it. */
+  reach: { normal: boolean; critical: boolean };
 }
 
 export interface ApproverCandidates {
-  /** People from person.* with a Home Assistant user. */
-  people: { user_id: string; name: string }[];
-  notify_services: string[];
+  /** People from person.* with a Home Assistant user; is_admin decides whether the UI channel is offered. */
+  people: { user_id: string; name: string; is_admin: boolean }[];
+  /**
+   * Devices with the Home Assistant app. suggest_critical comes from the device registry:
+   * on for phones, off for the Mac app and Android (no unlocking for notification buttons).
+   * name is Home Assistant's device name (untrusted text).
+   */
+  devices: { service: string; name: string; suggest_critical: boolean }[];
 }
 
 export interface ApproverList {
@@ -576,8 +606,11 @@ export interface ApproverList {
   candidates: ApproverCandidates;
 }
 
+/** PUT api/approvers/{user_id}; invalid_input names /devices, /ui or /ui_critical. */
 export interface ApproverUpdate {
-  notify_service: string;
+  devices: ApproverDevice[];
+  ui: boolean;
+  ui_critical: boolean;
   language: Language | null;
 }
 
