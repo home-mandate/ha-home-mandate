@@ -29,7 +29,7 @@ describe('AuditEntry', () => {
     const detail = await screen.findByRole('article', { name: 'Entry no. 9' });
     expect(detail.textContent?.replace(/[\u2068\u2069]/g, '')).toContain('Declined by Alex');
     expect(within(detail).getByText('Allowed, but the action is critical, so approval was requested.')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Audit log' }).getAttribute('href')).toBe('#/audit');
+    expect(screen.getByRole('link', { name: 'Back: Audit log' }).getAttribute('href')).toBe('#/audit');
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Entry no. 9');
   });
 
@@ -39,7 +39,7 @@ describe('AuditEntry', () => {
     cleanup();
     render(AuditEntry, { app, seq: 9 });
     await screen.findByRole('article', { name: 'Entry no. 9' });
-    expect(screen.getByRole('link', { name: 'Audit log' }).getAttribute('href')).toBe('#/audit?period=7d');
+    expect(screen.getByRole('link', { name: 'Back: Audit log' }).getAttribute('href')).toBe('#/audit?period=7d');
   });
 
   it('says so when the entry does not exist (any more)', async () => {

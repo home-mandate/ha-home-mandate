@@ -1,18 +1,22 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-<!-- Link back to the page above, with the direction icon (mirrored in right-to-left layouts). -->
+<!--
+  Link back to the page above, with the direction icon (mirrored in right-to-left layouts).
+  Its name says "Back: …", so screen readers do not take it for the navigation link of that
+  page; the visible label stays part of the name (WCAG 2.5.3).
+-->
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+  import { m } from '../i18n.ts';
   import Icon from './Icon.svelte';
 
   interface Props {
     href: string;
-    children: Snippet;
+    label: string;
   }
 
-  let { href, children }: Props = $props();
+  let { href, label }: Props = $props();
 </script>
 
-<a class="back" {href}><Icon name="back" size={16} />{@render children()}</a>
+<a class="back" {href} aria-label={m.common_back_to({ page: label })}><Icon name="back" size={16} />{label}</a>
 
 <style>
   .back {

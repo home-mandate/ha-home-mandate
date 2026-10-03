@@ -8,9 +8,9 @@
   import { Loader } from '../app/loader.svelte.ts';
   import type { AppState } from '../app/state.svelte.ts';
   import type { AuditEntry, DeviceCatalog } from '../api/types.ts';
+  import BackLink from '../components/BackLink.svelte';
   import ErrorState from '../components/ErrorState.svelte';
   import FullPageState from '../components/FullPageState.svelte';
-  import Icon from '../components/Icon.svelte';
   import Skeleton from '../components/Skeleton.svelte';
   import AuditDetail from '../components/audit/AuditDetail.svelte';
   import { m } from '../i18n.ts';
@@ -46,7 +46,7 @@
   const chain = $derived(app.system?.chain ?? null);
 </script>
 
-<a class="back" href={back}><Icon name="back" size={16} />{m.audit_title()}</a>
+<BackLink href={back} label={m.audit_title()} />
 
 {#if loader.status === 'error'}
   <ErrorState title={m.audit_error_title()} body={m.audit_error_body()} onretry={() => void loader.run()} />
@@ -69,15 +69,6 @@
 {/if}
 
 <style>
-  .back {
-    align-self: flex-start;
-    display: inline-flex;
-    align-items: center;
-    gap: var(--hm-space-1);
-    min-block-size: var(--hm-size-touch);
-    color: var(--hm-color-accent-text);
-    font-weight: var(--hm-font-weight-medium);
-  }
   article {
     display: flex;
     flex-direction: column;

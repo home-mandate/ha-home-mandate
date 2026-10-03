@@ -3,7 +3,8 @@
   One agent (design README 6.2, view=detail; decisions G3, G5, G7): identity, mandate,
   activity with its latest log entries, and "End access". A revoked agent shows who
   revoked it and when, and offers nothing to change. An unknown ID looks like any page
-  that does not exist.
+  that does not exist. The cards are named groups, not landmarks: five regions on one page
+  would crowd the landmark list.
 -->
 <script lang="ts">
   import { onMount, tick } from 'svelte';
@@ -129,7 +130,7 @@
   }
 </script>
 
-<BackLink href={href({ name: 'agents' })}>{m.agents_title()}</BackLink>
+<BackLink href={href({ name: 'agents' })} label={m.agents_title()} />
 
 {#if data.status === 'error'}
   <ErrorState title={m.agents_error_title()} body={m.agents_error_body()} onretry={reload} />
@@ -155,7 +156,7 @@
 
   <div class="grid">
     <div class="column">
-      <section class="card" aria-labelledby="{uid}-identity">
+      <div class="card" role="group" aria-labelledby="{uid}-identity">
         <h2 id="{uid}-identity">{m.agent_detail_identity()}</h2>
         <dl>
           <dt>{m.agents_col_client()}</dt>
@@ -172,19 +173,23 @@
           <dt>{m.agent_detail_approved()}</dt>
           <dd>{m.agent_detail_approved_value({ date: formatDateTime(new Date(agent.created_at), ctx), admin: isolate(agent.created_by_name ?? agent.created_by) })}</dd>
         </dl>
-      </section>
+      </div>
       <div class="card">
         <AgentMandate api={app.api} {agent} templates={data.data.templates} {ctx} headingId="{uid}-mandate" />
       </div>
     </div>
 
     <div class="column">
-      <section class="card" aria-labelledby="{uid}-activity">
+      <div class="card" role="group" aria-labelledby="{uid}-activity">
         <h2 id="{uid}-activity">{m.agent_detail_last()}</h2>
-        <p class="big" title={agent.last_active_at ? formatDateTime(new Date(agent.last_active_at), ctx) : undefined}>{when(agent.last_active_at)}</p>
+        <p class="big">
+          {#if agent.last_active_at}<time datetime={agent.last_active_at} title={formatDateTime(new Date(agent.last_active_at), ctx)}
+              >{when(agent.last_active_at)}</time
+            >{:else}{when(null)}{/if}
+        </p>
         <p class="muted">{m.agent_requests_today({ count: agent.requests_today })}</p>
-      </section>
-      <section class="card" aria-labelledby="{uid}-log">
+      </div>
+      <div class="card" role="group" aria-labelledby="{uid}-log">
         <div class="log-head">
           <h2 id="{uid}-log">{m.agent_detail_log()}</h2>
           <a href={href({ name: 'audit', query: { agent: [agent.client_id] } })}>{m.common_show_all()}<Icon name="chevron" size={16} /></a>
@@ -194,16 +199,16 @@
         {:else}
           <p class="muted">{m.agents_never_active()}</p>
         {/if}
-      </section>
+      </div>
     </div>
   </div>
 
   {#if agent.status === 'active'}
-    <section class="card end" aria-labelledby="{uid}-end">
+    <div class="card end" role="group" aria-labelledby="{uid}-end">
       <h2 id="{uid}-end">{m.agent_detail_end()}</h2>
       <p class="muted">{m.agent_detail_end_desc()}</p>
       <Button variant="danger" bind:element={endButton} onclick={() => (revoking = true)}>{m.revoke_button()}</Button>
-    </section>
+    </div>
     <RevokeDialog open={revoking} name={agent.display_name} {busy} {error} onclose={closeDialog} onrevoke={revoke} />
   {/if}
 {/if}

@@ -136,15 +136,30 @@ describe('Requests', () => {
     await waitFor(() => expect(show).toHaveBeenCalledWith({ kind: 'error', text: 'This approval was already answered or has ended.' }));
   });
 
-  it('says that sending failed for any other error, also one that is no API error', async () => {
+  it('says that sending failed when the server answered with an error', async () => {
     const { api } = await start({}, (client) => client.control.openApproval(answerable()));
     const show = vi.spyOn(toasts, 'show');
     const decline = await within(await pending()).findByRole('button', { name: 'Decline' });
     api.answerApproval = async () => {
-      throw null;
+      throw new ApiError('internal', 500);
     };
     await fireEvent.click(decline);
     await waitFor(() => expect(show).toHaveBeenCalledWith({ kind: 'error', text: 'The answer couldn’t be sent. Answering on the phone still works.' }));
+  });
+
+  // Without an answer from the server the answer may still have arrived (review Sec L4).
+  it.each([
+    ['the server was not reached', () => new ApiError('unavailable', 0)],
+    ['the error is no API error', () => null],
+  ])('says that it is unclear whether the answer arrived when %s', async (_, error) => {
+    const { api } = await start({}, (client) => client.control.openApproval(answerable()));
+    const show = vi.spyOn(toasts, 'show');
+    const decline = await within(await pending()).findByRole('button', { name: 'Decline' });
+    api.answerApproval = async () => {
+      throw error();
+    };
+    await fireEvent.click(decline);
+    await waitFor(() => expect(show).toHaveBeenCalledWith({ kind: 'error', text: 'It’s unclear whether the answer arrived. The history shows how it ended.' }));
   });
 
   it('follows requests answered on a phone, and announces the result', async () => {

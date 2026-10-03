@@ -172,7 +172,7 @@
   const doneTitle = $derived(around(m.pair_done_title({ agent: MARK })));
 </script>
 
-<BackLink href={href({ name: 'agents' })}>{m.agents_title()}</BackLink>
+<BackLink href={href({ name: 'agents' })} label={m.agents_title()} />
 <PageHeader title="{m.agents_add()}{SEPARATOR}{m.agents_way_code_title()}" />
 
 <div class="flow">

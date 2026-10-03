@@ -26,7 +26,7 @@
   const example = $derived(url ? claudeCommand(url) : null);
 </script>
 
-<BackLink href={href({ name: 'agents' })}>{m.agents_title()}</BackLink>
+<BackLink href={href({ name: 'agents' })} label={m.agents_title()} />
 <PageHeader title={m.browser_title()} />
 
 <ol class="steps" role="list">

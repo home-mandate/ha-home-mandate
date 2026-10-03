@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import type { ApprovalRequest } from '../api/types.ts';
 import { NOW, approvalsOpenFixture } from '../api/fixtures.ts';
@@ -25,6 +25,9 @@ async function start(options: MockOptions = {}, prepare?: (api: MockClient) => v
   render(Overview, { app, now: Date.parse(NOW) });
   return { api, app };
 }
+
+/** plain is text without the isolates around names, for comparing. */
+const plain = (text: string | null | undefined) => (text ?? '').replace(/[\u2068\u2069]/g, '');
 
 /** tiles waits until the status tiles show content, not the skeleton. */
 async function tiles(): Promise<HTMLElement> {
@@ -159,5 +162,19 @@ describe('Overview', () => {
     api.control.closeApproval('apr-1', 'approved', 'Markus');
     api.control.closeApproval('apr-2', 'rejected', 'Alex');
     expect(await within(section).findByText('No pending approvals')).toBeTruthy();
+  });
+
+  it('announces a new request and reloads once for a burst of events (review L24)', async () => {
+    const { api } = await start();
+    const section = await screen.findByRole('region', { name: /Pending approvals/ });
+    await within(section).findAllByRole('article');
+    const loads = vi.spyOn(api, 'approvals');
+    api.control.openApproval({ ...(approvalsOpenFixture[0] as ApprovalRequest), id: 'apr-2', device_name: 'Garagentor' });
+    api.control.emit({ type: 'audit.appended', seq: 99 });
+    api.control.emit({ type: 'agents.changed' });
+    const said = await screen.findByText((_, el) => el?.getAttribute('role') === 'status' && plain(el.textContent).startsWith('New approval request: Claude Code'));
+    expect(plain(said.textContent)).toBe('New approval request: Claude Code wants to unlock Garagentor');
+    await waitFor(() => expect(within(section).getAllByRole('article')).toHaveLength(2));
+    expect(loads).toHaveBeenCalledOnce();
   });
 });

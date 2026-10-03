@@ -2,7 +2,8 @@
 <!--
   Settings (design README 6.11; decisions F2, F5, S1–S8): one page with a section index,
   a sticky column on desktop and a scrolling chip row on mobile. #/settings/<section>
-  scrolls to that section and moves the focus to its heading. Simple fields save at once;
+  scrolls to that section and moves the focus to its heading; while scrolling, the index marks
+  the section in view. Simple fields save at once;
   security-relevant actions have their own buttons.
 -->
 <script lang="ts">
@@ -25,6 +26,7 @@
   import { resolveLocale } from '../locale.ts';
   import { baseLocale, getLocale, locales } from '../paraglide/runtime.js';
   import { href, type SettingsSection } from '../router.ts';
+  import { ScrollSpy } from '../ui/spy.svelte.ts';
   import { toasts } from '../ui/toasts.ts';
 
   interface Props {
@@ -51,6 +53,17 @@
     { key: 'estop', title: () => m.set_estop() },
     { key: 'about', title: () => m.set_about() },
   ];
+
+  const spy = new ScrollSpy(SECTIONS.map((s) => s.key));
+  onMount(() => {
+    const sections = SECTIONS.flatMap((s) => {
+      const el = document.getElementById(`${uid}-${s.key}`)?.parentElement;
+      return el ? [[s.key, el] as const] : [];
+    });
+    return spy.observe(sections);
+  });
+  /** The marked section: the one in view, else the one from the URL. */
+  const marked = $derived((spy.current as SettingsSection | null) ?? section);
 
   const defaults = new Loader<Defaults>(() => app.api.settings());
   /** Saves of the defaults run one after another, each on the last answer, so none undoes another. */
@@ -124,7 +137,7 @@
     <ul role="list">
       {#each SECTIONS as s (s.key)}
         <li>
-          <a href={href({ name: 'settings', section: s.key })} aria-current={section === s.key ? 'location' : undefined} onclick={(e) => again(e, s.key)}
+          <a href={href({ name: 'settings', section: s.key })} aria-current={marked === s.key ? 'location' : undefined} onclick={(e) => again(e, s.key)}
             >{s.title()}</a
           >
         </li>

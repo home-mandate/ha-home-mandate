@@ -23,6 +23,7 @@
   import { m } from '../i18n.ts';
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
+  import { coalesce, RELOAD_WAIT_MS } from '../ui/coalesce.ts';
   import { DESKTOP, Media } from '../ui/media.svelte.ts';
   import { cleanUntrusted } from '../untrusted.ts';
 
@@ -43,11 +44,25 @@
   let adding = $state(false);
   let ways: HTMLElement | undefined = $state();
 
+  /** What screen readers hear when the list changes live (review 5d). */
+  let spoken = $state('');
+
   const reload = () => void list.run();
+  // Events come in bursts (revoking changes agent and mandate): one reload after them, then say so.
+  const later = coalesce(async () => {
+    await list.run();
+    if (list.status === 'error') return;
+    spoken = '';
+    await tick();
+    spoken = m.agents_updated_live();
+  }, RELOAD_WAIT_MS);
   onMount(() => {
-    const stop = [app.on('agents.changed', reload), app.on('mandates.changed', reload), app.on('reconnected', reload)];
+    const stop = [app.on('agents.changed', later.call), app.on('mandates.changed', later.call), app.on('reconnected', later.call)];
     reload();
-    return () => stop.forEach((off) => off());
+    return () => {
+      later.cancel();
+      stop.forEach((off) => off());
+    };
   });
 
   const ctx = $derived({ locale: getLocale(), timeZone: app.session?.household.time_zone ?? 'UTC' });
@@ -63,12 +78,15 @@
     ways?.querySelector('a')?.focus();
   }
 
-  function last(agent: Agent): { text: string; title: string | undefined } {
-    if (agent.last_active_at === null) return { text: m.agents_never_active(), title: undefined };
+  /** last is the last activity: relative text, and for a <time> the moment and its full form. */
+  function last(agent: Agent): { text: string; at: string | null; title: string | undefined } {
+    if (agent.last_active_at === null) return { text: m.agents_never_active(), at: null, title: undefined };
     const at = new Date(agent.last_active_at);
-    return { text: formatRelative(at, serverNow, ctx), title: formatDateTime(at, ctx) };
+    return { text: formatRelative(at, serverNow, ctx), at: agent.last_active_at, title: formatDateTime(at, ctx) };
   }
 </script>
+
+<p class="hm-visually-hidden" role="status">{spoken}</p>
 
 <div class="head">
   <h1>{m.agents_title()}</h1>
@@ -120,7 +138,7 @@
                   <span class="muted">{m.agents_no_mandate()}</span>
                 {/if}
               </td>
-              <td class="muted" title={seen.title}>{seen.text}</td>
+              <td class="muted">{#if seen.at}<time datetime={seen.at} title={seen.title}>{seen.text}</time>{:else}{seen.text}{/if}</td>
               <td><AgentStatus status={agent.status} /></td>
             </tr>
           {/each}
@@ -137,7 +155,7 @@
             <span class="hm-visually-hidden">, </span>
             <span class="facts">
               <AgentStatus status={agent.status} compact />
-              <span><bdi>{agent.mandate ? cleanUntrusted(agent.mandate.name) : m.agents_no_mandate()}</bdi> · {seen.text}</span>
+              <span><bdi>{agent.mandate ? cleanUntrusted(agent.mandate.name) : m.agents_no_mandate()}</bdi> · {#if seen.at}<time datetime={seen.at} title={seen.title}>{seen.text}</time>{:else}{seen.text}{/if}</span>
             </span>
           </a>
         </li>

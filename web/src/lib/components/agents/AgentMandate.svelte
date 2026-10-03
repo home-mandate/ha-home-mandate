@@ -68,7 +68,7 @@
   }
 </script>
 
-<section aria-labelledby={headingId}>
+<div class="mandate" role="group" aria-labelledby={headingId}>
   <h2 id={headingId}>{m.agent_detail_mandate()}</h2>
   <div class="current">
     {#if mandate}
@@ -98,10 +98,10 @@
     </div>
     <p class="error" role="alert">{#if error}<Icon name="warning" size={16} />{error}{/if}</p>
   {/if}
-</section>
+</div>
 
 <style>
-  section {
+  .mandate {
     display: flex;
     flex-direction: column;
     gap: var(--hm-space-3);

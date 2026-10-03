@@ -44,6 +44,10 @@ describe('Agents', () => {
     expect(mandate?.getAttribute('href')).toBe('#/mandates/mandate-claude');
     expect(claude.getByText('claude.ai')).toBeTruthy();
     expect(rows[1]?.textContent).toContain('30 minutes ago');
+    // Relative times are <time> elements with the moment (review 5d), not plain text with a title.
+    const seen = claude.getByText('30 minutes ago');
+    expect(seen.tagName).toBe('TIME');
+    expect(Number.isNaN(Date.parse(seen.getAttribute('datetime') ?? ''))).toBe(false);
     expect(claude.getByText('Active')).toBeTruthy();
     const last = within(rows.at(-1) as HTMLElement);
     expect(last.getByText('Revoked')).toBeTruthy();
@@ -110,6 +114,17 @@ describe('Agents', () => {
     await screen.findByRole('table', { name: 'Agents' });
     await api.revokeAgent('https://claude.ai/oauth/claude-code-client-metadata');
     await waitFor(() => expect(within(screen.getByRole('table', { name: 'Agents' })).getAllByText('Revoked')).toHaveLength(2));
+  });
+
+  it('says that the list changed, after one reload for a burst of events', async () => {
+    const { api } = await start();
+    await screen.findByRole('table', { name: 'Agents' });
+    const loads = vi.spyOn(api, 'agents');
+    api.control.emit({ type: 'agents.changed' });
+    api.control.emit({ type: 'mandates.changed', id: 'mandate-voice' });
+    expect(await screen.findByText('Agent list updated')).toBeTruthy();
+    expect(screen.getByText('Agent list updated').getAttribute('role')).toBe('status');
+    expect(loads).toHaveBeenCalledOnce();
   });
 });
 

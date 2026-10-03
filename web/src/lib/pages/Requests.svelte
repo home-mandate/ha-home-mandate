@@ -93,14 +93,22 @@
     return () => stop.forEach((off) => off());
   });
 
+  /**
+   * answerError says what a failed answer means. Without an answer from the server (status 0,
+   * or no API error at all) the answer may still have arrived, so it does not claim it failed.
+   */
+  function answerError(err: unknown): string {
+    if (!(err instanceof ApiError) || err.status === 0) return m.request_answer_unknown();
+    return err.code === 'not_found' ? m.request_gone() : m.request_answer_failed();
+  }
+
   async function answer(requestId: string, approve: boolean) {
     if (busy) return;
     busy = requestId;
     try {
       await app.api.answerApproval(requestId, approve);
     } catch (err) {
-      const gone = err instanceof ApiError && err.code === 'not_found';
-      toasts.show({ kind: 'error', text: gone ? m.request_gone() : m.request_answer_failed() });
+      toasts.show({ kind: 'error', text: answerError(err) });
     } finally {
       busy = null;
     }

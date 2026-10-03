@@ -6,7 +6,7 @@
   keeps working; it must never look as if protection were off.
 -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { Loader } from '../app/loader.svelte.ts';
   import type { AppState } from '../app/state.svelte.ts';
   import type { Agent, ApprovalRequest, AuditEntry, DeviceCatalog } from '../api/types.ts';
@@ -20,6 +20,8 @@
   import { m } from '../i18n.ts';
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
+  import { openedText } from '../approvals/live.ts';
+  import { coalesce, RELOAD_WAIT_MS } from '../ui/coalesce.ts';
 
   interface Props {
     app: AppState;
@@ -57,16 +59,31 @@
   });
 
   const reload = () => void overview.run();
+  // Events come in bursts (a request opens and the log grows): one reload after them.
+  const later = coalesce(reload, RELOAD_WAIT_MS);
+  /** What screen readers hear about live changes (review L24). */
+  let spoken = $state('');
+
+  async function opened(request: ApprovalRequest) {
+    later.call();
+    spoken = '';
+    await tick();
+    spoken = openedText(request);
+  }
+
   onMount(() => {
     const stop = [
-      app.on('approval.opened', reload),
-      app.on('approval.closed', reload),
-      app.on('audit.appended', reload),
-      app.on('agents.changed', reload),
-      app.on('reconnected', reload),
+      app.on('approval.opened', ({ request }) => void opened(request)),
+      app.on('approval.closed', later.call),
+      app.on('audit.appended', later.call),
+      app.on('agents.changed', later.call),
+      app.on('reconnected', later.call),
     ];
     reload();
-    return () => stop.forEach((off) => off());
+    return () => {
+      later.cancel();
+      stop.forEach((off) => off());
+    };
   });
 
   const ctx = $derived({ locale: getLocale(), timeZone: app.session?.household.time_zone ?? 'UTC' });
@@ -124,6 +141,8 @@
   <h1>{m.overview_title()}</h1>
   <span class="tz">{m.common_timezone_note({ tz: ctx.timeZone })}</span>
 </div>
+
+<p class="hm-visually-hidden" role="status">{spoken}</p>
 
 {#if overview.status === 'error'}
   <ErrorState title={m.overview_error_title()} body={m.overview_error_body()} onretry={reload} />

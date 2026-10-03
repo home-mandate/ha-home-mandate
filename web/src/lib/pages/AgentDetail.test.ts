@@ -27,7 +27,7 @@ async function start(id: string, prepare?: (api: MockClient) => void) {
   return { api, app };
 }
 
-const section = (name: string) => screen.getByRole('region', { name });
+const section = (name: string) => screen.getByRole('group', { name });
 const plain = (text: string | null | undefined) => (text ?? '').replace(/[\u2068\u2069]/g, '').replace(/\s+/g, ' ').trim();
 
 describe('AgentDetail', () => {
@@ -52,6 +52,7 @@ describe('AgentDetail', () => {
     await start(VOICE);
     const activity = await waitFor(() => section('Last activity'));
     expect(activity.textContent).toContain('8 requests today');
+    expect(activity.querySelector('time')?.getAttribute('datetime')).toMatch(/^2026-/);
     expect(section('Mandate').textContent).toContain('1 of 60 actions in the last hour');
     const log = section('This agent’s audit log');
     expect(within(log).getAllByRole('listitem')).toHaveLength(5);

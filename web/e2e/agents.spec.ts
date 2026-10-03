@@ -53,7 +53,7 @@ test('pairs an agent by code with the keyboard only', async ({ page }, info) => 
 
   await expect(page.getByRole('heading', { name: t.done })).toBeFocused();
   await page.getByRole('link', { name: t.open }).click();
-  await expect(page.getByRole('region', { name: t.identity })).toBeVisible();
+  await expect(page.getByRole('group', { name: t.identity })).toBeVisible();
 });
 
 test('revokes an agent after the confirmation that starts on Cancel', async ({ page }, info) => {

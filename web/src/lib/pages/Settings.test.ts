@@ -57,6 +57,28 @@ describe('Settings: frame', () => {
     expect(within(nav).getByRole('link', { name: 'MCP endpoint' }).getAttribute('aria-current')).toBe('location');
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { level: 2, name: 'MCP endpoint' })));
   });
+
+  it('marks in the index the section that is scrolled into view (review 5e)', async () => {
+    let report: ((entries: { target: Element; isIntersecting: boolean }[]) => void) | null = null;
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(cb: typeof report) {
+          report = cb;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    await start({ section: 'approvers' });
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' });
+    const current = () => within(nav).getAllByRole('link').filter((l) => l.getAttribute('aria-current') === 'location').map((l) => l.textContent);
+    expect(current()).toEqual(['Approvers']);
+    const ha = screen.getByRole('heading', { level: 2, name: 'Home Assistant connection' }).parentElement as Element;
+    report!([{ target: ha, isIntersecting: true }]);
+    await waitFor(() => expect(current()).toEqual(['Home Assistant connection']));
+    vi.unstubAllGlobals();
+  });
 });
 
 describe('Settings: approvers', () => {

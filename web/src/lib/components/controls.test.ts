@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { setLocale } from '../paraglide/runtime.js';
+import BackLink from './BackLink.svelte';
 import Button from './Button.svelte';
 import DecisionSegment from './DecisionSegment.svelte';
 import IconButton from './IconButton.svelte';
@@ -65,6 +66,15 @@ describe('Button', () => {
     expect(container.querySelector('svg')).toBeNull();
     await fireEvent.click(button);
     expect(onclick).not.toHaveBeenCalled();
+  });
+});
+
+describe('BackLink', () => {
+  it('says "Back" in its name, so it is not mistaken for the navigation link of that page', () => {
+    render(BackLink, { href: '#/agents', label: 'Agents' });
+    const link = screen.getByRole('link', { name: 'Back: Agents' });
+    expect(link.getAttribute('href')).toBe('#/agents');
+    expect(link.textContent).toBe('Agents');
   });
 });
 
