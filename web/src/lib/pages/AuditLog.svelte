@@ -86,11 +86,13 @@
   let want = restore ? Math.min(restore.count, MAX_RESTORE) : PAGE;
 
   const list = new Loader<Page>(async () => {
+    const g = gen;
     const query = toAuditQuery(filters, serverNow());
     const first = await app.api.audit({ ...query, limit: PAGE });
     let entries = first.entries;
     let next = first.next_before;
-    while (entries.length < want && next !== null) {
+    // Stops when the list was replaced meanwhile (filter change, refresh).
+    while (entries.length < want && next !== null && g === gen) {
       const page = await app.api.audit({ ...query, limit: PAGE, before: next });
       entries = [...entries, ...page.entries];
       next = page.next_before;
@@ -176,13 +178,13 @@
   }
 
   async function select(event: MouseEvent, entry: AuditEntry) {
+    // Open in a new tab or window stays what the browser does, and this page keeps no way back.
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     if (!desktop.matches) {
       // Mobile: the link opens the entry's own page; remember the way back.
       app.auditReturn = { list: listHash(), seq: entry.seq, count: list.data?.entries.length ?? 0 };
       return;
     }
-    // Open in a new tab or window stays what the browser does.
-    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     filters = { ...filters, seq: entry.seq };
     picked = entry;

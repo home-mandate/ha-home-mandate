@@ -28,6 +28,7 @@ async function answerable(page: Page, id: string) {
       action: 'unlock',
       critical: true,
       reason: 'Der Paketbote ist da',
+      params: [],
       recipients: ['Markus'],
       created_at: new Date(now).toISOString(),
       expires_at: new Date(now + 120_000).toISOString(),

@@ -19,7 +19,7 @@ interface Screen {
 
 const CLAUDE = encodeURIComponent('https://claude.ai/oauth/claude-code-client-metadata');
 
-type Mock = { hmMock: { setEmergencyStop(a: boolean): void; breakChain(n: number): void; setHaConnected(c: boolean): void } };
+type Mock = { hmMock: { setEmergencyStop(a: boolean): Promise<void>; breakChain(n: number): void; setHaConnected(c: boolean): void } };
 
 const SCREENS: Screen[] = [
   { name: 'overview', path: './' },
@@ -28,13 +28,17 @@ const SCREENS: Screen[] = [
     name: 'overview, every banner',
     path: './',
     mock: { eventsState: 'closed' },
-    setup: (page) =>
-      page.evaluate(() => {
+    setup: async (page) => {
+      await page.evaluate(async () => {
         const mock = (window as unknown as Mock).hmMock;
-        mock.setEmergencyStop(true);
+        await mock.setEmergencyStop(true);
         mock.breakChain(18342);
         mock.setHaConnected(false);
-      }),
+      });
+      // Measure only once all four banners are there: emergency stop, broken chain, Home
+      // Assistant and the lost connection (shown after 5 s).
+      await expect(page.locator('.stack .banner')).toHaveCount(4, { timeout: 10_000 });
+    },
   },
   {
     name: 'emergency stop sheet',

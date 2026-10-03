@@ -18,7 +18,7 @@ afterEach(() => {
 
 async function start(options: MockOptions = {}, prepare?: (api: MockClient) => Promise<void>) {
   const api = createMockClient(options);
-  const app = new AppState(api);
+  const app = new AppState(api, () => Date.parse(NOW));
   await app.start();
   await prepare?.(api);
   render(MandateList, { app, now: Date.parse(NOW) });
@@ -83,7 +83,7 @@ describe('MandateList', () => {
       if (fail) throw new Error('down');
       return mandates();
     };
-    const app = new AppState(api);
+    const app = new AppState(api, () => Date.parse(NOW));
     await app.start();
     render(MandateList, { app, now: Date.parse(NOW) });
     const alert = await screen.findByRole('alert');
@@ -96,7 +96,7 @@ describe('MandateList', () => {
 
   it('shows a skeleton while loading', async () => {
     const api = createMockClient();
-    const app = new AppState(api);
+    const app = new AppState(api, () => Date.parse(NOW));
     await app.start();
     api.mandates = () => new Promise(() => {});
     render(MandateList, { app, now: Date.parse(NOW) });
@@ -106,7 +106,7 @@ describe('MandateList', () => {
 
   it('explains the consequence when there is no mandate yet', async () => {
     const api = createMockClient();
-    const app = new AppState(api);
+    const app = new AppState(api, () => Date.parse(NOW));
     await app.start();
     api.mandates = async () => [];
     render(MandateList, { app, now: Date.parse(NOW) });
@@ -137,7 +137,7 @@ describe('MandateList', () => {
       if (name === 'empty') throw new Error('gone');
       return template(name);
     };
-    const app = new AppState(api);
+    const app = new AppState(api, () => Date.parse(NOW));
     await app.start();
     render(MandateList, { app, now: Date.parse(NOW) });
     const section = await screen.findByRole('region', { name: 'Start from a template' });

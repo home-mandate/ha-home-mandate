@@ -371,6 +371,15 @@ describe('AuditLog on mobile', () => {
     expect(app.auditReturn).toBeNull();
   });
 
+  it('remembers no way back when an entry opens in a new tab (ctrl or middle click)', async () => {
+    const { app } = await start();
+    const region = await list();
+    await waitFor(() => expect(rows(region).length).toBeGreaterThan(0));
+    await fireEvent.click(rows(region)[0] as HTMLElement, { ctrlKey: true });
+    await fireEvent.click(rows(region)[0] as HTMLElement, { button: 1 });
+    expect(app.auditReturn).toBeNull();
+  });
+
   it('starts from the top when the remembered list had other filters', async () => {
     const { app } = await start({}, {}, manyEntries);
     app.auditReturn = { list: '#/audit?period=7d', seq: 5, count: 100 };

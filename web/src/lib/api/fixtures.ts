@@ -250,6 +250,7 @@ export const approvalsOpenFixture: ApprovalRequest[] = [
     action: 'unlock',
     critical: true,
     reason: HOSTILE_REASON,
+    params: [],
     recipients: ['Markus'],
     created_at: '2026-10-02T17:41:30Z',
     expires_at: '2026-10-02T17:43:30Z',

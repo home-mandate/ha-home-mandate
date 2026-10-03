@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { ApiError } from '../api/client.ts';
+import { NOW } from '../api/fixtures.ts';
 import { createMockClient, type MockClient, type MockOptions } from '../api/mock.ts';
 import type { MandateDraft, MandateUpdate, Rule } from '../api/types.ts';
 import { AppState } from '../app/state.svelte.ts';
@@ -30,7 +31,7 @@ const lightsAsk = (d: MandateDraft): MandateDraft => ({ ...d, rules: d.rules.map
 
 async function start(prepare?: (api: MockClient) => Promise<void>, options: MockOptions = {}, id = ID) {
   const api = createMockClient(options);
-  const app = new AppState(api);
+  const app = new AppState(api, () => Date.parse(NOW));
   await app.start();
   await prepare?.(api);
   render(MandateVersions, { app, id });

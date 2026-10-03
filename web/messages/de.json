@@ -73,6 +73,7 @@
   "request_answered_after": "nach {duration}",
   "request_approve": "Freigeben",
   "request_approve_confirm": "{agent} darf dann {device} {action}.",
+  "request_confirm_values": "Mit diesen Werten: {values}",
   "request_approve_confirm_btn": "Ja, freigeben",
   "request_decline": "Ablehnen",
   "request_expires_in": "läuft ab in",

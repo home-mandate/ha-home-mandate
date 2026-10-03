@@ -95,6 +95,11 @@ describe('connectEvents', () => {
     latest().message('{"type":"approval.opened","request":"x"}');
     latest().message('{"type":"approval.opened","request":{"id":"a","device_name":{"x":1}}}');
     latest().message('{"type":"approval.closed","id":"a"}');
+    // Service data must be name/value strings (S1), and can_answer a boolean.
+    const request = { id: 'a', entity_id: 'light.k', device_name: 'K', action: 'turn_on', created_at: 'x', expires_at: 'y', agent: { client_id: 'c', display_name: 'C' }, reason: null, area: null, critical: false, recipients: [], can_answer: false };
+    latest().message(JSON.stringify({ type: 'approval.opened', request: { ...request, params: [{ name: 'b', value: 1 }] } }));
+    latest().message(JSON.stringify({ type: 'approval.opened', request: { ...request, params: null } }));
+    latest().message(JSON.stringify({ type: 'approval.opened', request: { ...request, params: [], can_answer: 'yes' } }));
     latest().message('{"type":"system","system":null}');
     latest().message('{"type":"audit.appended","seq":7}');
     expect(events).toEqual([{ type: 'audit.appended', seq: 7 }]);

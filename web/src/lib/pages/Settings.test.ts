@@ -10,6 +10,7 @@ import { AppState } from '../app/state.svelte.ts';
 import type { SettingsSection } from '../router.ts';
 import { setLocale } from '../paraglide/runtime.js';
 import Settings from './Settings.svelte';
+import { toasts } from '../ui/toasts.ts';
 
 beforeEach(() => setLocale('en', { reload: false }));
 afterEach(() => {
@@ -252,6 +253,18 @@ describe('Settings: defaults', () => {
     await fireEvent.input(rate, { target: { value: '30' } });
     await waitFor(() => expect(put).toHaveBeenCalledWith(expect.objectContaining({ max_actions_per_hour: 30 })));
     expect(await within(region('Defaults')).findByText('Saved')).toBeTruthy();
+  });
+
+  it('says so when the save on leaving the page fails (review M2)', async () => {
+    const { api, view } = await start();
+    const rate = (await screen.findByLabelText('Default rate limit')) as HTMLInputElement;
+    const show = vi.spyOn(toasts, 'show');
+    api.putSettings = async () => {
+      throw new ApiError('internal', 500);
+    };
+    await fireEvent.input(rate, { target: { value: '30' } });
+    view.unmount();
+    await waitFor(() => expect(show).toHaveBeenCalledWith({ kind: 'error', text: 'Not saved. Please try again.' }));
   });
 
   it('keeps both a bell switch and a rate change made at the same time', async () => {

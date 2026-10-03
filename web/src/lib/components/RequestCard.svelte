@@ -10,9 +10,10 @@
   import type { ApprovalRequest } from '../api/types.ts';
   import { formatList, formatTime, type FormatContext } from '../format.ts';
   import { m } from '../i18n.ts';
+  import { paramPair } from '../approvals/params.ts';
   import { actionLabel } from '../mandate/labels.ts';
   import { clientIdentity } from '../ui/identity.ts';
-  import { MARK, around } from '../ui/sentence.ts';
+  import { MARK, MARK2, pieces } from '../ui/sentence.ts';
   import { cleanUntrusted } from '../untrusted.ts';
   import AgentName from './AgentName.svelte';
   import Countdown from './Countdown.svelte';
@@ -34,11 +35,12 @@
   let { request, areaName, offsetMs, ctx, now = Date.now, children }: Props = $props();
 
   const SEPARATOR = ' · ';
+  const LIST_SEPARATOR = ', ';
   const titleId = $props.id();
 
-  const title = $derived(
-    around(m.request_title({ agent: MARK, action: actionLabel(undefined, request.action), device: cleanUntrusted(request.device_name) })),
-  );
+  // Agent and device are components in the sentence (AgentName, <bdi>), in the language's order.
+  const title = $derived(pieces(m.request_title({ agent: MARK, action: actionLabel(undefined, request.action), device: MARK2 })));
+  const values = $derived(request.params.map(paramPair));
   const identity = $derived(clientIdentity(request.agent.client_id));
   const time = $derived(formatTime(new Date(request.created_at), ctx));
   const where = $derived(areaName ? cleanUntrusted(areaName) + SEPARATOR + time : time);
@@ -53,13 +55,20 @@
       {#if request.critical}<DecisionBadge kind="critical" size="sm" />{/if}
       <span class="where">{where}</span>
     </div>
-    <h3 id={titleId}>{title[0]}<AgentName name={request.agent.display_name} />{title[1]}</h3>
+    <h3 id={titleId}>
+      {#each title as piece, i (i)}{#if 'text' in piece}{piece.text}{:else if piece.slot === 1}<AgentName name={request.agent.display_name} />{:else}<bdi
+            >{cleanUntrusted(request.device_name)}</bdi
+          >{/if}{/each}
+    </h3>
     {#if identity}
       <div class="client">
         <span>{m.agent_client_id()}</span>
         {#if identity.verified}<code>{identity.text}</code>{:else}<bdi>{identity.text}</bdi>
           <span class="tag">{m.agent_claim_short()}</span>{/if}
       </div>
+    {/if}
+    {#if values.length > 0}
+      <p class="values"><span>{m.audit_parameters()}</span> {#each values as value, i (i)}{#if i > 0}{LIST_SEPARATOR}{/if}<bdi>{value}</bdi>{/each}</p>
     {/if}
     {#if request.reason}<ReasonBox reason={request.reason} />{/if}
     {#if request.recipients.length > 0}<span class="sent">{m.request_sent_to({ names: recipients })}</span>{/if}

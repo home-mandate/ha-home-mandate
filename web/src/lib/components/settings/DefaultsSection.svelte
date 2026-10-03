@@ -12,6 +12,7 @@
   import type { Defaults, Language } from '../../api/types.ts';
   import { timeoutSeconds } from '../../engine/check.ts';
   import { m } from '../../i18n.ts';
+  import { toasts } from '../../ui/toasts.ts';
   import Button from '../Button.svelte';
   import Icon from '../Icon.svelte';
   import SelectField from '../SelectField.svelte';
@@ -56,9 +57,12 @@
     });
   });
 
-  // Leaving the page within the pause still saves (the save outlives the component).
+  // Leaving the page within the pause still saves (the save outlives the component); a
+  // failure then shows as a toast, since the field's status is gone with the page.
+  let leaving = false;
   onDestroy(() => {
     clearTimeout(shown);
+    leaving = true;
     if (timer !== undefined) void flush();
   });
 
@@ -98,7 +102,8 @@
         if (status === 'saved') status = 'idle';
       }, SAVED_SHOWN_MS);
     } catch {
-      status = 'failed';
+      if (leaving) toasts.show({ kind: 'error', text: m.set_save_failed() });
+      else status = 'failed';
     }
   }
 

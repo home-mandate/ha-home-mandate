@@ -410,11 +410,11 @@ describe('createMockClient: approvals, settings, audit, approvers, emergency sto
   it('switches the emergency stop from the test controls, like the API', async () => {
     const api = createMockClient();
     const { events } = listen(api);
-    api.control.setEmergencyStop(true);
+    await api.control.setEmergencyStop(true);
     expect((await api.system()).emergency_stop).toMatchObject({ active: true, by_name: 'Markus' });
     expect((await api.approvals()).open).toEqual([]);
     expect(types(events)).toContain('system');
-    api.control.setEmergencyStop(false);
+    await api.control.setEmergencyStop(false);
     expect((await api.system()).emergency_stop.active).toBe(false);
   });
 

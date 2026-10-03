@@ -73,6 +73,7 @@
   "request_answered_after": "after {duration}",
   "request_approve": "Approve",
   "request_approve_confirm": "{agent} will then {action} {device}.",
+  "request_confirm_values": "With these values: {values}",
   "request_approve_confirm_btn": "Yes, approve",
   "request_decline": "Decline",
   "request_expires_in": "expires in",

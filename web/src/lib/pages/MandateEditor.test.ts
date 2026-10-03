@@ -25,7 +25,7 @@ afterEach(() => {
 
 async function start(options: MockOptions = {}, prepare?: (api: MockClient) => Promise<void>, id = ID) {
   const api = createMockClient(options);
-  const app = new AppState(api);
+  const app = new AppState(api, () => Date.parse(NOW));
   await app.start();
   await prepare?.(api);
   const view = render(MandateEditor, { app, id, now: Date.parse(NOW) });
@@ -728,7 +728,7 @@ describe('states', () => {
 
   it('shows a skeleton while loading', async () => {
     const api = createMockClient();
-    const app = new AppState(api);
+    const app = new AppState(api, () => Date.parse(NOW));
     await app.start();
     api.mandate = () => new Promise(() => {});
     render(MandateEditor, { app, id: ID, now: Date.parse(NOW) });

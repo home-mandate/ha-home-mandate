@@ -119,7 +119,7 @@ export interface MockControls {
   closeApproval(id: string, outcome: ApprovalHistoryEntry['outcome'], byName: string | null, via?: 'push' | 'ui'): void;
   setHaConnected(connected: boolean): void;
   breakChain(seq: number): void;
-  setEmergencyStop(active: boolean): void;
+  setEmergencyStop(active: boolean): Promise<void>;
 }
 
 export type MockClient = ApiClient & { control: MockControls };
@@ -164,6 +164,11 @@ function hostileState(state: State): State {
     id: 'apr-hostile',
     agent: { client_id: HOSTILE_AGENT, display_name: WORST_NAME },
     reason: WORST_REASON,
+    // Service data from the agent: shown cleaned, as hostile as the name.
+    params: [
+      { name: 'brightness_pct', value: '100' },
+      { name: WORST_NAME, value: WORST_REASON },
+    ],
     critical: false,
     can_answer: true,
   };
@@ -469,8 +474,8 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     breakChain(seq) {
       setSystem({ ...state.system, chain: { valid: false, broken_at_seq: seq, checked_at: now().toISOString() } });
     },
-    setEmergencyStop(active) {
-      void api.setEmergencyStop(active);
+    async setEmergencyStop(active) {
+      await api.setEmergencyStop(active);
     },
   };
 

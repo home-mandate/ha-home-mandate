@@ -51,6 +51,19 @@ describe('RequestCard', () => {
     expect(within(screen.getAllByRole('article')[1] as HTMLElement).queryByRole('figure')).toBeNull();
   });
 
+  it('shows the requested values, so the human sees what is approved (security S1)', () => {
+    show({ params: [{ name: 'brightness_pct', value: '100' }] });
+    const values = screen.getByText('Requested values').parentElement as HTMLElement;
+    expect(values.textContent?.replace(/\s+/g, ' ').trim()).toBe('Requested values brightness_pct=100');
+    expect(within(values).getByText('brightness_pct=100').tagName).toBe('BDI');
+  });
+
+  it('shows no values line without service data, and the device isolated in the heading', () => {
+    show();
+    expect(screen.queryByText('Requested values')).toBeNull();
+    expect(within(screen.getByRole('heading')).getByText('Haustür').tagName).toBe('BDI');
+  });
+
   it('names the recipients and counts down on the server clock', () => {
     show({ recipients: ['Anna', 'Jonas'] });
     const card = screen.getByRole('article');

@@ -37,6 +37,14 @@ describe('RequestAnswer', () => {
     expect(within(sentence).getByText('Haustür').tagName).toBe('BDI');
   });
 
+  it('repeats the values and the critical marker in the confirmation (security S1, S9)', async () => {
+    show({ critical: true, params: [{ name: 'brightness_pct', value: '100' }] });
+    await fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    const group = screen.getByRole('group', { name: 'Confirm approval' });
+    expect(within(group).getByText('Critical')).toBeTruthy();
+    expect(within(group).getByText(/With these values:/).textContent?.replace(/\s+/g, ' ')).toBe('With these values: brightness_pct=100');
+  });
+
   it('keeps hostile names as text: no mark, no hidden characters, no markup', async () => {
     show({ agent: { client_id: 'pair:voice-assistant', display_name: 'Anna\u0001 (verified)\u202E<img src=x onerror=alert(1)>' }, device_name: 'Tür\u0001\u2067x' });
     await fireEvent.click(screen.getByRole('button', { name: 'Approve' }));

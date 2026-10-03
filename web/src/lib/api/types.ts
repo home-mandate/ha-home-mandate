@@ -427,6 +427,13 @@ export interface Defaults {
 
 export type ApprovalOutcome = 'approved' | 'rejected' | 'timeout' | 'invalid_response';
 
+/** One service data field of a request, e.g. brightness_pct=100; sorted by name by the server. */
+export interface ApprovalParam {
+  name: string;
+  /** The value as text, sanitized by the server like the push; untrusted. */
+  value: string;
+}
+
 export interface ApprovalRequest {
   id: string;
   agent: { client_id: string; display_name: string };
@@ -437,6 +444,11 @@ export interface ApprovalRequest {
   critical: boolean;
   /** The agent's claim, sanitized by the server; untrusted. */
   reason: string | null;
+  /**
+   * Service data the action would be called with, as the push shows it (security review S1);
+   * empty for none. The UI shows every field before an approval.
+   */
+  params: ApprovalParam[];
   /** Names of the approvers the request reached (any channel). */
   recipients: string[];
   created_at: string;

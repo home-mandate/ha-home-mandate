@@ -87,8 +87,11 @@ function validRequest(v: unknown): boolean {
     (v.reason === null || isString(v.reason)) &&
     (v.area === null || isString(v.area)) &&
     typeof v.critical === 'boolean' &&
+    typeof v.can_answer === 'boolean' &&
     Array.isArray(v.recipients) &&
-    v.recipients.every(isString)
+    v.recipients.every(isString) &&
+    Array.isArray(v.params) &&
+    v.params.every((p) => isObject(p) && isString(p.name) && isString(p.value))
   );
 }
 

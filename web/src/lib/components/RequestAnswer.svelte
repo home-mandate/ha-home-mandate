@@ -11,11 +11,13 @@
   import { tick } from 'svelte';
   import type { ApprovalRequest } from '../api/types.ts';
   import { m } from '../i18n.ts';
+  import { paramsText } from '../approvals/params.ts';
   import { actionLabel } from '../mandate/labels.ts';
-  import { MARK } from '../ui/sentence.ts';
+  import { MARK, MARK2, around, pieces } from '../ui/sentence.ts';
   import { cleanUntrusted } from '../untrusted.ts';
   import AgentName from './AgentName.svelte';
   import Button from './Button.svelte';
+  import DecisionBadge from './DecisionBadge.svelte';
 
   interface Props {
     request: ApprovalRequest;
@@ -37,17 +39,11 @@
   let approveButton: HTMLButtonElement | undefined = $state();
   let confirmButton: HTMLButtonElement | undefined = $state();
 
-  // The catalog sentence holds two marks: one for the agent, one for the device.
-  const sentence = $derived.by(() => {
-    const [before, rest] = splitOnce(m.request_approve_confirm({ agent: MARK, action: actionLabel(undefined, request.action), device: MARK }));
-    const [middle, after] = splitOnce(rest);
-    return { before, middle, after };
-  });
-
-  function splitOnce(text: string): [string, string] {
-    const at = text.indexOf(MARK);
-    return at < 0 ? [text, ''] : [text.slice(0, at), text.slice(at + MARK.length)];
-  }
+  // Agent and device are components in the sentence, in the language's order.
+  const sentence = $derived(pieces(m.request_approve_confirm({ agent: MARK, action: actionLabel(undefined, request.action), device: MARK2 })));
+  // The confirmation repeats what is approved: the service data (security review S1).
+  const values = $derived(paramsText(request.params));
+  const valuesLine = around(m.request_confirm_values({ values: MARK }));
 
   async function ask() {
     confirming = true;
@@ -76,11 +72,14 @@
 {#if confirming}
   <div class="confirm" role="group" aria-labelledby="{id}-label" aria-describedby="{id}-sentence">
     <span id="{id}-label" class="hm-visually-hidden">{m.request_confirm_label()}</span>
+    {#if request.critical}<DecisionBadge kind="critical" size="sm" />{/if}
     <p id="{id}-sentence">
-      {sentence.before}<AgentName name={request.agent.display_name} client={request.agent.client_id} />{sentence.middle}<bdi
-        >{cleanUntrusted(request.device_name)}</bdi
-      >{sentence.after}
+      {#each sentence as piece, i (i)}{#if 'text' in piece}{piece.text}{:else if piece.slot === 1}<AgentName
+            name={request.agent.display_name}
+            client={request.agent.client_id}
+          />{:else}<bdi>{cleanUntrusted(request.device_name)}</bdi>{/if}{/each}
     </p>
+    {#if values}<p class="values">{valuesLine[0]}<bdi>{values}</bdi>{valuesLine[1]}</p>{/if}
     <div class="buttons">
       <Button variant="primary" {busy} bind:element={confirmButton} aria-describedby={describedBy} onclick={confirm}
         >{m.request_approve_confirm_btn()}</Button

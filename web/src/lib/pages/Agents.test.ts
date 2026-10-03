@@ -143,7 +143,7 @@ describe('Agents on mobile', () => {
 describe('AgentConnect', () => {
   it('shows the MCP address to copy and an example for Claude Code', async () => {
     const api = createMockClient();
-    const app = new AppState(api);
+    const app = new AppState(api, () => Date.parse(NOW));
     await app.start();
     const copy = vi.fn(async () => {});
     render(AgentConnect, { app, copy });
@@ -158,7 +158,7 @@ describe('AgentConnect', () => {
     const api = createMockClient();
     const system = api.system.bind(api);
     api.system = async () => ({ ...(await system()), mcp_url: null });
-    const app = new AppState(api);
+    const app = new AppState(api, () => Date.parse(NOW));
     await app.start();
     render(AgentConnect, { app });
     expect(screen.queryByLabelText('MCP endpoint address')).toBeNull();

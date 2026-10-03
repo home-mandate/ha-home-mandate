@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import { MARK, around } from './sentence.ts';
+import { MARK, MARK2, around, pieces } from './sentence.ts';
 
 describe('around', () => {
   it('splits a sentence at the mark, wherever the language puts it', () => {
@@ -16,5 +16,16 @@ describe('around', () => {
 
   it('uses a control character that cleaned foreign text can never contain', () => {
     expect(MARK).toMatch(/^\p{Cc}$/u);
+  });
+});
+
+describe('pieces', () => {
+  it('splits at both marks in the order of the language', () => {
+    expect(pieces(`${MARK} möchte ${MARK2} öffnen`)).toEqual([{ slot: 1 }, { text: ' möchte ' }, { slot: 2 }, { text: ' öffnen' }]);
+    expect(pieces(`${MARK2} soll ${MARK} …`)).toEqual([{ slot: 2 }, { text: ' soll ' }, { slot: 1 }, { text: ' …' }]);
+  });
+
+  it('is plain text without marks', () => {
+    expect(pieces('no marks')).toEqual([{ text: 'no marks' }]);
   });
 });
