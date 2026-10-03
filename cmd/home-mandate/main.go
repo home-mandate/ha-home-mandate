@@ -25,8 +25,11 @@ import (
 	"syscall"
 )
 
-// version is set at build time via -ldflags "-X main.version=…".
-var version = "dev"
+// version and commit are set at build time via -ldflags "-X main.version=… -X main.commit=…".
+var (
+	version = "dev"
+	commit  = "unknown"
+)
 
 const (
 	exitOK      = 0

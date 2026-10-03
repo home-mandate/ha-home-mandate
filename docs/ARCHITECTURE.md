@@ -154,7 +154,8 @@ checked on every request.
 - **Hint in Home Assistant (B2, off by default):** a persistent notification without any
   content of the request (no agent, device, reason or link) and with its own random ID
   (`hm_approval_…`, not the request ID: persistent notifications are visible to every HA
-  user), removed however the request ends.
+  user), removed however the request ends. At start the gateway removes such hints a crash
+  left behind (`persistent_notification/get`, only IDs of this form are touched).
 - **Revocation and emergency stop (decision F1):** when triggered in the running gateway
   (UI), open requests of the agent, or all, end at once and no further notification goes
   out; the audit entry has no approval and is denied with `authentication` or
@@ -168,21 +169,37 @@ checked on every request.
 |---|---|---|
 | Start | App from its own repository | `docker run` / Podman Quadlet with the same image |
 | Access to HA | `SUPERVISOR_TOKEN`, API via `http://supervisor/core/…` | Long-lived token of a dedicated HA user, URL via variable |
-| UI | Ingress (sign-in handled by HA) | Own port, sign-in with HA account (OAuth) |
+| UI | Ingress on port 8099 (sign-in handled by HA) | v0.1: none; `HM_INGRESS_ADDR` opens the same listener behind an own proxy that acts as the Supervisor (E2E). Own port with HA sign-in follows in v0.2 |
 | Data | `/data` | Mounted volume |
 
 One image, two configuration sources. Architectures: `amd64`, `aarch64`.
 
+**Who may use the UI (decision U2, checked against the Supervisor and Core sources):**
+Ingress lets every signed-in Home Assistant user reach the UI; `panel_admin` only hides the
+sidebar entry. Home-Mandate therefore checks itself, on every request:
+1. The peer address is the Supervisor, `172.30.32.2` (IPv4-mapped too). `X-Forwarded-For`
+   and `Forwarded` are never read. Anything else gets an empty 403, the UI included.
+2. Exactly one `X-Remote-User-Id`, in the form of a Home Assistant user ID. The Supervisor
+   removes client copies of this header and sets it from the session.
+3. The user is an administrator now: `config/auth/list`, administrator = owner, or active
+   and in `system-admin` (Home Assistant's own rule). The answer is kept 30 seconds; when
+   Home Assistant cannot be asked, nobody is an administrator (503, fail closed).
+
+The UI runs in an iframe of Home Assistant's own origin; an XSS in it would take over Home
+Assistant's frontend. Hence the strict CSP (section 12), and other apps share the origin,
+which Home-Mandate cannot prevent.
+
 ## 9. Data storage
 
 SQLite at `/data/home-mandate.db`:
-`agents`, `mandates` (JSON per schema, versioned), `tokens` (hashes), `approvals`,
-`audit` (hash-chained), `settings`.
+`agents`, `mandates` (JSON per schema, versioned; at most one active mandate per agent, a
+revoked one stays as it was), `tokens` (hashes), `audit_log` (hash-chained) with its search
+index `audit_search`, `approvers`, `mandate_templates`, `settings`.
 
-In container mode, the HA credentials are encrypted with a key stored separately from the
-database (`/data/secret.key`, file mode 0600). This protects against accidentally handing out
-the database (backup, support request), not against an attacker with full access to the file
-system. This is documented as such.
+**The Home Assistant credentials are never stored (decision U8).** In app mode Home-Mandate
+uses `SUPERVISOR_TOKEN`; in container mode the token comes from `HM_HA_TOKEN` or the file in
+`HM_HA_TOKEN_FILE` (mode 0600, mounted read-only). Nothing to encrypt in the database; a test
+runs the gateway with a token and checks that no file of the data directory contains it.
 
 ## 10. Cryptography
 
@@ -218,6 +235,9 @@ Decided by Markus on 2026-10-01.
    | Household time zone, units, language | `get_config` | no |
    | Select approvers | `config/auth/list` | **yes** – replacement without admin: `person.*` entities via `get_states` (attribute `user_id`) |
    | **Receive answers to approval requests** | `subscribe_events` with `mobile_app_notification_action` (not on the allowlist); `subscribe_trigger` as the alternative also requires admin | **yes** |
+   | UI only: who is an administrator, names of users (decisions U2, D15) | `config/auth/list` | **yes** |
+   | UI only: devices with the Companion App for approvers | `get_services` (only `notify.mobile_app_*` is used) | no |
+   | UI only: neutral hint in the notification bell (F2 B2) | `call_service` `persistent_notification.create`/`dismiss` (only IDs `hm_approval_<32 hex>`), `persistent_notification/get` (cleanup at start) | no |
 
    Result: everything except receiving the answers to approval requests works without admin
    rights.
@@ -235,8 +255,10 @@ Decided by Markus on 2026-10-01.
      the code); any other command is rejected before it is sent. A negative test checks this,
      and the table here is the source of the list.
    - `subscribe_events` only for `state_changed`, `*_registry_updated` and
-     `mobile_app_notification_action`; approvers are determined via `person.*`, not via
-     `config/auth/list`.
+     `mobile_app_notification_action`. Approver candidates come from `person.*`;
+     `config/auth/list` is read only for the UI's administrator check and for names
+     (decision B1, 2026-10-03). The UI shows the enforced list under "Why admin rights?"
+     (`system.ha.commands`, generated from it).
    - The reason for the admin rights is stated in the README and in the UI when setting up
      the HA access.
    - If Home Assistant lifts the restriction (event added to the allowlist), we switch to a
@@ -338,6 +360,50 @@ the browser with a port of the evaluation rule that passes the conformance cases
 - Restoring an earlier version stores a new version with that version's rules, approval
   settings and rate limit; the validity (valid from, valid until) and the name stay as they
   are, as when applying a template.
+
+### JSON API and live events (`internal/api`, `internal/webui`)
+
+The UI talks only to `api/…` on its own origin (contract: `web/src/lib/api/types.ts`).
+Every request goes through: Supervisor address → user → administrator (section 8) → a
+request limit per user (600 per minute). Writes additionally need `Sec-Fetch-Site:
+same-origin` and the header `X-HM-CSRF` (decision U4): HMAC-SHA256 under a key that lives
+only in the process, over the user and a 12-hour period; valid in its period and the next,
+compared in constant time. Bodies are JSON, at most 64 KiB, no unknown fields; errors carry a
+code and at most a JSON pointer, never internal details or the value sent. There is no CORS.
+
+- **Mandates:** edits go through `Store.Update` (base digest, U9 confirmation); a draft
+  with unchanged rules only renames (no version). A new mandate from a template, an applied
+  template and a pairing approval need the separate confirmation too when the template
+  allows critical actions without approval.
+- **Revocation** of an agent revokes it, its tokens and its active mandate in one
+  transaction, then ends its open approval requests (F1). The emergency stop ends all of them.
+- **Pairing in the UI** uses the same pending grants as `/pair` (`internal/oauth`): an
+  opaque `pairing_id` per request, wrong codes counted per user (5 in 10 minutes) and for
+  everyone (30); a lock refuses even a correct code and names the real remaining time. An
+  approval admits the agent at once; its tokens wait in memory for its next poll, at most
+  until the code expires.
+- **Audit log:** filters on indexed columns of the entries; the search (decision B2) matches
+  the folded search text of each entry (entity, area, agent name as the UI shows it, client
+  ID), written with the entry in the same transaction, plus the IDs of devices and areas
+  whose current name matches, as one JSON parameter (`instr`, no `LIKE`, no variable limit).
+  Folding ignores case and accents (`untrusted.Fold`); client and server clean the text the
+  same way (shared test vectors). Reads have a 5-second limit. The chain is verified every
+  10 minutes and on request (at most every 10 seconds).
+- **Live events:** WebSocket `api/events`; the first and only message of the client is its
+  CSRF token (otherwise close 4419), the administrator check is repeated every 60 seconds
+  (close 4403), a `system` event every 30 seconds is the heartbeat. New audit entries are
+  found by reading the log every second, so changes made on the command line (another
+  process) reach the UI too. A connection that cannot keep up is closed; the UI reconnects
+  and reloads.
+- **Defaults** (`api/settings`: approval timeout, rate limit) are what the editor starts new
+  templates and mandates with; the server stores and checks them but applies them nowhere
+  itself. The bell switch is read by `internal/approval` for every request.
+- **Announcements** of new and ended approval requests run in one worker, in order and
+  outside the agent's request; a request answered before its announcement is not announced.
+- **Embedded UI:** `internal/webui` serves the build from `embed.FS` with the CSP of
+  `web/scripts/serve-ingress.ts` (a test compares them), `no-store` for the page and long
+  caching for hashed assets; `licenses.txt` (the npm packages and, appended at build, the Go
+  modules) is plain text with `nosniff`.
 
 ### i18n and l10n
 

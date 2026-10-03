@@ -27,6 +27,7 @@ Requirements: Go 1.27.1, Node 24 LTS with corepack (`corepack enable pnpm`).
 make check                  # vet, staticcheck, race tests, coverage per package, govulncheck, actionlint
 make web-install web-check  # UI: lint, svelte-check, Vitest, i18n checks, build, pnpm audit
 make web-e2e                # Playwright in German and English under a random Ingress path
+make webui build            # binary with the embedded UI (without webui: a placeholder page)
 ```
 
 Checks run against the `mandate-spec` version pinned in `go.mod`. To develop against a
@@ -53,8 +54,17 @@ from Playwright's CDN, for tests only.
 | `HM_HA_BROWSER_URL` | Home Assistant as the human's browser reaches it, for signing in; default: the origin of `HM_HA_URL` |
 | `HM_APPROVAL_TIMEOUT` | Upper limit in seconds for waiting for an approval, 30–600, default 120; a mandate may only shorten it |
 | `HM_LOG_LEVEL` | `debug`, `info`, `warning` or `error` |
+| `HM_INGRESS_ADDR` | Optional listen address of the UI, e.g. `:8099`. It answers only requests from `172.30.32.2` with the `X-Remote-User-Id` of a Home Assistant administrator, as Home Assistant's Supervisor sends them: for a proxy that does what the Supervisor does, and for the E2E tests. Without it, there is no UI in container mode in v0.1 |
 
 Agents connect to `https://<host>:8765/mcp` with an OAuth access token.
+
+## The local UI
+
+In app mode (Home Assistant OS) the UI is in Home Assistant's sidebar through Ingress. Every
+Home Assistant user can open Ingress panels, so Home-Mandate checks each request itself: it
+must come from the Supervisor, and the user must be a Home Assistant administrator at that
+moment (asked every 30 seconds; if Home Assistant cannot answer, nobody is let in). See
+`docs/ARCHITECTURE.md`, sections 8 and 12.
 
 ## Admitting agents
 
@@ -98,7 +108,7 @@ Approvers who are Home Assistant administrators can additionally answer in the H
 UI; this is switched on per person in the UI, for critical actions separately, because a
 browser session asks for no unlocking the way a phone does.
 
-## Administration until the UI exists
+## Administration on the command line
 
 The administration commands work on the local database only; they are not reachable over
 the network and need no Home Assistant credentials, only `HM_DATA_DIR`. Run them inside the container, e.g. `docker exec -i home-mandate /home-mandate …`.
@@ -130,6 +140,10 @@ A template is a mandate whose `id`, `principal`, `agent`, `created_by`, `created
 - In app mode (Home Assistant OS), admitting agents is not available yet.
 - Changes to mandate templates and approvers are local settings: the specification has no
   audit event for them, so they do not appear in the audit log.
+- In container mode, the UI needs a proxy that acts as the Supervisor (`HM_INGRESS_ADDR`);
+  an own port with sign-in through Home Assistant follows in v0.2.
+- There is no test clock: time windows are tested against the real household time (E2E
+  scenario 9) and at their boundaries by unit tests.
 
 ## Home Assistant permissions
 

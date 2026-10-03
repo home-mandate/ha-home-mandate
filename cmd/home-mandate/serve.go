@@ -5,16 +5,19 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/home-mandate/home-mandate/internal/api"
 	"github.com/home-mandate/home-mandate/internal/approval"
 	"github.com/home-mandate/home-mandate/internal/audit"
 	"github.com/home-mandate/home-mandate/internal/catalog"
@@ -25,6 +28,7 @@ import (
 	"github.com/home-mandate/home-mandate/internal/oauth"
 	"github.com/home-mandate/home-mandate/internal/pdp"
 	"github.com/home-mandate/home-mandate/internal/ratelimit"
+	"github.com/home-mandate/home-mandate/internal/webui"
 )
 
 const (
@@ -34,6 +38,7 @@ const (
 	shutdownTimeout = 5 * time.Second
 	minWriteTimeout = 60 * time.Second
 	approvalSlack   = 30 * time.Second
+	bellCleanup     = 10 * time.Second
 )
 
 // registryEvents keep the catalog current (ARCHITECTURE section 11.2).
@@ -65,6 +70,12 @@ func serve(ctx context.Context, e env) int {
 		logger.Error("audit log is broken, not starting", "broken_at", r.BrokenAt, "error", err)
 		return exitFailure
 	}
+	if n, err := s.log.IndexSearch(ctx); err != nil {
+		logger.Error("cannot index the audit log for the search", "error", err)
+		return exitFailure
+	} else if n > 0 {
+		logger.Info("audit log indexed for the search", "entries", n)
+	}
 	g, err := newGateway(ctx, s, logger)
 	if err != nil {
 		logger.Error("cannot start", "error", err)
@@ -78,15 +89,26 @@ type gateway struct {
 	logger   *slog.Logger
 	client   *ha.Client
 	catalog  *catalog.Catalog
+	api      *api.Server
 	timeZone atomic.Value // string; empty until Home Assistant answered get_config
 	language atomic.Value // string; household language from get_config
 	self     atomic.Value // string; Home-Mandate's own Home Assistant user
+
+	mu        sync.Mutex
+	haSince   time.Time // when the connection was made or lost
+	haVersion string
+	units     map[string]string
+	bellClean sync.Once
+
 	server   *http.Server
 	listener net.Listener
+	ingress  *http.Server // the UI behind Ingress; nil without HM_INGRESS_ADDR in container mode
+	ingressL net.Listener
+	tlsUntil time.Time // expiry of the MCP certificate; zero without TLS
 }
 
 func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, error) {
-	g := &gateway{state: s, logger: logger}
+	g := &gateway{state: s, logger: logger, haSince: time.Now()}
 	g.timeZone.Store("")
 	g.language.Store("")
 	g.self.Store("")
@@ -103,8 +125,30 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		}
 	}
 
+	// The approval service and the API need each other: the API reads open requests and
+	// takes answers, the service asks the API who is an administrator, whether the bell
+	// is on, and tells it about new requests. Both exist before anything runs.
+	// Until the API exists nobody is an administrator, the bell is off and nothing is
+	// announced; Home Assistant events may arrive before newGateway returns.
+	var uiAPI atomic.Pointer[api.Server]
 	approvals := approval.New(approval.Config{Approvers: s.approvers, Notifier: client, Language: g.householdLanguage,
-		MaxTimeout: s.cfg.ApprovalTimeout, ServiceUser: g.serviceUser, Logger: logger})
+		MaxTimeout: s.cfg.ApprovalTimeout, ServiceUser: g.serviceUser, Logger: logger,
+		IsAdmin: func(ctx context.Context, user string) (bool, error) {
+			if a := uiAPI.Load(); a != nil {
+				return a.IsAdmin(ctx, user)
+			}
+			return false, errors.New("starting")
+		},
+		Bell: client.Bell(),
+		BellEnabled: func() bool {
+			a := uiAPI.Load()
+			return a != nil && a.BellEnabled()
+		},
+		OnOpened: func(o approval.Open) {
+			if a := uiAPI.Load(); a != nil {
+				a.ApprovalOpened(o)
+			}
+		}})
 	if _, err := client.SubscribeEvents(ctx, ha.EventMobileAppNotificationAction, approvals.HandleEvent); err != nil {
 		return nil, fmt.Errorf("subscribe %s: %w", ha.EventMobileAppNotificationAction, err)
 	}
@@ -124,7 +168,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	gw := mcp.New(mcp.Config{Resource: resource, ResourceMetadataURL: metadata, Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
 		Limiter: ratelimit.New(nil), Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
-	handler, err := withOAuth(s, gw.Handler(), resource, logger)
+	as, handler, err := withOAuth(s, gw.Handler(), resource, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -134,27 +178,85 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	if g.listener, err = listen(s.cfg, g.server, logger); err != nil {
 		return nil, err
 	}
+	if s.cfg.TLSCert != "" && g.server.TLSConfig != nil {
+		g.tlsUntil = certificateExpiry(g.server.TLSConfig)
+	}
+
+	apiCfg := api.Config{Store: s.store, Log: s.log, Agents: s.agents, Mandates: s.mandates, Admission: s.admission,
+		Approvers: s.approvers, Approvals: approvals, HA: client, Catalog: g.catalog, Status: g.status, UI: webui.Handler(),
+		Principal: s.household, Mode: string(s.cfg.Mode), Version: version, Commit: commit, Retention: retention,
+		TLS: func() (bool, time.Time) { return !g.tlsUntil.IsZero(), g.tlsUntil }, Logger: logger}
+	if as != nil {
+		apiCfg.Pairing = as
+	}
+	// The MCP address is taken from the configuration only, never from a request header.
+	if g.server.TLSConfig != nil && s.cfg.PublicURL != "" {
+		apiCfg.MCPURL = s.cfg.PublicURL + mcp.Path
+	}
+	g.api = api.New(apiCfg)
+	if err := g.api.LoadSettings(ctx); err != nil {
+		g.listener.Close()
+		return nil, err
+	}
+	uiAPI.Store(g.api)
+	s.log.OnCommit(g.api.AuditCommitted)
+	if err := g.listenIngress(); err != nil {
+		g.listener.Close()
+		return nil, err
+	}
 	return g, nil
 }
 
+// listenIngress opens the listener of the UI: always in app mode (:8099), in container
+// mode only with HM_INGRESS_ADDR (decision U3). Whatever the address, the API serves only
+// the Supervisor (172.30.32.2). It has no write timeout: the event stream stays open;
+// every API request has its own time limit.
+func (g *gateway) listenIngress() error {
+	addr := g.state.cfg.IngressAddr
+	if addr == "" {
+		return nil
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("ingress listener: %w", err)
+	}
+	g.ingressL = ln
+	g.ingress = &http.Server{Handler: g.api.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
+		IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10, ErrorLog: slog.NewLogLogger(g.logger.Handler(), slog.LevelWarn)}
+	g.logger.Info("UI listening for Ingress", "addr", ln.Addr().String())
+	return nil
+}
+
+// certificateExpiry is the end of validity of the configured certificate.
+func certificateExpiry(cfg *tls.Config) time.Time {
+	if len(cfg.Certificates) == 0 || len(cfg.Certificates[0].Certificate) == 0 {
+		return time.Time{}
+	}
+	cert, err := x509.ParseCertificate(cfg.Certificates[0].Certificate[0])
+	if err != nil {
+		return time.Time{}
+	}
+	return cert.NotAfter
+}
+
 // withOAuth adds the authorization server next to the MCP endpoint when a public URL is
-// configured; without one, OAuth is off and every token is refused.
-func withOAuth(s *state, mcpHandler http.Handler, resource string, logger *slog.Logger) (http.Handler, error) {
+// configured; without one, OAuth is off, every token is refused and nobody can pair.
+func withOAuth(s *state, mcpHandler http.Handler, resource string, logger *slog.Logger) (*oauth.Server, http.Handler, error) {
 	if s.cfg.PublicURL == "" {
 		logger.Warn("no public URL configured: OAuth is off, agents cannot be admitted")
-		return mcpHandler, nil
+		return nil, mcpHandler, nil
 	}
 	signIn, err := oauth.NewHASignIn(oauth.HASignInConfig{PublicURL: s.cfg.PublicURL, BrowserURL: s.cfg.HABrowserURL,
 		HTTPURL: s.cfg.HAHTTPURL, WebSocketURL: s.cfg.HAURL, Roots: s.cfg.HARootCAs})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	as := oauth.New(oauth.Config{PublicURL: s.cfg.PublicURL, Resource: resource, SignIn: signIn,
 		Clients: oauth.NewCIMDResolver(nil), Admission: s.admission, Tokens: s.agents, Audit: s.log, Logger: logger})
 	mux := http.NewServeMux()
 	mux.Handle(mcp.Path, mcpHandler)
 	mux.Handle("/", as.Handler())
-	return mux, nil
+	return as, mux, nil
 }
 
 // listen opens the MCP listener: TLS 1.3 when a certificate is configured, otherwise
@@ -199,6 +301,14 @@ func (g *gateway) serviceUser() string {
 	return g.self.Load().(string)
 }
 
+// status is the gateway's state for the UI.
+func (g *gateway) status() api.Status {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return api.Status{HAConnected: g.client.Connected(), HASince: g.haSince, HAVersion: g.haVersion, ServiceUser: g.serviceUser(),
+		TimeZone: g.householdTimeZone(), Language: g.language.Load().(string), Units: maps.Clone(g.units)}
+}
+
 // writeTimeout lets a perform_action wait for an approval: the longest wait plus time
 // for the action itself.
 func writeTimeout(approval time.Duration) time.Duration {
@@ -209,11 +319,25 @@ func writeTimeout(approval time.Duration) time.Duration {
 func (g *gateway) onDisconnect() {
 	g.catalog.Invalidate()
 	g.timeZone.Store("")
+	g.mu.Lock()
+	g.haSince = time.Now()
+	g.mu.Unlock()
+	if g.api != nil {
+		go g.api.SystemChanged()
+	}
 }
 
 // onConnect reloads what may have changed while disconnected.
 func (g *gateway) onConnect(ctx context.Context) {
+	g.mu.Lock()
+	g.haSince = time.Now()
+	g.mu.Unlock()
 	g.catalog.RequestRefresh()
+	defer func() {
+		if g.api != nil {
+			go g.api.SystemChanged()
+		}
+	}()
 	cfg, err := g.client.GetConfig(ctx)
 	if err != nil {
 		g.logger.Warn("cannot read the Home Assistant configuration", "error", err)
@@ -221,10 +345,32 @@ func (g *gateway) onConnect(ctx context.Context) {
 	}
 	g.timeZone.Store(cfg.TimeZone)
 	g.language.Store(cfg.Language)
+	g.mu.Lock()
+	g.haVersion, g.units = cfg.Version, maps.Clone(cfg.UnitSystem)
+	g.mu.Unlock()
 	if u, err := g.client.CurrentUser(ctx); err != nil {
 		g.logger.Warn("cannot read Home-Mandate's own Home Assistant user", "error", err)
 	} else {
 		g.self.Store(u.ID)
+	}
+	g.bellClean.Do(func() { go g.clearBells() })
+}
+
+// clearBells removes hints of approval requests a crash left in Home Assistant's
+// notification bell; requests do not survive a restart.
+func (g *gateway) clearBells() {
+	ctx, cancel := context.WithTimeout(context.Background(), bellCleanup)
+	defer cancel()
+	bell := g.client.Bell()
+	ids, err := bell.Leftovers(ctx)
+	if err != nil {
+		g.logger.Warn("cannot list approval hints left in Home Assistant", "error", err)
+		return
+	}
+	for _, id := range ids {
+		if err := bell.Clear(ctx, id); err != nil {
+			g.logger.Warn("approval hint left in Home Assistant not removed", "error", err)
+		}
 	}
 }
 
@@ -235,13 +381,19 @@ func (g *gateway) run(ctx context.Context) int {
 	var serveFailed atomic.Bool
 	wg.Go(func() { g.catalog.Run(ctx, catalogDebounce) })
 	wg.Go(func() { g.retention(ctx) })
-	wg.Go(func() {
-		if err := g.server.Serve(g.listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			g.logger.Error("MCP endpoint stopped", "error", err)
+	wg.Go(func() { g.api.RunTail(ctx) })
+	wg.Go(func() { g.api.RunVerifier(ctx) })
+	serveOn := func(name string, srv *http.Server, ln net.Listener) {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			g.logger.Error(name+" stopped", "error", err)
 			serveFailed.Store(true)
 			cancel()
 		}
-	})
+	}
+	wg.Go(func() { serveOn("MCP endpoint", g.server, g.listener) })
+	if g.ingress != nil {
+		wg.Go(func() { serveOn("UI listener", g.ingress, g.ingressL) })
+	}
 	g.logger.Info("home-mandate started", "version", version, "mode", g.state.cfg.Mode, "household", g.state.household)
 
 	err := g.client.Run(ctx)
@@ -249,6 +401,10 @@ func (g *gateway) run(ctx context.Context) int {
 	shutdownCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer stop()
 	_ = g.server.Shutdown(shutdownCtx)
+	if g.ingress != nil {
+		_ = g.ingress.Shutdown(shutdownCtx)
+		_ = g.ingress.Close() // event streams are hijacked connections; Shutdown does not wait for them
+	}
 	wg.Wait() // nothing may use the database after this returns
 	switch {
 	case errors.Is(err, ha.ErrAuthInvalid):

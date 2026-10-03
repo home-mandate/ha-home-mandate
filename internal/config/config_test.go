@@ -42,7 +42,7 @@ func TestLoadAppMode(t *testing.T) {
 	}
 	if cfg.Mode != ModeApp || cfg.HAURL != "ws://supervisor/core/websocket" || string(cfg.HAToken) != "sup-secret" ||
 		cfg.DataDir != "/data" || cfg.TLSCert != "/ssl/fullchain.pem" || cfg.TLSKey != "/ssl/privkey.pem" ||
-		cfg.MCPAddr != ":8765" || cfg.ApprovalTimeout != 2*time.Minute || cfg.LogLevel != slog.LevelInfo {
+		cfg.MCPAddr != ":8765" || cfg.IngressAddr != ":8099" || cfg.ApprovalTimeout != 2*time.Minute || cfg.LogLevel != slog.LevelInfo {
 		t.Errorf("config = %+v", cfg)
 	}
 }
@@ -100,7 +100,7 @@ func TestLoadContainerMode(t *testing.T) {
 	}
 	if cfg.Mode != ModeContainer || cfg.HAURL != "wss://ha.example.org/api/websocket" || string(cfg.HAToken) != "long-lived" ||
 		cfg.DataDir != "/var/lib/home-mandate" || cfg.MCPAddr != "0.0.0.0:9000" || cfg.ApprovalTimeout != DefaultApprovalTimeout ||
-		cfg.LogLevel != slog.LevelWarn {
+		cfg.LogLevel != slog.LevelWarn || cfg.IngressAddr != "" {
 		t.Errorf("config = %+v", cfg)
 	}
 }
@@ -245,6 +245,34 @@ func TestPDPAddrMustBeLoopback(t *testing.T) {
 		cfg, err := Load(env(m), files(nil))
 		if (err == nil) != ok || ok && cfg.PDPAddr != addr {
 			t.Errorf("HM_PDP_ADDR=%s: %+v, %v", addr, cfg.PDPAddr, err)
+		}
+	}
+}
+
+// The UI listener is opt-in in container mode (decision U3); its address is checked,
+// the source of requests is checked by internal/api whatever the address.
+func TestIngressAddr(t *testing.T) {
+	base := map[string]string{"HM_HA_URL": "ws://localhost:8123/api/websocket", "HM_HA_TOKEN": "t"}
+	for addr, ok := range map[string]bool{
+		"":               true,
+		":8099":          true,
+		"0.0.0.0:8099":   true,
+		"[::]:8099":      true,
+		"8099":           false,
+		":0":             false,
+		":65536":         false,
+		":http":          false,
+		"host:":          false,
+		"a:b:8099":       false,
+		"172.30.32.1:-1": false,
+	} {
+		m := map[string]string{"HM_INGRESS_ADDR": addr}
+		for k, v := range base {
+			m[k] = v
+		}
+		cfg, err := Load(env(m), files(nil))
+		if (err == nil) != ok || ok && cfg.IngressAddr != addr || !ok && !errors.Is(err, ErrInvalid) {
+			t.Errorf("HM_INGRESS_ADDR=%q: %q, %v", addr, cfg.IngressAddr, err)
 		}
 	}
 }

@@ -181,6 +181,11 @@ export interface PairingApprove extends PairingDecision {
   template: string;
   /** Name of the new mandate; default: the template name. */
   mandate_name?: string;
+  /**
+   * The separate confirmation (decision U9) for a template whose rules allow critical
+   * actions without approval; without it the server answers "critical_confirmation_required".
+   */
+  confirm_critical?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -344,6 +349,8 @@ export interface MandateCreate {
   template: string;
   /** Default: the template name. */
   name?: string;
+  /** As for PairingApprove: needed for a template with allow_critical rules (U9). */
+  confirm_critical?: boolean;
 }
 
 /**

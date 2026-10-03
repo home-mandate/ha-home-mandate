@@ -21,7 +21,7 @@ We acknowledge within 72 hours and disclose in a coordinated manner.
 | Attacker / scenario | Countermeasure | Status |
 |---|---|---|
 | **Manipulated agent** (prompt injection via website, e-mail, document) tries to open a door | Decision outside the model; locks default to `ask`; the agent's reason is sanitized and marked as unverified in approval requests, which also show the service data; at most 2 pending approval requests per agent; rate limit against loops | done |
-| Agent tries to extend its own permissions | Administrative functions are not reachable via MCP; mandates can only be changed through the UI by HA admins | planned |
+| Agent tries to extend its own permissions | Administrative functions are not reachable via MCP (the API is served only on the Ingress listener); mandates can only be changed through the UI by HA admins | done |
 | Agent explores devices outside its mandate | Unreadable devices are neither listed nor mentioned in error messages | planned |
 | Stolen agent token | Access tokens 10 minutes, bound to the MCP resource; refresh tokens bound to the agent's OAuth client, rotated, reuse revokes the whole family; agent status, revocation and emergency stop read on every request and again after an approval | done |
 | Agent admitted without a human | No open registration; every admission needs an HA administrator signed in through HA, a consent with CSRF token and same origin, PKCE S256 or a pairing code (34 bits, 10 minutes, locks after wrong codes); client metadata fetched only from public addresses (SSRF) | done |
@@ -30,9 +30,16 @@ We acknowledge within 72 hours and disclose in a coordinated manner.
 | Someone who already holds an HA admin token | Outside our control: they could control devices directly anyway. Documentation advises never giving agents HA tokens directly | – |
 | Home-Mandate's HA user is an admin (container mode, needed for approval answers) | Dedicated user; fixed allowlist of WebSocket commands and event types in `internal/ha`, enforced before sending and covered by negative tests | done |
 | Compromised supply chain | Pinned dependencies and base images, lockfile with integrity hashes, no install scripts, 7-day minimum release age, `govulncheck` and `pnpm audit` in CI; reproducible builds, signed images, SBOM | pinning and scanning: done; signing and SBOM: planned |
-| Database handed out (backup, support) | Database owner-only (0600); tokens only as hashes; HA credentials encrypted with a separate key | file permissions and token hashing: done; encryption: planned |
+| Database handed out (backup, support) | Database owner-only (0600); tokens only as hashes; the HA credentials are never stored (app mode: `SUPERVISOR_TOKEN`; container mode: environment or a 0600 file), a test checks the data directory for them | done |
+| Someone else in the household, or a page on another site, uses the local UI | Only requests from the Supervisor (172.30.32.2), only the HA user the Supervisor names, only if an administrator now (checked with HA, 30 s, fail closed); writes need `Sec-Fetch-Site: same-origin` and a per-user HMAC CSRF token, the event stream the token as its first message; strict CSP without inline code; request limits per user | done |
 
 ### Deliberately not covered in v0.1
+- Script running in Home Assistant's own origin: Home Assistant serves its frontend, custom
+  cards and every Ingress panel of every app under one origin. Code that runs there (an XSS
+  in another app's panel, a malicious custom card) is "same-origin" for Home-Mandate's UI,
+  can read the session's CSRF token and act with the rights of the signed-in administrator,
+  `confirm_critical` included. Home-Mandate cannot separate itself from that origin; it
+  keeps its own pages free of injected code (CSP) and logs every change with its actor.
 - Compromised Home Assistant host (then everything is lost)
 - Attacker with root on the host
 - Cloud scenarios (come with Plus, separate threat model)

@@ -118,9 +118,9 @@ func TestWithOAuth(t *testing.T) {
 	logger := slog.New(slog.DiscardHandler)
 
 	// Without a public URL, only the MCP endpoint is served.
-	h, err := withOAuth(s, mcpHandler, "", logger)
-	if err != nil {
-		t.Fatal(err)
+	as, h, err := withOAuth(s, mcpHandler, "", logger)
+	if err != nil || as != nil {
+		t.Fatal(as, err)
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil))
@@ -130,9 +130,9 @@ func TestWithOAuth(t *testing.T) {
 
 	s.cfg = config.Config{PublicURL: "https://hm.example.org", HABrowserURL: "https://ha.example.org",
 		HAHTTPURL: "https://ha.example.org", HAURL: "wss://ha.example.org/api/websocket"}
-	h, err = withOAuth(s, mcpHandler, "https://hm.example.org/mcp", logger)
-	if err != nil {
-		t.Fatal(err)
+	as, h, err = withOAuth(s, mcpHandler, "https://hm.example.org/mcp", logger)
+	if err != nil || as == nil {
+		t.Fatal(as, err)
 	}
 	for path, want := range map[string]int{"/.well-known/oauth-authorization-server": http.StatusOK, "/mcp": http.StatusTeapot} {
 		rec := httptest.NewRecorder()
@@ -143,7 +143,7 @@ func TestWithOAuth(t *testing.T) {
 	}
 
 	s.cfg.HAHTTPURL = "http://ha.example.org" // plaintext on the LAN
-	if _, err := withOAuth(s, mcpHandler, "https://hm.example.org/mcp", logger); err == nil {
+	if _, _, err := withOAuth(s, mcpHandler, "https://hm.example.org/mcp", logger); err == nil {
 		t.Error("plaintext Home Assistant accepted")
 	}
 }

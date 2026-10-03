@@ -39,6 +39,7 @@ const (
 	appSSLDir     = "/ssl"
 	supervisorWS  = "ws://supervisor/core/websocket"
 	mcpPort       = "8765"
+	ingressPort   = "8099"
 	minApproval   = 30 * time.Second
 	maxApproval   = 600 * time.Second
 	maxTokenBytes = 4096
@@ -63,6 +64,10 @@ type Config struct {
 	MCPAddr string
 	// PDPAddr, if set, serves the AuthZEN endpoint for other gateways; loopback only.
 	PDPAddr string
+	// IngressAddr is the listen address of the local UI behind Home Assistant Ingress:
+	// always :8099 in app mode, opt-in through HM_INGRESS_ADDR in container mode (decision
+	// U3). Whatever the address, only requests from the Supervisor (172.30.32.2) are served.
+	IngressAddr string
 	// PublicURL is the origin agents and browsers reach Home-Mandate at, e.g.
 	// https://hm.example.org:8765: OAuth issuer, base of the MCP resource and of the
 	// sign-in pages. Empty means OAuth is off. Plaintext only for loopback (decision 1).
@@ -81,8 +86,8 @@ type Config struct {
 
 // String omits nothing but the token, which Secret redacts.
 func (c Config) String() string {
-	return fmt.Sprintf("mode=%s data=%s ha=%s token=%s tls=%t mcp=%s public=%s approval=%s log=%s",
-		c.Mode, c.DataDir, c.HAURL, c.HAToken, c.TLSCert != "", c.MCPAddr, c.PublicURL, c.ApprovalTimeout, c.LogLevel)
+	return fmt.Sprintf("mode=%s data=%s ha=%s token=%s tls=%t mcp=%s ingress=%s public=%s approval=%s log=%s",
+		c.Mode, c.DataDir, c.HAURL, c.HAToken, c.TLSCert != "", c.MCPAddr, c.IngressAddr, c.PublicURL, c.ApprovalTimeout, c.LogLevel)
 }
 
 // DataDir returns the data directory without reading the rest of the configuration, so
@@ -140,6 +145,7 @@ func loadApp(token ha.Secret, readFile func(string) ([]byte, error)) (Config, er
 	if cfg.LogLevel, err = logLevel(opts.LogLevel); err != nil {
 		return Config{}, err
 	}
+	cfg.IngressAddr = ":" + ingressPort
 	cfg.MCPAddr = net.JoinHostPort("127.0.0.1", mcpPort)
 	if cfg.TLSCert != "" {
 		cfg.MCPAddr = ":" + mcpPort
@@ -201,6 +207,9 @@ func loadContainer(getenv func(string) string, readFile func(string) ([]byte, er
 		if _, err := mcpAddr(cfg.PDPAddr, false); err != nil {
 			return Config{}, fmt.Errorf("%w: HM_PDP_ADDR must be a loopback address", ErrInvalid)
 		}
+	}
+	if cfg.IngressAddr, err = ingressAddr(getenv("HM_INGRESS_ADDR")); err != nil {
+		return Config{}, err
 	}
 	cfg.ApprovalTimeout = DefaultApprovalTimeout
 	if s := getenv("HM_APPROVAL_TIMEOUT"); s != "" {
@@ -282,6 +291,21 @@ func mcpAddr(addr string, tls bool) (string, error) {
 		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
 			return "", fmt.Errorf("%w: without TLS the MCP endpoint may only listen on loopback", ErrInvalid)
 		}
+	}
+	return addr, nil
+}
+
+// ingressAddr accepts host:port with a numeric port, or nothing (no UI listener).
+func ingressAddr(addr string) (string, error) {
+	if addr == "" {
+		return "", nil
+	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", fmt.Errorf("%w: HM_INGRESS_ADDR: %w", ErrInvalid, err)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return "", fmt.Errorf("%w: HM_INGRESS_ADDR needs a port between 1 and 65535", ErrInvalid)
 	}
 	return addr, nil
 }

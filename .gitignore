@@ -8,6 +8,10 @@ cover.out
 *.test
 
 # UI
+# The built UI is copied into internal/webui/dist for embedding (make webui, Dockerfile);
+# only the placeholder that keeps the directory is checked in.
+/internal/webui/dist/*
+!/internal/webui/dist/.keep
 node_modules/
 web/dist/
 web/coverage/

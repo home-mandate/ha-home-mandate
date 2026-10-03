@@ -68,7 +68,11 @@ protection class, expired, not yet valid) needs its own named test.
 6. Revoke agent in the UI → next request with the old token denied.
 7. Emergency stop → all agents blocked immediately; lifting it → only newly issued tokens work.
 8. Exceed the rate limit → refusal from request n+1, logged.
-9. Mandate with a time window: request outside of it (test clock) → denied.
+9. Mandate with a time window: request outside of it → denied. There is no test clock in
+   the release image (it would be a security-relevant switch, decision U5): the test computes
+   the household's local time and sets a window that does not hold now (now + 2 h to + 3 h,
+   across midnight handled). The boundaries (midnight, DST change) are unit tests of
+   `mandate-spec` and `internal/pdp`.
 10. `user-plain` tries to admit an agent → denied.
 11. Restart Home-Mandate → mandates, agents and audit log unchanged, audit chain valid.
 12. HA unreachable → requests denied with a clear error, no queue that executes later.
@@ -96,7 +100,9 @@ Every line is at least one test. New attack ideas are added here before they are
 - Client metadata unreachable, wrong format, client ID ≠ URL → rejected
 - Pairing code wrong, expired, used more than once, brute force → locked after n attempts
 - Pairing in the UI: approve or deny with a `pairing_id` that is not the request behind the code (code reissued or request replaced since the check) → `conflict`, nobody admitted; two approvals at once → exactly one wins
-- Pairing lock: a locked session or a global lock also refuses a correct code (no oracle); `Retry-After` is the real remaining time; wrong code and unknown request look alike; the code itself is never logged
+- Pairing lock: a locked session or a global lock also refuses a correct code (no oracle); `Retry-After` is the real remaining time; wrong code and unknown request look alike; the code itself is never logged; parallel wrong codes of one session are counted one after the other (no burst past the limit); the global lock is shared by `/pair` and the UI
+- Pairing approved shortly before the code expires → the tokens wait at least 2 minutes for the agent's poll, no admitted agent without tokens
+- Applying a template that lacks rules, approval or limits → `invalid_mandate`, nothing stored
 - Free client identifier shaped like a URL (`https://…`) → refused, so it can never show as a checked domain
 - `requested_from` behind a proxy: `X-Forwarded-For` or `Forwarded` from a peer outside the configured trusted proxies → ignored; the address is normalized and at most 45 characters
 - Redirect URIs from client metadata: not `https` (except loopback), with userinfo, fragment, wildcards, control, bidi or format characters, more than 10 or longer than 2048 characters → refused; a later metadata fetch never widens the admitted set
@@ -131,7 +137,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - Answer on either channel after the timeout, a revocation or the emergency stop → no effect
 - Revocation or emergency stop in the gateway while a request is open → ended at once, no further notification sent, recorded without approval, denied with the cause
 - Approver removed while a request is open → their answer counts as one from anyone else
-- Approvers API (`PUT|DELETE api/approvers/{id}`, test): without an admin session or CSRF token → rejected; a device that is not in the registry, more than 5, a duplicate, no channel, `ui_critical` without `ui`, the UI channel for someone who is no administrator now (checked live, fail closed) → `invalid_input` naming only the field; Home-Mandate's own HA user as approver → refused; a change based on an outdated state → `conflict`
+- Approvers API (`PUT|DELETE api/approvers/{id}`, test): without an admin session or CSRF token → rejected; a device that is not in the registry, more than 5, a duplicate, no channel, `ui_critical` without `ui`, the UI channel for someone who is no administrator now (checked live, fail closed) → `invalid_input` naming only the field; Home-Mandate's own HA user, a system user or someone without a person → refused; the channels of a person are replaced as a whole in one transaction (the UI applies each change to the newest state; the contract has no version for approvers)
 - Reach per kind of request and channel (push, UI only, none) matches the channels and the admin role now; candidate devices carry their owner, and the suggestion for critical requests is on only for the person's own iOS devices
 - Test notification: only to the approver's stored devices, neutral text without action buttons or nonce, rate limited per approver and overall (`Retry-After`)
 - `system.ha.commands` is generated from the allowlist `internal/ha` really uses (a test fails when they differ); `licenses.txt` is served as `text/plain` with `nosniff`
@@ -150,6 +156,13 @@ Every line is at least one test. New attack ideas are added here before they are
 
 **UI**
 - Request without CSRF token → rejected
+- CSRF token of another user, of a former run, older than two 12-hour periods, twice in the request, or a write without `Sec-Fetch-Site: same-origin` → rejected; the event stream without the token as first message (wrong, extra field, binary, none within 10 s) → closed with 4419, longer than 1 KiB → closed with 1009, from another site (`Sec-Fetch-Site`, or without it an `Origin` other than the host the browser asked for, `X-Forwarded-Host` behind Ingress) or without `Origin` → refused
+- Administrator check: no or two `X-Remote-User-Id`, malformed, unknown user, no administrator → refused (also for the UI's event stream and unknown paths); Home Assistant not reachable → 503, never an older answer; rights withdrawn → refused within 30 s, an open event stream closed with 4403
+- Request limit per user, test notifications per approver and overall, approval answers per person, verification of the audit log → `rate_limited` with the real `Retry-After`
+- Body over 64 KiB, not JSON, unknown or mistyped fields, several objects, a body where none belongs → refused naming at most the field
+- Mandate draft with fields beyond the editable ones (`principal`, `default`, `id`) → refused; the identity of a version always comes from the server; a rename without changed rules stores no version but still needs the current version as its base
+- Database failure on any endpoint → `internal`, without details, nothing half done (revocation in one transaction)
+- The Home Assistant token never in the data directory or the log
 - Ingress request from a source other than 172.30.32.2 → rejected
 - Input containing HTML/script → correctly escaped (Playwright checks the rendering)
 - Content Security Policy: Playwright reports every CSP violation as a test failure
