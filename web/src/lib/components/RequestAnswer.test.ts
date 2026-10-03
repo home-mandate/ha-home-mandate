@@ -32,7 +32,7 @@ describe('RequestAnswer', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     const group = screen.getByRole('group', { name: 'Confirm approval' });
     const sentence = group.querySelector('p') as HTMLElement;
-    expect(sentence.textContent?.replace(/\s+/g, ' ').trim()).toBe('Claude Codeclaude.ai will then unlock Haustür.');
+    expect(sentence.textContent?.replace(/\s+/g, ' ').trim()).toBe('Claude Code, unverifiedclaude.ai will then unlock Haustür.');
     expect(within(sentence).getByText('Claude Code').getAttribute('title')).toBe('Stated by the agent, unverified');
     expect(within(sentence).getByText('Haustür').tagName).toBe('BDI');
   });

@@ -24,7 +24,7 @@ describe('RequestCard', () => {
     show();
     const card = screen.getByRole('article');
     const heading = within(card).getByRole('heading');
-    expect(heading.textContent).toBe('Claude Code wants to unlock Haustür');
+    expect(heading.textContent).toBe('Claude Code, unverified wants to unlock Haustür');
     expect(within(heading).getByText('Claude Code').getAttribute('title')).toBe('Stated by the agent, unverified');
     expect(within(card).getByText('claude.ai').tagName).toBe('CODE');
   });

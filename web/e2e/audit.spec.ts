@@ -74,3 +74,16 @@ test('mobile: filters fold away, an entry opens on its own page, nothing scrolls
   await expect(page.getByRole('heading', { level: 1, name: t.detail })).toBeVisible();
   expect(await pageScroll(page)).toBe(0);
 });
+
+test('on a phone, back from an entry returns to the filtered list with the focus on that entry', async ({ page }, info) => {
+  const t = text[info.project.name as Lang];
+  await page.setViewportSize({ width: 375, height: 700 });
+  await page.goto('./#/audit?decision=ask');
+  await expect(page.getByRole('search').getByRole('status')).toHaveText(t.asks);
+  await page.locator('a.row[data-seq="8"]').click();
+  await expect(page.getByRole('heading', { level: 1, name: t.detail })).toBeVisible();
+  await page.locator('a.back').click();
+  await expect(page).toHaveURL(/#\/audit\?decision=ask$/);
+  await expect(page.getByRole('search').getByRole('status')).toHaveText(t.asks);
+  await expect(page.locator('a.row[data-seq="8"]')).toBeFocused();
+});

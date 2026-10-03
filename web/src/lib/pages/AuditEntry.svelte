@@ -40,11 +40,13 @@
 
   onMount(() => void loader.run());
 
+  // Back to the list it came from (filters, position), else to the unfiltered log.
+  const back = $derived(app.auditReturn?.seq === seq ? app.auditReturn.list : href({ name: 'audit', query: {} }));
   const ctx = $derived({ locale: getLocale(), timeZone: app.session?.household.time_zone ?? 'UTC' });
   const chain = $derived(app.system?.chain ?? null);
 </script>
 
-<a class="back" href={href({ name: 'audit', query: {} })}><Icon name="back" size={16} />{m.audit_title()}</a>
+<a class="back" href={back}><Icon name="back" size={16} />{m.audit_title()}</a>
 
 {#if loader.status === 'error'}
   <ErrorState title={m.audit_error_title()} body={m.audit_error_body()} onretry={() => void loader.run()} />

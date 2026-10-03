@@ -37,7 +37,9 @@ describe('Agents', () => {
     const rows = within(table).getAllByRole('row').slice(1);
     expect(rows).toHaveLength(5);
     const claude = within(rows[1] as HTMLElement);
-    const [name, mandate] = claude.getAllByRole('link', { name: 'Claude Code' });
+    // The agent's name is its claim, so screen readers hear ", unverified"; the mandate link is the mandate's name.
+    const name = claude.getByRole('link', { name: 'Claude Code, unverified' });
+    const mandate = claude.getByRole('link', { name: 'Claude Code' });
     expect(name?.getAttribute('href')).toBe('#/agents/https%3A%2F%2Fclaude.ai%2Foauth%2Fclaude-code-client-metadata');
     expect(mandate?.getAttribute('href')).toBe('#/mandates/mandate-claude');
     expect(claude.getByText('claude.ai')).toBeTruthy();

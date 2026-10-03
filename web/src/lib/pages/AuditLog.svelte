@@ -51,6 +51,8 @@
   let { app, now, query }: Props = $props();
 
   const PAGE = 50;
+  /** Most entries loaded again when coming back from an entry. */
+  const MAX_RESTORE = 500;
   const NEW_CHECK_MS = 500;
   const SEPARATOR = ' · ';
 
@@ -72,9 +74,29 @@
 
   const serverNow = () => Date.now() - app.offsetMs;
 
+  /** The list without the desktop selection, as a hash: what an entry page leads back to. */
+  const listHash = () => href({ name: 'audit', query: toQuery({ ...filters, seq: null }) });
+
+  // Coming back from an entry's own page to the same list: load as far as before, then focus that entry.
+  const restore = untrack(() => {
+    const back = app.auditReturn;
+    app.auditReturn = null;
+    return back && back.list === listHash() ? back : null;
+  });
+  let want = restore ? Math.min(restore.count, MAX_RESTORE) : PAGE;
+
   const list = new Loader<Page>(async () => {
-    const page = await app.api.audit({ ...toAuditQuery(filters, serverNow()), limit: PAGE });
-    return { entries: page.entries, total: page.total, next: page.next_before };
+    const query = toAuditQuery(filters, serverNow());
+    const first = await app.api.audit({ ...query, limit: PAGE });
+    let entries = first.entries;
+    let next = first.next_before;
+    while (entries.length < want && next !== null) {
+      const page = await app.api.audit({ ...query, limit: PAGE, before: next });
+      entries = [...entries, ...page.entries];
+      next = page.next_before;
+    }
+    want = PAGE;
+    return { entries, total: first.total, next };
   });
 
   const meta = new Loader<Meta>(async () => {
@@ -118,7 +140,13 @@
       app.on('approval.closed', () => void meta.run()),
       app.on('agents.changed', () => void meta.run()),
     ];
-    void list.run();
+    void list.run().then(async () => {
+      if (!restore) return;
+      await tick();
+      const row = entriesSection?.querySelector<HTMLElement>(`[data-seq="${restore.seq}"]`);
+      row?.focus();
+      row?.scrollIntoView({ block: 'center' });
+    });
     void meta.run();
     return () => {
       clearTimeout(timer);
@@ -148,7 +176,11 @@
   }
 
   async function select(event: MouseEvent, entry: AuditEntry) {
-    if (!desktop.matches) return; // mobile: the link opens the entry's own page
+    if (!desktop.matches) {
+      // Mobile: the link opens the entry's own page; remember the way back.
+      app.auditReturn = { list: listHash(), seq: entry.seq, count: list.data?.entries.length ?? 0 };
+      return;
+    }
     // Open in a new tab or window stays what the browser does.
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();

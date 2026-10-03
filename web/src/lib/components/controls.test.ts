@@ -54,12 +54,15 @@ describe('Button', () => {
     expect(screen.getByRole('button').className).toContain('wide');
   });
 
-  it('shows loading and ignores clicks while busy', async () => {
+  it('keeps its name while busy, shows the spinner instead of the icon and ignores clicks', async () => {
     const onclick = vi.fn();
-    render(Button, { busy: true, onclick, children: text('Save') });
-    const button = screen.getByRole('button');
+    const { container } = render(Button, { busy: true, icon: 'check', onclick, children: text('Save') });
+    // The focused button must not turn into "Loading" for screen readers (review L31).
+    const button = screen.getByRole('button', { name: 'Save' });
     expect(button.getAttribute('aria-busy')).toBe('true');
-    expect(button.textContent).toContain('Loading');
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(container.querySelector('.spinner')).not.toBeNull();
+    expect(container.querySelector('svg')).toBeNull();
     await fireEvent.click(button);
     expect(onclick).not.toHaveBeenCalled();
   });

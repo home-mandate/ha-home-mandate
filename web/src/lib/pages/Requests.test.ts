@@ -109,7 +109,7 @@ describe('Requests', () => {
     await fireEvent.click(approve);
     expect(spy).not.toHaveBeenCalled();
     const group = within(section).getByRole('group', { name: 'Confirm approval' });
-    expect(plain(group.querySelector('p')?.textContent)).toBe('Claude Codeclaude.ai will then unlock Haustür.');
+    expect(plain(group.querySelector('p')?.textContent)).toBe('Claude Code, unverifiedclaude.ai will then unlock Haustür.');
     await tick();
     expect(document.activeElement).toBe(within(group).getByRole('button', { name: 'Yes, approve' }));
     await fireEvent.click(within(group).getByRole('button', { name: 'Cancel' }));

@@ -203,6 +203,14 @@ describe('untrusted agent text', () => {
     expect(container.querySelector('.domain')?.textContent).toBe('agent.example');
   });
 
+  it('tells screen readers that the name is unverified, outside the isolated name', () => {
+    const { container } = render(AgentName, { name: 'Tablet' });
+    const hint = container.querySelector('.agent > .hm-visually-hidden');
+    expect(hint?.textContent).toBe(', unverified');
+    expect(container.querySelector('bdi')?.textContent).toBe('Tablet');
+    expect(container.querySelector('.agent')?.textContent).toBe('Tablet, unverified');
+  });
+
   it('marks the identifier of a paired agent as unverified, never as a domain', () => {
     const { container } = render(AgentName, { name: 'Tablet', client: 'accounts.google.com' });
     expect(container.querySelector('.domain')).toBeNull();

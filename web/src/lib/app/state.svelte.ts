@@ -19,6 +19,15 @@ type EventType = ServerEvent['type'];
 type Listener<E> = (event: E) => void;
 type Topic = EventType | '*' | 'reconnected';
 
+/** Where the audit log was when an entry was opened on its own page (mobile), to come back to it. */
+export interface AuditReturn {
+  /** Hash of the list with its filters, e.g. "#/audit?period=7d". */
+  list: string;
+  seq: number;
+  /** Entries that were loaded ("load more"). */
+  count: number;
+}
+
 const RENEW_FIRST_MS = 1000;
 const RENEW_MAX_MS = 30_000;
 
@@ -35,6 +44,8 @@ export class AppState {
   offsetMs = $state(0);
   /** Unsaved edits of mandates by mandate id, so leaving the editor does not lose them. */
   readonly unsaved = new SvelteMap<string, UnsavedMandate>();
+  /** Set when an audit entry opens on its own page; the list takes it back once (review M19). */
+  auditReturn: AuditReturn | null = null;
 
   readonly #api: ApiClient;
   readonly #now: () => number;

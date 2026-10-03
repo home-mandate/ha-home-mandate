@@ -1,14 +1,15 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!--
   Countdown of an approval request (role="timer"), on the server's clock (offsetMs from
-  ui/countdown.ts). The bar shrinks; under 15 s nothing changes colour or blinks. Screen
-  readers hear only 60, 30 and 10 seconds and the end.
+  ui/countdown.ts). The bar shrinks; under 15 s nothing changes colour or blinks. The timer is
+  named "expires in" with the time in words (design); screen readers hear only 60, 30 and
+  10 seconds and the end, and nothing when it appears (review M8).
 -->
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte';
   import { getLocale } from '../paraglide/runtime.js';
   import { m } from '../i18n.ts';
-  import { announcement, formatClock, remainingSeconds } from '../ui/countdown.ts';
+  import { announcement, formatClock, remainingSeconds, spokenDuration } from '../ui/countdown.ts';
 
   const TICK_MS = 250;
 
@@ -34,12 +35,8 @@
 
   function update() {
     left = remainingSeconds(expiresAt, offsetMs, now());
-    if (last === null && left > 0 && left <= 60) {
-      say(left); // a request that starts under a minute says once how long it has
-    } else {
-      const at = announcement(last, left);
-      if (at !== null) say(at);
-    }
+    const at = announcement(last, left);
+    if (at !== null) say(at);
     last = left;
   }
 
@@ -57,9 +54,11 @@
   onDestroy(() => clearInterval(timer));
 
   const share = $derived(totalSeconds > 0 ? Math.min(1, left / totalSeconds) : 0);
+  const label = $derived(`${m.request_expires_in()} ${spokenDuration(left, getLocale())}`);
 </script>
 
-<div class="countdown {size}" class:expired={left === 0} role="timer" aria-live="off">
+<div class="countdown {size}" class:expired={left === 0} role="timer" aria-live="off" aria-label={label}>
+  <span class="caption">{m.request_expires_in()}</span>
   <span class="value">{formatClock(left, getLocale())}</span>
   <span class="track" aria-hidden="true"><span class="fill" style:inline-size="{share * 100}%"></span></span>
   <span class="hm-visually-hidden" aria-live="polite">{spoken}</span>
@@ -71,6 +70,10 @@
     flex-direction: column;
     gap: var(--hm-space-1);
     color: var(--hm-color-ask-fg);
+  }
+  .caption {
+    font-size: var(--hm-font-size-xs);
+    color: var(--hm-color-text-subtle);
   }
   .value {
     font-family: var(--hm-font-mono);

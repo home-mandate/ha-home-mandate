@@ -7,7 +7,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import type { HTMLButtonAttributes } from 'svelte/elements';
-  import { m } from '../i18n.ts';
   import Icon, { type IconName } from './Icon.svelte';
   import Spinner from './Spinner.svelte';
 
@@ -54,13 +53,9 @@
   aria-busy={busy ? 'true' : undefined}
   onclick={click}
 >
-  {#if busy}
-    <Spinner />
-    <span>{m.common_loading()}</span>
-  {:else}
-    {#if icon}<Icon name={icon} />{/if}
-    <span>{@render children()}</span>
-  {/if}
+  <!-- Busy keeps the label: the focused button must not change its name (aria-busy says the rest). -->
+  {#if busy}<Spinner />{:else if icon}<Icon name={icon} />{/if}
+  <span>{@render children()}</span>
 </button>
 
 <style>

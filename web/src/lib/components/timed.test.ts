@@ -46,6 +46,19 @@ describe('Countdown', () => {
     expect(screen.getByRole('timer').textContent).toContain('0:00');
   });
 
+  it('is named "expires in" with the time in words, and says nothing when it appears', async () => {
+    clock = 30_000; // 40 s left: under a minute from the start
+    const { container } = render(Countdown, { expiresAt, totalSeconds: 120, offsetMs: 0, now });
+    const live = () => container.querySelector('[aria-live="polite"]')?.textContent;
+    expect(screen.getByRole('timer', { name: 'expires in 40 seconds' })).toBeTruthy();
+    expect(screen.getByText('expires in')).toBeTruthy();
+    await advance(5_000);
+    expect(live()).toBe('');
+    expect(screen.getByRole('timer', { name: 'expires in 35 seconds' })).toBeTruthy();
+    await advance(5_000);
+    await vi.waitFor(() => expect(live()).toBe('30 seconds left'));
+  });
+
   it('uses the offset between browser and server clock', () => {
     // Browser 10 s ahead: at browser time 10 s it is 0 s on the server → 70 s left.
     clock = 10_000;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import { announcement, clockOffset, formatClock, remainingSeconds } from './countdown.ts';
+import { announcement, clockOffset, formatClock, remainingSeconds, spokenDuration } from './countdown.ts';
 
 describe('clockOffset', () => {
   it('is how far the browser clock is ahead of the server', () => {
@@ -44,6 +44,16 @@ describe('announcement', () => {
     [70, 20, 30],
   ] as const)('from %s to %s announces %s', (prev, next, want) => {
     expect(announcement(prev, next)).toBe(want);
+  });
+});
+
+describe('spokenDuration', () => {
+  it('says minutes and seconds in words, leaving out zero minutes', () => {
+    expect(spokenDuration(90, 'en')).toBe('1 minute 30 seconds');
+    expect(spokenDuration(40, 'de')).toBe('40 Sekunden');
+    expect(spokenDuration(120, 'de')).toBe('2 Minuten 0 Sekunden');
+    expect(spokenDuration(1, 'en')).toBe('1 second');
+    expect(spokenDuration(0, 'en')).toBe('0 seconds');
   });
 });
 

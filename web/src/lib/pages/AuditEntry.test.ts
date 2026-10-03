@@ -33,6 +33,15 @@ describe('AuditEntry', () => {
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Entry no. 9');
   });
 
+  it('leads back to the list it was opened from, with its filters', async () => {
+    const { app } = await start(9, {}, () => {});
+    app.auditReturn = { list: '#/audit?period=7d', seq: 9, count: 50 };
+    cleanup();
+    render(AuditEntry, { app, seq: 9 });
+    await screen.findByRole('article', { name: 'Entry no. 9' });
+    expect(screen.getByRole('link', { name: 'Audit log' }).getAttribute('href')).toBe('#/audit?period=7d');
+  });
+
   it('says so when the entry does not exist (any more)', async () => {
     await start(999);
     expect(await screen.findByText('Page not found')).toBeTruthy();

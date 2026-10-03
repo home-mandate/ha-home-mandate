@@ -2,8 +2,9 @@
 <!--
   The name an agent claims: untrusted (design README section 7). Cleaned (no control or
   bidi characters, no line breaks), isolated with <bdi>, dotted underline and the title
-  "agent's claim, unverified". With `client` the client identity follows: a checked domain
-  in mono, or a paired agent's own identifier marked "unverified".
+  "agent's claim, unverified"; screen readers hear ", unverified" after the name, since a
+  title on plain text is not announced. With `client` the client identity follows: a checked
+  domain in mono, or a paired agent's own identifier marked "unverified".
 -->
 <script lang="ts">
   import { m } from '../i18n.ts';
@@ -19,11 +20,15 @@
   }
 
   let { name, client, verified }: Props = $props();
+
+  // Outside the <bdi>, so the name itself stays exactly what the agent claims. It starts with
+  // the comma, not a space: accessible names drop whitespace at the edge of a child.
+  const hint = `, ${m.agent_claim_short()}`;
 </script>
 
 <span class="agent"
   ><bdi class="name" title={m.agent_claim_label()}>{cleanUntrusted(name)}</bdi
-  >{#if client !== undefined}<ClientIdentity {client} {verified} />{/if}</span
+  ><span class="hm-visually-hidden">{hint}</span>{#if client !== undefined}<ClientIdentity {client} {verified} />{/if}</span
 >
 
 <style>

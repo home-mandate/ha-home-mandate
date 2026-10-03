@@ -33,7 +33,7 @@ const plain = (text: string | null | undefined) => (text ?? '').replace(/[\u2068
 describe('AgentDetail', () => {
   it('shows identity, sign-in way, redirect address and who approved it', async () => {
     await start(CLAUDE);
-    expect(await screen.findByRole('heading', { level: 1, name: 'Claude Code' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Claude Code, unverified' })).toBeTruthy();
     const identity = section('Identity');
     expect(within(identity).getByText('claude.ai')).toBeTruthy();
     expect(within(identity).getByText('Browser sign-in')).toBeTruthy();

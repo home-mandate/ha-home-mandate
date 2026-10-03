@@ -326,7 +326,13 @@ describe('AuditLog: search', () => {
 });
 
 describe('AuditLog on mobile', () => {
-  beforeEach(mobile);
+  // jsdom does not scroll.
+  const scrolled = vi.fn();
+  beforeEach(() => {
+    mobile();
+    scrolled.mockClear();
+    Element.prototype.scrollIntoView = scrolled;
+  });
 
   it('opens an entry on its own page', async () => {
     await start();
@@ -335,5 +341,45 @@ describe('AuditLog on mobile', () => {
     const row = rows(region).find((r) => within(r).queryByText('No. 8'));
     expect(row?.getAttribute('href')).toBe('#/audit/8');
     expect(screen.queryByRole('complementary')).toBeNull();
+  });
+
+  /** manyEntries adds 120 log entries (emergency stop on and off), so the list has three pages. */
+  const manyEntries = async (api: MockClient) => {
+    for (let i = 0; i < 60; i++) {
+      await api.setEmergencyStop(true);
+      await api.setEmergencyStop(false);
+    }
+  };
+
+  it('comes back from an entry to the same filters, as far as loaded, with the focus on that entry (review M19)', async () => {
+    const { app } = await start({ period: ['7d'] }, {}, manyEntries);
+    const region = await list();
+    await waitFor(() => expect(rows(region)).toHaveLength(50));
+    await fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await waitFor(() => expect(rows(region)).toHaveLength(100));
+    const target = rows(region)[70] as HTMLElement;
+    const seq = Number(target.dataset.seq);
+    await fireEvent.click(target);
+    expect(app.auditReturn).toEqual({ list: '#/audit?period=7d', seq, count: 100 });
+
+    cleanup();
+    render(AuditLog, { app, now: Date.parse(NOW), query: { period: ['7d'] } });
+    const again = await list();
+    await waitFor(() => expect(rows(again)).toHaveLength(100));
+    await waitFor(() => expect((document.activeElement as HTMLElement | null)?.dataset.seq).toBe(String(seq)));
+    expect(scrolled).toHaveBeenCalledWith({ block: 'center' });
+    expect(app.auditReturn).toBeNull();
+  });
+
+  it('starts from the top when the remembered list had other filters', async () => {
+    const { app } = await start({}, {}, manyEntries);
+    app.auditReturn = { list: '#/audit?period=7d', seq: 5, count: 100 };
+    cleanup();
+    render(AuditLog, { app, now: Date.parse(NOW), query: {} });
+    const region = await list();
+    await waitFor(() => expect(rows(region)).toHaveLength(50));
+    expect((document.activeElement as HTMLElement | null)?.dataset.seq).toBeUndefined();
+    expect(scrolled).not.toHaveBeenCalled();
+    expect(app.auditReturn).toBeNull();
   });
 });
