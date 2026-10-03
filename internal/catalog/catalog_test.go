@@ -19,8 +19,19 @@ type fakeSource struct {
 	states   []ha.State
 	entities []ha.EntityEntry
 	devices  []ha.Device
+	areas    []ha.Area
 	err      error
+	areaErr  error
 	calls    int
+}
+
+func (f *fakeSource) ListAreas(context.Context) ([]ha.Area, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.areas, f.areaErr
 }
 
 func (f *fakeSource) GetStates(context.Context) ([]ha.State, error) {
@@ -355,5 +366,35 @@ func TestInvalidateUntilTheNextRefresh(t *testing.T) {
 	}
 	if err := c.Refresh(context.Background()); err != nil || !c.Ready() {
 		t.Errorf("not ready after a refresh: %v", err)
+	}
+}
+
+func TestAreasAndNames(t *testing.T) {
+	src := house()
+	src.areas = []ha.Area{{AreaID: "living_room", Name: "Wohnzimmer"}, {AreaID: "kitchen", Name: "Küche"}, {AreaID: "", Name: "broken"}}
+	c := New(src, nil)
+	if err := c.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	areas := c.Areas()
+	if len(areas) != 2 || areas[0] != (Area{ID: "kitchen", Name: "Küche"}) || areas[1].ID != "living_room" {
+		t.Errorf("areas = %+v", areas)
+	}
+	areas[0].Name = "changed"
+	if c.Areas()[0].Name != "Küche" {
+		t.Error("Areas returned the catalog's own slice")
+	}
+	if d, _ := c.Lookup("light.kitchen"); d.Name() != "Kitchen" {
+		t.Errorf("Name = %q", d.Name())
+	}
+	if d, _ := c.Lookup("switch.pool_pump"); d.Name() != "" {
+		t.Errorf("Name without friendly_name = %q", d.Name())
+	}
+	src.set(func(f *fakeSource) { f.areaErr = errors.New("area registry down") })
+	if err := c.Refresh(context.Background()); err == nil {
+		t.Error("Refresh succeeded without the area registry")
+	}
+	if len(c.Areas()) != 2 {
+		t.Error("a failed refresh dropped the areas")
 	}
 }

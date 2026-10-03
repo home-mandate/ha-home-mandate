@@ -24,6 +24,13 @@ type Source interface {
 	GetStates(ctx context.Context) ([]ha.State, error)
 	ListEntities(ctx context.Context) ([]ha.EntityEntry, error)
 	ListDevices(ctx context.Context) ([]ha.Device, error)
+	ListAreas(ctx context.Context) ([]ha.Area, error)
+}
+
+// Area is an area with its name, for the UI.
+type Area struct {
+	ID   string
+	Name string
 }
 
 // Device is an entity as the PEP sees it.
@@ -75,6 +82,7 @@ type Catalog struct {
 	ready      bool
 	devices    map[string]Device
 	entityArea map[string]string // entity → area from the registries
+	areas      []Area            // sorted by ID
 	disabled   map[string]bool
 	// While a refresh fetches, state changes are also kept here and applied on top of
 	// the new snapshot, so that an older snapshot never overwrites a newer event.
@@ -121,6 +129,19 @@ func (c *Catalog) All() []Device {
 	return out
 }
 
+// Areas returns the areas of Home Assistant, sorted by ID.
+func (c *Catalog) Areas() []Area {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return slices.Clone(c.areas)
+}
+
+// Name is the device's friendly_name from Home Assistant, untrusted; empty if it has none.
+func (d Device) Name() string {
+	name, _ := d.Attributes["friendly_name"].(string)
+	return name
+}
+
 func clone(d Device) Device {
 	d.Attributes = maps.Clone(d.Attributes)
 	return d
@@ -164,6 +185,17 @@ func (c *Catalog) Refresh(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("catalog: device registry: %w", err)
 	}
+	areaList, err := c.src.ListAreas(ctx)
+	if err != nil {
+		return fmt.Errorf("catalog: area registry: %w", err)
+	}
+	areas := make([]Area, 0, len(areaList))
+	for _, a := range areaList {
+		if a.AreaID != "" {
+			areas = append(areas, Area{ID: a.AreaID, Name: a.Name})
+		}
+	}
+	slices.SortFunc(areas, func(a, b Area) int { return strings.Compare(a.ID, b.ID) })
 
 	deviceArea := make(map[string]string, len(devices))
 	for _, d := range devices {
@@ -194,7 +226,7 @@ func (c *Catalog) Refresh(ctx context.Context) error {
 	if len(c.pending) >= maxPending {
 		return fmt.Errorf("catalog: too many changes during refresh")
 	}
-	c.devices, c.entityArea, c.disabled = snapshot, entityArea, disabled
+	c.devices, c.entityArea, c.disabled, c.areas = snapshot, entityArea, disabled, areas
 	for _, ch := range c.pending {
 		c.applyLocked(ch)
 	}

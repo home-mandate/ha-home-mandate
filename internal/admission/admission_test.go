@@ -262,3 +262,139 @@ func TestAdmissionReportsDatabaseErrors(t *testing.T) {
 		t.Error("Admit succeeded")
 	}
 }
+
+// criticalTemplate allows unlocking without approval.
+func criticalTemplate(t *testing.T) []byte {
+	return template(t, func(doc map[string]any) {
+		doc["rules"] = []any{map[string]any{"id": "r-unlock", "resource": map[string]any{"category": "lock"}, "actions": []any{"unlock"},
+			"decision": "allow", "allow_critical": true}}
+	})
+}
+
+// A template whose rules allow critical actions without approval admits nobody without
+// the separate confirmation (decision U9, also for admissions).
+func TestAdmitNeedsConfirmationForCriticalTemplates(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if err := e.adm.PutTemplate(ctx, "doors", criticalTemplate(t), admin); err != nil {
+		t.Fatal(err)
+	}
+	req := request()
+	req.Template = "doors"
+	if _, _, err := e.adm.Admit(ctx, req); !errors.Is(err, mandate.ErrCriticalConfirmation) {
+		t.Fatalf("Admit without confirmation = %v", err)
+	}
+	if list, _ := e.agents.List(ctx); len(list) != 0 {
+		t.Fatalf("agent admitted without confirmation: %v", list)
+	}
+	req.ConfirmCritical, req.MandateName = true, "  Türen  "
+	a, _, err := e.adm.Admit(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := e.mandates.ForAgent(ctx, a.ClientID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := e.mandates.Get(ctx, loaded.Info.ID); info.Name != "Türen" {
+		t.Errorf("mandate name = %q", info.Name)
+	}
+}
+
+func TestAdmitNamesTheMandateAfterTheTemplate(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if err := e.adm.PutTemplate(ctx, "voice-assistant", template(t, nil), admin); err != nil {
+		t.Fatal(err)
+	}
+	req := request()
+	req.RedirectURIs = []string{"https://claude.example.org/callback"}
+	a, _, err := e.adm.Admit(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, _ := e.mandates.List(ctx)
+	if len(list) != 1 || list[0].Name != "voice-assistant" {
+		t.Errorf("mandates = %+v", list)
+	}
+	if got, _ := e.agents.Get(ctx, a.ClientID); len(got.RedirectURIs) != 1 {
+		t.Errorf("redirect URIs = %v", got.RedirectURIs)
+	}
+}
+
+func TestNewMandate(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if err := e.adm.PutTemplate(ctx, "voice-assistant", template(t, nil), admin); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.adm.PutTemplate(ctx, "doors", criticalTemplate(t), admin); err != nil {
+		t.Fatal(err)
+	}
+	a, _, err := e.adm.Admit(ctx, request())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The agent has an active mandate: conflict.
+	if _, err := e.adm.NewMandate(ctx, a.ClientID, "voice-assistant", "", false, admin); !errors.Is(err, mandate.ErrConflict) {
+		t.Errorf("NewMandate with an active mandate = %v", err)
+	}
+	first, _ := e.mandates.ForAgent(ctx, a.ClientID)
+	if err := e.mandates.Revoke(ctx, first.Info.ID, admin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.adm.NewMandate(ctx, a.ClientID, "nope", "", false, admin); !errors.Is(err, admission.ErrTemplateNotFound) {
+		t.Errorf("unknown template = %v", err)
+	}
+	if _, err := e.adm.NewMandate(ctx, a.ClientID, "doors", "", false, admin); !errors.Is(err, mandate.ErrCriticalConfirmation) {
+		t.Errorf("critical template without confirmation = %v", err)
+	}
+	info, err := e.adm.NewMandate(ctx, a.ClientID, "voice-assistant", "Zweites", false, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ID == first.Info.ID || !strings.HasPrefix(info.ID, first.Info.ID+"-") || info.Name != "Zweites" {
+		t.Errorf("new mandate = %+v (first %s)", info, first.Info.ID)
+	}
+	now, _ := e.mandates.ForAgent(ctx, a.ClientID)
+	if now.Info.ID != info.ID || now.Info.Status != mandate.StatusActive {
+		t.Errorf("ForAgent = %+v, want the new mandate", now.Info)
+	}
+	if _, err := e.adm.NewMandate(ctx, a.ClientID, "voice-assistant", "", false, admin); !errors.Is(err, mandate.ErrConflict) {
+		t.Errorf("third mandate = %v", err)
+	}
+	if err := e.agents.Revoke(ctx, a.ClientID, admin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.adm.NewMandate(ctx, a.ClientID, "voice-assistant", "", false, admin); !errors.Is(err, admission.ErrAgentNotActive) {
+		t.Errorf("revoked agent = %v", err)
+	}
+	if _, err := e.adm.NewMandate(ctx, "hm-client:nobody", "voice-assistant", "", false, admin); !errors.Is(err, admission.ErrAgentNotActive) {
+		t.Errorf("unknown agent = %v", err)
+	}
+}
+
+func TestUpdateTemplateNeedsConfirmationForNewCriticalRules(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if err := e.adm.UpdateTemplate(ctx, "doors", criticalTemplate(t), false, admin); !errors.Is(err, mandate.ErrCriticalConfirmation) {
+		t.Fatalf("new critical template = %v", err)
+	}
+	if err := e.adm.UpdateTemplate(ctx, "doors", criticalTemplate(t), true, admin); err != nil {
+		t.Fatal(err)
+	}
+	// Unchanged critical rule: no new confirmation.
+	if err := e.adm.UpdateTemplate(ctx, "doors", criticalTemplate(t), false, admin); err != nil {
+		t.Errorf("unchanged critical rule = %v", err)
+	}
+	doc, tmpl, err := e.adm.TemplateDocument(ctx, "doors")
+	if err != nil || !bytes.Contains(doc, []byte("allow_critical")) || tmpl.Name != "doors" || tmpl.CreatedBy != admin.ID || tmpl.CreatedAt.IsZero() {
+		t.Errorf("TemplateDocument = %s %+v %v", doc, tmpl, err)
+	}
+	if _, _, err := e.adm.TemplateDocument(ctx, "none"); !errors.Is(err, admission.ErrTemplateNotFound) {
+		t.Errorf("unknown template = %v", err)
+	}
+	if err := e.adm.UpdateTemplate(ctx, "doors", []byte(`not json`), false, admin); !errors.Is(err, admission.ErrInvalidTemplate) {
+		t.Errorf("invalid template = %v", err)
+	}
+}

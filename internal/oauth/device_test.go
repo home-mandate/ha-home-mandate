@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/home-mandate/home-mandate/internal/admission"
 )
 
 type deviceAnswer struct {
@@ -315,22 +317,52 @@ func TestUserCodes(t *testing.T) {
 	}
 }
 
-// A server error while redeeming an approved pairing keeps the human's decision: the
-// agent's next poll succeeds.
-func TestDevicePollRetriesAfterAServerError(t *testing.T) {
+// The approval admits the agent at once. A server error during it leaves the pairing
+// pending: nothing was admitted, the human approves again with the same code, and the
+// agent's next poll gets the tokens.
+func TestDeviceApprovalAfterAServerError(t *testing.T) {
+	h := newHarness(t)
+	a := h.device("n8n-kitchen")
+	approve := func() response {
+		b, page := h.pairBrowser("admin-code")
+		b.enterCode(page, a.UserCode)
+		consent := b.get(ConsentPath)
+		return b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, consent.body)}, "action": {"approve"}, "name": {"Kitchen"}, "template": {"voice-assistant"}})
+	}
+	h.server.cfg.Admission = brokenAdmission{Admitter: h.adm, admitErr: errors.New("database is locked")}
+	if res := approve(); res.status != http.StatusServiceUnavailable {
+		t.Fatalf("approval with a broken database = %d", res.status)
+	}
+	if status, out := h.poll(a, "n8n-kitchen"); status != http.StatusBadRequest || out["error"] != "authorization_pending" {
+		t.Fatalf("poll after the failed approval = %d %v", status, out)
+	}
+	if n := countAgents(t, h); n != 0 {
+		t.Fatalf("%d agents", n)
+	}
+	h.server.cfg.Admission = h.adm
+	if res := approve(); res.status != http.StatusOK {
+		t.Fatalf("second approval = %d\n%s", res.status, res.body)
+	}
+	h.clock.Add(deviceInterval * 3)
+	if status, out := h.poll(a, "n8n-kitchen"); status != http.StatusOK {
+		t.Errorf("poll after recovery = %d %v", status, out)
+	}
+}
+
+// A refused admission (here: the template was deleted after the page was shown) is shown
+// to the human; the pairing stays pending.
+func TestDeviceApprovalRefused(t *testing.T) {
 	h := newHarness(t)
 	a := h.device("n8n-kitchen")
 	b, page := h.pairBrowser("admin-code")
 	b.enterCode(page, a.UserCode)
 	consent := b.get(ConsentPath)
-	b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, consent.body)}, "action": {"approve"}, "name": {"Kitchen"}, "template": {"voice-assistant"}})
-	h.server.cfg.Admission = brokenAdmission{Admitter: h.adm, admitErr: errors.New("database is locked")}
-	if status, out := h.poll(a, "n8n-kitchen"); status != http.StatusInternalServerError || out["error"] != "server_error" {
-		t.Fatalf("poll with a broken database = %d %v", status, out)
+	h.server.cfg.Admission = brokenAdmission{Admitter: h.adm, admitErr: admission.ErrTemplateNotFound}
+	res := b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, consent.body)}, "action": {"approve"}, "name": {"Kitchen"}, "template": {"voice-assistant"}})
+	if res.status != http.StatusBadRequest {
+		t.Errorf("refused admission = %d", res.status)
 	}
-	h.server.cfg.Admission = h.adm
-	h.clock.Add(deviceInterval * 3)
-	if status, out := h.poll(a, "n8n-kitchen"); status != http.StatusOK {
-		t.Errorf("poll after recovery = %d %v", status, out)
+	if status, out := h.poll(a, "n8n-kitchen"); out["error"] != "authorization_pending" {
+		t.Errorf("poll = %d %v", status, out)
 	}
 }

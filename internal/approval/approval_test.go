@@ -478,3 +478,49 @@ func (b *safeBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+// OnOpened announces a request once it was delivered, with what Open shows; the result
+// names the request it ended.
+func TestOnOpenedAndResultID(t *testing.T) {
+	e := newEnv(t, time.Minute)
+	opened := make(chan Open, 1)
+	e.svc.cfg.OnOpened = func(o Open) { opened <- o }
+	req := request()
+	req.EntityID, req.Area = "lock.front_door", "hall"
+	ch := e.ask(req)
+	var o Open
+	select {
+	case o = <-opened:
+	case <-time.After(5 * time.Second):
+		t.Fatal("OnOpened not called")
+	}
+	if o.ID == "" || o.Request.EntityID != "lock.front_door" || o.Request.Area != "hall" || len(o.Recipients) != 2 {
+		t.Errorf("opened = %+v", o)
+	}
+	nonce := nonceOf(t, e.notifier.next(t))
+	e.notifier.next(t)
+	e.svc.HandleEvent(event("HM_APPROVE_"+nonce, u1))
+	a := wait(t, ch)
+	if a.err != nil || a.res.ID != o.ID || a.res.Outcome != OutcomeApproved {
+		t.Errorf("result = %+v, %v", a.res, a.err)
+	}
+}
+
+// The UI shows the service data and the reason exactly as the push does (S1).
+func TestShownParamsAndText(t *testing.T) {
+	got := ShownParams(map[string]any{"temperature": 21.5, "brightness_pct": 100, "x<script>": "[link](https://evil)"})
+	if len(got) != 3 || got[0] != (Param{"brightness_pct", "100"}) || got[1] != (Param{"temperature", "21.5"}) ||
+		got[2].Name != "x script" || strings.Contains(got[2].Value, "://") || strings.ContainsAny(got[2].Value, "[]()") {
+		t.Errorf("ShownParams = %+v", got)
+	}
+	long := strings.Repeat("a", 300)
+	if p := ShownParams(map[string]any{long: long}); len([]rune(p[0].Name)) != ShownNameMax || len([]rune(p[0].Value)) != ShownNameMax {
+		t.Errorf("long param = %+v", p)
+	}
+	if len(ShownParams(nil)) != 0 {
+		t.Error("ShownParams(nil) not empty")
+	}
+	if got := ShownText("a\u202eb\nc", ShownReasonMax); got != "a b c" {
+		t.Errorf("ShownText = %q", got)
+	}
+}

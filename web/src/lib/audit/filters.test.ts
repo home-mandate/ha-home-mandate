@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_FILTERS, SEARCH_MAX, activeCount, cleanSearch, parseFilters, toAuditQuery, toQuery, type AuditFilters } from './filters.ts';
+import vectors from './search-vectors.json' with { type: 'json' };
 
 const NOW = Date.parse('2026-10-02T17:42:00Z');
 
@@ -108,6 +109,11 @@ describe('cleanSearch', () => {
     expect(cleanSearch('🚪'.repeat(SEARCH_MAX))).toBe('🚪'.repeat(SEARCH_MAX));
     expect(cleanSearch('🚪'.repeat(SEARCH_MAX + 1))).toBeNull();
     expect(cleanSearch(' '.repeat(10_000))).toBeNull(); // huge input is refused before any work
+  });
+
+  // The server cleans with internal/untrusted.CleanSearch; both run these vectors (B2).
+  it('cleans like the server (shared vectors)', () => {
+    for (const v of vectors.search) expect(cleanSearch(v.input), JSON.stringify(v.input)).toBe(v.clean);
   });
 });
 

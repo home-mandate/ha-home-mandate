@@ -409,17 +409,17 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 	if ask {
 		return g.askHuman(ctx, a, tokenOf(req), d, call, in.Reason)
 	}
-	return g.execute(ctx, a, d, call, nil)
+	return g.execute(ctx, a, d, call, approvalRef{})
 }
 
 // execute calls Home Assistant only while its "executed" entry is being written in the
 // same transaction: no entry, no execution. A failed call rolls the entry back and is
 // logged as failed.
-func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, call ha.ServiceCall, appr *audit.Approval) (*sdk.CallToolResult, actionOut, error) {
+func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, call ha.ServiceCall, appr approvalRef) (*sdk.CallToolResult, actionOut, error) {
 	start := g.cfg.Now()
 	executed := false
 	e := g.entry(a, d, true, audit.Result{Status: audit.StatusExecuted})
-	e.Approval = appr
+	e.Approval, e.ApprovalID = appr.approval, appr.id
 	err := g.cfg.Audit.WithEntry(context.WithoutCancel(ctx), e, func() error {
 		cctx, cancel := context.WithTimeout(ctx, g.cfg.CallTimeout)
 		defer cancel()
@@ -522,11 +522,11 @@ func (g *Gateway) record(ctx context.Context, a agent.Agent, d pdp.Decision, wit
 	return g.append(ctx, g.entry(a, d, withEvaluation, result))
 }
 
-// recordApproval writes a decision entry with the outcome of an approval request (nil
+// recordApproval writes a decision entry with the outcome of an approval request (empty
 // if none was asked).
-func (g *Gateway) recordApproval(ctx context.Context, a agent.Agent, d pdp.Decision, result audit.Result, appr *audit.Approval) error {
+func (g *Gateway) recordApproval(ctx context.Context, a agent.Agent, d pdp.Decision, result audit.Result, appr approvalRef) error {
 	e := g.entry(a, d, true, result)
-	e.Approval = appr
+	e.Approval, e.ApprovalID = appr.approval, appr.id
 	return g.append(ctx, e)
 }
 

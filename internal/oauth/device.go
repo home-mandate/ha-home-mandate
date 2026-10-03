@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/home-mandate/home-mandate/internal/agent"
 	"github.com/home-mandate/home-mandate/internal/ha"
 	"github.com/home-mandate/home-mandate/internal/i18n"
 )
@@ -28,24 +29,28 @@ const (
 	pairWindow     = 10 * time.Minute
 )
 
-// Grant states.
+// Grant states. A human's approval admits the agent at once (grantIssued); its tokens
+// wait in memory for the agent's next poll, at most until the grant expires.
 const (
-	grantPending  = "pending"
-	grantApproved = "approved"
-	grantDenied   = "denied"
+	grantPending   = "pending"
+	grantAdmitting = "admitting" // an approval is being carried out
+	grantIssued    = "issued"
+	grantDenied    = "denied"
 )
 
 // deviceGrant is a pending pairing, keyed by the hash of its device code.
 type deviceGrant struct {
+	id       string // opaque pairing ID for the UI, never the device or user code
 	sender   string // address of the agent that asked
 	client   Client
 	resource string
 	userCode string // hashKey of the normalized user code
+	created  time.Time
 	expires  time.Time
 	interval time.Duration
 	lastPoll time.Time
 	status   string
-	decision decision
+	tokens   *agent.TokenPair // set once issued, handed out once
 }
 
 // pairingLimit counts wrong pairing codes across all sessions.
@@ -77,7 +82,8 @@ func (s *Server) deviceAuthorization(w http.ResponseWriter, r *http.Request) {
 	now := s.cfg.Now()
 	s.mu.Lock()
 	for k, g := range s.grants {
-		if !now.Before(g.expires) {
+		// An approval in progress is never swept away under the admission.
+		if !now.Before(g.expires) && g.status != grantAdmitting {
 			delete(s.grants, k)
 		}
 	}
@@ -92,8 +98,8 @@ func (s *Server) deviceAuthorization(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable")
 		return
 	}
-	s.grants[hashKey(deviceCode)] = &deviceGrant{sender: sender, client: client, resource: resource, userCode: hashKey(userCode),
-		expires: now.Add(deviceTTL), interval: deviceInterval, status: grantPending}
+	s.grants[hashKey(deviceCode)] = &deviceGrant{id: newSecret(), sender: sender, client: client, resource: resource,
+		userCode: hashKey(userCode), created: now, expires: now.Add(deviceTTL), interval: deviceInterval, status: grantPending}
 	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"device_code":      deviceCode,
@@ -154,15 +160,12 @@ func (s *Server) pollDevice(w http.ResponseWriter, r *http.Request, form map[str
 		delete(s.grants, key)
 		s.mu.Unlock()
 		oauthError(w, http.StatusBadRequest, "access_denied")
-	case g.status == grantApproved:
+	case g.status == grantIssued:
 		delete(s.grants, key)
+		tokens := *g.tokens
+		g.tokens = nil
 		s.mu.Unlock()
-		if s.admit(w, r, g.client, g.resource, g.decision) {
-			// The human's decision stays valid when the server failed; the agent retries.
-			s.mu.Lock()
-			s.grants[key] = g
-			s.mu.Unlock()
-		}
+		writeTokens(w, tokens)
 	case !g.lastPoll.IsZero() && now.Sub(g.lastPoll) < g.interval:
 		g.interval += deviceInterval
 		g.lastPoll = now
@@ -184,17 +187,6 @@ func (s *Server) pendingGrant(key string) (deviceGrant, bool) {
 		return deviceGrant{}, false
 	}
 	return *g, true
-}
-
-func (s *Server) approveGrant(key string, d decision) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	g, ok := s.grants[key]
-	if !ok || g.status != grantPending || !s.cfg.Now().Before(g.expires) {
-		return false
-	}
-	g.status, g.decision = grantApproved, d
-	return true
 }
 
 func (s *Server) denyGrant(key string) {

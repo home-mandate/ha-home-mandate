@@ -472,3 +472,133 @@ func TestVersionsAreNumberedAndCanRepeatADigest(t *testing.T) {
 		t.Errorf("ForAgent = %+v, %v", loaded.Info, err)
 	}
 }
+
+// A name is metadata next to the document: renaming stores no version and keeps the
+// digest (decision D2); together with an edit it is part of the same transaction.
+func TestNamesAreNotPartOfTheMandate(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a := e.agent(t, "Voice")
+	info, err := e.mandates.Put(ctx, voiceAssistant(t, a.ClientID, nil), admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Name != "" {
+		t.Errorf("imported mandate has name %q", info.Name)
+	}
+	if err := e.mandates.SetName(ctx, info.ID, "Sprachassistent"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.mandates.SetName(ctx, "m-none", "x"); !errors.Is(err, mandate.ErrNotFound) {
+		t.Errorf("SetName(unknown) = %v", err)
+	}
+	renamed, _ := e.mandates.Get(ctx, info.ID)
+	versions, _ := e.mandates.Versions(ctx, info.ID)
+	if renamed.Name != "Sprachassistent" || renamed.Digest != info.Digest || len(versions) != 1 {
+		t.Errorf("after rename: %+v, %d versions", renamed, len(versions))
+	}
+	// Rename only, through Update: no version.
+	got, err := e.mandates.Update(ctx, info.ID, voiceAssistant(t, a.ClientID, nil), mandate.Change{BaseDigest: info.Digest, Name: "Neu"}, admin)
+	if err != nil || got.Name != "Neu" || got.Digest != info.Digest {
+		t.Errorf("rename by Update = %+v, %v", got, err)
+	}
+	if versions, _ := e.mandates.Versions(ctx, info.ID); len(versions) != 1 {
+		t.Errorf("rename stored a version: %d", len(versions))
+	}
+	// A failed edit keeps the old name.
+	if _, err := e.mandates.Update(ctx, info.ID, voiceAssistant(t, a.ClientID, nil), mandate.Change{BaseDigest: "sha256:old", Name: "Lost"}, admin); !errors.Is(err, mandate.ErrConflict) {
+		t.Fatalf("Update on an old base = %v", err)
+	}
+	if now, _ := e.mandates.Get(ctx, info.ID); now.Name != "Neu" {
+		t.Errorf("name after a failed edit = %q", now.Name)
+	}
+	cur, doc, err := e.mandates.Current(ctx, info.ID)
+	if err != nil || cur.ID != info.ID || !json.Valid(doc) {
+		t.Errorf("Current = %+v, %v", cur, err)
+	}
+	if _, _, err := e.mandates.Current(ctx, "m-none"); !errors.Is(err, mandate.ErrNotFound) {
+		t.Errorf("Current(unknown) = %v", err)
+	}
+}
+
+func TestRevokeAgentTx(t *testing.T) {
+	e, db := newEnvWithDB(t)
+	ctx := context.Background()
+	a := e.agent(t, "Voice")
+	info, err := e.mandates.Put(ctx, voiceAssistant(t, a.ClientID, nil), admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 { // the second time there is no active mandate any more: a no-op
+		tx, _ := db.BeginTx(ctx, nil)
+		if err := e.mandates.RevokeAgentTx(ctx, tx, a.ClientID, admin); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, _ := e.mandates.Get(ctx, info.ID)
+	if got.Status != mandate.StatusRevoked {
+		t.Errorf("status = %s", got.Status)
+	}
+	tx, _ := db.BeginTx(ctx, nil)
+	defer func() { _ = tx.Rollback() }()
+	if err := e.mandates.RevokeAgentTx(ctx, tx, "hm-client:none", admin); err != nil {
+		t.Errorf("agent without mandate = %v", err)
+	}
+}
+
+// After a revoked mandate, an agent may get a new one under another ID; never two active.
+func TestNewMandateAfterARevokedOne(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a := e.agent(t, "Voice")
+	first, err := e.mandates.Put(ctx, voiceAssistant(t, a.ClientID, nil), admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := voiceAssistant(t, a.ClientID, func(doc map[string]any) { doc["id"] = "m-voice-2" })
+	if _, err := e.mandates.Put(ctx, second, admin); !errors.Is(err, mandate.ErrConflict) {
+		t.Fatalf("second active mandate = %v", err)
+	}
+	if err := e.mandates.Revoke(ctx, first.ID, admin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.mandates.Put(ctx, second, admin); err != nil {
+		t.Fatalf("mandate after a revoked one = %v", err)
+	}
+	// The revoked one stays revoked and cannot be changed.
+	if _, err := e.mandates.Put(ctx, voiceAssistant(t, a.ClientID, func(doc map[string]any) { doc["limits"] = map[string]any{"max_actions_per_hour": 7} }), admin); !errors.Is(err, mandate.ErrConflict) {
+		t.Errorf("change of the revoked mandate = %v", err)
+	}
+	loaded, _ := e.mandates.ForAgent(ctx, a.ClientID)
+	if loaded.Info.ID != "m-voice-2" || loaded.Status != evaluator.StatusActive {
+		t.Errorf("ForAgent = %+v", loaded.Info)
+	}
+	if err := e.mandates.Revoke(ctx, "m-voice-2", admin); err != nil {
+		t.Fatal(err)
+	}
+	if loaded, _ := e.mandates.ForAgent(ctx, a.ClientID); loaded.Info.ID != "m-voice-2" || loaded.Status != evaluator.StatusRevoked {
+		t.Errorf("ForAgent after both revoked = %+v %s", loaded.Info, loaded.Status)
+	}
+}
+
+func TestNewCriticalGrant(t *testing.T) {
+	plain := []byte(`{"rules":[{"id":"r","decision":"allow"}]}`)
+	critical := []byte(`{"rules":[{"id":"r","decision":"allow","allow_critical":true,"actions":["unlock","open"]}]}`)
+	reordered := []byte(`{"rules":[{"id":"r","decision":"allow","allow_critical":true,"actions":["open","unlock"]}]}`)
+	for _, tc := range []struct {
+		current, next []byte
+		want          bool
+	}{
+		{nil, plain, false}, {nil, critical, true}, {plain, critical, true}, {critical, reordered, false}, {critical, plain, false},
+	} {
+		if got, err := mandate.NewCriticalGrant(tc.current, tc.next); err != nil || got != tc.want {
+			t.Errorf("NewCriticalGrant(%s, %s) = %v, %v", tc.current, tc.next, got, err)
+		}
+	}
+	if _, err := mandate.NewCriticalGrant(nil, []byte(`[`)); !errors.Is(err, mandate.ErrInvalid) {
+		t.Errorf("malformed = %v", err)
+	}
+}

@@ -46,7 +46,11 @@ const timeFormat = time.RFC3339Nano
 
 // Info describes the current version of a mandate.
 type Info struct {
-	ID                string
+	ID string
+	// Name is the display name (decision D2): metadata next to the document, so that
+	// renaming changes neither the document nor its digest. Empty for mandates stored
+	// before names existed and for imports; the UI then shows the ID.
+	Name              string
 	ClientID          string
 	Status            string
 	Digest            string
@@ -152,16 +156,27 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, info Info, document []byte,
 	if err != nil {
 		return fmt.Errorf("mandate: read agent: %w", err)
 	}
-	var existing struct{ id, clientID, status, digest string }
-	err = tx.QueryRowContext(ctx, `SELECT id, client_id, status, current_digest FROM mandates WHERE id = ? OR client_id = ?`,
-		info.ID, info.ClientID).Scan(&existing.id, &existing.clientID, &existing.status, &existing.digest)
+	// One active mandate per agent: another active one for the agent is a conflict, so is
+	// a document that moves a mandate to another agent or changes a revoked one.
+	var other string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM mandates WHERE client_id = ? AND status = ? AND id <> ?`,
+		info.ClientID, StatusActive, info.ID).Scan(&other)
+	switch {
+	case err == nil:
+		return fmt.Errorf("%w: agent already has the active mandate %s", ErrConflict, other)
+	case !errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("mandate: read: %w", err)
+	}
+	var existing struct{ clientID, status, digest string }
+	err = tx.QueryRowContext(ctx, `SELECT client_id, status, current_digest FROM mandates WHERE id = ?`, info.ID).
+		Scan(&existing.clientID, &existing.status, &existing.digest)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return s.create(ctx, tx, info, document, by)
 	case err != nil:
 		return fmt.Errorf("mandate: read: %w", err)
-	case existing.id != info.ID || existing.clientID != info.ClientID || existing.status != StatusActive:
-		return fmt.Errorf("%w: agent already has mandate %s, or the mandate belongs to another agent or is revoked", ErrConflict, existing.id)
+	case existing.clientID != info.ClientID || existing.status != StatusActive:
+		return fmt.Errorf("%w: mandate %s belongs to another agent or is revoked", ErrConflict, info.ID)
 	case existing.digest == info.Digest:
 		return nil
 	}
@@ -195,35 +210,67 @@ func (s *Store) addVersion(ctx context.Context, tx *sql.Tx, info Info, document 
 // Revoking a revoked mandate is a no-op.
 func (s *Store) Revoke(ctx context.Context, id string, by audit.Actor) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
-		var status, digest string
-		err := tx.QueryRowContext(ctx, `SELECT status, current_digest FROM mandates WHERE id = ?`, id).Scan(&status, &digest)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("mandate: read: %w", err)
-		}
-		if status == StatusRevoked {
-			return nil
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE mandates SET status = ?, updated_at = ? WHERE id = ?`,
-			StatusRevoked, time.Now().UTC().Format(timeFormat), id); err != nil {
-			return fmt.Errorf("mandate: revoke: %w", err)
-		}
-		_, err = s.log.AppendTx(ctx, tx, audit.Entry{Event: audit.EventMandateRevoked, Actor: &by,
-			Mandate: &audit.Mandate{ID: id, Digest: digest}})
-		return err
+		return s.revokeTx(ctx, tx, `id = ?`, id, by, true)
 	})
 }
 
-// ForAgent returns the current mandate of an agent for evaluation.
+// RevokeAgentTx revokes the mandate of an agent inside tx, if it has an active one, so
+// that revoking an agent ends its mandate in the same transaction.
+func (s *Store) RevokeAgentTx(ctx context.Context, tx *sql.Tx, clientID string, by audit.Actor) error {
+	return s.revokeTx(ctx, tx, `client_id = ? AND status = 'active'`, clientID, by, false)
+}
+
+func (s *Store) revokeTx(ctx context.Context, tx *sql.Tx, where, key string, by audit.Actor, mustExist bool) error {
+	var id, status, digest string
+	err := tx.QueryRowContext(ctx, `SELECT id, status, current_digest FROM mandates WHERE `+where, key).Scan(&id, &status, &digest)
+	if errors.Is(err, sql.ErrNoRows) {
+		if mustExist {
+			return ErrNotFound
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("mandate: read: %w", err)
+	}
+	if status == StatusRevoked {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE mandates SET status = ?, updated_at = ? WHERE id = ?`,
+		StatusRevoked, time.Now().UTC().Format(timeFormat), id); err != nil {
+		return fmt.Errorf("mandate: revoke: %w", err)
+	}
+	_, err = s.log.AppendTx(ctx, tx, audit.Entry{Event: audit.EventMandateRevoked, Actor: &by,
+		Mandate: &audit.Mandate{ID: id, Digest: digest}})
+	return err
+}
+
+// SetNameTx sets the display name of a mandate inside tx. It stores no version and
+// writes no audit entry: the name is not part of the mandate.
+func (s *Store) SetNameTx(ctx context.Context, tx *sql.Tx, id, name string) error {
+	res, err := tx.ExecContext(ctx, `UPDATE mandates SET name = ? WHERE id = ?`, name, id)
+	if err != nil {
+		return fmt.Errorf("mandate: rename: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetName is SetNameTx in its own transaction.
+func (s *Store) SetName(ctx context.Context, id, name string) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error { return s.SetNameTx(ctx, tx, id, name) })
+}
+
+// ForAgent returns the current mandate of an agent for evaluation: the active one, or
+// the newest revoked one (which denies everything).
 func (s *Store) ForAgent(ctx context.Context, clientID string) (Loaded, error) {
 	var info Info
 	var updatedAt, document, agentStatus string
 	err := s.db.QueryRowContext(ctx, `SELECT m.id, m.client_id, m.status, m.current_digest, m.max_actions_per_hour, m.updated_at, v.document, a.status
 		FROM mandates m JOIN mandate_versions v ON v.mandate_id = m.id AND v.digest = m.current_digest
 		JOIN agents a ON a.client_id = m.client_id
-		WHERE m.client_id = ? ORDER BY v.version DESC LIMIT 1`, clientID).
+		WHERE m.client_id = ? ORDER BY m.status = 'active' DESC, m.rowid DESC, v.version DESC LIMIT 1`, clientID).
 		Scan(&info.ID, &info.ClientID, &info.Status, &info.Digest, &info.MaxActionsPerHour, &updatedAt, &document, &agentStatus)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Loaded{}, ErrNotFound
@@ -278,7 +325,7 @@ func (s *Store) List(ctx context.Context) ([]Info, error) {
 }
 
 func (s *Store) query(ctx context.Context, where string, args ...any) ([]Info, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, client_id, status, current_digest, max_actions_per_hour, updated_at FROM mandates `+
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, client_id, status, current_digest, max_actions_per_hour, updated_at FROM mandates `+
 		where+` ORDER BY rowid`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("mandate: query: %w", err)
@@ -288,13 +335,28 @@ func (s *Store) query(ctx context.Context, where string, args ...any) ([]Info, e
 	for rows.Next() {
 		var i Info
 		var updatedAt string
-		if err := rows.Scan(&i.ID, &i.ClientID, &i.Status, &i.Digest, &i.MaxActionsPerHour, &updatedAt); err != nil {
+		if err := rows.Scan(&i.ID, &i.Name, &i.ClientID, &i.Status, &i.Digest, &i.MaxActionsPerHour, &updatedAt); err != nil {
 			return nil, fmt.Errorf("mandate: query: %w", err)
 		}
 		i.UpdatedAt, _ = time.Parse(timeFormat, updatedAt)
 		list = append(list, i)
 	}
 	return list, rows.Err()
+}
+
+// Current returns the current version of a mandate with its document.
+func (s *Store) Current(ctx context.Context, id string) (Info, []byte, error) {
+	info, err := s.Get(ctx, id)
+	if err != nil {
+		return Info{}, nil, err
+	}
+	var document string
+	err = s.db.QueryRowContext(ctx, `SELECT document FROM mandate_versions WHERE mandate_id = ? AND digest = ? ORDER BY version DESC LIMIT 1`,
+		id, info.Digest).Scan(&document)
+	if err != nil {
+		return Info{}, nil, fmt.Errorf("mandate: current version of %s: %w", id, err)
+	}
+	return info, []byte(document), nil
 }
 
 // Versions returns all versions of a mandate, oldest first, numbered from 1.

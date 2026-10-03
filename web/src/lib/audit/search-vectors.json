@@ -1,0 +1,132 @@
+{
+ "_comment": "Shared test vectors of the audit search (decision B2): cleanSearch in web/src/lib/audit/filters.ts and internal/untrusted.CleanSearch must give 'clean' (null: refused); internal/untrusted.Fold gives 'folded'. Escapes keep invisible characters visible in this file.",
+ "search": [
+  {
+   "input": " a\u0000b\u2066c\t\r\nd  ",
+   "clean": "abc d",
+   "folded": "abc d"
+  },
+  {
+   "input": "Garten\u00adtor",
+   "clean": "Gartentor",
+   "folded": "gartentor"
+  },
+  {
+   "input": "Haust\u00fcr",
+   "clean": "Haust\u00fcr",
+   "folded": "haustur"
+  },
+  {
+   "input": "Haustu\u0308r",
+   "clean": "Haustu\u0308r",
+   "folded": "haustur"
+  },
+  {
+   "input": "STRASSE",
+   "clean": "STRASSE",
+   "folded": "strasse"
+  },
+  {
+   "input": "Stra\u00dfe",
+   "clean": "Stra\u00dfe",
+   "folded": "strasse"
+  },
+  {
+   "input": "GRO\u1e9e",
+   "clean": "GRO\u1e9e",
+   "folded": "gross"
+  },
+  {
+   "input": "\u0130stanbul",
+   "clean": "\u0130stanbul",
+   "folded": "istanbul"
+  },
+  {
+   "input": "\u0131spanak",
+   "clean": "\u0131spanak",
+   "folded": "ispanak"
+  },
+  {
+   "input": "\u03a3\u039f\u03a6\u039f\u03a3",
+   "clean": "\u03a3\u039f\u03a6\u039f\u03a3",
+   "folded": "\u03c3\u03bf\u03c6\u03bf\u03c3"
+  },
+  {
+   "input": "\u03c3\u03bf\u03c6\u03bf\u03c2",
+   "clean": "\u03c3\u03bf\u03c6\u03bf\u03c2",
+   "folded": "\u03c3\u03bf\u03c6\u03bf\u03c3"
+  },
+  {
+   "input": "Caf\u00e9",
+   "clean": "Caf\u00e9",
+   "folded": "cafe"
+  },
+  {
+   "input": "Cafe\u0301",
+   "clean": "Cafe\u0301",
+   "folded": "cafe"
+  },
+  {
+   "input": "50%_off\\",
+   "clean": "50%_off\\",
+   "folded": "50%_off\\"
+  },
+  {
+   "input": "it's \"quoted\"",
+   "clean": "it's \"quoted\"",
+   "folded": "it's \"quoted\""
+  },
+  {
+   "input": "\u202egnalnegrom",
+   "clean": "gnalnegrom",
+   "folded": "gnalnegrom"
+  },
+  {
+   "input": "a\u200bb\u200dc\ufeffd",
+   "clean": "abcd",
+   "folded": "abcd"
+  },
+  {
+   "input": "a\u2028b\u2029c\u0085d",
+   "clean": "a b c d",
+   "folded": "a b c d"
+  },
+  {
+   "input": "a\u00a0\u3000\u2003b",
+   "clean": "a b",
+   "folded": "a b"
+  },
+  {
+   "input": "   ",
+   "clean": "",
+   "folded": ""
+  },
+  {
+   "input": "",
+   "clean": "",
+   "folded": ""
+  },
+  {
+   "input": "LIGHT.Kitchen_Ceiling",
+   "clean": "LIGHT.Kitchen_Ceiling",
+   "folded": "light.kitchen_ceiling"
+  },
+  {
+   "input": "\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa",
+   "clean": "\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa",
+   "folded": "\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa"
+  },
+  {
+   "input": "\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa\ud83d\udeaa",
+   "clean": null
+  },
+  {
+   "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "clean": null
+  },
+  {
+   "input": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                ",
+   "clean": null
+  }
+ ]
+}

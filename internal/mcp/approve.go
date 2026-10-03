@@ -50,8 +50,8 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 		}
 	}()
 
-	req := approval.Request{ClientID: a.ClientID, Agent: a.DisplayName, Device: d.Resource.EntityID, Action: d.Action, Reason: reason,
-		Params: call.Data, Critical: evaluator.IsCritical(d.Resource.Category, d.Action)}
+	req := approval.Request{ClientID: a.ClientID, Agent: a.DisplayName, EntityID: d.Resource.EntityID, Area: d.Resource.Area,
+		Device: d.Resource.EntityID, Action: d.Action, Reason: reason, Params: call.Data, Critical: evaluator.IsCritical(d.Resource.Category, d.Action)}
 	if dev, ok := g.cfg.Catalog.Lookup(d.Resource.EntityID); ok {
 		if name, _ := dev.Attributes["friendly_name"].(string); name != "" {
 			req.Device = name
@@ -69,9 +69,9 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 		return nil, actionOut{}, errors.New(codeDenied + ": no_approver")
 	}
 	if res.Outcome == approval.OutcomeCancelled {
-		return g.cancelled(ctx, a, d)
+		return g.cancelled(ctx, a, d, res.ID)
 	}
-	appr := &audit.Approval{Outcome: res.Outcome, By: res.By, Via: res.Via, At: res.At}
+	appr := approvalRef{approval: &audit.Approval{Outcome: res.Outcome, By: res.By, Via: res.Via, At: res.At}, id: res.ID}
 	var code string
 	switch res.Outcome {
 	case approval.OutcomeApproved:
@@ -87,21 +87,30 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 	return nil, actionOut{}, errors.New(codeDenied + ": " + code)
 }
 
+// approvalRef is the outcome of an approval request for its audit entry: the approval
+// (nil when the request ended without an answer) and the request's ID, which tells the UI
+// which open request the entry closes.
+type approvalRef struct {
+	approval *audit.Approval
+	id       string
+}
+
 // cancelled records a request that the emergency stop or a revocation ended before
 // anyone answered (decision F1): no approval, only the denial with its cause.
-func (g *Gateway) cancelled(ctx context.Context, a agent.Agent, d pdp.Decision) (*sdk.CallToolResult, actionOut, error) {
+func (g *Gateway) cancelled(ctx context.Context, a agent.Agent, d pdp.Decision, id string) (*sdk.CallToolResult, actionOut, error) {
+	ref := approvalRef{id: id}
 	if g.stopped(ctx) {
-		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop})
+		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop}, ref)
 		return nil, actionOut{}, errors.New(codeDenied + ": emergency_stop")
 	}
-	_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication})
+	_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication}, ref)
 	return nil, actionOut{}, errors.New(codeDenied + ": unauthorized")
 }
 
 // afterApproval checks again what may have changed while the human decided: the
 // emergency stop, the agent's token (revoked, e.g. after refresh token reuse), the
 // mandate (a revoked agent's mandate denies) and the connection.
-func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, appr *audit.Approval) (*sdk.CallToolResult, actionOut, error) {
+func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, appr approvalRef) (*sdk.CallToolResult, actionOut, error) {
 	if g.stopped(ctx) {
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop}, appr)
 		return nil, actionOut{}, errors.New(codeDenied + ": emergency_stop")

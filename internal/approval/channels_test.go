@@ -346,6 +346,11 @@ func TestSecondAnswerAfterTheEnd(t *testing.T) {
 				end.end(e, t, id, nonce)
 				a := wait(t, ch)
 				a.res.At = time.Time{}
+				// The result names the request it ends (for the audit entry in the UI).
+				if a.res.ID != id {
+					t.Errorf("result ID = %q, want %q", a.res.ID, id)
+				}
+				a.res.ID = ""
 				if a.err != nil || a.res != end.want {
 					t.Fatalf("result = %+v, %v, want %+v", a.res, a.err, end.want)
 				}

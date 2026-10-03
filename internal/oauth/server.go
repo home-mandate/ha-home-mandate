@@ -81,10 +81,12 @@ type Server struct {
 	// clientAddr identifies the sender of a request for per-sender limits.
 	clientAddr func(*http.Request) string
 
-	mu      sync.Mutex
-	codes   map[string]*authCode
-	grants  map[string]*deviceGrant
-	pairing pairingLimit
+	mu         sync.Mutex
+	codes      map[string]*authCode
+	grants     map[string]*deviceGrant
+	pairing    pairingLimit
+	uiFailures map[string]*uiFailures  // wrong codes per UI session (pairing.go)
+	uiLocks    map[string]*sessionLock // attempts in progress per UI session
 }
 
 //go:embed pages
@@ -109,7 +111,8 @@ func New(cfg Config) *Server {
 		cfg.Now = time.Now
 	}
 	s := &Server{cfg: cfg, sessions: newSessions(cfg.Now), codes: map[string]*authCode{},
-		grants: map[string]*deviceGrant{}, clientAddr: remoteHost}
+		grants: map[string]*deviceGrant{}, uiFailures: map[string]*uiFailures{},
+		uiLocks: map[string]*sessionLock{}, clientAddr: remoteHost}
 	s.secure = strings.HasPrefix(cfg.PublicURL, "https://")
 	s.cookie = "hm_session"
 	if s.secure {

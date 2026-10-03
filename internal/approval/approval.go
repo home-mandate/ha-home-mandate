@@ -123,14 +123,19 @@ type Config struct {
 	// answered in the UI (B2, off by default).
 	Bell        Bell
 	BellEnabled func() bool
-	Logger      *slog.Logger
-	Now         func() time.Time
+	// OnOpened is called when a request was delivered and is open (shown by Open); the UI
+	// announces it. It must not block.
+	OnOpened func(Open)
+	Logger   *slog.Logger
+	Now      func() time.Time
 }
 
 // Request is one action waiting for a human.
 type Request struct {
 	ClientID  string         // the agent, for revocation
 	Agent     string         // display name of the agent
+	EntityID  string         // the device
+	Area      string         // its area, empty if none
 	Device    string         // friendly name or entity ID
 	Action    string         // vocabulary action
 	Reason    string         // the agent's claim, untrusted
@@ -141,8 +146,10 @@ type Request struct {
 }
 
 // Result is the outcome of a request; By and Via are empty for a timeout and a
-// cancellation.
+// cancellation. ID is the request's ID in the UI, so that the audit entry written for
+// the outcome can be matched to the request it closes (never the nonce).
 type Result struct {
+	ID      string
 	Outcome string
 	By      string
 	Via     string
@@ -241,18 +248,27 @@ func (s *Service) Ask(ctx context.Context, req Request) (Result, error) {
 	s.mu.Lock()
 	if p.done { // answered on a phone or cancelled during the delivery
 		s.mu.Unlock()
-		return <-p.result, nil
+		return withID(<-p.result, p.id), nil
 	}
 	if len(reached) == 0 {
 		s.mu.Unlock()
 		return Result{}, fmt.Errorf("%w: no notification delivered", ErrNoApprover)
 	}
 	p.reached, p.uiUsers, p.listed = reached, uiUsers, true
+	opened := s.openOf(p)
 	s.mu.Unlock()
+	if s.cfg.OnOpened != nil {
+		s.cfg.OnOpened(opened)
+	}
 	if rung := s.ring(ctx, p); rung {
 		defer s.clear(p.bellID)
 	}
-	return s.wait(ctx, key, p), nil
+	return withID(s.wait(ctx, key, p), p.id), nil
+}
+
+func withID(r Result, id string) Result {
+	r.ID = id
+	return r
 }
 
 // recipients are the configured approvers of req who can be reached for it, each once;
@@ -388,7 +404,7 @@ func (s *Service) Answer(ctx context.Context, id, user string, approve bool) (Re
 		return Result{}, ErrNotPending
 	}
 	p.done = true
-	res := Result{Outcome: OutcomeRejected, By: user, Via: ViaUI, At: s.cfg.Now()}
+	res := Result{ID: p.id, Outcome: OutcomeRejected, By: user, Via: ViaUI, At: s.cfg.Now()}
 	if approve {
 		res.Outcome = OutcomeApproved
 	}
@@ -440,12 +456,17 @@ func (s *Service) Open() []Open {
 	slices.SortFunc(list, func(a, b *pending) int { return cmp.Compare(a.seq, b.seq) })
 	out := make([]Open, len(list))
 	for i, p := range list {
-		req := p.req
-		req.Approvers, req.Params = slices.Clone(req.Approvers), maps.Clone(req.Params)
-		out[i] = Open{ID: p.id, Request: req, Recipients: slices.Clone(p.reached), UIUsers: slices.Clone(p.uiUsers),
-			CreatedAt: p.created, ExpiresAt: p.expires}
+		out[i] = s.openOf(p)
 	}
 	return out
+}
+
+// openOf copies p; s.mu must be held.
+func (s *Service) openOf(p *pending) Open {
+	req := p.req
+	req.Approvers, req.Params = slices.Clone(req.Approvers), maps.Clone(req.Params)
+	return Open{ID: p.id, Request: req, Recipients: slices.Clone(p.reached), UIUsers: slices.Clone(p.uiUsers),
+		CreatedAt: p.created, ExpiresAt: p.expires}
 }
 
 // CancelAgent ends the open requests of an agent that was revoked and returns how many.
@@ -593,6 +614,33 @@ func buildRequest(lang i18n.Lang, req Request, nonce string) ha.Notification {
 			{Action: denyPrefix + nonce, Title: i18n.T(lang, i18n.ApprovalDeny, nil), Destructive: true},
 		},
 	}
+}
+
+// Shown limits of untrusted text, as in the push: the agent's reason and names.
+const (
+	ShownReasonMax = maxReason
+	ShownNameMax   = maxName
+)
+
+// Param is one field of the service data as the push shows it.
+type Param struct {
+	Name  string
+	Value string
+}
+
+// ShownParams returns the service data as the push shows it (security review S1): sorted
+// by name, each name and value sanitized and cut to ShownNameMax.
+func ShownParams(params map[string]any) []Param {
+	out := make([]Param, 0, len(params))
+	for _, k := range slices.Sorted(maps.Keys(params)) {
+		out = append(out, Param{Name: sanitize(k, maxName), Value: sanitize(fmt.Sprint(params[k]), maxName)})
+	}
+	return out
+}
+
+// ShownText sanitizes untrusted text as the push does and cuts it to limit runes.
+func ShownText(text string, limit int) string {
+	return sanitize(text, limit)
 }
 
 // formatParams shows the service data as sorted name=value pairs, sanitized.

@@ -163,13 +163,17 @@ func TestScenario07EmergencyStop(t *testing.T) {
 			t.Errorf("agent %s during the stop: %d", name, status)
 		}
 	}
-	// Admission is refused during the stop, even when a human agrees.
+	// Admission is refused during the stop, even when a human agrees: the approval admits
+	// at once, so the consent itself is refused and the agent never gets tokens.
 	p := requestPairing(t)
-	if res := pairAs(t, p, adminApprover, "During stop", lastTemplate(t)); res.status != http.StatusOK {
+	if res := pairAs(t, p, adminApprover, "During stop", lastTemplate(t)); res.status != http.StatusBadRequest {
 		t.Fatalf("consent during the stop = %d", res.status)
 	}
-	if status, out := pollTokens(t, p); status != http.StatusBadRequest || out["error"] != "invalid_grant" {
+	if status, out := pollTokens(t, p); status != http.StatusBadRequest || out["error"] != "authorization_pending" {
 		t.Errorf("tokens during the stop = %d %v", status, out)
+	}
+	if strings.Contains(cli(t, "", "agent", "list"), "During stop") {
+		t.Error("an agent was admitted during the stop")
 	}
 
 	cli(t, "", "emergency-stop", "off")

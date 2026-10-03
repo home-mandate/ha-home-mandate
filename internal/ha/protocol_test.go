@@ -19,12 +19,15 @@ func TestAllowlistMatchesArchitecture(t *testing.T) {
 		"auth/current_user",
 		"call_service",
 		"config/area_registry/list",
+		"config/auth/list",
 		"config/device_registry/list",
 		"config/entity_registry/list",
 		"config/floor_registry/list",
 		"config/label_registry/list",
 		"get_config",
+		"get_services",
 		"get_states",
+		"persistent_notification/get",
 		"ping",
 		"subscribe_entities",
 		"subscribe_events",
@@ -45,6 +48,10 @@ func TestAllowlistMatchesArchitecture(t *testing.T) {
 	if got := sortedKeys(allowedEvents); !slices.Equal(got, wantEvents) {
 		t.Errorf("allowed events = %v, want %v", got, wantEvents)
 	}
+	// The UI shows the list that is enforced (system.ha.commands).
+	if got := AllowedCommands(); !slices.Equal(got, wantCommands) {
+		t.Errorf("AllowedCommands() = %v, want %v", got, wantCommands)
+	}
 }
 
 func sortedKeys(m map[string]bool) []string {
@@ -64,7 +71,9 @@ func TestCommandsOutsideAllowlistNeverReachHA(t *testing.T) {
 	waitReady(t, c)
 
 	forbidden := []command{
-		{Type: "config/auth/list"},
+		{Type: "config/auth/create"},
+		{Type: "config/auth/delete"},
+		{Type: "persistent_notification/subscribe"},
 		{Type: "homeassistant/restart"},
 		{Type: "execute_script"},
 		{Type: "render_template"},
@@ -78,7 +87,7 @@ func TestCommandsOutsideAllowlistNeverReachHA(t *testing.T) {
 		{Type: "subscribe_events", Fields: map[string]any{"event_type": "call_service"}},
 		{Type: "subscribe_events", Fields: map[string]any{"event_type": "*"}},
 		{Type: "subscribe_events", Fields: map[string]any{"event_type": 42}},
-		{Type: "get_states", Fields: map[string]any{"type": "config/auth/list"}},
+		{Type: "get_states", Fields: map[string]any{"type": "config/auth/create"}},
 		{Type: "get_states", Fields: map[string]any{"id": 1}},
 	}
 	for _, cmd := range forbidden {

@@ -90,6 +90,29 @@ func (ap Approver) Reach(admin bool) Reach {
 	return Reach{Normal: ap.Channels(false, admin).Reachable(), Critical: ap.Channels(true, admin).Reachable()}
 }
 
+// How a kind of request reaches a person (decision S9): by push to a device, only in the
+// UI (seen only while it is open), or not at all.
+const (
+	ReachPush = "push"
+	ReachUI   = "ui"
+	ReachNone = "none"
+)
+
+// ReachBy returns the channel ordinary and critical requests reach ap by, with the
+// administrator role now.
+func (ap Approver) ReachBy(admin bool) (normal, critical string) {
+	by := func(c Channels) string {
+		switch {
+		case len(c.Devices) > 0:
+			return ReachPush
+		case c.UI:
+			return ReachUI
+		}
+		return ReachNone
+	}
+	return by(ap.Channels(false, admin)), by(ap.Channels(true, admin))
+}
+
 // CheckUI refuses the UI channel for someone who is no administrator. The API calls it
 // when saving; requests and answers check the administrator again each time.
 func CheckUI(ap Approver, admin bool) error {

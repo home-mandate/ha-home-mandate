@@ -498,7 +498,7 @@ func TestRefreshChecksTheOAuthClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := s.RegisterTx(ctx, tx, "Claude", "https://claude.example.org/client.json", true, admin)
+	a, err := s.RegisterTx(ctx, tx, "Claude", agent.Client{ID: "https://claude.example.org/client.json", Verified: true}, admin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,5 +514,40 @@ func TestRefreshChecksTheOAuthClient(t *testing.T) {
 	}
 	if _, err := s.Refresh(ctx, p.RefreshToken, resource, "https://claude.example.org/client.json"); err != nil {
 		t.Errorf("own client after a refused attempt: %v", err)
+	}
+}
+
+func TestEmergencyStopState(t *testing.T) {
+	s, _, db := newStore(t)
+	ctx := context.Background()
+	at := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	s.SetClock(func() time.Time { return at })
+	if st, err := s.EmergencyStopState(ctx); err != nil || st.Active || !st.Since.IsZero() || st.By != "" {
+		t.Errorf("initial state = %+v, %v", st, err)
+	}
+	if _, err := s.SetEmergencyStop(ctx, true, admin); err != nil {
+		t.Fatal(err)
+	}
+	st, err := s.EmergencyStopState(ctx)
+	if err != nil || !st.Active || !st.Since.Equal(at) || st.By != admin.ID {
+		t.Errorf("on = %+v, %v", st, err)
+	}
+	// Switching it on again changes neither the time nor the person.
+	s.SetClock(func() time.Time { return at.Add(time.Hour) })
+	if _, err := s.SetEmergencyStop(ctx, true, audit.Actor{Kind: "user", ID: "other"}); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := s.EmergencyStopState(ctx); !st.Since.Equal(at) || st.By != admin.ID {
+		t.Errorf("repeated on = %+v", st)
+	}
+	if _, err := s.SetEmergencyStop(ctx, false, admin); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := s.EmergencyStopState(ctx); err != nil || st.Active || !st.Since.IsZero() || st.By != "" {
+		t.Errorf("off = %+v, %v", st, err)
+	}
+	_ = db.Close()
+	if _, err := s.EmergencyStopState(ctx); err == nil {
+		t.Error("EmergencyStopState succeeded on a closed database")
 	}
 }

@@ -147,3 +147,84 @@ func TestStoreReportsDatabaseErrors(t *testing.T) {
 		t.Error("List succeeded")
 	}
 }
+
+// A display name must show a letter or digit once cleaned as the UI shows it (TESTING.md
+// section 4, UI: blank-looking names).
+func TestRegisterRejectsNamesWithoutVisibleText(t *testing.T) {
+	s, _, _ := newStore(t)
+	for _, name := range []string{"\u3164\u3164", "\u2800", "---", "\u0301\u0302", "x\ufe0f", "\u115f\u1160"} {
+		_, err := s.Register(context.Background(), name, admin)
+		wantOK := name == "x\ufe0f" // the selector is cleaned away, the letter stays
+		if (err == nil) != wantOK || !wantOK && !errors.Is(err, agent.ErrInvalidName) {
+			t.Errorf("Register(%q) = %v", name, err)
+		}
+	}
+	if n, ok := agent.ValidName("  Küche 2  "); !ok || n != "Küche 2" {
+		t.Errorf("ValidName = %q, %v", n, ok)
+	}
+	if _, ok := agent.ValidName("\u3164"); ok {
+		t.Error("ValidName accepted a blank name")
+	}
+}
+
+func TestRegisterTxKeepsTheRedirectURIs(t *testing.T) {
+	s, _, db := newStore(t)
+	ctx := context.Background()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uris := []string{"https://claude.ai/api/mcp/auth_callback", "http://127.0.0.1/callback"}
+	a, err := s.RegisterTx(ctx, tx, "Claude", agent.Client{ID: "https://claude.ai/oauth/client.json", Verified: true, RedirectURIs: uris}, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(ctx, a.ClientID)
+	if err != nil || len(got.RedirectURIs) != 2 || got.RedirectURIs[1] != uris[1] || !got.ClientVerified || !got.RevokedAt.IsZero() {
+		t.Errorf("Get = %+v, %v", got, err)
+	}
+	plain := register(t, s, "Pairing")
+	if got, _ := s.Get(ctx, plain.ClientID); got.RedirectURIs == nil || len(got.RedirectURIs) != 0 {
+		t.Errorf("pairing agent redirect URIs = %#v", got.RedirectURIs)
+	}
+}
+
+func TestRevokeRecordsWhoAndWhen(t *testing.T) {
+	s, _, db := newStore(t)
+	ctx := context.Background()
+	a := register(t, s, "Voice")
+	tx, _ := db.BeginTx(ctx, nil)
+	changed, err := s.RevokeTx(ctx, tx, a.ClientID, admin)
+	if err != nil || !changed {
+		t.Fatalf("RevokeTx = %v, %v", changed, err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(ctx, a.ClientID)
+	if got.Status != agent.StatusRevoked || got.RevokedBy != admin.ID || got.RevokedAt.IsZero() {
+		t.Errorf("revoked agent = %+v", got)
+	}
+	tx, _ = db.BeginTx(ctx, nil)
+	defer func() { _ = tx.Rollback() }()
+	if changed, err := s.RevokeTx(ctx, tx, a.ClientID, audit.Actor{Kind: "user", ID: "other"}); err != nil || changed {
+		t.Errorf("second RevokeTx = %v, %v", changed, err)
+	}
+	if _, err := s.RevokeTx(ctx, tx, "hm-client:nobody-00000000", admin); !errors.Is(err, agent.ErrNotFound) {
+		t.Errorf("RevokeTx(unknown) = %v", err)
+	}
+}
+
+func TestListReportsUnreadableRedirectURIs(t *testing.T) {
+	s, _, db := newStore(t)
+	a := register(t, s, "Voice")
+	if _, err := db.Exec(`UPDATE agents SET redirect_uris = 'not json' WHERE client_id = ?`, a.ClientID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.List(context.Background()); err == nil {
+		t.Error("List succeeded with unreadable redirect URIs")
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -751,5 +752,18 @@ func TestSanitizeRemovesTokenCarryingAttributes(t *testing.T) {
 	})
 	if len(got) != 2 || got["friendly_name"] != "TV" || got["volume_level"] != 0.4 {
 		t.Errorf("sanitize = %v", got)
+	}
+}
+
+// The UI offers per category exactly the actions of the vocabulary the PEP enforces.
+func TestActionsOfTheVocabulary(t *testing.T) {
+	if got := Actions("light"); !slices.Equal(got, []string{"read", "set", "turn_off", "turn_on"}) {
+		t.Errorf("Actions(light) = %v", got)
+	}
+	if got := Actions("lock"); !slices.Equal(got, []string{"lock", "open", "read", "unlock"}) {
+		t.Errorf("Actions(lock) = %v", got)
+	}
+	if got := Actions("paperless:document"); len(got) != 0 {
+		t.Errorf("unknown category = %v", got)
 	}
 }

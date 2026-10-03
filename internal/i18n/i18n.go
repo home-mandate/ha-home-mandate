@@ -45,6 +45,8 @@ const (
 	ApprovalInvalidMessage Key = "approval_invalid_message"
 	ApprovalBellTitle      Key = "approval_bell_title"
 	ApprovalBellMessage    Key = "approval_bell_message"
+	ApprovalTestTitle      Key = "approval_test_title"
+	ApprovalTestMessage    Key = "approval_test_message"
 
 	PageErrorTitle         Key = "page_error_title"
 	PageInvalidRequest     Key = "page_invalid_request"
@@ -83,7 +85,7 @@ var actions = []string{"read", "turn_on", "turn_off", "set", "set_temperature", 
 // Keys lists every message key.
 var Keys = append([]Key{
 	ApprovalTitle, ApprovalMessage, ApprovalReason, ApprovalParams, ApprovalNoAnswer, ApprovalApprove, ApprovalDeny,
-	ApprovalInvalidTitle, ApprovalInvalidMessage, ApprovalBellTitle, ApprovalBellMessage,
+	ApprovalInvalidTitle, ApprovalInvalidMessage, ApprovalBellTitle, ApprovalBellMessage, ApprovalTestTitle, ApprovalTestMessage,
 	PageErrorTitle, PageInvalidRequest, PageInvalidClient, PageSessionExpired, PageSignInFailed, PageNotAdmin, PageBusy, PageSignedInAs, PageConsentTitle, PageConsentClaimed, PageConsentVerified, PageConsentUnverified, PageConsentReturn, PageConsentName, PageConsentTemplate, PageConsentApprove, PageConsentDeny, PageConsentNoTemplates, PageConsentInvalid, PageDenied, PageAdmitted, PagePairTitle, PagePairIntro, PagePairCode, PagePairSubmit, PagePairInvalid, PagePairLocked,
 }, actionKeys()...)
 

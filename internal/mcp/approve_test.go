@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/home-mandate/home-mandate/internal/approval"
+	"github.com/home-mandate/home-mandate/internal/audit"
 	"github.com/home-mandate/home-mandate/internal/ha"
 	"github.com/home-mandate/home-mandate/internal/pdp"
 )
@@ -371,5 +372,36 @@ func TestCancelledApprovals(t *testing.T) {
 		if r, err := h.log.Verify(context.Background()); err != nil || !r.Valid {
 			t.Errorf("%s: audit log = %+v, %v", name, r, err)
 		}
+	}
+}
+
+// Every audit entry that ends an approval request carries the request's ID for the UI
+// (approval.closed), whatever the outcome; it is never part of the stored entry.
+func TestApprovalEntriesNameTheirRequest(t *testing.T) {
+	for _, outcome := range []string{approval.OutcomeApproved, approval.OutcomeRejected, approval.OutcomeTimeout, approval.OutcomeCancelled} {
+		t.Run(outcome, func(t *testing.T) {
+			res := approval.Result{ID: "0123456789abcdef0123456789abcdef", Outcome: outcome, At: answeredAt}
+			if outcome == approval.OutcomeApproved || outcome == approval.OutcomeRejected {
+				res.By, res.Via = approverID, approval.ViaUI
+			}
+			f := &fakeApprover{result: res}
+			h := approvalHarness(t, f)
+			var mu sync.Mutex
+			var ids []string
+			h.log.OnCommit(func(_ int64, e audit.Entry) {
+				mu.Lock()
+				defer mu.Unlock()
+				ids = append(ids, e.ApprovalID)
+			})
+			_ = unlock(h, nil)
+			mu.Lock()
+			defer mu.Unlock()
+			if len(ids) != 1 || ids[0] != res.ID {
+				t.Errorf("approval IDs of the entries = %q", ids)
+			}
+			if req := f.requests(); len(req) != 1 || req[0].EntityID != "lock.front_door" {
+				t.Errorf("request = %+v", req)
+			}
+		})
 	}
 }

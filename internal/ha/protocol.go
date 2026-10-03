@@ -34,7 +34,8 @@ const (
 )
 
 // allowedCommands is the fixed allowlist of WebSocket commands from docs/ARCHITECTURE.md
-// section 11.2. Home-Mandate's HA user is an admin; this list is what limits it.
+// section 11.2. Home-Mandate's HA user is an admin; this list is what limits it. The
+// last three only read, for the local UI (decision B1).
 var allowedCommands = map[string]bool{
 	"get_states":                  true,
 	"subscribe_entities":          true,
@@ -49,6 +50,9 @@ var allowedCommands = map[string]bool{
 	"subscribe_events":            true,
 	"unsubscribe_events":          true,
 	"ping":                        true,
+	cmdAuthList:                   true,
+	cmdGetServices:                true,
+	cmdPersistentNotifyGet:        true,
 }
 
 // allowedEvents limits subscribe_events (ARCHITECTURE section 11.2).

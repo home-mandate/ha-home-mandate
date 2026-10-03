@@ -43,8 +43,10 @@ const (
 	kindRefresh = "refresh"
 
 	settingEmergencyStop = "emergency_stop"
-	stopOn               = "on"
-	stopOff              = "off"
+	// settingEmergencyStopBy is who switched the stop on; written with it.
+	settingEmergencyStopBy = "emergency_stop_by"
+	stopOn                 = "on"
+	stopOff                = "off"
 
 	errRefreshReused = "refresh_token_reused"
 )
@@ -263,10 +265,11 @@ func (s *Store) SetEmergencyStop(ctx context.Context, on bool, by audit.Actor) (
 				return fmt.Errorf("agent: revoke all tokens: %w", err)
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
-			ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-			settingEmergencyStop, value, now); err != nil {
-			return fmt.Errorf("agent: write emergency stop: %w", err)
+		for key, v := range map[string]string{settingEmergencyStop: value, settingEmergencyStopBy: by.ID} {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+				ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, key, v, now); err != nil {
+				return fmt.Errorf("agent: write emergency stop: %w", err)
+			}
 		}
 		if _, err := s.log.AppendTx(ctx, tx, audit.Entry{Event: event, Actor: &by}); err != nil {
 			return err
@@ -275,6 +278,36 @@ func (s *Store) SetEmergencyStop(ctx context.Context, on bool, by audit.Actor) (
 		return nil
 	})
 	return changed, err
+}
+
+// StopState is the emergency stop as the UI shows it.
+type StopState struct {
+	Active bool
+	Since  time.Time // when it was switched on; zero while off
+	By     string    // Home Assistant user ID (or local-admin) who switched it on
+}
+
+// EmergencyStopState returns whether the stop is on, since when and by whom. The time is
+// that of its own setting, which outlives the 30 days of the audit log.
+func (s *Store) EmergencyStopState(ctx context.Context) (StopState, error) {
+	var value, updated string
+	err := s.db.QueryRowContext(ctx, `SELECT value, updated_at FROM settings WHERE key = ?`, settingEmergencyStop).Scan(&value, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return StopState{}, nil
+	}
+	if err != nil {
+		return StopState{}, fmt.Errorf("agent: read emergency stop: %w", err)
+	}
+	if value == stopOff {
+		return StopState{}, nil
+	}
+	st := StopState{Active: true}
+	st.Since, _ = time.Parse(timeFormat, updated)
+	err = s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, settingEmergencyStopBy).Scan(&st.By)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return StopState{}, fmt.Errorf("agent: read emergency stop: %w", err)
+	}
+	return st, nil
 }
 
 func emergencyStop(ctx context.Context, tx *sql.Tx) (bool, error) {

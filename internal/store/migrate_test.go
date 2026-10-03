@@ -254,3 +254,68 @@ func TestApproverChannelsMigrationKeepsPhones(t *testing.T) {
 		t.Errorf("devices of a removed approver: %d, %v", n, err)
 	}
 }
+
+// Migration 9 rebuilds the mandate tables without losing anything, keeps the foreign
+// keys, allows a new mandate after a revoked one and still refuses two active mandates
+// of one agent; the audit columns and the search table work under trusted_schema(0).
+func TestUIMigrationKeepsMandates(t *testing.T) {
+	ctx := context.Background()
+	db := openRaw(t)
+	if err := migrate(ctx, db, upTo(t, 8)); err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO agents (client_id, display_name, status, created_at, created_by) VALUES ('hm-client:a', 'A', 'active', 't', 'u')`,
+		`INSERT INTO mandates (id, client_id, status, current_digest, max_actions_per_hour, created_at, updated_at)
+			VALUES ('m-a', 'hm-client:a', 'revoked', 'sha256:1', 60, 't1', 't2')`,
+		`INSERT INTO mandate_versions (mandate_id, digest, document, created_at, created_by) VALUES ('m-a', 'sha256:1', '{}', 't1', 'u')`,
+		`INSERT INTO audit_log (seq, recorded_at, event, entry, digest) VALUES (1, 't', 'decision',
+			'{"agent":{"client_id":"hm-client:a"},"request":{"resource":{"entity_id":"light.x","area":"k"}},"evaluation":{"decision":"deny","reason":"no_match"}}', 'd')`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrate(ctx, db, embeddedMigrations()); err != nil {
+		t.Fatal(err)
+	}
+	var id, status, name string
+	var limit, versions int
+	if err := db.QueryRow(`SELECT m.id, m.status, m.name, m.max_actions_per_hour, (SELECT count(*) FROM mandate_versions v WHERE v.mandate_id = m.id)
+		FROM mandates m`).Scan(&id, &status, &name, &limit, &versions); err != nil {
+		t.Fatal(err)
+	}
+	if id != "m-a" || status != "revoked" || name != "" || limit != 60 || versions != 1 {
+		t.Errorf("mandate after migration: %s %s %q %d %d", id, status, name, limit, versions)
+	}
+	// A second mandate of the agent after the revoked one: allowed once, not twice active.
+	if _, err := db.Exec(`INSERT INTO mandates (id, client_id, status, current_digest, max_actions_per_hour, created_at, updated_at)
+		VALUES ('m-a-2', 'hm-client:a', 'active', 'sha256:2', 60, 't', 't')`); err != nil {
+		t.Errorf("new mandate after a revoked one: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO mandates (id, client_id, status, current_digest, max_actions_per_hour, created_at, updated_at)
+		VALUES ('m-a-3', 'hm-client:a', 'active', 'sha256:3', 60, 't', 't')`); err == nil {
+		t.Error("second active mandate of one agent accepted")
+	}
+	// Foreign keys survived the rebuild.
+	if _, err := db.Exec(`INSERT INTO mandate_versions (mandate_id, digest, document, created_at, created_by) VALUES ('m-none', 'x', '{}', 't', 'u')`); err == nil {
+		t.Error("version of an unknown mandate accepted")
+	}
+	if _, err := db.Exec(`INSERT INTO mandates (id, client_id, status, current_digest, max_actions_per_hour, created_at, updated_at)
+		VALUES ('m-b', 'hm-client:nobody', 'active', 'x', 1, 't', 't')`); err == nil {
+		t.Error("mandate of an unknown agent accepted")
+	}
+	var client, entity, area, decision string
+	if err := db.QueryRow(`SELECT client_id, entity_id, area, decision FROM audit_log WHERE seq = 1`).Scan(&client, &entity, &area, &decision); err != nil {
+		t.Fatal(err)
+	}
+	if client != "hm-client:a" || entity != "light.x" || area != "k" || decision != "default" {
+		t.Errorf("audit columns: %s %s %s %s", client, entity, area, decision)
+	}
+	if _, err := db.Exec(`INSERT INTO audit_search (seq, text) VALUES (1, 'x')`); err != nil {
+		t.Errorf("search row: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO audit_search (seq, text) VALUES (2, 'x')`); err == nil {
+		t.Error("search row without its entry accepted")
+	}
+}

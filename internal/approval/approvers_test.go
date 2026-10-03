@@ -325,6 +325,53 @@ func TestReachCombinations(t *testing.T) {
 	}
 }
 
+// Combination table "reach by channel" (decision S9): the settings show per kind of
+// request whether it reaches the person by push, only in the UI, or not at all.
+func TestReachByCombinations(t *testing.T) {
+	cases := []struct {
+		config           string
+		admin            bool
+		normal, critical string
+	}{
+		{"P", false, "push", "push"},
+		{"P", true, "push", "push"},
+		{"M", false, "push", "none"},
+		{"M", true, "push", "none"},
+		{"PM", false, "push", "push"},
+		{"PM", true, "push", "push"},
+		{"-, UI", false, "none", "none"},
+		{"-, UI", true, "ui", "none"},
+		{"-, UI+crit", false, "none", "none"},
+		{"-, UI+crit", true, "ui", "ui"},
+		{"P, UI", false, "push", "push"},
+		{"P, UI", true, "push", "push"},
+		{"P, UI+crit", false, "push", "push"},
+		{"P, UI+crit", true, "push", "push"},
+		{"M, UI", false, "push", "none"},
+		{"M, UI", true, "push", "none"},
+		{"M, UI+crit", false, "push", "none"},
+		{"M, UI+crit", true, "push", "ui"},
+		{"PM, UI", false, "push", "push"},
+		{"PM, UI", true, "push", "push"},
+		{"PM, UI+crit", false, "push", "push"},
+		{"PM, UI+crit", true, "push", "push"},
+	}
+	if len(cases) != len(configs)*2 {
+		t.Fatalf("%d cases, want %d", len(cases), len(configs)*2)
+	}
+	for _, c := range cases {
+		normal, critical := configs[c.config].ReachBy(c.admin)
+		if normal != c.normal || critical != c.critical {
+			t.Errorf("%s, admin=%v: %s/%s, want %s/%s", c.config, c.admin, normal, critical, c.normal, c.critical)
+		}
+		// Consistent with Reach: "none" exactly when unreachable.
+		r := configs[c.config].Reach(c.admin)
+		if r.Normal != (normal != ReachNone) || r.Critical != (critical != ReachNone) {
+			t.Errorf("%s, admin=%v: ReachBy and Reach disagree", c.config, c.admin)
+		}
+	}
+}
+
 func TestApproversReportDatabaseErrors(t *testing.T) {
 	a, closeDB := newApprovers(t)
 	_ = closeDB()

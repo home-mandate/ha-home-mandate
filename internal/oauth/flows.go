@@ -5,6 +5,7 @@ package oauth
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -34,10 +35,12 @@ type authzRequest struct {
 	resource    string
 }
 
-// decision is what the human chose on the consent page.
+// decision is what the human chose on the consent page or in the UI.
 type decision struct {
-	name, template string
-	by             ha.User
+	name, template  string
+	mandateName     string
+	confirmCritical bool
+	by              string // Home Assistant user ID
 }
 
 // authCode is an authorization code waiting to be exchanged, at most codeTTL.
@@ -161,11 +164,12 @@ func (s *Server) endSession(w http.ResponseWriter, id string) {
 
 // consentState is a snapshot of a signed-in session that is admitting an agent.
 type consentState struct {
-	user   ha.User
-	csrf   string
-	authz  *authzRequest
-	device string
-	client Client
+	user    ha.User
+	csrf    string
+	authz   *authzRequest
+	device  string
+	grantID string
+	client  Client
 }
 
 // consentSession returns the signed-in session of r with an agent to admit.
@@ -187,7 +191,7 @@ func (s *Server) consentSession(r *http.Request) (consentState, bool) {
 		return st, true
 	}
 	g, ok := s.pendingGrant(st.device)
-	st.client = g.client
+	st.client, st.grantID = g.client, g.id
 	return st, ok
 }
 
@@ -278,7 +282,7 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 			s.renderConsent(w, r, st, name, tmpl, i18n.PageConsentInvalid)
 			return
 		}
-		d := decision{name: name, template: tmpl, by: st.user}
+		d := decision{name: name, template: tmpl, by: st.user.ID}
 		if !s.decide(w, id, form["csrf"]) {
 			s.fail(w, r, http.StatusForbidden, i18n.PageSessionExpired)
 			return
@@ -292,8 +296,15 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 			s.redirectToClient(w, r, st.authz, url.Values{"code": {code}}, http.StatusSeeOther)
 			return
 		}
-		if !s.approveGrant(st.device, d) {
-			s.fail(w, r, http.StatusBadRequest, i18n.PagePairInvalid)
+		if _, err := s.admitGrant(r.Context(), st.device, st.grantID, d); err != nil {
+			switch {
+			case errors.Is(err, ErrPairingAdmission):
+				s.fail(w, r, http.StatusBadRequest, i18n.PageConsentInvalid)
+			case errors.Is(err, ErrPairingUnavailable):
+				s.fail(w, r, http.StatusServiceUnavailable, i18n.PageBusy)
+			default:
+				s.fail(w, r, http.StatusBadRequest, i18n.PagePairInvalid)
+			}
 			return
 		}
 		s.message(w, r, http.StatusOK, i18n.PageConsentTitle, i18n.PageAdmitted)

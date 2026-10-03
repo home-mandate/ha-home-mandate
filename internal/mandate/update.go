@@ -23,6 +23,8 @@ type Change struct {
 	// ConfirmCritical is the human's separate confirmation that rules of the new version
 	// may allow critical actions without approval.
 	ConfirmCritical bool
+	// Name, if not empty, becomes the display name in the same transaction.
+	Name string
 }
 
 // Update stores document as a new version of the mandate id that a human edited. It is
@@ -65,12 +67,28 @@ func (s *Store) Update(ctx context.Context, id string, document []byte, change C
 				return ErrCriticalConfirmation
 			}
 		}
-		return s.put(ctx, tx, info, document, by)
+		if err := s.put(ctx, tx, info, document, by); err != nil {
+			return err
+		}
+		if change.Name != "" {
+			return s.SetNameTx(ctx, tx, id, change.Name)
+		}
+		return nil
 	})
 	if err != nil {
 		return Info{}, err
 	}
 	return s.Get(ctx, id)
+}
+
+// NewCriticalGrant tells whether the document next has a rule with allow_critical that
+// current (nil: none) does not have in exactly this form; for checks outside an update,
+// such as a new mandate from a template.
+func NewCriticalGrant(current, next []byte) (bool, error) {
+	if current == nil {
+		current = []byte(`{}`)
+	}
+	return newCriticalGrant(current, next)
 }
 
 // newCriticalGrant tells whether next has a rule with allow_critical that current does

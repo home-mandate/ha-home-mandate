@@ -13,7 +13,6 @@ import (
 	"github.com/home-mandate/home-mandate/internal/admission"
 	"github.com/home-mandate/home-mandate/internal/agent"
 	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/mandate"
 )
 
 // verifierPattern is a PKCE code verifier (RFC 7636 section 4.1).
@@ -74,14 +73,13 @@ func pkceMatches(verifier, challenge string) bool {
 // the admission is not cancelled when the agent disconnects.
 func (s *Server) admit(w http.ResponseWriter, r *http.Request, client Client, resource string, d decision) (serverError bool) {
 	a, tokens, err := s.cfg.Admission.Admit(context.WithoutCancel(r.Context()), admission.Request{DisplayName: d.name, Template: d.template,
-		OAuthClient: client.ID, ClientVerified: client.Verified, Resource: resource,
-		By: audit.Actor{Kind: audit.ActorUser, ID: d.by.ID}})
+		OAuthClient: client.ID, ClientVerified: client.Verified, RedirectURIs: client.RedirectURIs, Resource: resource,
+		By: audit.Actor{Kind: audit.ActorUser, ID: d.by}})
 	switch {
 	case err == nil:
-		s.cfg.Logger.Info("agent admitted", "client_id", a.ClientID, "oauth_client", client.ID, "by", d.by.ID)
+		s.cfg.Logger.Info("agent admitted", "client_id", a.ClientID, "oauth_client", client.ID, "by", d.by)
 		writeTokens(w, tokens)
-	case errors.Is(err, agent.ErrEmergencyStop), errors.Is(err, admission.ErrTemplateNotFound),
-		errors.Is(err, agent.ErrInvalidName), errors.Is(err, mandate.ErrInvalid):
+	case refused(err):
 		s.cfg.Logger.Warn("admission refused", "oauth_client", client.ID, "error", err)
 		oauthError(w, http.StatusBadRequest, "invalid_grant")
 	default:
