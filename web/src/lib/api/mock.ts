@@ -27,6 +27,8 @@ import {
   templatesFixture,
   USERS,
   voiceAssistantMandate,
+  WORST_NAME,
+  WORST_REASON,
 } from './fixtures.ts';
 import type {
   Agent,
@@ -81,7 +83,7 @@ export const MOCK_PAIRING_CODE = 'BCDF-GHJK';
 export const MOCK_EXPIRED_CODE = 'ZZZZ-ZZZZ';
 const PAIRING_ATTEMPTS = 5;
 const PAIRING_LOCK_S = 600;
-const pairingCandidate: PairingCandidate = {
+const pairingFixture: PairingCandidate = {
   pairing_id: 'pg-kitchen-tablet',
   claimed_name: 'Küchen-Tablet',
   client: 'kitchen-tablet',
@@ -129,6 +131,8 @@ export interface MockOptions {
   eventsState?: EventsState;
   /** Starts a household without agents, mandates, log entries and requests (onboarding). */
   empty?: boolean;
+  /** Gives the voice assistant WORST_NAME everywhere, an open request with WORST_REASON, and the pairing candidate WORST_NAME. */
+  hostile?: boolean;
   now?: () => Date;
 }
 
@@ -141,6 +145,30 @@ function householdDay(at: Date, timeZone: string): string {
 
 const normalizeCode = (code: string) => code.toUpperCase().replace(/[\s-]/g, '');
 const nameOf = (userId: string) => USERS[userId] ?? null;
+
+const HOSTILE_AGENT = 'pair:voice-assistant';
+
+/** renameAgent returns value with every {client_id, display_name} of the agent renamed. */
+function renameAgent<T>(value: T, clientId: string, name: string): T {
+  if (Array.isArray(value)) return value.map((v: unknown) => renameAgent(v, clientId, name)) as T;
+  if (value === null || typeof value !== 'object') return value;
+  const out: Record<string, unknown> = Object.fromEntries(Object.entries(value).map(([k, v]) => [k, renameAgent(v, clientId, name)]));
+  return (out.client_id === clientId && 'display_name' in out ? { ...out, display_name: name } : out) as T;
+}
+
+/** hostileState is the household of the option "hostile". */
+function hostileState(state: State): State {
+  const renamed = renameAgent(state, HOSTILE_AGENT, WORST_NAME);
+  const request: ApprovalRequest = {
+    ...approvalsOpenFixture[0]!,
+    id: 'apr-hostile',
+    agent: { client_id: HOSTILE_AGENT, display_name: WORST_NAME },
+    reason: WORST_REASON,
+    critical: false,
+    can_answer: true,
+  };
+  return { ...renamed, approvals: { ...renamed.approvals, open: [...renamed.approvals.open, request] } };
+}
 
 function initialMandates(): Record<string, StoredMandate> {
   return Object.fromEntries(
@@ -239,7 +267,8 @@ function matchesQuery(e: AuditEntry, q: AuditQuery): boolean {
 
 export function createMockClient(options: MockOptions = {}): MockClient {
   const now = options.now ?? (() => new Date(NOW));
-  let state: State = {
+  const pairingCandidate: PairingCandidate = options.hostile ? { ...pairingFixture, claimed_name: WORST_NAME } : pairingFixture;
+  const initial: State = {
     session: sessionFixture,
     system: systemFixture,
     defaults: defaultsFixture,
@@ -251,6 +280,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     approvers: approversFixture,
     pairing: { codes: { [normalizeCode(MOCK_PAIRING_CODE)]: 'open', [normalizeCode(MOCK_EXPIRED_CODE)]: 'expired' }, wrong: 0, lockedUntil: 0 },
   };
+  let state = options.hostile ? hostileState(initial) : initial;
   let counter = 0;
   const listeners = new Set<EventHandlers>();
 

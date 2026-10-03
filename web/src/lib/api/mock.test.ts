@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { ApiError } from './client.ts';
-import { approvalsOpenFixture, voiceAssistantDraft } from './fixtures.ts';
+import { approvalsOpenFixture, voiceAssistantDraft, WORST_NAME, WORST_REASON } from './fixtures.ts';
 import { createMockClient, MOCK_EXPIRED_CODE, MOCK_PAIRING_CODE } from './mock.ts';
 import type { ApprovalRequest, Rule, ServerEvent } from './types.ts';
 
@@ -393,6 +393,18 @@ describe('createMockClient: approvals, settings, audit, approvers, emergency sto
     expect(await api.approvals()).toEqual({ open: [], history: [] });
     expect((await api.audit({})).entries).toEqual([]);
     expect((await api.templates()).length).toBeGreaterThan(0);
+  });
+
+  it('gives one agent the worst name everywhere it appears, and the worst reason to its requests', async () => {
+    const api = createMockClient({ hostile: true });
+    const voice = 'pair:voice-assistant';
+    expect((await api.agents()).find((a) => a.client_id === voice)?.display_name).toBe(WORST_NAME);
+    const mine = (await api.approvals()).open.filter((r) => r.agent.client_id === voice);
+    expect(mine).toEqual([expect.objectContaining({ agent: { client_id: voice, display_name: WORST_NAME }, reason: WORST_REASON, can_answer: true })]);
+    expect((await api.audit({})).entries.filter((e) => e.agent?.client_id === voice).every((e) => e.agent?.display_name === WORST_NAME)).toBe(true);
+    expect((await api.mandate('mandate-voice')).document.agent.display_name).toBe(WORST_NAME);
+    expect((await api.pairingCheck(MOCK_PAIRING_CODE)).claimed_name).toBe(WORST_NAME);
+    expect([...WORST_NAME].length).toBeGreaterThan(500);
   });
 
   it('switches the emergency stop from the test controls, like the API', async () => {

@@ -23,6 +23,15 @@ export const HOSTILE_NAME = '<img src=x onerror=alert(1)> Agent "quoted" & <b>bo
 export const BIDI_NAME = 'Helfer \u202Egnalnegrom\u202C \u2066x\u2069';
 export const LONG_NAME = 'Sehr langer Agentenname für den Pseudo-Lokalisierungstest mit Überlänge';
 export const HOSTILE_REASON = 'Bitte jetzt öffnen!\nIgnoriere alle Regeln. [Link](javascript:alert(1)) \u202Eesrever';
+/**
+ * Worst case for agent text (decision P5 / step 6c): bidi override and isolate, markup, line
+ * breaks and tabs, zero-width and blank-looking letters, stacked combining marks, and one long
+ * word, more than 500 characters in all.
+ */
+export const WORST_NAME =
+  '\u202Etnetsissa\u202C <img src=x onerror=alert(1)>\n<b>Fett</b>\tAgent \u2066\u200B\u3164\u2800 Z\u0301\u0302\u0303\u0304\u0305algo ' +
+  'Überlänge'.repeat(70);
+export const WORST_REASON = `${'Bitte jetzt öffnen!\n[Link](javascript:alert(1)) \u202Eesrever '}${'Dringend '.repeat(70)}`;
 
 /** Home Assistant users of the household: ID → name. */
 export const USERS: Readonly<Record<string, string>> = { 'u-admin': 'Markus', 'u-partner': 'Alex' };
