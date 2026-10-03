@@ -9,3 +9,9 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+/** Test builds only (VITE_MOCK): Playwright sets the options and drives the mock through hmMock. */
+interface Window {
+  hmMock?: import('./lib/api/mock.ts').MockControls;
+  hmMockOptions?: import('./lib/api/mock.ts').MockOptions;
+}

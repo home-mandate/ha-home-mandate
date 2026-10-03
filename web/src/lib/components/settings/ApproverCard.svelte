@@ -109,6 +109,7 @@
   async function cancel() {
     const from = pending?.from;
     pending = null;
+    removed = null;
     await tick();
     if (from?.isConnected) from.focus();
   }
@@ -134,6 +135,28 @@
     }
     onchange(edit);
   }
+
+  // After a device is gone (the server's answer), the focus moves to the next device's remove
+  // button, else to the device choice, instead of falling to the page (review a11y L5).
+  let body: HTMLElement | undefined = $state();
+  let removed: { service: string; index: number } | null = null;
+
+  function removeDevice(service: string, index: number) {
+    removed = { service, index };
+    change((u) => withoutDevice(u, service));
+  }
+
+  $effect(() => {
+    const devices = update.devices;
+    const gone = removed;
+    if (!gone || devices.some((d) => d.service === gone.service)) return;
+    removed = null;
+    void tick().then(() => {
+      const buttons = body?.querySelectorAll<HTMLElement>('.device .wrap button') ?? [];
+      const next = buttons[Math.min(gone.index, buttons.length - 1)] ?? body?.querySelector<HTMLElement>('.add select');
+      next?.focus();
+    });
+  });
 
   function deviceCritical(service: string, on: boolean) {
     const candidate = candidates.devices.find((d) => d.service === service);
@@ -173,11 +196,11 @@
   </div>
 
   <!-- Every control below is about this person; the group carries the name. -->
-  <div class="body" role="group" aria-labelledby="{id}-name">
+  <div class="body" role="group" aria-labelledby="{id}-name" bind:this={body}>
     <fieldset>
       <legend>{m.set_approver_devices()}</legend>
       <ul role="list">
-        {#each update.devices as device (device.service)}
+        {#each update.devices as device, index (device.service)}
           {@const label = deviceLabel(device.service)}
           <li>
             <div class="device" role="group" aria-labelledby="{id}-{device.service}">
@@ -193,7 +216,7 @@
               <IconButton
                 icon="close"
                 label={m.set_approver_device_remove({ device: isolate(label.name) })}
-                onclick={() => change((u) => withoutDevice(u, device.service))}
+                onclick={() => removeDevice(device.service, index)}
               />
             </div>
           </li>

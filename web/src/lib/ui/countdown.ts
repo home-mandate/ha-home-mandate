@@ -35,13 +35,14 @@ export function announcement(prev: number | null, next: number): number | null {
   return crossed;
 }
 
-/** spokenDuration says seconds in words for the timer's name, e.g. "1 minute 30 seconds"; zero minutes are left out. */
+/** spokenDuration says seconds in words for the timer's name, e.g. "1 minute 30 seconds"; a zero part is left out. */
 export function spokenDuration(seconds: number, locale: string): string {
   const s = Math.max(0, Math.floor(seconds));
   const unit = (value: number, name: 'minute' | 'second') =>
     new Intl.NumberFormat(locale, { style: 'unit', unit: name, unitDisplay: 'long' }).format(value);
   const minutes = Math.floor(s / 60);
-  return minutes > 0 ? `${unit(minutes, 'minute')} ${unit(s % 60, 'second')}` : unit(s, 'second');
+  if (minutes === 0) return unit(s, 'second');
+  return s % 60 === 0 ? unit(minutes, 'minute') : `${unit(minutes, 'minute')} ${unit(s % 60, 'second')}`;
 }
 
 /** formatClock shows seconds as m:ss in the digits of the locale. */

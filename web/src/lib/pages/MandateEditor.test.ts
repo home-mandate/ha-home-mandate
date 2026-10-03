@@ -62,7 +62,7 @@ describe('MandateEditor', () => {
     expect((screen.getByLabelText('Valid from') as HTMLInputElement).value).toBe('2026-10-01');
     expect((screen.getByLabelText('Valid until (optional)') as HTMLInputElement).value).toBe('');
     expect((screen.getByLabelText('Rate limit') as HTMLInputElement).value).toBe('60');
-    expect(screen.getByRole('link', { name: 'All mandates' }).getAttribute('href')).toBe('#/mandates');
+    expect(screen.getByRole('link', { name: 'Back: All mandates' }).getAttribute('href')).toBe('#/mandates');
     expect(screen.getByRole('link', { name: 'Versions' }).getAttribute('href')).toBe('#/mandates/mandate-voice/versions');
 
     const list = await cards();
@@ -723,7 +723,7 @@ describe('states', () => {
   it('says so when the mandate does not exist', async () => {
     await start({}, undefined, 'mandate-gone');
     expect(await screen.findByRole('heading', { name: 'This mandate doesn’t exist' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'All mandates' }).getAttribute('href')).toBe('#/mandates');
+    expect(screen.getByRole('link', { name: 'Back: All mandates' }).getAttribute('href')).toBe('#/mandates');
   });
 
   it('shows a skeleton while loading', async () => {

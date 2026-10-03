@@ -18,7 +18,10 @@
   interface Props {
     label: string;
     onfire: () => void;
-    /** Announced at 100 %. */
+    /**
+     * Announced at 100 %, before onfire's outcome is known: say that it is happening, not
+     * that it happened (review a11y M4); the outcome is the caller's to announce.
+     */
     done: string;
     element?: HTMLButtonElement;
     now?: () => number;

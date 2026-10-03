@@ -15,6 +15,7 @@
   import Button from '../components/Button.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import ErrorState from '../components/ErrorState.svelte';
+  import BackLink from '../components/BackLink.svelte';
   import Icon from '../components/Icon.svelte';
   import Skeleton from '../components/Skeleton.svelte';
   import EffectsList from '../components/mandate/EffectsList.svelte';
@@ -176,7 +177,7 @@
 
 {#if page.status === 'error' && page.code === 'not_found'}
   <EmptyState icon="search" title={m.editor_not_found_title()} body={m.editor_not_found_body()}>
-    {#snippet action()}<a class="back" href={href({ name: 'mandates' })}><Icon name="back" size={16} />{m.editor_back()}</a>{/snippet}
+    {#snippet action()}<BackLink href={href({ name: 'mandates' })} label={m.editor_back()} />{/snippet}
   </EmptyState>
 {:else if page.status === 'error'}
   <ErrorState title={m.editor_error_title()} body={m.mandates_error_body()} onretry={() => void reload()} />
@@ -185,7 +186,7 @@
 {:else}
   {@const current_ = currentNumber(versions)}
   <div class="head">
-    <a class="back" href={href({ name: 'mandate', id })}><Icon name="back" size={16} /><bdi>{cleanUntrusted(detail.summary.name)}</bdi></a>
+    <BackLink href={href({ name: 'mandate', id })} label={cleanUntrusted(detail.summary.name)} untrusted />
     <h1>{m.versions_title()}</h1>
   </div>
 
@@ -288,26 +289,6 @@
     display: flex;
     flex-direction: column;
     gap: var(--hm-space-2);
-  }
-  .back {
-    align-self: flex-start;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-block-size: 36px;
-    font-size: var(--hm-font-size-sm);
-    font-weight: var(--hm-font-weight-medium);
-    color: var(--hm-color-accent-text);
-    text-decoration: none;
-    overflow-wrap: anywhere;
-  }
-  .back:hover {
-    text-decoration: underline;
-  }
-  @media (pointer: coarse), (max-width: 767px) {
-    .back {
-      min-block-size: var(--hm-size-touch);
-    }
   }
   h1 {
     margin: 0;

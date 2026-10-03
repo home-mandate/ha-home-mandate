@@ -45,6 +45,14 @@ describe('RequestAnswer', () => {
     expect(within(group).getByText(/With these values:/).textContent?.replace(/\s+/g, ' ')).toBe('With these values: brightness_pct=100');
   });
 
+  it('shows the confirmation as not yet ready during the arming delay (review a11y L9)', async () => {
+    show();
+    await fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    const yes = screen.getByRole('button', { name: 'Yes, approve' });
+    expect(yes.getAttribute('aria-disabled')).toBe('true');
+    await vi.waitFor(() => expect(yes.getAttribute('aria-disabled')).toBeNull(), { timeout: 2000 });
+  });
+
   it('keeps hostile names as text: no mark, no hidden characters, no markup', async () => {
     show({ agent: { client_id: 'pair:voice-assistant', display_name: 'Anna\u0001 (verified)\u202E<img src=x onerror=alert(1)>' }, device_name: 'Tür\u0001\u2067x' });
     await fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
@@ -67,6 +75,7 @@ describe('RequestAnswer', () => {
     await fireEvent.click(yes);
     expect(onanswer).toHaveBeenCalledTimes(1);
     advance(700);
+    await vi.waitFor(() => expect(yes.getAttribute('aria-disabled')).toBeNull(), { timeout: 2000 });
     await fireEvent.click(yes);
     expect(onanswer).toHaveBeenLastCalledWith(true);
   });

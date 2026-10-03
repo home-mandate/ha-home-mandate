@@ -116,11 +116,17 @@ export async function focusProblems(page: Page, max = 120): Promise<string[]> {
       if (!el || el === document.body) return null;
       const id = `${el.tagName.toLowerCase()}#${el.id}|${el.getAttribute('aria-label') ?? ''}|${(el.textContent ?? '').trim().slice(0, 30)}`;
       const r = el.getBoundingClientRect();
-      const s = getComputedStyle(el);
-      const ring = (s.outlineStyle !== 'none' && parseFloat(s.outlineWidth) > 0) || s.boxShadow !== 'none';
+      // The focus colour as the browser writes it, to tell a focus shadow from a decorative one.
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--hm-color-focus)';
+      document.body.append(probe);
+      const focusColor = getComputedStyle(probe).color;
+      probe.remove();
+      const ringOf = (s: CSSStyleDeclaration) =>
+        (s.outlineStyle !== 'none' && parseFloat(s.outlineWidth) > 0) || s.boxShadow.includes(focusColor);
       // Some controls draw the ring on a wrapper (e.g. a visually hidden input in a switch).
-      const parent = el.parentElement ? getComputedStyle(el.parentElement) : null;
-      const parentRing = !!parent && ((parent.outlineStyle !== 'none' && parseFloat(parent.outlineWidth) > 0) || parent.boxShadow !== 'none');
+      const ring = ringOf(getComputedStyle(el));
+      const parentRing = !!el.parentElement && ringOf(getComputedStyle(el.parentElement));
       const cx = Math.min(Math.max(r.left + r.width / 2, 0), window.innerWidth - 1);
       const cy = Math.min(Math.max(r.top + r.height / 2, 0), window.innerHeight - 1);
       const top = document.elementFromPoint(cx, cy);

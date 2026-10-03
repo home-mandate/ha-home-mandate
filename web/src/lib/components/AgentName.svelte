@@ -39,6 +39,10 @@
     gap: 0 var(--hm-space-2);
     min-inline-size: 0;
   }
+  /* The hint is for screen readers; copying the name does not take it along. */
+  .hm-visually-hidden {
+    user-select: none;
+  }
   .name {
     text-decoration: underline dotted var(--hm-color-text-subtle);
     text-underline-offset: 4px;

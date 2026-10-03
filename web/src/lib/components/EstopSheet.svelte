@@ -35,7 +35,7 @@
     </div>
     <p class="after">{m.estop_sheet_after()}</p>
     <p class="error" role="alert">{#if error}<Icon name="warning" size={16} />{error}{/if}</p>
-    <HoldButton bind:element={hold} label={m.estop_hold()} done={m.estop_triggered_toast()} {onfire} />
+    <HoldButton bind:element={hold} label={m.estop_hold()} done={m.estop_hold_firing()} {onfire} />
     <button type="button" class="cancel" onclick={onclose}>{m.common_cancel()}</button>
   </div>
 </Dialog>

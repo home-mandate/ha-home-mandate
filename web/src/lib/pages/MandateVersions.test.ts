@@ -56,7 +56,7 @@ describe('MandateVersions', () => {
     // 17:42 UTC is 7:42 PM in the household's zone (Berlin), not the machine's.
     expect(items[0]?.textContent).toMatch(/Markus · Oct 2, 2026, 7:42\sPM/);
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Versions');
-    expect(screen.getByRole('link', { name: 'Sprachassistent Küche' }).getAttribute('href')).toBe('#/mandates/mandate-voice');
+    expect(screen.getByRole('link', { name: /^Back: .?Sprachassistent Küche.?$/ }).getAttribute('href')).toBe('#/mandates/mandate-voice');
   });
 
   it('compares the version before the current one at first', async () => {

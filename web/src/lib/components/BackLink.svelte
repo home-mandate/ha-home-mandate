@@ -6,17 +6,22 @@
 -->
 <script lang="ts">
   import { m } from '../i18n.ts';
+  import { isolate } from '../untrusted.ts';
   import Icon from './Icon.svelte';
 
   interface Props {
     href: string;
     label: string;
+    /** The label is foreign text (a mandate's name): isolated in the name and on screen. */
+    untrusted?: boolean;
   }
 
-  let { href, label }: Props = $props();
+  let { href, label, untrusted = false }: Props = $props();
 </script>
 
-<a class="back" {href} aria-label={m.common_back_to({ page: label })}><Icon name="back" size={16} />{label}</a>
+<a class="back" {href} aria-label={m.common_back_to({ page: untrusted ? isolate(label) : label })}
+  ><Icon name="back" size={16} />{#if untrusted}<bdi>{label}</bdi>{:else}{label}{/if}</a
+>
 
 <style>
   .back {

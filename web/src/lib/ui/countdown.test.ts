@@ -48,10 +48,10 @@ describe('announcement', () => {
 });
 
 describe('spokenDuration', () => {
-  it('says minutes and seconds in words, leaving out zero minutes', () => {
+  it('says minutes and seconds in words, leaving out a zero part', () => {
     expect(spokenDuration(90, 'en')).toBe('1 minute 30 seconds');
     expect(spokenDuration(40, 'de')).toBe('40 Sekunden');
-    expect(spokenDuration(120, 'de')).toBe('2 Minuten 0 Sekunden');
+    expect(spokenDuration(120, 'de')).toBe('2 Minuten');
     expect(spokenDuration(1, 'en')).toBe('1 second');
     expect(spokenDuration(0, 'en')).toBe('0 seconds');
   });

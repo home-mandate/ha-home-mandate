@@ -8,7 +8,7 @@
   double click on "Approve" cannot approve. Cancel returns the focus to "Approve".
 -->
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import type { ApprovalRequest } from '../api/types.ts';
   import { m } from '../i18n.ts';
   import { paramsText } from '../approvals/params.ts';
@@ -36,6 +36,10 @@
   const id = $props.id();
   let confirming = $state(false);
   let shownAt = 0;
+  /** Visible side of the arming delay: the button looks and reads as not ready yet (review a11y L9). */
+  let armed = $state(true);
+  let armTimer: ReturnType<typeof setTimeout> | undefined;
+  onDestroy(() => clearTimeout(armTimer));
   let approveButton: HTMLButtonElement | undefined = $state();
   let confirmButton: HTMLButtonElement | undefined = $state();
 
@@ -48,6 +52,9 @@
   async function ask() {
     confirming = true;
     shownAt = now();
+    armed = false;
+    clearTimeout(armTimer);
+    armTimer = setTimeout(() => (armed = true), ARM_MS);
     await tick();
     confirmButton?.focus();
   }
@@ -81,7 +88,7 @@
     </p>
     {#if values}<p class="values">{valuesLine[0]}<bdi>{values}</bdi>{valuesLine[1]}</p>{/if}
     <div class="buttons">
-      <Button variant="primary" {busy} bind:element={confirmButton} aria-describedby={describedBy} onclick={confirm}
+      <Button variant="primary" {busy} disabled={!armed} bind:element={confirmButton} aria-describedby={describedBy} onclick={confirm}
         >{m.request_approve_confirm_btn()}</Button
       >
       <Button variant="secondary" disabled={busy} onclick={cancel}>{m.common_cancel()}</Button>

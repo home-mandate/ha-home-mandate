@@ -222,6 +222,17 @@ describe('Settings: approvers', () => {
     expect(screen.getByText(/Requests reach nobody by push/)).toBeTruthy();
   });
 
+  it('keeps the focus in the card after removing a device (review a11y L5)', async () => {
+    await start();
+    const markus = await card('Markus');
+    await fireEvent.click(within(markus).getByRole('button', { name: /^Remove .?Pixel 9.?$/ }));
+    // Without the phone, critical requests would reach nobody: the card asks first.
+    await fireEvent.click(await within(markus).findByRole('button', { name: 'Change anyway' }));
+    await waitFor(() => expect(within(markus).queryByText('mobile_app_pixel_9')).toBeNull());
+    await waitFor(() => expect(markus.contains(document.activeElement)).toBe(true));
+    expect(document.activeElement?.matches('button, select')).toBe(true);
+  });
+
   it('asks inline before removing the last person who gets requests', async () => {
     const { api } = await start();
     const markus = await card('Markus');

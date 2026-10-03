@@ -38,12 +38,17 @@ test('axe: reports missing names and low contrast', async ({ page }) => {
 });
 
 test('focus: reports a missing focus ring and focus in inert content', async ({ page }) => {
-  await page.setContent(`<style>.bare:focus { outline: none }</style>
-    <button>ok</button><button class="bare">no ring</button><div inert><button>inert</button></div>`);
+  await page.setContent(`<style>:root { --hm-color-focus: rgb(47, 85, 196) } .bare:focus { outline: none }
+    .shadow { box-shadow: 0 1px 2px rgb(0 0 0 / 0.4) } .shadow:focus { outline: none }
+    .ring:focus { outline: none; box-shadow: 0 0 0 2px var(--hm-color-focus) }</style>
+    <button>ok</button><button class="bare">no ring</button><button class="shadow">decorative shadow</button>
+    <button class="ring">focus shadow</button><div inert><button>inert</button></div>`);
   // Inert content cannot take focus at all; a focusable aria-hidden element can.
   await page.evaluate(() => document.body.insertAdjacentHTML('beforeend', '<div aria-hidden="true"><a href="#x">hidden link</a></div>'));
   const problems = (await focusProblems(page)).join('\n');
   expect(problems).toMatch(/no visible focus indicator: button#\|\|no ring/);
+  expect(problems).toMatch(/no visible focus indicator: button#\|\|decorative shadow/);
+  expect(problems).not.toMatch(/focus shadow/);
   expect(problems).toMatch(/focus inside inert or hidden content: a#\|\|hidden link/);
   expect(problems).not.toMatch(/\|ok$/m);
 });

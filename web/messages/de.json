@@ -26,6 +26,7 @@
   "estop_hold": "Gedrückt halten zum Auslösen",
   "estop_hold_hint": "Mit Tastatur: Leertaste oder Eingabetaste 2 Sekunden halten.",
   "estop_hold_progress": "Weiter halten …",
+  "estop_hold_firing": "Not-Aus wird ausgelöst …",
   "estop_sheet_after": "Du kannst den Not-Aus jederzeit aufheben. Danach müssen sich alle Agenten neu anmelden.",
   "estop_sheet_body": "Alle Agenten werden sofort gesperrt. Offene Rückfragen werden abgelehnt. Home Assistant selbst läuft normal weiter.",
   "estop_sheet_title": "Not-Aus auslösen?",

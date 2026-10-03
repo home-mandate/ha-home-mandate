@@ -195,6 +195,9 @@ describe('App frame', () => {
       timeout: 4000,
     });
     expect(screen.getByRole('alertdialog')).toBeTruthy();
+    // At 100 % the button says it is triggering, not that it triggered (review a11y M4).
+    expect(sheet.textContent).toContain('Triggering the emergency stop …');
+    expect(sheet.textContent).not.toContain('Emergency stop triggered');
   });
 
   it('moves focus to the page heading and updates the title on navigation (review a11y L2)', async () => {
