@@ -24,6 +24,7 @@
   import Requests from './lib/pages/Requests.svelte';
   import Placeholder from './lib/pages/Placeholder.svelte';
   import AgentConnect from './lib/pages/AgentConnect.svelte';
+  import AgentPair from './lib/pages/AgentPair.svelte';
   import Agents from './lib/pages/Agents.svelte';
   import { getLocale } from './lib/paraglide/runtime.js';
   import { href, parseHash, sectionOf, type Route, type Section } from './lib/router.ts';
@@ -150,6 +151,8 @@
     {#key route.seq}<AuditEntry {app} seq={route.seq} />{/key}
   {:else if route.name === 'agents'}
     <Agents {app} {now} />
+  {:else if route.name === 'pair'}
+    <AgentPair {app} {now} />
   {:else if route.name === 'connect'}
     <AgentConnect {app} />
   {:else if route.name === 'mandates'}
