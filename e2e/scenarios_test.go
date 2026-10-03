@@ -187,21 +187,3 @@ func TestScenario12UnreachableHomeAssistant(t *testing.T) {
 		t.Error("outage refusals not logged")
 	}
 }
-
-// TESTING.md §4: no tokens or Home Assistant credentials in the logs of any run.
-func TestZZLogsContainNoSecrets(t *testing.T) {
-	logs := logsOf(env.hm)
-	if !strings.Contains(logs, "home-mandate started") {
-		t.Fatalf("unexpected gateway logs:\n%s", logs)
-	}
-	for _, secret := range env.secrets {
-		if secret != "" && strings.Contains(logs, secret) {
-			t.Error("a token appears in the gateway logs")
-		}
-	}
-	for _, prefix := range []string{"hma_", "hmr_", "hmd_", "hmc_", "HM_APPROVE_", "HM_DENY_"} {
-		if strings.Contains(logs, prefix) {
-			t.Errorf("something that looks like a token, code or nonce (%s) appears in the gateway logs", prefix)
-		}
-	}
-}

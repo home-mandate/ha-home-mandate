@@ -27,6 +27,7 @@
   "include": [
     "scripts",
     "e2e",
+    "e2e-live",
     "*.ts",
     "*.js"
   ]

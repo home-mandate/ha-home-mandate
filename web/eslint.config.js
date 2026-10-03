@@ -12,7 +12,7 @@ export default defineConfig(
   ts.configs.recommended,
   svelte.configs.recommended,
   { files: ['src/**'], languageOptions: { globals: globals.browser } },
-  { files: ['scripts/**', 'e2e/**', '*.config.*'], languageOptions: { globals: globals.node } },
+  { files: ['scripts/**', 'e2e/**', 'e2e-live/**', '*.config.*'], languageOptions: { globals: globals.node } },
   {
     files: ['**/*.svelte', '**/*.svelte.ts'],
     languageOptions: { parserOptions: { parser: ts.parser } },
