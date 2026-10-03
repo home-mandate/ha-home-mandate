@@ -77,3 +77,19 @@ test('mobile: settings without sideways scrolling', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   expect(await pageScroll(page)).toBe(0);
 });
+
+test('an invalid field keeps the focus ring (review a11y H2)', async ({ page }, info) => {
+  const t = text[info.project.name as Lang];
+  await page.goto('./#/settings/defaults');
+  const rate = page.getByLabel(t.rate);
+  await rate.fill('0');
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
+  await expect(rate).toHaveAttribute('aria-invalid', 'true');
+  await expect(rate).toBeFocused();
+  const ring = await rate.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { style: s.outlineStyle, width: parseFloat(s.outlineWidth) };
+  });
+  expect(ring).toEqual({ style: 'solid', width: 2 });
+});

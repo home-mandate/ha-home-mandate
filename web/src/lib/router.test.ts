@@ -4,6 +4,12 @@ import { describe, expect, it } from 'vitest';
 import { href, parseHash, sectionOf, type Route } from './router.ts';
 
 describe('parseHash', () => {
+  it('ignores query keys that are names of object properties (security S5)', () => {
+    for (const key of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
+      expect(parseHash(`#/audit?${key}=1&period=7d`)).toEqual({ name: 'audit', query: { [key]: ['1'], period: ['7d'] } });
+    }
+  });
+
   it.each<[string, Route]>([
     ['', { name: 'overview' }],
     ['#', { name: 'overview' }],
@@ -11,8 +17,11 @@ describe('parseHash', () => {
     ['#/agents', { name: 'agents' }],
     ['#/agents/pair', { name: 'pair' }],
     ['#/agents/browser', { name: 'connect' }],
-    ['#/agents/pair%3Avoice-assistant', { name: 'agent', id: 'pair:voice-assistant' }],
-    ['#/agents/https%3A%2F%2Fclaude.ai%2Foauth%2Fmeta', { name: 'agent', id: 'https://claude.ai/oauth/meta' }],
+    ['#/agents/id/pair%3Avoice-assistant', { name: 'agent', id: 'pair:voice-assistant' }],
+    ['#/agents/id/https%3A%2F%2Fclaude.ai%2Foauth%2Fmeta', { name: 'agent', id: 'https://claude.ai/oauth/meta' }],
+    // Agent IDs equal to a page name stay agents (security review S4).
+    ['#/agents/id/pair', { name: 'agent', id: 'pair' }],
+    ['#/agents/id/browser', { name: 'agent', id: 'browser' }],
     ['#/mandates', { name: 'mandates' }],
     ['#/mandates/mandate-voice', { name: 'mandate', id: 'mandate-voice' }],
     ['#/mandates/mandate-voice/versions', { name: 'mandate_versions', id: 'mandate-voice' }],
@@ -27,8 +36,11 @@ describe('parseHash', () => {
   });
 
   it.each([
-    '#/agents/unknown/deeper',
-    '#/agents/%E0%A4%A',
+    '#/agents/unknown',
+    '#/agents/id',
+    '#/agents/id/',
+    '#/agents/id/x/deeper',
+    '#/agents/id/%E0%A4%A',
     '#/agents/',
     '#/mandates/a b',
     '#/mandates/x',
@@ -51,7 +63,8 @@ describe('parseHash', () => {
 describe('href', () => {
   it.each<[Route, string]>([
     [{ name: 'overview' }, '#/'],
-    [{ name: 'agent', id: 'https://claude.ai/oauth/meta' }, '#/agents/https%3A%2F%2Fclaude.ai%2Foauth%2Fmeta'],
+    [{ name: 'agent', id: 'https://claude.ai/oauth/meta' }, '#/agents/id/https%3A%2F%2Fclaude.ai%2Foauth%2Fmeta'],
+    [{ name: 'agent', id: 'pair' }, '#/agents/id/pair'],
     [{ name: 'mandate', id: 'mandate-voice' }, '#/mandates/mandate-voice'],
     [{ name: 'mandate_versions', id: 'mandate-voice' }, '#/mandates/mandate-voice/versions'],
     [{ name: 'audit', query: { decision: ['deny', 'default'] } }, '#/audit?decision=deny&decision=default'],

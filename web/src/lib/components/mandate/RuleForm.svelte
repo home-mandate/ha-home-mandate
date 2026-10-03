@@ -426,8 +426,8 @@
   }
   .time input[aria-invalid='true'] {
     border-color: var(--hm-color-danger-fg);
-    outline: 1px solid var(--hm-color-danger-fg);
-    outline-offset: 0;
+    /* A shadow, not an outline: the outline stays free for the focus ring. */
+    box-shadow: 0 0 0 1px var(--hm-color-danger-fg);
   }
   .foot {
     display: flex;

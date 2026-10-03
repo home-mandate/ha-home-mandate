@@ -40,7 +40,7 @@ describe('Agents', () => {
     // The agent's name is its claim, so screen readers hear ", unverified"; the mandate link is the mandate's name.
     const name = claude.getByRole('link', { name: 'Claude Code, unverified' });
     const mandate = claude.getByRole('link', { name: 'Claude Code' });
-    expect(name?.getAttribute('href')).toBe('#/agents/https%3A%2F%2Fclaude.ai%2Foauth%2Fclaude-code-client-metadata');
+    expect(name?.getAttribute('href')).toBe('#/agents/id/https%3A%2F%2Fclaude.ai%2Foauth%2Fclaude-code-client-metadata');
     expect(mandate?.getAttribute('href')).toBe('#/mandates/mandate-claude');
     expect(claude.getByText('claude.ai')).toBeTruthy();
     expect(rows[1]?.textContent).toContain('30 minutes ago');
@@ -120,11 +120,21 @@ describe('Agents', () => {
     const { api } = await start();
     await screen.findByRole('table', { name: 'Agents' });
     const loads = vi.spyOn(api, 'agents');
-    api.control.emit({ type: 'agents.changed' });
-    api.control.emit({ type: 'mandates.changed', id: 'mandate-voice' });
+    // Revoking sends agents.changed and mandates.changed.
+    await api.revokeAgent('pair:voice-assistant');
     expect(await screen.findByText('Agent list updated')).toBeTruthy();
     expect(screen.getByText('Agent list updated').getAttribute('role')).toBe('status');
     expect(loads).toHaveBeenCalledOnce();
+  });
+
+  it('says nothing when an event brings no change (a reconnect)', async () => {
+    const { api } = await start();
+    await screen.findByRole('table', { name: 'Agents' });
+    const loads = vi.spyOn(api, 'agents');
+    api.control.emit({ type: 'agents.changed' });
+    await waitFor(() => expect(loads).toHaveBeenCalledOnce());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText('Agent list updated')).toBeNull();
   });
 });
 
@@ -136,7 +146,7 @@ describe('Agents on mobile', () => {
     const list = await screen.findByRole('list');
     const links = within(list).getAllByRole('link');
     expect(links).toHaveLength(5);
-    expect(links[0]?.getAttribute('href')).toBe('#/agents/pair%3Avoice-assistant');
+    expect(links[0]?.getAttribute('href')).toBe('#/agents/id/pair%3Avoice-assistant');
   });
 });
 

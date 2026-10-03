@@ -222,7 +222,26 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let csrf: string | null = null;
 
+  /**
+   * request sends one call. A write the server refuses with csrf_invalid (token rotated or
+   * expired) was not carried out: the client fetches a fresh session and repeats it once,
+   * so writes, the emergency stop above all, do not stay blocked until a reload (S2).
+   */
   async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
+    try {
+      return await send<T>(method, path, body);
+    } catch (err) {
+      if (method === 'GET' || !(err instanceof ApiError) || err.code !== 'csrf_invalid' || err.status === 0) throw err;
+      try {
+        useSession(await send<Session>('GET', 'session'));
+      } catch {
+        throw err;
+      }
+      return send<T>(method, path, body);
+    }
+  }
+
+  async function send<T>(method: Method, path: string, body?: unknown): Promise<T> {
     const headers = new Headers({ Accept: 'application/json' });
     if (method !== 'GET') {
       if (csrf === null) throw new ApiError('csrf_invalid', 0);

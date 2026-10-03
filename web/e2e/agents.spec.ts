@@ -58,7 +58,7 @@ test('pairs an agent by code with the keyboard only', async ({ page }, info) => 
 
 test('revokes an agent after the confirmation that starts on Cancel', async ({ page }, info) => {
   const t = text[info.project.name as Lang];
-  await page.goto(`./#/agents/${CLAUDE}`);
+  await page.goto(`./#/agents/id/${CLAUDE}`);
   await page.getByRole('button', { name: t.revoke }).focus();
   await page.keyboard.press('Enter');
   const dialog = page.getByRole('alertdialog');
@@ -72,7 +72,7 @@ test('revokes an agent after the confirmation that starts on Cancel', async ({ p
 
 test('mobile: list, pairing and detail without sideways scrolling', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 800 });
-  for (const path of ['./#/agents', './#/agents/pair', './#/agents/browser', `./#/agents/${CLAUDE}`, './#/agents/pair%3Along']) {
+  for (const path of ['./#/agents', './#/agents/pair', './#/agents/browser', `./#/agents/id/${CLAUDE}`, './#/agents/id/pair%3Along']) {
     await page.goto(path);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     expect(await pageScroll(page), path).toBe(0);

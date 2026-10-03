@@ -14,6 +14,7 @@
   import type { AppState } from '../app/state.svelte.ts';
   import type { ApprovalHistoryEntry, Approvals, DeviceCatalog } from '../api/types.ts';
   import { historyOutcome } from '../approvals/history.ts';
+  import { openedText } from '../approvals/live.ts';
   import AgentName from '../components/AgentName.svelte';
   import ErrorState from '../components/ErrorState.svelte';
   import Icon from '../components/Icon.svelte';
@@ -26,6 +27,7 @@
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
   import { DESKTOP, Media } from '../ui/media.svelte.ts';
+  import { Announcer } from '../ui/announcer.svelte.ts';
   import { toasts } from '../ui/toasts.ts';
   import { cleanUntrusted, isolate } from '../untrusted.ts';
 
@@ -49,7 +51,7 @@
 
   let tab = $state<'open' | 'history'>('open');
   let busy = $state<string | null>(null);
-  let spoken = $state('');
+  const live = new Announcer();
   let openHeading: HTMLElement | undefined = $state();
   let openSection: HTMLElement | undefined = $state();
   const TABS = ['open', 'history'] as const;
@@ -65,9 +67,7 @@
 
   /** announce says the end of a request once; the same text twice in a row is said again. */
   async function announce(entry: ApprovalHistoryEntry) {
-    spoken = '';
-    await tick();
-    spoken = m.request_closed_live({ device: isolate(entry.device_name), result: historyOutcome(entry).text });
+    await live.say(m.request_closed_live({ device: isolate(entry.device_name), result: historyOutcome(entry).text }));
   }
 
   /** keepFocus moves the focus to the section heading when the focused card's request has ended. */
@@ -82,7 +82,10 @@
   onMount(() => {
     const reload = () => void loader.run();
     const stop = [
-      app.on('approval.opened', reload),
+      app.on('approval.opened', ({ request }) => {
+        reload();
+        void live.say(openedText(request));
+      }),
       app.on('approval.closed', (event) => {
         void announce(event.entry);
         void loader.run().then(keepFocus);
@@ -94,12 +97,15 @@
   });
 
   /**
-   * answerError says what a failed answer means. Without an answer from the server (status 0,
-   * or no API error at all) the answer may still have arrived, so it does not claim it failed.
+   * answerError says what a failed answer means. Without a clear answer from the server (not
+   * reached, 5xx from it or a proxy, or no API error at all) the answer may still have
+   * arrived, so it never claims it failed. Errors the client raised before sending (such as
+   * a missing CSRF token) and refusals mean nothing was sent.
    */
   function answerError(err: unknown): string {
-    if (!(err instanceof ApiError) || err.status === 0) return m.request_answer_unknown();
-    return err.code === 'not_found' ? m.request_gone() : m.request_answer_failed();
+    if (!(err instanceof ApiError) || err.code === 'unavailable' || err.status >= 500) return m.request_answer_unknown();
+    if (err.code === 'not_found' || err.code === 'conflict') return m.request_gone();
+    return m.request_answer_failed();
   }
 
   async function answer(requestId: string, approve: boolean) {
@@ -109,10 +115,14 @@
       await app.api.answerApproval(requestId, approve);
     } catch (err) {
       toasts.show({ kind: 'error', text: answerError(err) });
+    }
+    // The buttons stay busy until the list shows the outcome, so the answered card offers
+    // no second answer meanwhile (security review S8).
+    try {
+      await loader.run();
     } finally {
       busy = null;
     }
-    await loader.run();
     await keepFocus();
   }
 
@@ -152,7 +162,7 @@
 <div class="head"><h1>{m.requests_title()}</h1></div>
 <AuditTabs current="requests" pending={data ? open.length : null} locale={ctx.locale} />
 
-<div class="hm-visually-hidden" aria-live="polite">{spoken}</div>
+<div class="hm-visually-hidden" aria-live="polite">{live.text}</div>
 
 {#if loader.status === 'error'}
   <ErrorState title={m.overview_error_title()} body={m.overview_error_body()} onretry={() => void loader.run()} />

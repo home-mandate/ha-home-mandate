@@ -39,8 +39,9 @@ function decode(segment: string): string | null {
 }
 
 function parseQuery(query: string): Record<string, string[]> {
-  const out: Record<string, string[]> = {};
-  for (const [key, value] of new URLSearchParams(query)) (out[key] ??= []).push(value);
+  // No prototype: keys such as __proto__ or constructor are plain keys (security review S5).
+  const out: Record<string, string[]> = Object.create(null);
+  for (const [key, value] of new URLSearchParams(query)) out[key] = [...(Object.hasOwn(out, key) ? (out[key] ?? []) : []), value];
   return out;
 }
 
@@ -52,6 +53,11 @@ export function parseHash(hash: string): Route {
   const [first = '', second, third, ...rest] = parts;
   if (rest.length > 0) return NOT_FOUND;
   if (third !== undefined) {
+    // An agent lives under "id/": its ID may equal a page name such as "pair" (security review S4).
+    if (first === 'agents' && second === 'id') {
+      const id = decode(third);
+      return id === null ? NOT_FOUND : { name: 'agent', id };
+    }
     const versions = first === 'mandates' && third === 'versions' && second !== undefined && MANDATE_ID.test(second);
     return versions ? { name: 'mandate_versions', id: second } : NOT_FOUND;
   }
@@ -72,12 +78,10 @@ export function parseHash(hash: string): Route {
     }
   }
   switch (first) {
-    case 'agents': {
+    case 'agents':
       if (second === 'pair') return { name: 'pair' };
       if (second === 'browser') return { name: 'connect' };
-      const id = decode(second);
-      return id === null ? NOT_FOUND : { name: 'agent', id };
-    }
+      return NOT_FOUND;
     case 'mandates':
       return MANDATE_ID.test(second) ? { name: 'mandate', id: second } : NOT_FOUND;
     case 'audit':
@@ -103,7 +107,7 @@ export function href(route: Route): string {
     case 'connect':
       return '#/agents/browser';
     case 'agent':
-      return `#/agents/${encodeURIComponent(route.id)}`;
+      return `#/agents/id/${encodeURIComponent(route.id)}`;
     case 'mandates':
       return '#/mandates';
     case 'mandate':

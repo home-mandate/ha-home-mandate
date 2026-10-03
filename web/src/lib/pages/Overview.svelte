@@ -6,7 +6,7 @@
   keeps working; it must never look as if protection were off.
 -->
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount } from 'svelte';
   import { Loader } from '../app/loader.svelte.ts';
   import type { AppState } from '../app/state.svelte.ts';
   import type { Agent, ApprovalRequest, AuditEntry, DeviceCatalog } from '../api/types.ts';
@@ -21,6 +21,7 @@
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
   import { openedText } from '../approvals/live.ts';
+  import { Announcer } from '../ui/announcer.svelte.ts';
   import { coalesce, RELOAD_WAIT_MS } from '../ui/coalesce.ts';
 
   interface Props {
@@ -62,18 +63,16 @@
   // Events come in bursts (a request opens and the log grows): one reload after them.
   const later = coalesce(reload, RELOAD_WAIT_MS);
   /** What screen readers hear about live changes (review L24). */
-  let spoken = $state('');
+  const live = new Announcer();
 
-  async function opened(request: ApprovalRequest) {
+  function opened(request: ApprovalRequest) {
     later.call();
-    spoken = '';
-    await tick();
-    spoken = openedText(request);
+    void live.say(openedText(request));
   }
 
   onMount(() => {
     const stop = [
-      app.on('approval.opened', ({ request }) => void opened(request)),
+      app.on('approval.opened', ({ request }) => opened(request)),
       app.on('approval.closed', later.call),
       app.on('audit.appended', later.call),
       app.on('agents.changed', later.call),
@@ -142,7 +141,7 @@
   <span class="tz">{m.common_timezone_note({ tz: ctx.timeZone })}</span>
 </div>
 
-<p class="hm-visually-hidden" role="status">{spoken}</p>
+<p class="hm-visually-hidden" role="status">{live.text}</p>
 
 {#if overview.status === 'error'}
   <ErrorState title={m.overview_error_title()} body={m.overview_error_body()} onretry={reload} />

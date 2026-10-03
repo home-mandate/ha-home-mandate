@@ -173,7 +173,7 @@ describe('Overview', () => {
     api.control.emit({ type: 'audit.appended', seq: 99 });
     api.control.emit({ type: 'agents.changed' });
     const said = await screen.findByText((_, el) => el?.getAttribute('role') === 'status' && plain(el.textContent).startsWith('New approval request: Claude Code'));
-    expect(plain(said.textContent)).toBe('New approval request: Claude Code wants to unlock Garagentor');
+    expect(plain(said.textContent)).toBe('New approval request: Claude Code, unverified wants to unlock Garagentor');
     await waitFor(() => expect(within(section).getAllByRole('article')).toHaveLength(2));
     expect(loads).toHaveBeenCalledOnce();
   });

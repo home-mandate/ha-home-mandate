@@ -23,6 +23,7 @@
   import { m } from '../i18n.ts';
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
+  import { Announcer } from '../ui/announcer.svelte.ts';
   import { coalesce, RELOAD_WAIT_MS } from '../ui/coalesce.ts';
   import { DESKTOP, Media } from '../ui/media.svelte.ts';
   import { cleanUntrusted } from '../untrusted.ts';
@@ -45,16 +46,15 @@
   let ways: HTMLElement | undefined = $state();
 
   /** What screen readers hear when the list changes live (review 5d). */
-  let spoken = $state('');
+  const live = new Announcer();
 
   const reload = () => void list.run();
   // Events come in bursts (revoking changes agent and mandate): one reload after them, then say so.
+  // Said only when the list really changed, not after every reconnect (review L4).
   const later = coalesce(async () => {
+    const before = JSON.stringify(list.data);
     await list.run();
-    if (list.status === 'error') return;
-    spoken = '';
-    await tick();
-    spoken = m.agents_updated_live();
+    if (list.status !== 'error' && JSON.stringify(list.data) !== before) await live.say(m.agents_updated_live());
   }, RELOAD_WAIT_MS);
   onMount(() => {
     const stop = [app.on('agents.changed', later.call), app.on('mandates.changed', later.call), app.on('reconnected', later.call)];
@@ -86,7 +86,7 @@
   }
 </script>
 
-<p class="hm-visually-hidden" role="status">{spoken}</p>
+<p class="hm-visually-hidden" role="status">{live.text}</p>
 
 <div class="head">
   <h1>{m.agents_title()}</h1>

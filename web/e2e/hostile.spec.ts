@@ -45,10 +45,10 @@ const SCREENS: Screen[] = [
   { name: 'audit log', path: './#/audit' },
   { name: 'audit entry', path: './#/audit/8' },
   { name: 'agents', path: './#/agents' },
-  { name: 'agent detail', path: `./#/agents/${VOICE}` },
+  { name: 'agent detail', path: `./#/agents/id/${VOICE}` },
   {
     name: 'revoke dialog',
-    path: `./#/agents/${VOICE}`,
+    path: `./#/agents/id/${VOICE}`,
     setup: async (page) => {
       await page.locator('main button.btn.danger').first().click();
       await expect(page.getByRole('alertdialog')).toBeVisible();

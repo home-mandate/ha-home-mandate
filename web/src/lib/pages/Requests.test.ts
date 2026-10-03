@@ -136,20 +136,48 @@ describe('Requests', () => {
     await waitFor(() => expect(show).toHaveBeenCalledWith({ kind: 'error', text: 'This approval was already answered or has ended.' }));
   });
 
-  it('says that sending failed when the server answered with an error', async () => {
+  it.each([
+    ['the server refused it', () => new ApiError('forbidden', 403)],
+    ['no CSRF token was there, so nothing was sent', () => new ApiError('csrf_invalid', 0)],
+  ])('says that sending failed when %s', async (_, error) => {
     const { api } = await start({}, (client) => client.control.openApproval(answerable()));
     const show = vi.spyOn(toasts, 'show');
     const decline = await within(await pending()).findByRole('button', { name: 'Decline' });
     api.answerApproval = async () => {
-      throw new ApiError('internal', 500);
+      throw error();
     };
     await fireEvent.click(decline);
     await waitFor(() => expect(show).toHaveBeenCalledWith({ kind: 'error', text: 'The answer couldn’t be sent. Answering on the phone still works.' }));
   });
 
+  it('stays busy until the list shows the outcome (security S8)', async () => {
+    const { api } = await start({}, (client) => client.control.openApproval(answerable()));
+    const decline = await within(await pending()).findByRole('button', { name: 'Decline' });
+    const load = api.approvals.bind(api);
+    let release: () => void = () => {};
+    api.approvals = () => new Promise((resolve) => (release = () => void load().then(resolve)));
+    await fireEvent.click(decline);
+    await waitFor(() => expect(decline.getAttribute('aria-busy')).toBe('true'));
+    release();
+    await waitFor(() => expect(decline.isConnected).toBe(false));
+  });
+
+  it('says that the request was already answered on a conflict', async () => {
+    const { api } = await start({}, (client) => client.control.openApproval(answerable()));
+    const show = vi.spyOn(toasts, 'show');
+    const decline = await within(await pending()).findByRole('button', { name: 'Decline' });
+    api.answerApproval = async () => {
+      throw new ApiError('conflict', 409);
+    };
+    await fireEvent.click(decline);
+    await waitFor(() => expect(show).toHaveBeenCalledWith({ kind: 'error', text: 'This approval was already answered or has ended.' }));
+  });
+
   // Without an answer from the server the answer may still have arrived (review Sec L4).
   it.each([
     ['the server was not reached', () => new ApiError('unavailable', 0)],
+    ['a proxy timed out (504)', () => new ApiError('unavailable', 504)],
+    ['the server failed (500)', () => new ApiError('internal', 500)],
     ['the error is no API error', () => null],
   ])('says that it is unclear whether the answer arrived when %s', async (_, error) => {
     const { api } = await start({}, (client) => client.control.openApproval(answerable()));
@@ -160,6 +188,13 @@ describe('Requests', () => {
     };
     await fireEvent.click(decline);
     await waitFor(() => expect(show).toHaveBeenCalledWith({ kind: 'error', text: 'It’s unclear whether the answer arrived. The history shows how it ended.' }));
+  });
+
+  it('announces a new request on this page too (review a11y M1)', async () => {
+    const { api } = await start();
+    await within(await pending()).findAllByRole('article');
+    api.control.openApproval({ ...(approvalsOpenFixture[0] as ApprovalRequest), id: 'apr-2', device_name: 'Garagentor' });
+    await live('New approval request: Claude Code, unverified wants to unlock Garagentor');
   });
 
   it('follows requests answered on a phone, and announces the result', async () => {

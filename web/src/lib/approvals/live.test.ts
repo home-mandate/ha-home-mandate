@@ -12,7 +12,8 @@ const plain = (text: string) => text.replace(/[\u2068\u2069]/g, '');
 describe('openedText', () => {
   it('says who wants what, with agent and device isolated', () => {
     const text = openedText(approvalsOpenFixture[0]!);
-    expect(plain(text)).toBe('New approval request: Claude Code wants to unlock Haustür');
+    // The name is the agent's claim, as AgentName says everywhere else (security S6).
+    expect(plain(text)).toBe('New approval request: Claude Code, unverified wants to unlock Haustür');
     expect(text).toContain('\u2068Claude Code\u2069');
     expect(text).toContain('\u2068Haustür\u2069');
   });

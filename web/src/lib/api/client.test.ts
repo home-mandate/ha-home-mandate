@@ -247,18 +247,31 @@ describe('createHttpClient', () => {
     expect(err).toMatchObject({ code: 'internal', status: 200 });
   });
 
-  it('forgets the CSRF token after csrf_invalid until the session is reloaded', async () => {
+  // A rotated token must not block writes until a reload, least of all the emergency stop (security S2).
+  it('fetches a fresh session after csrf_invalid and repeats the write once', async () => {
     const { api, calls } = await signedIn(
       json({ code: 'csrf_invalid' }, 403),
       json({ ...sessionFixture, csrf_token: 'fresh' }),
-      json({ active: false }),
+      json({ active: true }),
     );
-    await expect(api.setEmergencyStop(false)).rejects.toMatchObject({ code: 'csrf_invalid' });
-    await expect(api.setEmergencyStop(false)).rejects.toMatchObject({ code: 'csrf_invalid' });
-    expect(calls()).toHaveLength(1);
-    await api.session();
-    await expect(api.setEmergencyStop(false)).resolves.toEqual({ active: false });
+    await expect(api.setEmergencyStop(true)).resolves.toEqual({ active: true });
+    expect(calls().map((c) => c.init.method ?? 'GET')).toEqual(['PUT', 'GET', 'PUT']);
     expect(header(calls()[2], 'X-HM-CSRF')).toBe('fresh');
+  });
+
+  it('gives up after one repeat that is refused again', async () => {
+    const { api, calls } = await signedIn(
+      json({ code: 'csrf_invalid' }, 403),
+      json({ ...sessionFixture, csrf_token: 'fresh' }),
+      json({ code: 'csrf_invalid' }, 403),
+    );
+    await expect(api.setEmergencyStop(true)).rejects.toMatchObject({ code: 'csrf_invalid', status: 403 });
+    expect(calls()).toHaveLength(3);
+  });
+
+  it('reports csrf_invalid when no fresh session can be fetched', async () => {
+    const { api } = await signedIn(json({ code: 'csrf_invalid' }, 403), new TypeError('offline'));
+    await expect(api.setEmergencyStop(true)).rejects.toMatchObject({ code: 'csrf_invalid', status: 403 });
   });
 
   it('calls every endpoint with the method, path and body of the contract', async () => {

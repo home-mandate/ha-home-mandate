@@ -71,7 +71,7 @@ describe('AgentPair', () => {
     });
     expect(approve).toHaveBeenCalledTimes(1);
     const agent = (await api.agents()).at(-1);
-    expect(screen.getByRole('link', { name: 'Go to agent' }).getAttribute('href')).toBe(`#/agents/${encodeURIComponent(agent?.client_id ?? '')}`);
+    expect(screen.getByRole('link', { name: 'Go to agent' }).getAttribute('href')).toBe(`#/agents/id/${encodeURIComponent(agent?.client_id ?? '')}`);
     expect(screen.getByRole('link', { name: 'Adjust mandate' }).getAttribute('href')).toBe(`#/mandates/${agent?.mandate?.id}`);
     expect(screen.queryByRole('list', { name: /Step/ })).toBeNull();
   });
