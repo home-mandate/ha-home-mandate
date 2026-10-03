@@ -8,6 +8,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { Loader } from '../app/loader.svelte.ts';
+  import ClaimLegend from '../components/ClaimLegend.svelte';
   import type { AppState } from '../app/state.svelte.ts';
   import type { AuditEntry, DeviceCatalog } from '../api/types.ts';
   import { groupByDay } from '../audit/days.ts';
@@ -359,6 +360,7 @@
       {#if list.data && list.data.next !== null}
         <Button busy={more} onclick={loadMore}>{m.load_more()}</Button>
       {/if}
+      <ClaimLegend />
       <p class="foot">{m.audit_retention()}{SEPARATOR}{m.common_timezone_note({ tz: ctx.timeZone })}</p>
     </section>
 

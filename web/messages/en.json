@@ -82,6 +82,8 @@
   "request_title": "{agent} wants to {action} {device}",
   "agent_claim_label": "Stated by the agent, unverified",
   "agent_claim_short": "unverified",
+  "agent_claim_legend": "{sample}: a name the agent gives itself, not verified",
+  "agent_claim_legend_sample": "Dotted underline",
   "agent_client_id": "Client ID",
   "agent_detail_approved": "Approved",
   "agent_detail_approved_value": "{date} by {admin}",

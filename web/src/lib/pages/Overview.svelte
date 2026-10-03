@@ -11,6 +11,7 @@
   import type { AppState } from '../app/state.svelte.ts';
   import type { Agent, ApprovalRequest, AuditEntry, DeviceCatalog } from '../api/types.ts';
   import ErrorState from '../components/ErrorState.svelte';
+  import ClaimLegend from '../components/ClaimLegend.svelte';
   import Icon from '../components/Icon.svelte';
   import RequestCard from '../components/RequestCard.svelte';
   import ActivityList from '../components/overview/ActivityList.svelte';
@@ -202,6 +203,7 @@
         {/if}
       </section>
     </div>
+    <ClaimLegend />
   {/if}
 {/if}
 

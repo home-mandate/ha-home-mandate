@@ -10,6 +10,7 @@
   import { onMount, tick } from 'svelte';
   import { slide } from 'svelte/transition';
   import { ApiError } from '../api/client.ts';
+  import ClaimLegend from '../components/ClaimLegend.svelte';
   import { Loader } from '../app/loader.svelte.ts';
   import type { AppState } from '../app/state.svelte.ts';
   import type { ApprovalHistoryEntry, Approvals, DeviceCatalog } from '../api/types.ts';
@@ -218,6 +219,7 @@
             </div>
           {/each}
           <p class="note"><Icon name="info" size={16} />{answerHere ? m.requests_ui_approve_note() : m.request_phone_note()}</p>
+          <ClaimLegend />
         {/if}
     </section>
 

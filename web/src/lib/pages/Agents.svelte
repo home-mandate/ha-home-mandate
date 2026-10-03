@@ -11,6 +11,7 @@
   import type { AppState } from '../app/state.svelte.ts';
   import type { Agent } from '../api/types.ts';
   import AgentName from '../components/AgentName.svelte';
+  import ClaimLegend from '../components/ClaimLegend.svelte';
   import Button from '../components/Button.svelte';
   import ClientIdentity from '../components/ClientIdentity.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -162,6 +163,7 @@
       {/each}
     </ul>
   {/if}
+  {#if agents && agents.length > 0}<ClaimLegend />{/if}
 {/if}
 
 <style>

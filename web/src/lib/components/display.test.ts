@@ -8,6 +8,7 @@ import { HOSTILE_NAME, HOSTILE_REASON } from '../api/fixtures.ts';
 import { createToasts } from '../ui/toasts.ts';
 import AgentName from './AgentName.svelte';
 import Banner from './Banner.svelte';
+import ClaimLegend from './ClaimLegend.svelte';
 import CopyField from './CopyField.svelte';
 import DecisionBadge from './DecisionBadge.svelte';
 import Dialog from './Dialog.svelte';
@@ -64,6 +65,17 @@ describe('Banner', () => {
     expect(alert.className).toContain('estop');
     await fireEvent.click(screen.getByRole('button', { name: 'Lift' }));
     expect(onclick).toHaveBeenCalledOnce();
+  });
+});
+
+describe('ClaimLegend', () => {
+  it('explains the dotted underline once per list, for the eyes only (decision L1)', () => {
+    const { container } = render(ClaimLegend);
+    const legend = container.querySelector('.legend') as HTMLElement;
+    expect(legend.textContent).toBe('Dotted underline: a name the agent gives itself, not verified');
+    expect(legend.querySelector('.sample')?.textContent).toBe('Dotted underline');
+    // Screen readers hear ", unverified" at every name already.
+    expect(legend.getAttribute('aria-hidden')).toBe('true');
   });
 });
 

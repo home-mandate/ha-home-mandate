@@ -82,6 +82,8 @@
   "request_title": "{agent} möchte {device} {action}",
   "agent_claim_label": "Angabe des Agenten, ungeprüft",
   "agent_claim_short": "ungeprüft",
+  "agent_claim_legend": "{sample}: Name, den der Agent selbst angibt, ungeprüft",
+  "agent_claim_legend_sample": "Gepunktet unterstrichen",
   "agent_client_id": "Kennung",
   "agent_detail_approved": "Zugelassen",
   "agent_detail_approved_value": "{date} von {admin}",
