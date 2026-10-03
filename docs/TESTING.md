@@ -86,6 +86,11 @@ Every line is at least one test. New attack ideas are added here before they are
 - Redirect URI differs (even just in case or by an appended path) → rejected
 - Client metadata unreachable, wrong format, client ID ≠ URL → rejected
 - Pairing code wrong, expired, used more than once, brute force → locked after n attempts
+- Pairing in the UI: approve or deny with a `pairing_id` that is not the request behind the code (code reissued or request replaced since the check) → `conflict`, nobody admitted; two approvals at once → exactly one wins
+- Pairing lock: a locked session or a global lock also refuses a correct code (no oracle); `Retry-After` is the real remaining time; wrong code and unknown request look alike; the code itself is never logged
+- Free client identifier shaped like a URL (`https://…`) → refused, so it can never show as a checked domain
+- `requested_from` behind a proxy: `X-Forwarded-For` or `Forwarded` from a peer outside the configured trusted proxies → ignored; the address is normalized and at most 45 characters
+- Redirect URIs from client metadata: not `https` (except loopback), with userinfo, fragment, wildcards, control, bidi or format characters, more than 10 or longer than 2048 characters → refused; a later metadata fetch never widens the admitted set
 - Admission by a non-admin → rejected
 - Client metadata on a private, loopback or link-local address (also after DNS resolution), other port than 443, redirect, more than 5 KB, repeated keys → rejected without a connection to the private address
 - Redirect URI host with characters that could end a CSP directive → rejected
@@ -144,6 +149,11 @@ Every line is at least one test. New attack ideas are added here before they are
 - Device list not loadable → the save summary says the effect is unknown, never "no effect"
 - Draft that would not apply right now (not yet valid, expired, revoked) → the preview says so; a longer validity is flagged in the save summary
 - Device, area and agent names with HTML, bidi overrides or control characters in the editor, preview and versions → shown as text, isolated
+- Agent and display names made only of blank-looking letters (Hangul fillers, braille blank), variation selectors or stacked combining marks → cleaned; a display name without a letter or digit → refused (UI and server alike)
+- MCP address with quotes, spaces, `;`, `$`, backticks, a backslash or a line break, or not built from the configuration → no copy-paste command is shown; the server never derives it from request headers
+- Revoke whose answer is lost although the server revoked → the UI reloads and shows the agent as revoked; a repeated revoke answers like the first; agent, tokens, mandate and pending approvals end in one transaction
+- `apply-template`, `POST mandates` and pairing approval with a template whose rules allow critical actions without approval → refused without the separate confirmation, like a mandate edit
+- Mandate change from an agent's page based on an outdated version → `conflict`, nothing replaced
 
 **Audit log**
 - Tampered entry in the database → chain verification fails and reports the position

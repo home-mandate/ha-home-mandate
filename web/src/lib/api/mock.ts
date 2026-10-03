@@ -79,6 +79,7 @@ export const MOCK_EXPIRED_CODE = 'ZZZZ-ZZZZ';
 const PAIRING_ATTEMPTS = 5;
 const PAIRING_LOCK_S = 600;
 const pairingCandidate: PairingCandidate = {
+  pairing_id: 'pg-kitchen-tablet',
   claimed_name: 'Küchen-Tablet',
   client: 'kitchen-tablet',
   client_verified: false,
@@ -277,7 +278,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     state = {
       ...state,
       mandates: { ...state.mandates, [id]: m },
-      agents: state.agents.map((a) => (a.mandate?.id === id ? { ...a, mandate: { id, name: m.name, status: m.status, max_actions_per_hour: null } } : a)),
+      agents: state.agents.map((a) => (a.mandate?.id === id ? { ...a, mandate: { id, name: m.name, status: m.status, max_actions_per_hour: null, digest: '' } } : a)),
     };
     emit({ type: 'mandates.changed', id });
   }
@@ -312,7 +313,12 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     const at = now();
     const day = householdDay(at, state.session.household.time_zone);
     const requests = state.audit.filter((e) => e.event === 'decision' && e.agent?.client_id === a.client_id);
-    const mandate = a.mandate && { ...a.mandate, max_actions_per_hour: stored(a.mandate.id).versions[0]?.document.limits?.max_actions_per_hour ?? null };
+    const current = a.mandate && stored(a.mandate.id).versions[0];
+    const mandate = a.mandate && {
+      ...a.mandate,
+      max_actions_per_hour: current?.document.limits?.max_actions_per_hour ?? null,
+      digest: current?.meta.digest ?? '',
+    };
     return {
       ...a,
       mandate,
@@ -343,7 +349,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       created_at: createdAt,
     };
     const meta = { number: 1, digest: `sha256:mock-${counter}`, created_at: createdAt, created_by: user().id, created_by_name: user().name };
-    state = { ...state, agents: state.agents.map((a) => (a.client_id === clientId ? { ...a, mandate: { id, name: '', status: 'active' as const, max_actions_per_hour: null } } : a)) };
+    state = { ...state, agents: state.agents.map((a) => (a.client_id === clientId ? { ...a, mandate: { id, name: '', status: 'active' as const, max_actions_per_hour: null, digest: '' } } : a)) };
     putStored(id, { name: mandateName ?? name, status: 'active', versions: [{ meta, document }] });
     log('mandate.created', { agent: document.agent, mandate: { id, digest: meta.digest } });
     return id;
@@ -369,8 +375,10 @@ export function createMockClient(options: MockOptions = {}): MockClient {
   function closeApproval(id: string, outcome: ApprovalHistoryEntry['outcome'], byName: string | null, via?: 'push' | 'ui'): ApprovalHistoryEntry | null {
     const request = state.approvals.open.find((r) => r.id === id);
     if (!request) return null;
+    // The mock writes no audit entry here; the seq only has to be unique in the history.
+    const last = Math.max(state.audit.at(-1)?.seq ?? 0, ...state.approvals.history.map((h) => h.seq));
     const entry: ApprovalHistoryEntry = {
-      seq: (state.audit.at(-1)?.seq ?? 0) + 1,
+      seq: last + 1,
       agent: request.agent,
       entity_id: request.entity_id,
       device_name: request.device_name,
@@ -435,6 +443,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       if (name.length < 1 || name.length > 80) fail('invalid_input', '/display_name');
       template(req.template);
       const key = checkPairing(req.code);
+      if (req.pairing_id !== pairingCandidate.pairing_id) fail('conflict');
       const clientId = `pair:${pairingCandidate.client}-${++counter}`;
       const agent: Agent = {
         client_id: clientId,
@@ -459,8 +468,9 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       emit({ type: 'agents.changed' });
       return copy(present(state.agents.find((a) => a.client_id === clientId) ?? fail('internal')));
     },
-    async pairingDeny(code) {
+    async pairingDeny({ code, pairing_id }) {
       const key = checkPairing(code);
+      if (pairing_id !== pairingCandidate.pairing_id) fail('conflict');
       state = { ...state, pairing: { ...state.pairing, codes: { ...state.pairing.codes, [key]: 'expired' } } };
     },
 

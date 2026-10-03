@@ -23,12 +23,11 @@
   import AgentStatus from '../components/agents/AgentStatus.svelte';
   import RevokeDialog from '../components/agents/RevokeDialog.svelte';
   import ActivityList from '../components/overview/ActivityList.svelte';
-  import { formatDateTime, formatRelative } from '../format.ts';
+  import { formatDateTime, formatNumber, formatRelative } from '../format.ts';
   import { m } from '../i18n.ts';
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
-  import { toasts } from '../ui/toasts.ts';
-  import { isolate } from '../untrusted.ts';
+  import { cleanUntrusted, isolate } from '../untrusted.ts';
 
   interface Props {
     app: AppState;
@@ -48,6 +47,9 @@
   let { app, id, now }: Props = $props();
 
   const LOG_ENTRIES = 5;
+  /** Redirect addresses come from the agent's metadata: cleaned, cut and at most this many shown. */
+  const REDIRECTS_SHOWN = 10;
+  const REDIRECT_MAX = 200;
   const PAIRED = 'pair:';
 
   const uid = $props.id();
@@ -87,25 +89,40 @@
     return at === null ? m.agents_never_active() : formatRelative(new Date(at), new Date(serverNow), ctx);
   }
 
+  /** revoked shows the revoked agent at once (the banner says so) and moves the focus to the heading. */
+  async function revoked(result: Agent) {
+    const current = data.data;
+    if (current) data.set({ ...current, agent: result });
+    revoking = false;
+    await tick();
+    document.getElementById(`${uid}-title`)?.focus();
+    void data.run();
+  }
+
   async function revoke() {
-    if (busy || !agent) return;
+    const target = agent;
+    if (busy || !target) return;
     busy = true;
     error = '';
     try {
-      await app.api.revokeAgent(agent.client_id);
-      revoking = false;
-      toasts.show({ kind: 'success', text: m.agent_revoked_toast({ agent: isolate(agent.display_name) }) });
-      await data.run();
-      await tick();
-      document.getElementById(`${uid}-title`)?.focus();
-    } catch {
-      error = m.revoke_failed();
-    } finally {
+      const result = await app.api.revokeAgent(target.client_id);
+      if (result.status !== 'revoked') throw new Error('not revoked');
       busy = false;
+      await revoked(result);
+    } catch {
+      // The answer may be lost although the revoke went through: ask for the real state.
+      const now = await app.api
+        .agents()
+        .then((list) => list.find((a) => a.client_id === target.client_id) ?? null)
+        .catch(() => null);
+      busy = false;
+      if (now?.status === 'revoked') await revoked(now);
+      else error = m.revoke_failed();
     }
   }
 
   function closeDialog() {
+    if (busy) return;
     revoking = false;
     error = '';
     endButton?.focus();
@@ -142,12 +159,15 @@
         <h2 id="{uid}-identity">{m.agent_detail_identity()}</h2>
         <dl>
           <dt>{m.agents_col_client()}</dt>
-          <dd><ClientIdentity client={agent.oauth_client} /></dd>
+          <dd><ClientIdentity client={agent.oauth_client} verified={agent.client_verified} /></dd>
           <dt>{m.agent_detail_way()}</dt>
           <dd>{agent.client_id.startsWith(PAIRED) ? m.agent_way_code() : m.agent_way_browser()}</dd>
           {#if agent.redirect_uris.length > 0}
             <dt>{m.agent_detail_redirect()}</dt>
-            <dd class="mono">{#each agent.redirect_uris as uri (uri)}<bdi>{uri}</bdi><br />{/each}</dd>
+            <dd class="mono">
+              {#each agent.redirect_uris.slice(0, REDIRECTS_SHOWN) as uri, i (i)}<bdi title={cleanUntrusted(uri)}>{cleanUntrusted(uri, REDIRECT_MAX)}</bdi><br />{/each}
+              {#if agent.redirect_uris.length > REDIRECTS_SHOWN}<span class="muted">+{formatNumber(agent.redirect_uris.length - REDIRECTS_SHOWN, ctx)}</span>{/if}
+            </dd>
           {/if}
           <dt>{m.agent_detail_approved()}</dt>
           <dd>{m.agent_detail_approved_value({ date: formatDateTime(new Date(agent.created_at), ctx), admin: isolate(agent.created_by_name ?? agent.created_by) })}</dd>

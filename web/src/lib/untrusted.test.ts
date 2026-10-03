@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import { cleanUntrusted, isolate, UNTRUSTED_MAX } from './untrusted.ts';
+import { cleanUntrusted, hasVisibleText, isolate, UNTRUSTED_MAX } from './untrusted.ts';
 
 describe('cleanUntrusted', () => {
   it('keeps ordinary text, umlauts, emoji and right-to-left script', () => {
@@ -43,6 +43,28 @@ describe('cleanUntrusted', () => {
   it('returns an empty string for null and undefined', () => {
     expect(cleanUntrusted(null)).toBe('');
     expect(cleanUntrusted(undefined)).toBe('');
+  });
+});
+
+describe('cleanUntrusted: look-alike blanks', () => {
+  it('removes letters that render blank and variation selectors', () => {
+    expect(cleanUntrusted('A\u3164B\u115F\u1160C\u2800D\uFFA0E')).toBe('ABCDE');
+    expect(cleanUntrusted('x\uFE0Fy\u{E0100}z\u180Bw')).toBe('xyzw');
+  });
+
+  it('keeps at most two combining marks per character', () => {
+    expect(cleanUntrusted('e\u0301\u0302\u0303\u0304x')).toBe('e\u0301\u0302x');
+    expect(cleanUntrusted('Cafe\u0301')).toBe('Cafe\u0301');
+  });
+});
+
+describe('hasVisibleText', () => {
+  it('needs a letter or digit after cleaning', () => {
+    expect(hasVisibleText('Küche')).toBe(true);
+    expect(hasVisibleText('7')).toBe(true);
+    expect(hasVisibleText('\u3164\u2800')).toBe(false);
+    expect(hasVisibleText(' \u200B - . ')).toBe(false);
+    expect(hasVisibleText(null)).toBe(false);
   });
 });
 

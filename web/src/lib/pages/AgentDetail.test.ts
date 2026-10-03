@@ -28,7 +28,7 @@ async function start(id: string, prepare?: (api: MockClient) => void) {
 }
 
 const section = (name: string) => screen.getByRole('region', { name });
-const plain = (text: string | null | undefined) => (text ?? '').replace(/[⁨⁩]/g, '').replace(/\s+/g, ' ').trim();
+const plain = (text: string | null | undefined) => (text ?? '').replace(/[\u2068\u2069]/g, '').replace(/\s+/g, ' ').trim();
 
 describe('AgentDetail', () => {
   it('shows identity, sign-in way, redirect address and who approved it', async () => {
@@ -88,6 +88,52 @@ describe('AgentDetail', () => {
     await waitFor(() => expect(within(dialog).getByRole('alert').textContent).toContain('emergency stop'));
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(document.activeElement).toBe(end));
+  });
+
+  it('shows the revoke when its answer was lost but it went through', async () => {
+    await start(CLAUDE, (api) => {
+      const revoke = api.revokeAgent.bind(api);
+      api.revokeAgent = async (id) => {
+        await revoke(id);
+        throw new ApiError('unavailable', 0);
+      };
+    });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Revoke access' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke access' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(plain(document.body.textContent)).toContain('Revoked on');
+  });
+
+  it('cannot be cancelled while the revoke runs', async () => {
+    let finish: () => void = () => {};
+    await start(CLAUDE, (api) => {
+      const revoke = api.revokeAgent.bind(api);
+      api.revokeAgent = (id) => new Promise((resolve) => (finish = () => void revoke(id).then(resolve)));
+    });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Revoke access' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke access' }));
+    const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
+    expect(cancel.getAttribute('aria-disabled')).toBe('true');
+    await fireEvent.click(cancel);
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    finish();
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  });
+
+  it('says when the mandate changed since the page showed it', async () => {
+    const { api } = await start(VOICE);
+    const select = (await screen.findByLabelText('Change mandate')) as HTMLSelectElement;
+    // Someone else saves a new version; the page still shows the old one.
+    const detail = await api.mandate('mandate-voice');
+    const stale = await api.agents();
+    api.agents = async () => stale; // the page keeps seeing the old version
+    await api.applyTemplate('mandate-voice', { template: 'empty', base_digest: detail.summary.digest });
+    await fireEvent.change(select, { target: { value: 'read-only' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('changed in the meantime'));
   });
 
   it('changes the mandate to a template as a new version', async () => {

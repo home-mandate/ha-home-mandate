@@ -40,7 +40,8 @@
   const active = $derived(agent.status === 'active');
   const replaces = $derived(mandate?.status === 'active');
   const options = $derived(templates.map((t) => ({ value: t.name, label: templateName(t.name) })));
-  const chosen = $derived(template || (templates[0]?.name ?? ''));
+  // A template that is no longer offered falls back to the first one.
+  const chosen = $derived(templates.some((t) => t.name === template) ? template : (templates[0]?.name ?? ''));
   const rate = $derived(
     mandate?.max_actions_per_hour == null
       ? m.agent_detail_rate_none()
@@ -53,12 +54,14 @@
     error = '';
     try {
       const detail = mandate && replaces
-        ? await api.applyTemplate(mandate.id, { template: chosen, base_digest: (await api.mandate(mandate.id)).summary.digest })
+        ? // The version shown here is the base: a change by someone else since then is a conflict.
+          await api.applyTemplate(mandate.id, { template: chosen, base_digest: mandate.digest })
         : await api.createMandate({ client_id: agent.client_id, template: chosen, name: templateName(chosen) });
       toasts.show({ kind: 'success', text: m.toast_saved({ version: currentNumber(detail.versions) }) });
     } catch (err) {
-      // A conflict on creating means another mandate came first; on changing, retrying reads the new version.
-      error = err instanceof ApiError && err.code === 'conflict' && !replaces ? m.mandates_new_conflict() : m.agent_detail_change_failed();
+      const conflict = err instanceof ApiError && err.code === 'conflict';
+      // Creating: another mandate came first. Changing: the mandate changed since it was shown.
+      error = conflict ? (replaces ? m.agent_detail_change_conflict() : m.mandates_new_conflict()) : m.agent_detail_change_failed();
     } finally {
       busy = false;
     }

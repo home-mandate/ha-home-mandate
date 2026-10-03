@@ -127,9 +127,9 @@ export interface Agent {
    * The agent's current mandate. A revoked mandate stays visible here; null only if the
    * agent never had one. An active agent with a revoked mandate may do nothing; it gets a
    * new mandate through POST api/mandates. max_actions_per_hour: the mandate's rate limit,
-   * null without one.
+   * null without one; digest: of its current version (base for apply-template).
    */
-  mandate: { id: string; name: string; status: MandateStatus; max_actions_per_hour: number | null } | null;
+  mandate: { id: string; name: string; status: MandateStatus; max_actions_per_hour: number | null; digest: string } | null;
 }
 
 /** POST api/agents/revoke: revokes the agent, its tokens and its mandate at once. */
@@ -149,6 +149,11 @@ export interface PairingCode {
 
 /** The agent waiting behind a code. */
 export interface PairingCandidate {
+  /**
+   * Opaque ID of this pending request. Approve and deny send it back; if the code now
+   * belongs to another request, the server answers "conflict" (the person saw a different agent).
+   */
+  pairing_id: string;
   /** Name the agent claims; untrusted. */
   claimed_name: string;
   /** OAuth client ID: verified metadata URL or the agent's free identifier. */
@@ -160,7 +165,12 @@ export interface PairingCandidate {
   requested_from: string;
 }
 
-export interface PairingApprove extends PairingCode {
+export interface PairingDecision extends PairingCode {
+  /** From the check: the request the person looked at. */
+  pairing_id: string;
+}
+
+export interface PairingApprove extends PairingDecision {
   /** Display name chosen by the human. */
   display_name: string;
   /** The template that becomes the agent's mandate. */

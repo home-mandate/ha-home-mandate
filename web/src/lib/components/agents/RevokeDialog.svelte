@@ -38,7 +38,7 @@
     </div>
     <p class="error" role="alert">{#if error}<Icon name="warning" size={16} />{error}{/if}</p>
     <div class="actions">
-      <Button size="lg" bind:element={cancel} onclick={onclose}>{m.common_cancel()}</Button>
+      <Button size="lg" bind:element={cancel} disabled={busy} onclick={onclose}>{m.common_cancel()}</Button>
       <Button size="lg" variant="danger" {busy} onclick={onrevoke}>{m.revoke_button()}</Button>
     </div>
   </div>

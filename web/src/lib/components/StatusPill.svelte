@@ -78,4 +78,13 @@
     border-radius: 2px;
     background: currentColor;
   }
+  @media (forced-colors: active) {
+    .mark.dot,
+    .mark.square {
+      background: CanvasText;
+    }
+    .mark.ring {
+      border-color: CanvasText;
+    }
+  }
 </style>

@@ -29,6 +29,7 @@ import type {
   MandateUpdate,
   PairingApprove,
   PairingCandidate,
+  PairingDecision,
   ServerEvent,
   Session,
   SystemStatus,
@@ -53,7 +54,7 @@ export interface ApiClient {
   pairingCheck(code: string): Promise<PairingCandidate>;
   /** Admits the agent; answers with it (and its new mandate). */
   pairingApprove(approve: PairingApprove): Promise<Agent>;
-  pairingDeny(code: string): Promise<void>;
+  pairingDeny(decision: PairingDecision): Promise<void>;
 
   devices(): Promise<DeviceCatalog>;
 
@@ -277,7 +278,7 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
     revokeAgent: (clientId) => request('POST', 'agents/revoke', { client_id: clientId }),
     pairingCheck: (code) => request('POST', 'pairing/check', { code }),
     pairingApprove: (approve) => request('POST', 'pairing/approve', approve),
-    pairingDeny: (code) => request('POST', 'pairing/deny', { code }),
+    pairingDeny: (decision) => request('POST', 'pairing/deny', decision),
 
     devices: () => get('devices'),
 

@@ -5,6 +5,7 @@
   update); Home-Mandate never shows credentials.
 -->
 <script lang="ts">
+  import { claudeCommand } from '../agents/connect.ts';
   import type { AppState } from '../app/state.svelte.ts';
   import BackLink from '../components/BackLink.svelte';
   import Banner from '../components/Banner.svelte';
@@ -21,24 +22,26 @@
   let { app, copy }: Props = $props();
 
   const url = $derived(app.system?.mcp_url ?? null);
-  // The example command for Claude Code; the URL is Home-Mandate's own, not an agent's text.
-  const example = $derived(url ? `claude mcp add --transport http home-mandate ${url}` : '');
+  // The example command for Claude Code: only for a plainly formed address, quoted.
+  const example = $derived(url ? claudeCommand(url) : null);
 </script>
 
 <BackLink href={href({ name: 'agents' })}>{m.agents_title()}</BackLink>
 <PageHeader title={m.browser_title()} />
 
-<ol class="steps">
+<ol class="steps" role="list">
   <li>
     <span class="n" aria-hidden="true">1</span>
     <div class="body">
       <span class="step">{m.browser_step1()}</span>
       {#if url}
         <CopyField label={m.mcp_endpoint_label()} value={url} help={m.mcp_endpoint_help()} {copy} />
-        <details>
-          <summary>{m.browser_example()}</summary>
-          <pre>{example}</pre>
-        </details>
+        {#if example}
+          <details>
+            <summary>{m.browser_example()}</summary>
+            <pre dir="ltr">{example}</pre>
+          </details>
+        {/if}
       {:else}
         <Banner kind="warning" body={m.browser_no_url()} />
       {/if}

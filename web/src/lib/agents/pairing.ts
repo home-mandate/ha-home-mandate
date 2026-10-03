@@ -8,10 +8,14 @@ import { ApiError } from '../api/client.ts';
 
 /** Characters of a code; the server ignores case, spaces and the dash. */
 export const CODE_LENGTH = 8;
-/** Lock time when the server gives none: the documented 10 minutes. */
-const LOCK_FALLBACK_S = 600;
+/** The server's alphabet (internal/oauth/device.go): no vowels, no 0/O or 1/I look-alikes. */
+const ALPHABET = 'BCDFGHJKLMNPQRSTVWXZ';
+const CODE = new RegExp(`^[${ALPHABET}]{${CODE_LENGTH}}$`);
+/** The documented lock: 10 minutes. Used when the server gives no time, and as the cap. */
+const LOCK_S = 600;
 
-export type CodeState = 'idle' | 'wrong' | 'expired' | 'locked' | 'failed';
+/** incomplete: the typed text is no code yet (not sent, costs no attempt). */
+export type CodeState = 'idle' | 'incomplete' | 'wrong' | 'expired' | 'locked' | 'failed';
 
 /** normalizeCode is the code without spaces and dashes, in capitals. */
 export function normalizeCode(text: string): string {
@@ -20,7 +24,7 @@ export function normalizeCode(text: string): string {
 
 /** isComplete tells whether the text holds a code of the right length and alphabet. */
 export function isComplete(text: string): boolean {
-  return /^[A-Z0-9]{8}$/.test(normalizeCode(text));
+  return CODE.test(normalizeCode(text));
 }
 
 /** displayCode writes a complete code as the agent shows it: "BCDF-GHJK". */
@@ -36,10 +40,27 @@ export function codeError(err: unknown): { state: CodeState; lockedFor: number }
     case 'pairing_code_invalid':
       return { state: 'wrong', lockedFor: 0 };
     case 'pairing_code_expired':
+    case 'conflict': // the code now belongs to another request than the one checked
       return { state: 'expired', lockedFor: 0 };
     case 'pairing_locked':
-      return { state: 'locked', lockedFor: err.retryAfter ?? LOCK_FALLBACK_S };
+      // A proxy's Retry-After must not stretch the lock shown beyond the server's.
+      return { state: 'locked', lockedFor: Math.min(err.retryAfter ?? LOCK_S, LOCK_S) };
     default:
       return { state: 'failed', lockedFor: 0 };
   }
+}
+
+/**
+ * isHomeAddress tells whether a request came from the home network: loopback, private IPv4
+ * (RFC 1918), link-local, or IPv6 unique-local / link-local. Anything else gets a warning.
+ */
+export function isHomeAddress(address: string): boolean {
+  const ip = address.trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/^::ffff:/, '').split('%')[0] ?? '';
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(ip);
+  if (v4) {
+    const a = Number(v4[1]);
+    const b = Number(v4[2]);
+    return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
+  }
+  return ip === '::1' || /^f[cd][0-9a-f]{2}:/.test(ip) || /^fe[89ab][0-9a-f]:/.test(ip);
 }

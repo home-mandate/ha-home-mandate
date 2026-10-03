@@ -6,13 +6,13 @@
   chosen here; the agent's own name is only the suggestion.
 -->
 <script lang="ts">
-  import { tick, untrack } from 'svelte';
+  import { tick } from 'svelte';
   import type { DeviceCatalog, Template } from '../../api/types.ts';
   import { m } from '../../i18n.ts';
   import { NAME_MAX } from '../../mandate/problems.ts';
   import { templateChips, templateName } from '../../mandate/template.ts';
   import { MARK, around } from '../../ui/sentence.ts';
-  import { cleanUntrusted } from '../../untrusted.ts';
+  import { cleanUntrusted, hasVisibleText } from '../../untrusted.ts';
   import Button from '../Button.svelte';
   import Icon from '../Icon.svelte';
   import TextField from '../TextField.svelte';
@@ -22,8 +22,11 @@
     templates: readonly Template[];
     catalog: DeviceCatalog;
     locale: string;
-    /** Name the agent claims; the suggestion for the display name. */
+    /** Name the agent claims, for the heading. */
     claimedName: string;
+    /** Chosen template and display name; kept by the page, so going back loses nothing. */
+    chosen: string;
+    name: string;
     headingId: string;
     busy: boolean;
     /** Error of the last attempt, already worded. */
@@ -32,34 +35,49 @@
     onconfirm: (template: string, displayName: string) => void;
   }
 
-  let { templates, catalog, locale, claimedName, headingId, busy, error, onback, onconfirm }: Props = $props();
+  let {
+    templates,
+    catalog,
+    locale,
+    claimedName,
+    chosen = $bindable(),
+    name = $bindable(),
+    headingId,
+    busy,
+    error,
+    onback,
+    onconfirm,
+  }: Props = $props();
+
+  /** Longest claimed name in the heading. */
+  const HEADING_MAX = 80;
 
   const id = $props.id();
-  // The empty template is the safe start when nothing is chosen ("nothing yet").
-  let chosen = $state(untrack(() => (templates.some((t) => t.name === 'empty') ? 'empty' : (templates[0]?.name ?? ''))));
-  let name = $state(untrack(() => [...cleanUntrusted(claimedName)].slice(0, NAME_MAX).join('')));
   let checked = $state(false);
   let nameField: HTMLInputElement | undefined = $state();
 
   const title = $derived(around(m.pair_mandate_title({ agent: MARK })));
   const length = $derived([...name.trim()].length);
-  const nameError = $derived(checked && (length < 1 || length > NAME_MAX) ? m.validation_name({ max: NAME_MAX }) : '');
+  // A name must show something: not only blanks, marks or punctuation.
+  const nameValid = $derived(length >= 1 && length <= NAME_MAX && hasVisibleText(name));
+  const nameError = $derived(checked && !nameValid ? m.validation_name({ max: NAME_MAX }) : '');
+  const noTemplates = $derived(templates.length === 0);
 
   async function confirm(event: SubmitEvent) {
     event.preventDefault();
     checked = true;
-    if (length < 1 || length > NAME_MAX) {
+    if (!nameValid) {
       await tick();
       nameField?.focus();
       return;
     }
-    if (busy || chosen === '') return;
+    if (busy || noTemplates || !templates.some((t) => t.name === chosen)) return;
     onconfirm(chosen, name.trim());
   }
 </script>
 
 <form onsubmit={confirm} novalidate aria-labelledby={headingId}>
-  <h2 id={headingId} tabindex="-1">{title[0]}<bdi>{cleanUntrusted(claimedName)}</bdi>{title[1]}</h2>
+  <h2 id={headingId} tabindex="-1">{title[0]}<bdi>{cleanUntrusted(claimedName, HEADING_MAX)}</bdi>{title[1]}</h2>
   <TextField
     label={m.agents_col_name()}
     bind:value={name}
@@ -73,25 +91,25 @@
   <fieldset>
     <legend>{m.pair_mandate_template()}</legend>
     <div class="options">
-      {#each templates as t (t.name)}
-        <label class="option" class:on={chosen === t.name}>
-          <input type="radio" name="{id}-template" value={t.name} bind:group={chosen} />
+      {#each templates as t, i (t.name)}
+        <div class="option" class:on={chosen === t.name}>
+          <input id="{id}-t{i}" type="radio" name="{id}-template" value={t.name} bind:group={chosen} aria-describedby="{id}-c{i}" />
           <span class="text">
-            <span class="name"><bdi>{templateName(t.name)}</bdi></span>
-            <span class="chips">
+            <label class="name" for="{id}-t{i}"><bdi>{templateName(t.name)}</bdi></label>
+            <span class="chips" id="{id}-c{i}">
               {#each templateChips(t.draft, catalog, locale) as chip (chip.kind)}
                 <DecisionChip kind={chip.kind}><bdi>{chip.text}</bdi></DecisionChip>
               {/each}
             </span>
           </span>
-        </label>
+        </div>
       {/each}
     </div>
   </fieldset>
-  <p class="error" role="alert">{#if error}<Icon name="warning" size={16} />{error}{/if}</p>
+  <p class="error" role="alert">{#if error || noTemplates}<Icon name="warning" size={16} />{error || m.pair_failed()}{/if}</p>
   <div class="actions">
     <Button size="lg" icon="back" disabled={busy} onclick={onback}>{m.common_back()}</Button>
-    <Button type="submit" variant="primary" size="lg" {busy}>{m.pair_confirm()}</Button>
+    <Button type="submit" variant="primary" size="lg" {busy} disabled={noTemplates}>{m.pair_confirm()}</Button>
   </div>
 </form>
 
@@ -134,7 +152,6 @@
     border-radius: var(--hm-radius-lg);
     border: var(--hm-border-width) solid var(--hm-color-border-strong);
     background: var(--hm-color-surface);
-    cursor: pointer;
   }
   .option.on {
     border-color: var(--hm-color-accent);
@@ -159,6 +176,12 @@
   }
   .name {
     font-weight: var(--hm-font-weight-semibold);
+    cursor: pointer;
+  }
+  @media (forced-colors: active) {
+    .option.on {
+      outline: 2px solid Highlight;
+    }
   }
   .chips {
     display: flex;

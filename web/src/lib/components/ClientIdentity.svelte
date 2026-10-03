@@ -2,6 +2,8 @@
 <!--
   An agent's OAuth client identity: a checked domain in mono, or a paired agent's own
   identifier marked "unverified" (ui/identity.ts). Nothing for an identifier that fits neither.
+  Where the server's client_verified flag is known it decides: without it, even an https
+  URL is shown as unverified.
 -->
 <script lang="ts">
   import { m } from '../i18n.ts';
@@ -9,11 +11,14 @@
 
   interface Props {
     client: string;
+    /** The server's client_verified flag, where the API gives it. */
+    verified?: boolean;
   }
 
-  let { client }: Props = $props();
+  let { client, verified }: Props = $props();
 
-  const identity = $derived(clientIdentity(client));
+  const found = $derived(clientIdentity(client));
+  const identity = $derived(found && verified === false ? { ...found, verified: false } : found);
 </script>
 
 {#if identity?.verified}<span class="domain">{identity.text}</span

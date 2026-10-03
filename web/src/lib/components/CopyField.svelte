@@ -46,7 +46,7 @@
 <div class="field">
   <label id="{id}-label" for={id}>{label}</label>
   <div class="control">
-    <input bind:this={input} {id} type="text" readonly {value} aria-describedby={help ? `${id}-help` : undefined} />
+    <input bind:this={input} {id} type="text" readonly dir="ltr" {value} aria-describedby={help ? `${id}-help` : undefined} />
     <button type="button" class:copied aria-describedby="{id}-label" onclick={run}>
       <Icon name={copied ? 'check' : 'copy'} size={16} />
       <span>{copied ? m.common_copied() : m.common_copy()}</span>

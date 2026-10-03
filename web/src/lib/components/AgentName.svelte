@@ -14,14 +14,16 @@
     name: string;
     /** OAuth client ID; its identity is shown when set. */
     client?: string;
+    /** The server's client_verified flag, where known. */
+    verified?: boolean;
   }
 
-  let { name, client }: Props = $props();
+  let { name, client, verified }: Props = $props();
 </script>
 
 <span class="agent"
   ><bdi class="name" title={m.agent_claim_label()}>{cleanUntrusted(name)}</bdi
-  >{#if client !== undefined}<ClientIdentity {client} />{/if}</span
+  >{#if client !== undefined}<ClientIdentity {client} {verified} />{/if}</span
 >
 
 <style>

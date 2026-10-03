@@ -1,12 +1,14 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!--
-  Pairing step 1 (design README 6.2): the code the agent shows. States idle, wrong,
-  expired, locked (5 wrong codes; the field stays disabled until the server's lock time has
-  passed) and failed (any other error). An incomplete code is not sent, so it costs no
-  attempt. Errors are announced (role=alert) and tied to the field.
+  Pairing step 1 (design README 6.2): the code the agent shows. States idle, incomplete
+  (not sent, so it costs no attempt), wrong, expired, locked (5 wrong codes, until the
+  server's lock time has passed) and failed (any other error). Errors are announced once
+  (role=alert, a new element per error) and tied to the field. While locked the field is
+  read-only but stays focusable, so its message can still be reached; the end of the lock
+  is announced politely.
 -->
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import type { ApiClient } from '../../api/client.ts';
   import type { PairingCandidate } from '../../api/types.ts';
   import { codeError, isComplete, normalizeCode, type CodeState } from '../../agents/pairing.ts';
@@ -22,11 +24,15 @@
     initial?: string;
     /** State to start with, e.g. "expired" when the code ran out in a later step. */
     initialState?: CodeState;
+    /** End of a lock that a later step ran into (browser clock, ms). */
+    initialLockedUntil?: number;
+    /** Focus the field once shown (after a restart, so its message is heard). */
+    focusField?: boolean;
     headingId: string;
     onfound: (code: string, candidate: PairingCandidate) => void;
   }
 
-  let { api, now, initial = '', initialState = 'idle', headingId, onfound }: Props = $props();
+  let { api, now, initial = '', initialState = 'idle', initialLockedUntil = 0, focusField = false, headingId, onfound }: Props = $props();
 
   const id = $props.id();
   const MINUTE_MS = 60_000;
@@ -35,23 +41,26 @@
 
   let text = $state(untrack(() => initial));
   let status: CodeState = $state(untrack(() => initialState));
-  let lockedUntil = $state(0);
+  let lockedUntil = $state(untrack(() => initialLockedUntil));
+  /** Minutes of the lock when it began; the alert does not count down (no repeated announcements). */
+  let lockMinutes = $state(untrack(() => Math.max(1, Math.ceil((initialLockedUntil - now) / MINUTE_MS))));
   let busy = $state(false);
   let errors = $state(0);
+  let unlocked = $state(false);
   let field: HTMLInputElement | undefined = $state();
 
   const locked = $derived(status === 'locked' && now < lockedUntil);
-  const shown = $derived<CodeState>(status === 'locked' && !locked ? 'idle' : status);
-  const ready = $derived(isComplete(text) && !locked && !busy);
-  const bad = $derived(shown !== 'idle');
+  const bad = $derived(status !== 'idle');
   const message = $derived.by(() => {
-    switch (shown) {
+    switch (status) {
+      case 'incomplete':
+        return m.pair_code_incomplete();
       case 'wrong':
         return m.pair_code_wrong();
       case 'expired':
         return m.pair_code_expired();
       case 'locked':
-        return m.pair_code_locked({ minutes: Math.max(1, Math.ceil((lockedUntil - now) / MINUTE_MS)) });
+        return m.pair_code_locked({ minutes: lockMinutes });
       case 'failed':
         return m.pair_failed();
       default:
@@ -59,13 +68,39 @@
     }
   });
 
+  // The lock ends by the clock: say so once.
+  $effect(() => {
+    if (status === 'locked' && !locked) {
+      untrack(() => {
+        status = 'idle';
+        unlocked = true;
+      });
+    }
+  });
+
+  $effect(() => {
+    if (field && untrack(() => focusField)) field.focus();
+  });
+
   function typed() {
+    unlocked = false;
     if (status !== 'locked') status = 'idle';
+  }
+
+  async function fail(state: CodeState) {
+    status = state;
+    errors++;
+    await tick();
+    field?.focus();
   }
 
   async function check(event: SubmitEvent) {
     event.preventDefault();
-    if (!ready) return;
+    if (busy || locked) return;
+    if (!isComplete(text)) {
+      await fail('incomplete');
+      return;
+    }
     busy = true;
     const code = normalizeCode(text);
     try {
@@ -73,10 +108,9 @@
       onfound(code, candidate);
     } catch (err) {
       const result = codeError(err);
-      status = result.state;
-      errors++;
       lockedUntil = now + result.lockedFor * 1000;
-      field?.focus();
+      lockMinutes = Math.max(1, Math.ceil(result.lockedFor / 60));
+      await fail(result.state);
     } finally {
       busy = false;
     }
@@ -93,8 +127,10 @@
       bind:this={field}
       bind:value={text}
       oninput={typed}
-      disabled={locked}
+      readonly={locked}
+      aria-disabled={locked ? 'true' : undefined}
       maxlength={MAX_INPUT}
+      dir="ltr"
       autocomplete="off"
       autocapitalize="characters"
       spellcheck="false"
@@ -110,9 +146,10 @@
         <p id="{id}-msg" class="msg"><Icon name="info" size={16} /><span>{message}</span></p>
       {/if}
     {/key}
+    <p class="hm-visually-hidden" role="status">{unlocked ? m.pair_code_unlocked() : ''}</p>
   </div>
   <div class="actions">
-    <Button type="submit" variant="primary" size="lg" {busy} disabled={!ready && !busy}>{m.pair_code_submit()}</Button>
+    <Button type="submit" variant="primary" size="lg" {busy} disabled={locked} aria-describedby="{id}-msg">{m.pair_code_submit()}</Button>
   </div>
 </form>
 
@@ -164,7 +201,7 @@
   input[aria-invalid='true'] {
     border-color: var(--hm-color-danger-fg);
   }
-  input:disabled {
+  input[readonly] {
     background: var(--hm-color-surface-sunken);
     color: var(--hm-color-text-disabled);
     border-color: var(--hm-color-border);

@@ -3,10 +3,12 @@
   Pairing by code (design README 6.2, view=pair; decisions D5, G1, G4): enter the code,
   check the agent, choose its mandate, done. Each step change moves the focus to the new
   step's heading. If the code runs out or gets locked on the way, the person is back at
-  step 1 with that state; "This isn't my agent" declines the pairing.
+  step 1 with that state (and the lock time), with the focus on the field so its message is
+  heard. Approve and deny name the request that was checked (pairing_id). When the answer
+  to an approval is lost, the agent list tells whether it went through.
 -->
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { Loader } from '../app/loader.svelte.ts';
   import type { AppState } from '../app/state.svelte.ts';
   import type { Agent, DeviceCatalog, PairingCandidate, Template } from '../api/types.ts';
@@ -20,6 +22,7 @@
   import PairSteps from '../components/agents/PairSteps.svelte';
   import PairVerify from '../components/agents/PairVerify.svelte';
   import { m } from '../i18n.ts';
+  import { NAME_MAX } from '../mandate/problems.ts';
   import { templateName } from '../mandate/template.ts';
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
@@ -52,6 +55,11 @@
   let step: Step = $state('code');
   let code = $state('');
   let codeState: CodeState = $state('idle');
+  let lockedUntil = $state(0);
+  let restarted = $state(false);
+  /** The mandate step's choices; here, so going back to the check loses nothing. */
+  let chosen = $state('');
+  let displayName = $state('');
   let candidate: PairingCandidate | null = $state.raw(null);
   let admitted: Agent | null = $state.raw(null);
   let mandateName = $state('');
@@ -81,50 +89,84 @@
   function found(checked: string, c: PairingCandidate) {
     code = checked;
     candidate = c;
+    displayName = [...cleanUntrusted(c.claimed_name)].slice(0, NAME_MAX).join('');
+    chosen = '';
     void go('verify');
   }
 
-  /** restart goes back to step 1, keeping the code and showing why. */
-  function restart(state: CodeState) {
+  /** restart goes back to step 1, keeping the code and showing why; the field gets the focus. */
+  function restart(state: CodeState, lockedFor = 0) {
     codeState = state;
+    lockedUntil = now + lockedFor * 1000;
+    restarted = true;
     candidate = null;
     round++;
-    void go('code');
+    step = 'code';
+    error = '';
   }
 
+  /** admittedMeanwhile finds the agent when an approval's answer was lost but it went through. */
+  async function admittedMeanwhile(c: PairingCandidate): Promise<Agent | null> {
+    try {
+      const agents = await app.api.agents();
+      return agents.find((a) => a.oauth_client === c.client && a.status === 'active' && a.created_at >= c.requested_at) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function goToMandate() {
+    if (chosen === '' && choices.data) {
+      // The empty template is the safe start ("nothing yet", decision G1).
+      const names = choices.data.templates.map((t) => t.name);
+      chosen = names.includes('empty') ? 'empty' : (names[0] ?? '');
+    }
+    await go('mandate');
+  }
+
+  // Choices that arrive while step 3 waits for them: preselect and move the focus in.
+  $effect(() => {
+    if (step === 'mandate' && choices.data && untrack(() => chosen) === '') void goToMandate();
+  });
+
   async function notMine() {
-    if (busy) return;
+    if (busy || !candidate) return;
     busy = true;
     try {
-      await app.api.pairingDeny(code);
+      await app.api.pairingDeny({ code, pairing_id: candidate.pairing_id });
       toasts.show({ kind: 'success', text: m.pair_denied_toast() });
       code = '';
       restart('idle');
     } catch (err) {
       const result = codeError(err);
       if (result.state === 'failed') toasts.show({ kind: 'error', text: m.pair_failed() });
-      else restart(result.state);
+      else restart(result.state, result.lockedFor);
     } finally {
       busy = false;
     }
   }
 
-  async function confirm(template: string, displayName: string) {
-    if (busy) return;
+  async function confirm(template: string, name: string) {
+    if (busy || !candidate) return;
+    const c = candidate;
     busy = true;
     error = '';
-    const name = templateName(template);
+    const mandate = templateName(template);
     try {
-      admitted = await app.api.pairingApprove({ code, display_name: displayName, template, mandate_name: name });
-      mandateName = admitted.mandate?.name ?? name;
-      await go('done');
+      admitted = await app.api.pairingApprove({ code, pairing_id: c.pairing_id, display_name: name, template, mandate_name: mandate });
     } catch (err) {
-      const result = codeError(err);
-      if (result.state === 'failed') error = m.pair_failed();
-      else restart(result.state);
-    } finally {
-      busy = false;
+      admitted = await admittedMeanwhile(c);
+      if (!admitted) {
+        const result = codeError(err);
+        busy = false;
+        if (result.state === 'failed') error = m.pair_failed();
+        else restart(result.state, result.lockedFor);
+        return;
+      }
     }
+    mandateName = admitted.mandate?.name ?? mandate;
+    busy = false;
+    await go('done');
   }
 
   const doneTitle = $derived(around(m.pair_done_title({ agent: MARK })));
@@ -138,7 +180,16 @@
 
   {#if step === 'code'}
     {#key round}
-      <PairCode api={app.api} {now} initial={code} initialState={codeState} {headingId} onfound={found} />
+      <PairCode
+        api={app.api}
+        {now}
+        initial={code}
+        initialState={codeState}
+        initialLockedUntil={lockedUntil}
+        focusField={restarted}
+        {headingId}
+        onfound={found}
+      />
     {/key}
   {:else if step === 'verify' && candidate}
     <PairVerify
@@ -149,17 +200,20 @@
       {headingId}
       {busy}
       onnotmine={notMine}
-      oncontinue={() => void go('mandate')}
+      oncontinue={() => void goToMandate()}
     />
   {:else if step === 'mandate' && candidate}
     {#if choices.status === 'error'}
-      <ErrorState title={m.mandates_error_title()} body={m.pair_failed()} onretry={() => void choices.run()} />
+      <h2 id={headingId} tabindex="-1" class="hm-visually-hidden">{m.pair_step_mandate()}</h2>
+      <ErrorState title={m.mandates_error_title()} body={m.pair_failed()} onretry={() => void choices.run().then(goToMandate)} />
     {:else if choices.data}
       <PairMandate
         templates={choices.data.templates}
         catalog={choices.data.catalog}
         locale={ctx.locale}
         claimedName={candidate.claimed_name}
+        bind:chosen
+        bind:name={displayName}
         {headingId}
         {busy}
         {error}
@@ -167,6 +221,7 @@
         onconfirm={confirm}
       />
     {:else}
+      <h2 id={headingId} tabindex="-1" class="hm-visually-hidden">{m.pair_step_mandate()}</h2>
       <p role="status">{m.common_loading()}</p>
     {/if}
   {:else if step === 'done' && admitted}

@@ -22,6 +22,7 @@ function listen(api: ReturnType<typeof createMockClient>) {
   return { events, states, conn };
 }
 
+const PAIRING_ID = 'pg-kitchen-tablet';
 const NOW_ISO = '2026-10-02T17:42:00.000Z';
 const types = (events: ServerEvent[]) => events.map((e) => e.type);
 
@@ -132,32 +133,47 @@ describe('createMockClient: agents and pairing', () => {
   it('admits the agent with a mandate from the template; the code works once', async () => {
     const api = createMockClient();
     const { events } = listen(api);
-    const admitted = await api.pairingApprove({ code: MOCK_PAIRING_CODE, display_name: ' Tablet Küche ', template: 'read-only' });
+    const admitted = await api.pairingApprove({ code: MOCK_PAIRING_CODE, pairing_id: PAIRING_ID, display_name: ' Tablet Küche ', template: 'read-only' });
     const agent = (await api.agents()).at(-1);
     expect(admitted).toEqual(agent);
     expect(agent).toMatchObject({ display_name: 'Tablet Küche', status: 'active', mandate: { name: 'read-only', status: 'active' } });
     expect(types(events)).toContain('agents.changed');
-    await expect(api.pairingApprove({ code: MOCK_PAIRING_CODE, display_name: 'x', template: 'read-only' })).rejects.toMatchObject({
+    await expect(api.pairingApprove({ code: MOCK_PAIRING_CODE, pairing_id: PAIRING_ID, display_name: 'x', template: 'read-only' })).rejects.toMatchObject({
       code: 'pairing_code_expired',
     });
   });
 
   it('checks name and template before using up the code', async () => {
     const api = createMockClient();
-    await expect(api.pairingApprove({ code: MOCK_PAIRING_CODE, display_name: '  ', template: 'read-only' })).rejects.toMatchObject({
+    await expect(api.pairingApprove({ code: MOCK_PAIRING_CODE, pairing_id: PAIRING_ID, display_name: '  ', template: 'read-only' })).rejects.toMatchObject({
       code: 'invalid_input',
       field: '/display_name',
     });
-    await expect(api.pairingApprove({ code: MOCK_PAIRING_CODE, display_name: 'x', template: 'nope' })).rejects.toMatchObject({
+    await expect(api.pairingApprove({ code: MOCK_PAIRING_CODE, pairing_id: PAIRING_ID, display_name: 'x', template: 'nope' })).rejects.toMatchObject({
       code: 'invalid_input',
       field: '/template',
     });
     await expect(api.pairingCheck(MOCK_PAIRING_CODE)).resolves.toBeDefined();
   });
 
+  it('refuses approve and deny for another request than the one checked', async () => {
+    const api = createMockClient();
+    await expect(api.pairingApprove({ code: MOCK_PAIRING_CODE, pairing_id: 'pg-other', display_name: 'x', template: 'read-only' })).rejects.toMatchObject({
+      code: 'conflict',
+    });
+    await expect(api.pairingDeny({ code: MOCK_PAIRING_CODE, pairing_id: 'pg-other' })).rejects.toMatchObject({ code: 'conflict' });
+    expect((await api.pairingCheck(MOCK_PAIRING_CODE)).pairing_id).toBe(PAIRING_ID);
+  });
+
+  it('gives the agent the digest of its current mandate version', async () => {
+    const api = createMockClient();
+    const voice = (await api.agents()).find((a) => a.client_id === 'pair:voice-assistant');
+    expect(voice?.mandate?.digest).toBe((await api.mandate('mandate-voice')).summary.digest);
+  });
+
   it('declines a pairing, after which the code is gone', async () => {
     const api = createMockClient();
-    await api.pairingDeny(MOCK_PAIRING_CODE);
+    await api.pairingDeny({ code: MOCK_PAIRING_CODE, pairing_id: PAIRING_ID });
     await expect(api.pairingCheck(MOCK_PAIRING_CODE)).rejects.toMatchObject({ code: 'pairing_code_expired' });
   });
 });
@@ -261,7 +277,7 @@ describe('createMockClient: mandates and templates', () => {
     const created = await api.createMandate({ client_id: 'pair:voice-assistant', template: 'read-only', name: 'Neu' });
     expect(created.summary).toMatchObject({ name: 'Neu', client_id: 'pair:voice-assistant', status: 'active' });
     expect(created.document.created_at).toBe('2026-10-03T10:00:00.000Z');
-    expect((await api.agents())[0]?.mandate).toEqual({ id: created.summary.id, name: 'Neu', status: 'active', max_actions_per_hour: 60 });
+    expect((await api.agents())[0]?.mandate).toEqual({ id: created.summary.id, name: 'Neu', status: 'active', max_actions_per_hour: 60, digest: created.summary.digest });
   });
 
   it('manages templates with U9 and tells listeners', async () => {

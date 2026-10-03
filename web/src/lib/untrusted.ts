@@ -13,10 +13,23 @@ export const UNTRUSTED_MAX = 500;
 // soft hyphen, BOM) are removed; line/paragraph separators and whitespace runs become one space.
 const HIDDEN = /[\p{Cc}\p{Cf}]/gu;
 const BREAKS = /[\s\u2028\u2029]+/gu;
+// Letters that render blank (Hangul fillers, braille blank) and variation selectors: they
+// make a name look empty or different without being Cc/Cf.
+// (An alternation, not a class: Hangul fillers and selectors would combine inside a class.)
+const BLANK = /\u115F|\u1160|\u3164|\uFFA0|\u2800|[\u180B-\u180F]|[\uFE00-\uFE0F]|[\u{E0100}-\u{E01EF}]/gu;
+// More than two combining marks on one character ("Zalgo") only serve to overflow the layout.
+const STACKED = /(\p{M}{2})\p{M}+/gu;
+const VISIBLE = /[\p{L}\p{N}]/u;
 
 export function cleanUntrusted(text: string | null | undefined, max = UNTRUSTED_MAX): string {
   if (!text) return '';
-  const flat = text.replace(/[\r\n\t\u0085\u2028\u2029]/g, ' ').replace(HIDDEN, '').replace(BREAKS, ' ').trim();
+  const flat = text
+    .replace(/[\r\n\t\u0085\u2028\u2029]/g, ' ')
+    .replace(HIDDEN, '')
+    .replace(BLANK, '')
+    .replace(STACKED, '$1')
+    .replace(BREAKS, ' ')
+    .trim();
   const chars = [...flat];
   return chars.length <= max ? flat : `${chars.slice(0, max - 1).join('')}…`;
 }
@@ -29,4 +42,9 @@ export function cleanUntrusted(text: string | null | undefined, max = UNTRUSTED_
  */
 export function isolate(text: string | null | undefined, max = UNTRUSTED_MAX): string {
   return `\u2068${cleanUntrusted(text, max)}\u2069`;
+}
+
+/** hasVisibleText tells whether cleaned text still holds a letter or digit (a name, not only marks or punctuation). */
+export function hasVisibleText(text: string | null | undefined): boolean {
+  return VISIBLE.test(cleanUntrusted(text));
 }

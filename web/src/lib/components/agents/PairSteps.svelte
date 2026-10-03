@@ -14,12 +14,16 @@
   const labels = $derived([m.pair_step_code(), m.pair_step_verify(), m.pair_step_mandate()]);
 </script>
 
-<ol aria-label={m.pair_step_label({ n: current, total: labels.length })}>
+<ol role="list" aria-label={m.pair_step_label({ n: current, total: labels.length })}>
   {#each labels as label, i (i)}
     {@const n = i + 1}
     <li class:done={n < current} class:current={n === current} aria-current={n === current ? 'step' : undefined}>
       <span class="bar" aria-hidden="true"></span>
-      <span class="label">{#if n < current}<Icon name="check" size={16} />{/if}{label}</span>
+      <span class="label"
+        >{#if n < current}<Icon name="check" size={16} />{/if}{label}{#if n !== current}<span class="hm-visually-hidden"
+            > ({n < current ? m.pair_step_done() : m.pair_step_todo()})</span
+          >{/if}</span
+      >
     </li>
   {/each}
 </ol>

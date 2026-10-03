@@ -269,8 +269,8 @@ describe('createHttpClient', () => {
     await c.agents();
     await c.revokeAgent('pair:kitchen');
     await c.pairingCheck('bcdf-ghjk');
-    await c.pairingApprove({ code: 'BCDFGHJK', display_name: 'Küche', template: 'voice' });
-    await c.pairingDeny('BCDFGHJK');
+    await c.pairingApprove({ code: 'BCDFGHJK', pairing_id: 'pg-1', display_name: 'Küche', template: 'voice' });
+    await c.pairingDeny({ code: 'BCDFGHJK', pairing_id: 'pg-1' });
     await c.devices();
     await c.mandates();
     await c.createMandate({ client_id: 'pair:kitchen', template: 'voice' });
@@ -300,8 +300,8 @@ describe('createHttpClient', () => {
       'GET api/agents',
       'POST api/agents/revoke {"client_id":"pair:kitchen"}',
       'POST api/pairing/check {"code":"bcdf-ghjk"}',
-      'POST api/pairing/approve {"code":"BCDFGHJK","display_name":"Küche","template":"voice"}',
-      'POST api/pairing/deny {"code":"BCDFGHJK"}',
+      'POST api/pairing/approve {"code":"BCDFGHJK","pairing_id":"pg-1","display_name":"Küche","template":"voice"}',
+      'POST api/pairing/deny {"code":"BCDFGHJK","pairing_id":"pg-1"}',
       'GET api/devices',
       'GET api/mandates',
       'POST api/mandates {"client_id":"pair:kitchen","template":"voice"}',

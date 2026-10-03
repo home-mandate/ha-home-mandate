@@ -109,7 +109,7 @@
             {@const seen = last(agent)}
             <tr class:revoked={agent.status === 'revoked'}>
               <th scope="row"><a href={href({ name: 'agent', id: agent.client_id })}><AgentName name={agent.display_name} /></a></th>
-              <td><ClientIdentity client={agent.oauth_client} /></td>
+              <td><ClientIdentity client={agent.oauth_client} verified={agent.client_verified} /></td>
               <td>
                 {#if agent.mandate}
                   <span class="mandate"
@@ -133,7 +133,8 @@
         {@const seen = last(agent)}
         <li class:revoked={agent.status === 'revoked'}>
           <a href={href({ name: 'agent', id: agent.client_id })}>
-            <span class="row"><span class="name"><AgentName name={agent.display_name} client={agent.oauth_client} /></span><span class="chevron"><Icon name="chevron" /></span></span>
+            <span class="row"><span class="name"><AgentName name={agent.display_name} client={agent.oauth_client} verified={agent.client_verified} /></span><span class="chevron"><Icon name="chevron" /></span></span>
+            <span class="hm-visually-hidden">, </span>
             <span class="facts">
               <AgentStatus status={agent.status} compact />
               <span><bdi>{agent.mandate ? cleanUntrusted(agent.mandate.name) : m.agents_no_mandate()}</bdi> · {seen.text}</span>

@@ -134,7 +134,7 @@ describe('AgentConnect', () => {
     expect(field.value).toBe('https://home.example:8765/mcp');
     await fireEvent.click(screen.getByRole('button', { name: /Copy/ }));
     expect(copy).toHaveBeenCalledWith('https://home.example:8765/mcp');
-    expect(screen.getByText('claude mcp add --transport http home-mandate https://home.example:8765/mcp')).toBeTruthy();
+    expect(screen.getByText("claude mcp add --transport http home-mandate 'https://home.example:8765/mcp'")).toBeTruthy();
   });
 
   it('explains a missing address instead of showing an empty field', async () => {

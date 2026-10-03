@@ -115,7 +115,7 @@ const agent = ({ mandate, ...a }: AgentInput): Agent => ({
   revoked_by_name: null,
   requests_today: 0,
   actions_last_hour: 0,
-  mandate: mandate && { ...mandate, max_actions_per_hour: null },
+  mandate: mandate && { ...mandate, max_actions_per_hour: null, digest: '' },
   ...a,
 });
 
