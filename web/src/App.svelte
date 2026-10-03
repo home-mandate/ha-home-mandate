@@ -216,7 +216,7 @@
   {/if}
 </main>
 <ToastHost />
-<EstopSheet open={sheet} onclose={() => (sheet = false)} onfire={fire} error={estopError} />
+<EstopSheet open={sheet} onclose={() => (sheet = false)} onfire={fire} busy={firing} error={estopError} />
 
 <style>
   main {

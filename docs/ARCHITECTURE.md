@@ -311,6 +311,14 @@ as generated code.
   minimum release age, JavaScript dependencies included in the SBOM.
 - Svelte output is escaped by default; `{@html}` is forbidden.
 
+**Emergency stop in the UI:** The header button (and the one in the settings) opens a
+dialog that says what happens, with Cancel and an explicit confirmation. The design asked
+for holding a button for 2 seconds; that is replaced, because a hold cannot be done with
+every way of input (switch control, voice control, eye gaze, people who cannot hold). To
+keep a slip from triggering it, the focus starts on Cancel and the confirmation is armed
+only after 600 ms. A click beside the dialog, Escape and Cancel cancel; the window losing
+focus does not.
+
 **Editing mandates:** The editor works on a draft and shows live what it would mean (rule
 notes, the "what it may do" preview, the summary before saving). That preview is computed in
 the browser with a port of the evaluation rule that passes the conformance cases of

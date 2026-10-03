@@ -107,16 +107,45 @@ describe('App frame', () => {
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Settings');
   });
 
-  it('triggers the emergency stop through the hold sheet', async () => {
-    const { app } = await start();
+  // Decision H1 (03.10.): an explicit confirmation instead of holding for 2 s, so every way of
+  // input (tap, switch, voice, keyboard, screen reader) reaches it.
+  it('triggers the emergency stop after the explicit confirmation, which starts on Cancel', async () => {
+    await start();
     await fireEvent.click(screen.getByRole('button', { name: 'Emergency stop' }));
     const sheet = await screen.findByRole('alertdialog', { name: 'Trigger emergency stop?' });
-    expect(within(sheet).getByRole('button', { name: /Press and hold/ })).toBeTruthy();
-    // Assistive technology: one click starts the run (HoldButton); here the result matters.
-    await app.setEmergencyStop(true);
-    await tick();
+    await vi.waitFor(() => expect(document.activeElement).toBe(within(sheet).getByRole('button', { name: 'Cancel' })));
+    const confirm = within(sheet).getByRole('button', { name: 'Trigger emergency stop' });
+    // Armed only after a moment: a double click or a held Enter cannot confirm (decision H1).
+    expect(confirm.getAttribute('aria-disabled')).toBe('true');
+    await fireEvent.click(confirm);
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    await vi.waitFor(() => expect(confirm.getAttribute('aria-disabled')).toBeNull(), { timeout: 2000 });
+    await fireEvent.click(confirm);
+    await vi.waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(screen.getByRole('button', { name: 'Emergency stop on' })).toBeTruthy();
-    expect(screen.getAllByRole('alert').some((a) => a.textContent?.includes('Emergency stop active'))).toBe(true);
+  });
+
+  it('cancels with a click beside the sheet, Escape or Cancel, but not when the window loses focus', async () => {
+    const { api } = await start();
+    const stop = vi.spyOn(api, 'setEmergencyStop');
+    const open = async () => {
+      await fireEvent.click(screen.getByRole('button', { name: 'Emergency stop' }));
+      return screen.findByRole('alertdialog');
+    };
+    await open();
+    window.dispatchEvent(new Event('blur'));
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    const backdrop = document.querySelector('.backdrop') as HTMLElement;
+    await fireEvent.pointerDown(backdrop);
+    await fireEvent.click(backdrop);
+    await vi.waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    await open();
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    await vi.waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    const sheet = await open();
+    await fireEvent.click(within(sheet).getByRole('button', { name: 'Cancel' }));
+    await vi.waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(stop).not.toHaveBeenCalled();
   });
 
   it('sends the active emergency stop button to lifting it in the settings', async () => {
@@ -188,15 +217,11 @@ describe('App frame', () => {
     await tick();
     await fireEvent.click(screen.getByRole('button', { name: 'Emergency stop' }));
     const sheet = await screen.findByRole('alertdialog');
-    const hold = within(sheet).getByRole('button', { name: /Press and hold/ });
-    // Assistive technology path, in real time: a click without a hold runs the 2 s on its own.
-    await fireEvent.click(hold, { detail: 0 });
-    await vi.waitFor(() => expect(within(sheet).getByRole('alert').textContent).toContain('could not be triggered'), {
-      timeout: 4000,
-    });
+    const confirm = within(sheet).getByRole('button', { name: 'Trigger emergency stop' });
+    await vi.waitFor(() => expect(confirm.getAttribute('aria-disabled')).toBeNull(), { timeout: 2000 });
+    await fireEvent.click(confirm);
+    await vi.waitFor(() => expect(within(sheet).getByRole('alert').textContent).toContain('could not be triggered'));
     expect(screen.getByRole('alertdialog')).toBeTruthy();
-    // At 100 % the button says it is triggering, not that it triggered (review a11y M4).
-    expect(sheet.textContent).toContain('Triggering the emergency stop …');
     expect(sheet.textContent).not.toContain('Emergency stop triggered');
   });
 

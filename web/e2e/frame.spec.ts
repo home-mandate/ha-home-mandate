@@ -9,7 +9,7 @@ const text = {
     estop: 'Not-Aus',
     estopOn: 'Not-Aus aktiv',
     sheet: 'Not-Aus auslösen?',
-    hold: /Gedrückt halten/,
+    confirm: 'Not-Aus auslösen',
     banner: 'Not-Aus aktiv',
     chain: 'Zum Eintrag',
     cancel: 'Abbrechen',
@@ -19,31 +19,28 @@ const text = {
     estop: 'Emergency stop',
     estopOn: 'Emergency stop on',
     sheet: 'Trigger emergency stop?',
-    hold: /Press and hold/,
+    confirm: 'Trigger emergency stop',
     banner: 'Emergency stop active',
     chain: 'Go to entry',
     cancel: 'Cancel',
   },
 } as const;
 
-test('emergency stop with the keyboard only: hold Space for 2 s', async ({ page }, info) => {
+test('emergency stop with the keyboard only: Cancel first, then the explicit confirmation', async ({ page }, info) => {
   const t = text[info.project.name as keyof typeof text];
   await page.goto('./');
   await page.getByRole('button', { name: t.estop, exact: true }).focus();
   await page.keyboard.press('Enter');
   const sheet = page.getByRole('alertdialog', { name: t.sheet });
   await expect(sheet).toBeVisible();
-  await expect(sheet.getByRole('button', { name: t.hold })).toBeFocused();
+  await expect(sheet.getByRole('button', { name: t.cancel })).toBeFocused();
 
-  // Released early: nothing happens.
-  await page.keyboard.down(' ');
-  await page.waitForTimeout(800);
-  await page.keyboard.up(' ');
-  await expect(sheet).toBeVisible();
-
-  await page.keyboard.down(' ');
-  await page.waitForTimeout(2300);
-  await page.keyboard.up(' ');
+  // The arming delay itself is covered by the unit tests (timing in a browser run is not fixed).
+  await page.keyboard.press('Tab');
+  const confirm = sheet.getByRole('button', { name: t.confirm });
+  await expect(confirm).toBeFocused();
+  await expect(confirm).not.toHaveAttribute('aria-disabled');
+  await page.keyboard.press('Enter');
   await expect(sheet).toBeHidden();
   await expect(page.getByRole('button', { name: t.estopOn })).toBeVisible();
   await expect(page.getByRole('alert').filter({ hasText: t.banner })).toBeVisible();

@@ -4,7 +4,8 @@
   <body> and the app behind it becomes inert. Focus moves in on open (to `initial`, else the
   first focusable element; destructive dialogs pass their safe button), cannot leave, and
   returns to the trigger on close (or to <main> if the trigger is gone). Esc closes. A
-  click on the backdrop closes only non-destructive dialogs, and only if it started there.
+  click on the backdrop closes non-destructive dialogs, and destructive ones that count it as
+  cancelling (backdropCloses), only if it started there.
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte';
@@ -23,11 +24,13 @@
     size?: 'md' | 'lg';
     /** Element to focus on open; destructive dialogs pass their safe button. */
     initial?: HTMLElement | null;
+    /** A backdrop click closes; default only for non-destructive dialogs. */
+    backdropCloses?: boolean;
     onclose: () => void;
     children: Snippet;
   }
 
-  let { open, labelledby, describedby, destructive = false, size = 'md', initial = null, onclose, children }: Props = $props();
+  let { open, labelledby, describedby, destructive = false, size = 'md', initial = null, backdropCloses, onclose, children }: Props = $props();
 
   let panel: HTMLElement | undefined = $state();
   let pressedOnBackdrop = false;
@@ -91,7 +94,7 @@
   }
 
   function backdrop(event: MouseEvent) {
-    const close = pressedOnBackdrop && event.target === event.currentTarget && !destructive;
+    const close = pressedOnBackdrop && event.target === event.currentTarget && (backdropCloses ?? !destructive);
     pressedOnBackdrop = false;
     if (close) onclose();
   }

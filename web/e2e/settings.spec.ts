@@ -7,10 +7,10 @@ import { expect, pageScroll, test } from './support.ts';
 
 const text = {
   de: { sections: 'Abschnitte der Einstellungen', mcp: 'MCP-Endpunkt', approvers: 'Freigebende', critical: 'Auch kritische Rückfragen', normalOnly: 'Bekommt nur normale Rückfragen',
-    defaults: 'Standards', rate: 'Tempolimit-Standard', saved: 'Gespeichert', estop: 'Not-Aus', trigger: 'Not-Aus auslösen …', hold: 'Gedrückt halten zum Auslösen', lift: 'Not-Aus aufheben …', liftYes: 'Aufheben', cancel: 'Abbrechen',
+    defaults: 'Standards', rate: 'Tempolimit-Standard', saved: 'Gespeichert', estop: 'Not-Aus', trigger: 'Not-Aus auslösen …', confirm: 'Not-Aus auslösen', lift: 'Not-Aus aufheben …', liftYes: 'Aufheben', cancel: 'Abbrechen',
     about: 'Über', licenses: 'Lizenzen der enthaltenen Pakete' },
   en: { sections: 'Settings sections', mcp: 'MCP endpoint', approvers: 'Approvers', critical: 'Critical requests too', normalOnly: 'Gets normal requests only',
-    defaults: 'Defaults', rate: 'Default rate limit', saved: 'Saved', estop: 'Emergency stop', trigger: 'Trigger emergency stop …', hold: 'Press and hold to trigger', lift: 'Lift emergency stop …', liftYes: 'Lift', cancel: 'Cancel',
+    defaults: 'Defaults', rate: 'Default rate limit', saved: 'Saved', estop: 'Emergency stop', trigger: 'Trigger emergency stop …', confirm: 'Trigger emergency stop', lift: 'Lift emergency stop …', liftYes: 'Lift', cancel: 'Cancel',
     about: 'About', licenses: 'Licenses of the included packages' },
 } as const;
 
@@ -52,10 +52,7 @@ test('triggers the emergency stop from the settings and lifts it after the inlin
   await page.goto('./#/settings/estop');
   const estop = page.getByRole('region', { name: t.estop });
   await estop.getByRole('button', { name: t.trigger }).click();
-  await page.getByRole('alertdialog').getByRole('button', { name: t.hold }).focus();
-  await page.keyboard.down(' ');
-  await page.waitForTimeout(2300);
-  await page.keyboard.up(' ');
+  await page.getByRole('alertdialog').getByRole('button', { name: t.confirm, exact: true }).click();
   await estop.getByRole('button', { name: t.lift }).click();
   await expect(estop.getByRole('button', { name: t.cancel })).toBeFocused();
   await estop.getByRole('button', { name: t.liftYes, exact: true }).click();

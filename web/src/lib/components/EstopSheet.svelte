@@ -1,29 +1,48 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!--
-  Emergency stop sheet (design README section 5): what happens, the 2 s hold button and
-  Cancel. Destructive: focus starts on the hold button, a backdrop click does not close it.
+  Emergency stop sheet (design README section 5, changed by decision H1 of 03.10.2026):
+  what happens, Cancel and an explicit confirmation instead of holding for 2 s, so every
+  way of input reaches it. Focus starts on Cancel; the confirmation is armed after a
+  moment, so a double click or a held Enter cannot trigger it. A click beside the sheet,
+  Escape and Cancel cancel; the window losing focus does not.
 -->
 <script lang="ts">
   import { m } from '../i18n.ts';
+  import { onDestroy } from 'svelte';
+  import Button from './Button.svelte';
   import Dialog from './Dialog.svelte';
-  import HoldButton from './HoldButton.svelte';
   import Icon from './Icon.svelte';
 
   interface Props {
     open: boolean;
     onclose: () => void;
     onfire: () => void;
+    /** The request is on its way. */
+    busy?: boolean;
     /** Shown in the sheet as an alert: the app behind a modal sheet is inert, toasts would not be heard. */
     error?: string;
   }
 
-  let { open, onclose, onfire, error }: Props = $props();
+  let { open, onclose, onfire, busy = false, error }: Props = $props();
+
+  /** The confirmation is armed this long after the sheet opens (like "Yes, approve"). */
+  const ARM_MS = 600;
 
   const id = $props.id();
-  let hold: HTMLButtonElement | undefined = $state();
+  let cancel: HTMLButtonElement | undefined = $state();
+  let armed = $state(false);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  $effect(() => {
+    if (!open) return;
+    armed = false;
+    timer = setTimeout(() => (armed = true), ARM_MS);
+    return () => clearTimeout(timer);
+  });
+  onDestroy(() => clearTimeout(timer));
 </script>
 
-<Dialog {open} labelledby="{id}-title" describedby="{id}-body" destructive initial={hold ?? null} {onclose}>
+<Dialog {open} labelledby="{id}-title" describedby="{id}-body" destructive backdropCloses initial={cancel ?? null} {onclose}>
   <div class="sheet">
     <div class="head">
       <span class="icon"><Icon name="power" size={32} /></span>
@@ -35,8 +54,10 @@
     </div>
     <p class="after">{m.estop_sheet_after()}</p>
     <p class="error" role="alert">{#if error}<Icon name="warning" size={16} />{error}{/if}</p>
-    <HoldButton bind:element={hold} label={m.estop_hold()} done={m.estop_hold_firing()} {onfire} />
-    <button type="button" class="cancel" onclick={onclose}>{m.common_cancel()}</button>
+    <div class="actions">
+      <Button size="lg" bind:element={cancel} onclick={onclose}>{m.common_cancel()}</Button>
+      <Button size="lg" variant="danger" icon="power" disabled={!armed} {busy} onclick={onfire}>{m.estop_confirm()}</Button>
+    </div>
   </div>
 </Dialog>
 
@@ -107,15 +128,17 @@
   .close:hover {
     background: var(--hm-color-surface-hover);
   }
-  .cancel {
-    min-block-size: var(--hm-size-touch);
-    border-radius: var(--hm-radius-md);
-    font: inherit;
-    font-size: 15px;
-    font-weight: var(--hm-font-weight-semibold);
-    color: var(--hm-color-text);
-    background: var(--hm-color-surface);
-    border: var(--hm-border-width) solid var(--hm-color-border-strong);
-    cursor: pointer;
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--hm-space-3);
+  }
+  @media (max-width: 767px) {
+    /* Bottom sheet: Cancel on top, the confirmation below, both full width. */
+    .actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
   }
 </style>
