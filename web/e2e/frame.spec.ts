@@ -74,9 +74,9 @@ test('a broken audit chain shows a banner that leads to the entry', async ({ pag
 test('mobile: sections in a scrolling tab bar, no horizontal page scroll', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 760 });
   await page.goto('./#/settings');
-  const nav = page.getByRole('navigation');
+  const nav = page.getByRole('navigation', { name: /^(Bereiche|Sections)$/ });
   await expect(nav.getByRole('link')).toHaveCount(5);
   expect(await pageScroll(page)).toBe(0);
-  const box = await page.getByRole('button', { name: /Not-Aus|Emergency stop/ }).boundingBox();
+  const box = await page.getByRole('button', { name: /^(Not-Aus|Emergency stop)$/ }).boundingBox();
   expect(box?.height).toBeGreaterThanOrEqual(44);
 });

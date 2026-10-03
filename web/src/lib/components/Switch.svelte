@@ -1,31 +1,37 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-<!-- On/off switch (role="switch"); tone "danger" when switching on weakens a protection. -->
+<!--
+  On/off switch (role="switch"); tone "danger" when switching on weakens a protection.
+  Disabled stays focusable (aria-disabled), so its description says why.
+-->
 <script lang="ts">
   interface Props {
     checked: boolean;
     label: string;
     description?: string;
     tone?: 'accent' | 'danger';
+    disabled?: boolean;
     onchange?: (checked: boolean) => void;
   }
 
-  let { checked = $bindable(), label, description, tone = 'accent', onchange }: Props = $props();
+  let { checked = $bindable(), label, description, tone = 'accent', disabled = false, onchange }: Props = $props();
 
   const id = $props.id();
 
   function toggle() {
+    if (disabled) return;
     checked = !checked;
     onchange?.(checked);
   }
 </script>
 
 <!-- The whole row is the hit area: a label activates the switch it contains. -->
-<label class="row">
+<label class="row" class:disabled>
   <button
     type="button"
     role="switch"
     class={tone}
     aria-checked={checked}
+    aria-disabled={disabled ? 'true' : undefined}
     aria-labelledby="{id}-label"
     aria-describedby={description ? `${id}-desc` : undefined}
     onclick={toggle}
@@ -82,6 +88,17 @@
   }
   .danger[aria-checked='true'] .knob {
     background: var(--hm-color-on-danger);
+  }
+  .disabled {
+    cursor: not-allowed;
+  }
+  .disabled .label,
+  .disabled .desc {
+    color: var(--hm-color-text-disabled);
+  }
+  button[aria-disabled='true'] {
+    cursor: not-allowed;
+    opacity: 0.6;
   }
   .text {
     display: flex;

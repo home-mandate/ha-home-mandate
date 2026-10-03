@@ -3,11 +3,12 @@
 
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { ICONS_LICENSE, licenses } from './scripts/licenses.ts';
 
 export default defineConfig({
   // Relative paths: Home Assistant Ingress serves the UI under a per-installation path.
   base: './',
-  plugins: [svelte()],
+  plugins: [svelte(), licenses([ICONS_LICENSE], ['@inlang/paraglide-js'])],
   build: {
     target: 'es2024',
     // No data: URIs and no inline polyfill, so the CSP can stay at 'self'.

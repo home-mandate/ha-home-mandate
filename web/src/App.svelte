@@ -5,7 +5,8 @@
   says what keeps working, and a missing admin right shows "no access" without navigation.
 -->
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
+  import { BrowserNotifier } from './lib/app/notifier.svelte.ts';
   import type { AppState } from './lib/app/state.svelte.ts';
   import BannerStack from './lib/components/BannerStack.svelte';
   import ErrorState from './lib/components/ErrorState.svelte';
@@ -22,7 +23,7 @@
   import MandateVersions from './lib/pages/MandateVersions.svelte';
   import Overview from './lib/pages/Overview.svelte';
   import Requests from './lib/pages/Requests.svelte';
-  import Placeholder from './lib/pages/Placeholder.svelte';
+  import Settings from './lib/pages/Settings.svelte';
   import AgentConnect from './lib/pages/AgentConnect.svelte';
   import AgentDetail from './lib/pages/AgentDetail.svelte';
   import AgentPair from './lib/pages/AgentPair.svelte';
@@ -48,6 +49,30 @@
   let firing = $state(false);
   let estopError = $state('');
   let main: HTMLElement | undefined = $state();
+
+  /** localStorage, or none where the browser blocks it (private mode, sandboxed frame). */
+  function storage(): Storage | undefined {
+    try {
+      return window.localStorage;
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Browser notifications for new requests (decision S4), on every page.
+  const notifier = new BrowserNotifier({
+    Notification: typeof Notification === 'undefined' ? undefined : Notification,
+    storage: storage(),
+    hidden: () => document.hidden,
+  });
+  onMount(() =>
+    app.on('approval.opened', ({ request }) =>
+      notifier.notify(request, { title: m.notify_title(), body: m.notify_body() }, () => {
+        window.focus();
+        go({ name: 'requests' });
+      }),
+    ),
+  );
 
   const timer = setInterval(() => (now = Date.now()), TICK_MS);
   onDestroy(() => {
@@ -81,13 +106,17 @@
     window.location.hash = href(target);
   }
 
+  function openSheet() {
+    estopError = '';
+    sheet = true;
+  }
+
   function estop() {
     if (estopActive) {
       go({ name: 'settings', section: 'estop' });
       return;
     }
-    estopError = '';
-    sheet = true;
+    openSheet();
   }
 
   async function fire() {
@@ -158,14 +187,14 @@
     {#key route.id}<AgentDetail {app} id={route.id} {now} />{/key}
   {:else if route.name === 'connect'}
     <AgentConnect {app} />
+  {:else if route.name === 'settings'}
+    <Settings {app} {notifier} section={route.section} onestop={openSheet} storage={storage()} />
   {:else if route.name === 'mandates'}
     <MandateList {app} {now} />
   {:else if route.name === 'mandate'}
     {#key route.id}<MandateEditor {app} id={route.id} {now} />{/key}
   {:else if route.name === 'mandate_versions'}
     {#key route.id}<MandateVersions {app} id={route.id} />{/key}
-  {:else}
-    <Placeholder {section} />
   {/if}
 </main>
 <ToastHost />

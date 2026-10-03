@@ -17,6 +17,8 @@ const ALLOWED_ORIGINS: { origin: string; path: string }[] = [
   { origin: 'https://svelte.dev', path: '/e/' },
   { origin: 'https://paraglidejs.com', path: '/errors' },
   { origin: 'http://www.w3.org', path: '/' },
+  // The source code link under "About" (AGPL section 13); a link the person may follow, nothing loads it.
+  { origin: 'https://github.com', path: '/home-mandate/home-mandate' },
 ];
 /** Base URLs the Paraglide runtime passes to new URL() for parsing; they load nothing. */
 const ALLOWED_URLS = new Set(['http://fallback.com/', 'http://example.com/']);
@@ -50,8 +52,12 @@ function isFixtureUrl(raw: string): boolean {
   }
 }
 
+/** The license texts (decision S8): plain text the page links to; their URLs load nothing. */
+const LICENSES = /(^|[\\/])licenses\.txt$/;
+
 export function checkFile(name: string, content: string, fixtures = false): string[] {
   const problems: string[] = [];
+  if (LICENSES.test(name)) return problems;
   const mockChunk = MOCK_CHUNK.test(name);
   if (!fixtures && (mockChunk || MOCK_MARKERS.some((marker) => content.includes(marker)))) {
     return [`${name}: mock client in a release build`];

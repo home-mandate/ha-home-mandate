@@ -5,12 +5,11 @@
   was left or a save was tried, never while typing.
 -->
 <script lang="ts">
-  import { untrack } from 'svelte';
   import type { Approval } from '../../api/types.ts';
   import { m } from '../../i18n.ts';
-  import { timeoutInput, timeoutIso, type TimeoutUnit } from '../../mandate/timeout.ts';
   import { cleanUntrusted } from '../../untrusted.ts';
   import Icon from '../Icon.svelte';
+  import TimeoutField from '../TimeoutField.svelte';
 
   interface Props {
     approval: Approval;
@@ -29,25 +28,6 @@
   const id = $props.id();
   const MAX_INITIALS = 2;
 
-  // What is typed stays as typed; it only follows the draft when that changed elsewhere.
-  // A number input binds a number (or null while it is empty or not a number).
-  let value: string | number | null = $state('');
-  let unit: TimeoutUnit = $state('m');
-  const typed = () => timeoutIso({ value: String(value ?? ''), unit });
-  $effect(() => {
-    const stored = approval.timeout;
-    untrack(() => {
-      if (typed() === stored) return;
-      const input = timeoutInput(stored);
-      value = input.value;
-      if (input.value !== '') unit = input.unit;
-    });
-  });
-
-  function emitTimeout() {
-    onchange({ ...approval, timeout: typed() });
-  }
-
   function toggle(person: string) {
     const approvers = approval.approvers.includes(person) ? approval.approvers.filter((a) => a !== person) : [...approval.approvers, person];
     onchange({ ...approval, approvers });
@@ -64,31 +44,13 @@
 </script>
 
 <div class="fields">
-  <div class="field">
-    <span id="{id}-timeout" class="label">{m.timeout_label()}</span>
-    <div class="timeout" role="group" aria-labelledby="{id}-timeout">
-      <input
-        type="number"
-        inputmode="numeric"
-        min="1"
-        bind:value
-        {disabled}
-        aria-labelledby="{id}-timeout"
-        aria-describedby="{id}-timeout-help"
-        aria-invalid={timeoutError ? 'true' : undefined}
-        oninput={emitTimeout}
-        onblur={() => ontouch?.('timeout')}
-      />
-      <span id="{id}-unit" class="hm-visually-hidden">{m.timeout_unit_label()}</span>
-      <select bind:value={unit} {disabled} aria-labelledby="{id}-timeout {id}-unit" onchange={emitTimeout}>
-        <option value="s">{m.unit_seconds()}</option>
-        <option value="m">{m.unit_minutes()}</option>
-      </select>
-    </div>
-    <span id="{id}-timeout-help" class="help" class:error={timeoutError}>
-      {#if timeoutError}<Icon name="warning" size={16} />{timeoutError}{:else}{m.timeout_help()}{/if}
-    </span>
-  </div>
+  <TimeoutField
+    timeout={approval.timeout}
+    error={timeoutError}
+    {disabled}
+    onchange={(timeout) => onchange({ ...approval, timeout })}
+    ontouch={() => ontouch?.('timeout')}
+  />
 
   <fieldset aria-describedby="{id}-approvers-help">
     <legend>{m.editor_approvers()}</legend>
@@ -114,7 +76,6 @@
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
     gap: var(--hm-space-4);
   }
-  .field,
   fieldset {
     display: flex;
     flex-direction: column;
@@ -124,7 +85,6 @@
     padding: 0;
     border: none;
   }
-  .label,
   legend {
     padding: 0;
     font-size: var(--hm-font-size-sm);
@@ -132,41 +92,6 @@
   }
   legend {
     padding-block-end: 6px;
-  }
-  .timeout {
-    display: flex;
-    gap: var(--hm-space-2);
-  }
-  input,
-  select {
-    min-block-size: var(--hm-size-touch);
-    padding-block: 0;
-    padding-inline: var(--hm-space-3);
-    border-radius: var(--hm-radius-md);
-    font: inherit;
-    font-size: var(--hm-font-size-md);
-    color: var(--hm-color-text);
-    background: var(--hm-color-surface);
-    border: var(--hm-border-width) solid var(--hm-color-border-strong);
-  }
-  input {
-    inline-size: 88px;
-    box-sizing: border-box;
-  }
-  select {
-    flex: 1;
-    min-inline-size: 0;
-  }
-  input[aria-invalid='true'] {
-    border-color: var(--hm-color-danger-fg);
-    outline: 1px solid var(--hm-color-danger-fg);
-    outline-offset: 0;
-  }
-  input:disabled,
-  select:disabled {
-    color: var(--hm-color-text-disabled);
-    background: var(--hm-color-surface-sunken);
-    border-color: var(--hm-color-border);
   }
   .people {
     display: flex;
