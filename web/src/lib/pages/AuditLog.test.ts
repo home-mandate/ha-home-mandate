@@ -325,6 +325,24 @@ describe('AuditLog: search', () => {
   });
 });
 
+describe('AuditLog: verifying', () => {
+  beforeEach(desktop);
+
+  it('says the result of every check, also when nothing changed (review a11y M2)', async () => {
+    await start();
+    await list();
+    const said = () => document.querySelector('p.hm-visually-hidden[role="status"]')?.textContent;
+    await fireEvent.click(await screen.findByRole('button', { name: 'Verify now' }));
+    await waitFor(() => expect(said()).toBe('Audit log complete and unaltered'));
+    const seen: string[] = [];
+    const region = document.querySelector('p.hm-visually-hidden[role="status"]') as HTMLElement;
+    new MutationObserver(() => seen.push(region.textContent ?? '')).observe(region, { childList: true, subtree: true, characterData: true });
+    await fireEvent.click(screen.getByRole('button', { name: 'Verify now' }));
+    await waitFor(() => expect(seen).toContain(''));
+    await waitFor(() => expect(said()).toBe('Audit log complete and unaltered'));
+  });
+});
+
 describe('AuditLog on mobile', () => {
   // jsdom does not scroll.
   const scrolled = vi.fn();

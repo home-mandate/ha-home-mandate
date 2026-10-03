@@ -156,6 +156,8 @@ export function connectEvents(options: EventsOptions): EventsConnection {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let delay = FIRST_DELAY_MS;
   let stopped = false;
+  /** Token refusals since the server last accepted one; from the second on, reconnect() waits. */
+  let refused = 0;
 
   function schedule(): void {
     if (stopped || timer !== null) return;
@@ -185,14 +187,21 @@ export function connectEvents(options: EventsOptions): EventsConnection {
       return;
     }
     socket = s;
+    // Open only once the server accepted the token (its first event), not when the socket
+    // opens: a server that refuses every token would otherwise cause a reload per attempt (S3).
+    let accepted = false;
     s.onopen = () => {
       s.send(JSON.stringify({ csrf }));
-      options.onState('open');
     };
     s.onmessage = (e) => {
       const event = parse(e.data);
       if (!event) return;
-      delay = FIRST_DELAY_MS; // the server accepted the token
+      if (!accepted) {
+        accepted = true;
+        delay = FIRST_DELAY_MS;
+        refused = 0;
+        options.onState('open');
+      }
       options.onEvent(event);
     };
     s.onclose = (e) => {
@@ -204,6 +213,7 @@ export function connectEvents(options: EventsOptions): EventsConnection {
         return;
       }
       if (e.code === CLOSE_CSRF) {
+        refused++;
         options.onState('csrf'); // wait for reconnect() after the session reload
         return;
       }
@@ -221,6 +231,12 @@ export function connectEvents(options: EventsOptions): EventsConnection {
       timer = null;
       socket?.close();
       socket = null;
+      // After a refused token, a fresh session is worth one immediate try; refused again,
+      // the next tries wait with growing delays like any other reconnect.
+      if (refused > 1) {
+        schedule();
+        return;
+      }
       delay = FIRST_DELAY_MS;
       open();
     },

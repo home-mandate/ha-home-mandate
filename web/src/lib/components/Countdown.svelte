@@ -9,6 +9,7 @@
   import { onDestroy, untrack } from 'svelte';
   import { getLocale } from '../paraglide/runtime.js';
   import { m } from '../i18n.ts';
+  import { isolate } from '../untrusted.ts';
   import { announcement, formatClock, remainingSeconds, spokenDuration } from '../ui/countdown.ts';
 
   const TICK_MS = 250;
@@ -20,17 +21,20 @@
     /** Browser clock minus server clock in ms. */
     offsetMs: number;
     size?: 'md' | 'lg';
+    /** What the countdown belongs to, e.g. the device; announcements name it (review a11y M8). Untrusted. */
+    subject?: string;
     now?: () => number;
   }
 
-  let { expiresAt, totalSeconds, offsetMs, size = 'md', now = Date.now }: Props = $props();
+  let { expiresAt, totalSeconds, offsetMs, size = 'md', subject, now = Date.now }: Props = $props();
 
   let left = $state(0);
   let spoken = $state('');
   let last: number | null = null;
 
   function say(seconds: number) {
-    spoken = seconds === 0 ? m.countdown_expired() : m.countdown_seconds_left({ count: seconds });
+    const text = seconds === 0 ? m.countdown_expired() : m.countdown_seconds_left({ count: seconds });
+    spoken = subject ? m.countdown_for({ device: isolate(subject), text }) : text;
   }
 
   function update() {

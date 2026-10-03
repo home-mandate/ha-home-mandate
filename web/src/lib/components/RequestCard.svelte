@@ -74,7 +74,7 @@
     {#if request.recipients.length > 0}<span class="sent">{m.request_sent_to({ names: recipients })}</span>{/if}
     {#if children}<div class="actions">{@render children(titleId)}</div>{/if}
   </div>
-  <Countdown expiresAt={request.expires_at} totalSeconds={total} {offsetMs} size="lg" {now} />
+  <Countdown expiresAt={request.expires_at} totalSeconds={total} {offsetMs} size="lg" subject={request.device_name} {now} />
 </article>
 
 <style>

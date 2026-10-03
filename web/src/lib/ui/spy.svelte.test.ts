@@ -54,4 +54,16 @@ describe('ScrollSpy', () => {
     expect(FakeObserver.last?.disconnected).toBe(true);
     expect(() => new ScrollSpy(['a']).observe([['a', el()]], undefined)()).not.toThrow();
   });
+
+  it('keeps a chosen section marked until the person scrolls (review M1)', () => {
+    const [a, b, c] = [el(), el(), el()];
+    const spy = new ScrollSpy(['a', 'b', 'c']);
+    spy.observe([['a', a], ['b', b], ['c', c]], FakeObserver as unknown as typeof IntersectionObserver);
+    const io = FakeObserver.last as FakeObserver;
+    spy.pin('c'); // e.g. "About" at the end, which never reaches the top of the window
+    io.see([b, true], [c, true]);
+    expect(spy.current).toBe('c');
+    spy.release();
+    expect(spy.current).toBe('b');
+  });
 });

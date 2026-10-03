@@ -342,7 +342,7 @@ describe('createHttpClient', () => {
   });
 
   it('opens the event stream next to the page with the current CSRF token', async () => {
-    const sockets: { url: string; sent: string[]; onopen: (() => void) | null }[] = [];
+    const sockets: { url: string; sent: string[]; onopen: (() => void) | null; onmessage: ((e: { data: unknown }) => void) | null }[] = [];
     const { fetch } = fakeFetch(json(sessionFixture));
     const api = createHttpClient({
       fetch,
@@ -359,6 +359,8 @@ describe('createHttpClient', () => {
     sockets[0]?.onopen?.();
     expect(sockets[0]?.url).toBe('wss://ha.example/api/hassio_ingress/f00d/api/events');
     expect(sockets[0]?.sent).toEqual([`{"csrf":"${sessionFixture.csrf_token}"}`]);
+    expect(states).toEqual(['connecting']);
+    sockets[0]?.onmessage?.({ data: '{"type":"agents.changed"}' });
     expect(states).toEqual(['connecting', 'open']);
     stop.close();
   });

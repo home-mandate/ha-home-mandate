@@ -66,10 +66,14 @@ describe('eventsUrl', () => {
 });
 
 describe('connectEvents', () => {
-  it('sends the CSRF token as the first and only message, then reports open', () => {
+  it('sends the CSRF token as the first and only message, and reports open once the server accepted it', () => {
     const { states } = connect();
     latest().open();
     expect(latest().sent).toEqual(['{"csrf":"token"}']);
+    // An open socket is not yet an accepted token (security review S3).
+    expect(states).toEqual(['connecting']);
+    latest().message('{"type":"agents.changed"}');
+    latest().message('{"type":"agents.changed"}');
     expect(states).toEqual(['connecting', 'open']);
   });
 
@@ -155,6 +159,34 @@ describe('connectEvents', () => {
     expect(FakeSocket.all).toHaveLength(1);
     conn.reconnect();
     expect(FakeSocket.all).toHaveLength(2);
+  });
+
+  it('waits with growing delays when the token is refused again and again, even on reconnect() (S3)', () => {
+    const { conn } = connect();
+    const refuse = () => {
+      latest().open();
+      latest().drop(CLOSE_CSRF);
+    };
+    refuse();
+    conn.reconnect(); // the first refusal: a fresh session is worth one immediate try
+    expect(FakeSocket.all).toHaveLength(2);
+    refuse();
+    conn.reconnect();
+    expect(FakeSocket.all).toHaveLength(2);
+    vi.advanceTimersByTime(1000);
+    expect(FakeSocket.all).toHaveLength(3);
+    refuse();
+    conn.reconnect();
+    vi.advanceTimersByTime(1000);
+    expect(FakeSocket.all).toHaveLength(3);
+    vi.advanceTimersByTime(1000);
+    expect(FakeSocket.all).toHaveLength(4);
+    // Accepted at last: the next refusal is tried again at once.
+    latest().open();
+    latest().message('{"type":"agents.changed"}');
+    latest().drop(CLOSE_CSRF);
+    conn.reconnect();
+    expect(FakeSocket.all).toHaveLength(5);
   });
 
   it('does not open without a CSRF token and waits for reconnect()', () => {

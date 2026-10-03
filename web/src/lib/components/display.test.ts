@@ -100,6 +100,35 @@ describe('ToastHost', () => {
   });
 });
 
+describe('ToastHost and the keyboard', () => {
+  it('closes the newest error on Escape, unless a dialog is open (review a11y M5)', async () => {
+    const toasts = createToasts();
+    render(ToastHost, { toasts });
+    toasts.show({ kind: 'error', text: 'First' });
+    toasts.show({ kind: 'error', text: 'Second' });
+    await tick();
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    document.body.append(dialog);
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    expect(toasts.list().map((t) => t.text)).toEqual(['First', 'Second']);
+    dialog.remove();
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    expect(toasts.list().map((t) => t.text)).toEqual(['First']);
+  });
+
+  it('keeps room below while toasts are shown, so they cover no focused control', async () => {
+    const toasts = createToasts();
+    render(ToastHost, { toasts });
+    toasts.show({ kind: 'error', text: 'Could not save' });
+    await tick();
+    expect(document.documentElement.style.scrollPaddingBlockEnd).not.toBe('');
+    toasts.dismiss(toasts.list()[0]!.id);
+    await tick();
+    expect(document.documentElement.style.scrollPaddingBlockEnd).toBe('');
+  });
+});
+
 describe('Dialog', () => {
   const body = html('<div><h2 id="t">Revoke?</h2><button id="cancel">Cancel</button><button id="ok">Revoke</button></div>');
 

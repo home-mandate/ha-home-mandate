@@ -3,7 +3,9 @@
   Renders the toast queue (lib/ui/toasts.ts) bottom-center, max 480 px. The two live regions
   (polite for success and undo, assertive for errors) exist before any toast arrives, so
   screen readers announce new ones reliably. Timers pause while the pointer or focus is on
-  the toasts.
+  the toasts. While toasts are shown, the page keeps that much room below (scroll-padding),
+  so they cover no focused control; Escape closes the newest error unless a dialog is open
+  (review a11y M5).
 -->
 <script lang="ts">
   import { m } from '../i18n.ts';
@@ -21,7 +23,31 @@
 
   const polite = $derived(list.filter((t) => t.kind !== 'error'));
   const errors = $derived(list.filter((t) => t.kind === 'error'));
+
+  /** Gap between the toasts and a focused control scrolled into view. */
+  const ROOM_PX = 16;
+  let host: HTMLElement | undefined = $state();
+
+  $effect(() => {
+    const root = document.documentElement.style;
+    if (list.length === 0 || !host) {
+      root.scrollPaddingBlockEnd = '';
+      return;
+    }
+    root.scrollPaddingBlockEnd = `${Math.ceil(host.getBoundingClientRect().height) + ROOM_PX}px`;
+    return () => (root.scrollPaddingBlockEnd = '');
+  });
+
+  function keydown(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || errors.length === 0) return;
+    // A dialog or sheet owns Escape while it is open.
+    if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
+    const newest = errors.at(-1);
+    if (newest) toasts.dismiss(newest.id);
+  }
 </script>
+
+<svelte:window onkeydown={keydown} />
 
 {#snippet toastView(toast: Toast)}
   <div class="toast {toast.kind}">
@@ -40,6 +66,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions (pausing only, no action) -->
 <div
+  bind:this={host}
   class="host"
   onpointerenter={() => toasts.pause()}
   onpointerleave={() => toasts.resume()}

@@ -59,6 +59,14 @@ describe('Countdown', () => {
     await vi.waitFor(() => expect(live()).toBe('30 seconds left'));
   });
 
+  it('names the request in its announcements when given a subject (review a11y M8)', async () => {
+    clock = 30_000;
+    const { container } = render(Countdown, { expiresAt, totalSeconds: 120, offsetMs: 0, now, subject: 'Haustür' });
+    const live = () => container.querySelector('[aria-live="polite"]')?.textContent?.replace(/[\u2068\u2069]/g, '');
+    await advance(10_000);
+    await vi.waitFor(() => expect(live()).toBe('Approval for Haustür: 30 seconds left'));
+  });
+
   it('uses the offset between browser and server clock', () => {
     // Browser 10 s ahead: at browser time 10 s it is 0 s on the server → 70 s left.
     clock = 10_000;

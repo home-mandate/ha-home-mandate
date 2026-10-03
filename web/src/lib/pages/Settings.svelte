@@ -62,6 +62,10 @@
     });
     return spy.observe(sections);
   });
+  /** Keys that scroll the page: the person scrolls, so the view decides the mark again. */
+  const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+  const release = () => spy.release();
+  const scrollKey = (event: KeyboardEvent) => SCROLL_KEYS.has(event.key) && spy.release();
   /** The marked section: the one in view, else the one from the URL. */
   const marked = $derived((spy.current as SettingsSection | null) ?? section);
 
@@ -79,6 +83,7 @@
   const browserLanguage = $derived(resolveLocale(undefined, navigator.languages, locales, baseLocale) as Language);
 
   function show(key: SettingsSection) {
+    spy.pin(key);
     const heading = document.getElementById(`${uid}-${key}`);
     heading?.scrollIntoView?.({ block: 'start' });
     heading?.focus();
@@ -128,6 +133,8 @@
     if (must) reload();
   }
 </script>
+
+<svelte:window onwheel={release} ontouchmove={release} onkeydown={scrollKey} />
 
 <PageHeader title={m.settings_title()} />
 <p class="hint">{m.settings_autosave()}</p>

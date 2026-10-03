@@ -87,3 +87,13 @@ test('on a phone, back from an entry returns to the filtered list with the focus
   await expect(page.getByRole('search').getByRole('status')).toHaveText(t.asks);
   await expect(page.locator('a.row[data-seq="8"]')).toBeFocused();
 });
+
+test('on a short window the end of the selected entry stays reachable (review a11y M7)', async ({ page }, info) => {
+  const t = text[info.project.name as Lang];
+  await page.setViewportSize({ width: 1280, height: 420 });
+  await page.goto('./#/audit');
+  await page.locator('a.row[data-seq="8"]').click();
+  const technical = page.getByRole('complementary').getByText(t.technical);
+  await technical.scrollIntoViewIfNeeded();
+  await expect(technical).toBeInViewport();
+});

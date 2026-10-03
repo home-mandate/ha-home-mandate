@@ -24,6 +24,7 @@
   import { m } from '../i18n.ts';
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
+  import { Announcer } from '../ui/announcer.svelte.ts';
   import { DESKTOP, Media } from '../ui/media.svelte.ts';
   import { toasts } from '../ui/toasts.ts';
   import { cleanUntrusted } from '../untrusted.ts';
@@ -213,12 +214,17 @@
     }
   }
 
+  const live = new Announcer();
+
   async function verify() {
     if (verifying) return;
     verifying = true;
     try {
       const result = await app.api.verifyAudit();
       app.setChain({ valid: result.valid, broken_at_seq: result.broken_at_seq, checked_at: result.checked_at });
+      // Said every time: an unchanged result changes nothing on screen (review a11y M2).
+      const broken = result.broken_at_seq;
+      void live.say(result.valid ? m.audit_chain_ok() : broken !== null ? m.audit_chain_broken({ number: broken }) : m.audit_verify_failed());
     } catch {
       toasts.show({ kind: 'error', text: m.audit_verify_failed() });
     } finally {
@@ -279,6 +285,8 @@
     return desktop.matches ? href({ name: 'audit', query: toQuery({ ...filters, seq: entry.seq }) }) : href({ name: 'audit_entry', seq: entry.seq });
   }
 </script>
+
+<p class="hm-visually-hidden" role="status">{live.text}</p>
 
 <div class="head">
   <h1>{m.audit_title()}</h1>
@@ -439,6 +447,9 @@
   aside {
     position: sticky;
     inset-block-start: var(--hm-space-4);
+    /* A long entry scrolls inside, so its end stays reachable on short windows (review a11y M7). */
+    max-block-size: calc(100dvh - 2 * var(--hm-space-4));
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: var(--hm-space-3);

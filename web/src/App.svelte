@@ -5,7 +5,7 @@
   says what keeps working, and a missing admin right shows "no access" without navigation.
 -->
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { BrowserNotifier } from './lib/app/notifier.svelte.ts';
   import type { AppState } from './lib/app/state.svelte.ts';
   import BannerStack from './lib/components/BannerStack.svelte';
@@ -88,17 +88,35 @@
     settings: () => m.settings_title(),
   };
 
-  /** Navigation: the page title follows, focus moves to the content so screen readers hear the change. */
+  /** Navigation: focus moves to the content so screen readers hear the change. */
   function navigated() {
     route = parseHash(window.location.hash);
     visits++;
-    const page = section ? TITLES[section]() : m.notfound_title();
-    document.title = `${page} – ${m.app_name()}`;
+    // The way back from an audit entry only holds while staying in the audit log.
+    if (route.name !== 'audit' && route.name !== 'audit_entry') app.auditReturn = null;
     // Never pull focus out of the open emergency stop sheet (it would cancel a running hold).
-    if (!sheet) main?.focus();
+    if (!sheet) void focusPage();
+  }
+
+  /** focusPage puts the focus on the page's heading, so screen readers hear the page name (review a11y L2). */
+  async function focusPage() {
+    await tick();
+    if (sheet) return;
+    const heading = main?.querySelector<HTMLElement>('h1');
+    if (!heading) {
+      main?.focus();
+      return;
+    }
+    if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1');
+    heading.focus();
   }
 
   const section = $derived(sectionOf(route));
+  // The page title follows the route, from the first load on (review a11y M6).
+  $effect(() => {
+    const page = section ? TITLES[section]() : m.notfound_title();
+    document.title = `${page} – ${m.app_name()}`;
+  });
   const estopActive = $derived(app.system?.emergency_stop.active ?? false);
   const timeZone = $derived(app.session?.household.time_zone ?? 'UTC');
 

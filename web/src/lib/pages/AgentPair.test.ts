@@ -179,6 +179,22 @@ describe('AgentPair', () => {
     expect(await screen.findByRole('heading', { name: /is connected/ })).toBeTruthy();
   });
 
+  it('does not take another admission of the same client for this one (security S11)', async () => {
+    await start((api) => {
+      const approve = api.pairingApprove.bind(api);
+      api.pairingApprove = async (req) => {
+        // Someone else admitted the same client under another name; this request is refused.
+        await approve({ ...req, display_name: 'Someone else' });
+        throw new ApiError('conflict', 409);
+      };
+    });
+    await enter(MOCK_PAIRING_CODE);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Approve agent' }));
+    await waitFor(() => expect(step().getAttribute('aria-label')).toBe('Step 1 of 3'));
+    expect(screen.queryByRole('heading', { name: /is connected/ })).toBeNull();
+  });
+
   it('keeps the display name and template when going back and on again', async () => {
     await start();
     await enter(MOCK_PAIRING_CODE);

@@ -633,6 +633,7 @@
   "change_from_to": "v{version}: {from}",
   "countdown_seconds_left": "{count, plural, one {{count, number} second left} other {{count, number} seconds left}}",
   "countdown_expired": "Time is up",
+  "countdown_for": "Approval for {device}: {text}",
   "common_copy_failed": "Copying was not possible. The text is selected; copy it with Ctrl+C.",
   "skip_to_content": "Skip to content",
   "banner_conn_title": "Connection to Home-Mandate lost",

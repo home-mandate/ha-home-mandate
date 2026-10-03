@@ -75,8 +75,35 @@ describe('Settings: frame', () => {
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
     const current = () => within(nav).getAllByRole('link').filter((l) => l.getAttribute('aria-current') === 'location').map((l) => l.textContent);
     expect(current()).toEqual(['Approvers']);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { level: 2, name: 'Approvers' })));
+    await fireEvent.wheel(window); // the person scrolls
     const ha = screen.getByRole('heading', { level: 2, name: 'Home Assistant connection' }).parentElement as Element;
     report!([{ target: ha, isIntersecting: true }]);
+    await waitFor(() => expect(current()).toEqual(['Home Assistant connection']));
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps the chosen section marked until the person scrolls (review M1)', async () => {
+    let report: ((entries: { target: Element; isIntersecting: boolean }[]) => void) | null = null;
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(cb: typeof report) {
+          report = cb;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    await start({ section: 'about' });
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' });
+    const current = () => within(nav).getAllByRole('link').filter((l) => l.getAttribute('aria-current') === 'location').map((l) => l.textContent);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { level: 2, name: 'About' })));
+    const ha = screen.getByRole('heading', { level: 2, name: 'Home Assistant connection' }).parentElement as Element;
+    report!([{ target: ha, isIntersecting: true }]);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(current()).toEqual(['About']);
+    await fireEvent.wheel(window);
     await waitFor(() => expect(current()).toEqual(['Home Assistant connection']));
     vi.unstubAllGlobals();
   });

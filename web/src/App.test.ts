@@ -57,10 +57,22 @@ describe('App frame', () => {
     expect(await screen.findByRole('region', { name: 'History' })).toBeTruthy();
   });
 
+  it('forgets the way back into the audit log when going elsewhere (review a11y L7)', async () => {
+    const { app } = await start({}, '#/audit/8');
+    app.auditReturn = { list: '#/audit?period=7d', seq: 8, count: 50 };
+    await navigate('#/agents');
+    expect(app.auditReturn).toBeNull();
+  });
+
   it('shows the overview at the start', async () => {
     await start();
     expect(screen.getByRole('heading', { level: 1, name: 'Overview' })).toBeTruthy();
     expect(await screen.findByRole('region', { name: 'Status at a glance' })).toBeTruthy();
+  });
+
+  it('names the page in the title from the start, also after a reload (review a11y M6)', async () => {
+    await start({}, '#/mandates');
+    expect(document.title).toBe('Mandates – Home-Mandate');
   });
 
   it('shows the sections with the current one marked, and the page title', async () => {
@@ -185,10 +197,10 @@ describe('App frame', () => {
     expect(screen.getByRole('alertdialog')).toBeTruthy();
   });
 
-  it('moves focus to the content and updates the title on navigation', async () => {
+  it('moves focus to the page heading and updates the title on navigation (review a11y L2)', async () => {
     await start();
     await navigate('#/agents');
-    expect(document.activeElement?.id).toBe('main');
+    await vi.waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1, name: 'Agents' })));
     expect(document.title).toBe('Agents – Home-Mandate');
   });
 

@@ -10,6 +10,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { Loader } from '../app/loader.svelte.ts';
+  import { ApiError } from '../api/client.ts';
   import type { AppState } from '../app/state.svelte.ts';
   import type { Agent, DeviceCatalog, PairingCandidate, Template } from '../api/types.ts';
   import { codeError, type CodeState } from '../agents/pairing.ts';
@@ -105,11 +106,21 @@
     error = '';
   }
 
-  /** admittedMeanwhile finds the agent when an approval's answer was lost but it went through. */
-  async function admittedMeanwhile(c: PairingCandidate): Promise<Agent | null> {
+  /**
+   * admittedMeanwhile finds the agent when an approval's answer was lost but it went through.
+   * Only for an unclear outcome (not reached, 5xx, no API error): a refusal such as conflict
+   * means this approval did not happen, even if the same client was admitted otherwise. The
+   * agent must carry the name given here and be newer than the request (security review S11).
+   */
+  async function admittedMeanwhile(err: unknown, c: PairingCandidate, name: string): Promise<Agent | null> {
+    const unclear = !(err instanceof ApiError) || err.code === 'unavailable' || err.status >= 500;
+    if (!unclear) return null;
     try {
       const agents = await app.api.agents();
-      return agents.find((a) => a.oauth_client === c.client && a.status === 'active' && a.created_at >= c.requested_at) ?? null;
+      const since = Date.parse(c.requested_at);
+      return (
+        agents.find((a) => a.oauth_client === c.client && a.status === 'active' && a.display_name === name && Date.parse(a.created_at) >= since) ?? null
+      );
     } catch {
       return null;
     }
@@ -155,7 +166,7 @@
     try {
       admitted = await app.api.pairingApprove({ code, pairing_id: c.pairing_id, display_name: name, template, mandate_name: mandate });
     } catch (err) {
-      admitted = await admittedMeanwhile(c);
+      admitted = await admittedMeanwhile(err, c, name);
       if (!admitted) {
         const result = codeError(err);
         busy = false;
