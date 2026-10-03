@@ -174,15 +174,18 @@
             <span class="label {decision}">{decisionLabel(decision)}</span>
           </span>
         </div>
-        <!-- The cell's own name already says device, action and decision; only the reason is announced. -->
-        <div class="lines" aria-live="polite" aria-atomic="true">
-          {#each chosen.lines as line (line.kind)}
-            <span class="line {line.kind}"><Icon name={LINE_ICONS[line.kind]} size={16} /><span>{line.text}</span></span>
-          {/each}
-        </div>
       {:else}
         <span class="hint">{m.matrix_select_hint()}</span>
       {/if}
+      <!-- The cell's own name already says device, action and decision; only the reason is
+           announced. The region exists before the first selection, so that one is said too. -->
+      <div class="lines" aria-live="polite" aria-atomic="true">
+        {#if chosen}
+          {#each chosen.lines as line (line.kind)}
+            <span class="line {line.kind}"><Icon name={LINE_ICONS[line.kind]} size={16} /><span>{line.text}</span></span>
+          {/each}
+        {/if}
+      </div>
     </div>
   {/if}
 

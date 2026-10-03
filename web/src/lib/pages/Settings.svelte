@@ -204,6 +204,9 @@
     nav {
       position: sticky;
       inset-block-start: var(--hm-space-4);
+      /* Short windows: the index scrolls inside instead of running off the screen. */
+      max-block-size: calc(100dvh - 2 * var(--hm-space-4));
+      overflow-y: auto;
     }
     nav ul {
       flex-direction: column;

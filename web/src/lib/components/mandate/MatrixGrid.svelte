@@ -43,7 +43,13 @@
 
   const cellAtPosition = (row: number, col: number) => grid?.querySelector<HTMLElement>(`[data-row="${row}"][data-col="${col}"]`) ?? null;
 
-  function keydown(event: KeyboardEvent, row: number, col: number) {
+  function keydown(event: KeyboardEvent, row: number, col: number, key: string) {
+    // A gridcell is no button (ARIA in HTML, review a11y L8): Enter and Space select it.
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onselect(key);
+      return;
+    }
     const rtl = grid ? getComputedStyle(grid).direction === 'rtl' : false;
     const size = { rows: block.rows.length, cols: block.actions.length };
     const to = gridMove(event.key, { row, col }, size, { rtl, ctrl: event.ctrlKey || event.metaKey });
@@ -90,8 +96,7 @@
         {#if cell}
           {@const key = keyOf(row.device.entity_id, action)}
           {@const name = cellLabel(row.device, cell)}
-          <button
-            type="button"
+          <div
             role="gridcell"
             class="cell {cell.cell.decision}"
             aria-selected={selected === key}
@@ -101,14 +106,14 @@
             data-row={r}
             data-col={c}
             onclick={() => onselect(key)}
-            onkeydown={(e) => keydown(e, r, c)}
+            onkeydown={(e) => keydown(e, r, c, key)}
           >
             <Icon name={cell.cell.demoted ? 'demoted' : cell.cell.decision} size={16} />
             <span>{shortLabel(cell.cell.decision)}</span>
             {#if cell.cell.demoted}<span class="mark end critical"><Icon name="critical" size={16} /></span>{/if}
             {#if cell.cell.timed}<span class="mark start"><Icon name="history" size={16} /></span>{/if}
             {#if cell.changed}<span class="dot"></span>{/if}
-          </button>
+          </div>
         {:else}
           <div role="gridcell" class="hole" aria-label={m.matrix_cell_none()}></div>
         {/if}

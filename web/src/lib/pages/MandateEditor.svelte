@@ -475,7 +475,7 @@
       </div>
       <div class="actions">
         {#if !readonly}
-          <span class="state" class:dirty={changes > 0}>
+          <span id="{uid}-state" class="state" class:dirty={changes > 0}>
             <span class="mark" aria-hidden="true"></span>{changes > 0 ? m.editor_unsaved({ count: changes }) : m.editor_saved_state()}
           </span>
           <!-- Announced when the state flips, not with every change of the count. -->
@@ -487,7 +487,7 @@
             variant="primary"
             size="lg"
             disabled={changes === 0 && problems.length === 0}
-            aria-describedby={visible.length > 0 ? `${uid}-problems` : undefined}
+            aria-describedby={visible.length > 0 ? `${uid}-problems` : changes === 0 ? `${uid}-state` : undefined}
             aria-keyshortcuts="Control+S Meta+S"
             onclick={() => void trySave()}
           >

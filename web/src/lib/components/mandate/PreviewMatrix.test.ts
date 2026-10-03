@@ -84,9 +84,24 @@ describe('PreviewMatrix on desktop', () => {
     await fireEvent.keyDown(cells[7] as HTMLElement, { key: 'Home', ctrlKey: true });
     expect(document.activeElement).toBe(cells[0]);
     // Other keys are left alone.
-    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
-    cells[0]?.dispatchEvent(enter);
-    expect(enter.defaultPrevented).toBe(false);
+    const letter = new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true });
+    cells[0]?.dispatchEvent(letter);
+    expect(letter.defaultPrevented).toBe(false);
+  });
+
+  it('has the live region for the reason before the first selection, so that one is announced too', () => {
+    const { container } = show();
+    expect(container.querySelector('.detail [aria-live="polite"]')).not.toBeNull();
+  });
+
+  it('uses gridcells, not buttons, and selects with Enter and Space (review a11y L8)', async () => {
+    show();
+    const cells = within(screen.getByRole('grid', { name: 'Lights' })).getAllByRole('gridcell');
+    expect(cells.some((c) => c.tagName === 'BUTTON')).toBe(false);
+    await fireEvent.keyDown(cells[2] as HTMLElement, { key: 'Enter' });
+    expect(cells[2]?.getAttribute('aria-selected')).toBe('true');
+    await fireEvent.keyDown(cells[3] as HTMLElement, { key: ' ' });
+    expect(cells[3]?.getAttribute('aria-selected')).toBe('true');
   });
 
   it('mirrors the horizontal arrows right-to-left', async () => {
