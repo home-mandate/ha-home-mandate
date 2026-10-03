@@ -3,6 +3,7 @@
 import { mount } from 'svelte';
 import App from './App.svelte';
 import { createHttpClient, type ApiClient } from './lib/api/client.ts';
+import type { MockOptions } from './lib/api/mock.ts';
 import { adoptLanguage, storedLanguage } from './lib/app/language.ts';
 import { AppState } from './lib/app/state.svelte.ts';
 import { m } from './lib/i18n.ts';
@@ -24,7 +25,8 @@ function storage(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> {
 async function client(): Promise<ApiClient> {
   if (import.meta.env.VITE_MOCK === '1') {
     const { createMockClient } = await import('./lib/api/mock.ts');
-    const mock = createMockClient();
+    // Playwright sets hmMockOptions before the page loads to start in a given state.
+    const mock = createMockClient((window as unknown as { hmMockOptions?: MockOptions }).hmMockOptions ?? {});
     (window as unknown as { hmMock?: unknown }).hmMock = mock.control;
     return mock;
   }

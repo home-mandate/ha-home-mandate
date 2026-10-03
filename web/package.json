@@ -18,9 +18,10 @@
     "lint": "pnpm i18n:compile && eslint .",
     "typecheck": "pnpm i18n:compile && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings && tsc -p tsconfig.node.json",
     "test": "pnpm i18n:compile && vitest run --coverage",
-    "e2e": "pnpm build:mock && playwright test"
+    "e2e": "pnpm build:mock && pnpm build:pseudo && playwright test"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "@eslint/js": "10.0.1",
     "@inlang/paraglide-js": "2.25.4",
     "@inlang/plugin-icu1": "1.1.0",

@@ -117,6 +117,7 @@ export interface MockControls {
   closeApproval(id: string, outcome: ApprovalHistoryEntry['outcome'], byName: string | null, via?: 'push' | 'ui'): void;
   setHaConnected(connected: boolean): void;
   breakChain(seq: number): void;
+  setEmergencyStop(active: boolean): void;
 }
 
 export type MockClient = ApiClient & { control: MockControls };
@@ -126,6 +127,8 @@ export interface MockOptions {
   failures?: Partial<Record<keyof ApiClient, ApiErrorCode>>;
   /** State the event stream reaches after connecting; default "open". */
   eventsState?: EventsState;
+  /** Starts a household without agents, mandates, log entries and requests (onboarding). */
+  empty?: boolean;
   now?: () => Date;
 }
 
@@ -240,11 +243,11 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     session: sessionFixture,
     system: systemFixture,
     defaults: defaultsFixture,
-    agents: agentsFixture,
-    mandates: initialMandates(),
+    agents: options.empty ? [] : agentsFixture,
+    mandates: options.empty ? {} : initialMandates(),
     templates: templatesFixture,
-    audit: auditFixture,
-    approvals: { open: approvalsOpenFixture, history: approvalsHistoryFixture },
+    audit: options.empty ? [] : auditFixture,
+    approvals: options.empty ? { open: [], history: [] } : { open: approvalsOpenFixture, history: approvalsHistoryFixture },
     approvers: approversFixture,
     pairing: { codes: { [normalizeCode(MOCK_PAIRING_CODE)]: 'open', [normalizeCode(MOCK_EXPIRED_CODE)]: 'expired' }, wrong: 0, lockedUntil: 0 },
   };
@@ -435,6 +438,9 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     },
     breakChain(seq) {
       setSystem({ ...state.system, chain: { valid: false, broken_at_seq: seq, checked_at: now().toISOString() } });
+    },
+    setEmergencyStop(active) {
+      void api.setEmergencyStop(active);
     },
   };
 

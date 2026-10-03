@@ -66,7 +66,7 @@ web-check:
 web-conformance:
 	go run ./tools/webconformance
 
-## web-e2e: Playwright in de and en under a random Ingress path
+## web-e2e: Playwright in de, en and pseudo under a random Ingress path
 web-e2e:
 	cd web && pnpm e2e
 

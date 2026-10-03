@@ -7,6 +7,10 @@ import { defineConfig, devices } from '@playwright/test';
 const ingressPath = process.env.INGRESS_PATH ?? `/api/hassio_ingress/${randomBytes(16).toString('hex')}/`;
 process.env.INGRESS_PATH = ingressPath;
 const port = 4173;
+const pseudoPort = 4174;
+const at = (p: number) => `http://127.0.0.1:${p}${ingressPath}`;
+// The screen sweep (step 6: themes, rtl, widths, axe) runs in every language; the flows only in de/en.
+const sweep = /(sweep|hostile)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: './e2e',
@@ -14,18 +18,35 @@ export default defineConfig({
   retries: 0,
   reporter: process.env.CI ? 'github' : 'list',
   use: {
-    baseURL: `http://127.0.0.1:${port}${ingressPath}`,
+    baseURL: at(port),
     trace: 'retain-on-failure',
+    // Countdowns, toasts and transitions settle at once.
+    reducedMotion: 'reduce',
   },
   projects: [
     { name: 'de', use: { ...devices['Desktop Chrome'], locale: 'de-DE', timezoneId: 'America/New_York' } },
     { name: 'en', use: { ...devices['Desktop Chrome'], locale: 'en-US', timezoneId: 'Asia/Tokyo' } },
+    // Pseudo-localized build: accented and about 40 % longer texts find clipping and hard-coded strings.
+    {
+      name: 'pseudo',
+      testMatch: sweep,
+      use: { ...devices['Desktop Chrome'], locale: 'de-DE', timezoneId: 'Europe/Berlin', baseURL: at(pseudoPort) },
+    },
   ],
-  webServer: {
-    command: 'node scripts/serve-ingress.ts',
-    url: `http://127.0.0.1:${port}${ingressPath}`,
-    // The UI needs data: the static test build runs against the mock client.
-    env: { INGRESS_PATH: ingressPath, PORT: String(port), DIST: 'dist-mock' },
-    reuseExistingServer: false,
-  },
+  // The UI needs data: the static test builds run against the mock client.
+  webServer: [
+    {
+      command: 'node scripts/serve-ingress.ts',
+      url: at(port),
+      env: { INGRESS_PATH: ingressPath, PORT: String(port), DIST: 'dist-mock' },
+      // Locally a running server can be reused (same INGRESS_PATH); it reads dist on every request.
+      reuseExistingServer: !process.env.CI,
+    },
+    {
+      command: 'node scripts/serve-ingress.ts',
+      url: at(pseudoPort),
+      env: { INGRESS_PATH: ingressPath, PORT: String(pseudoPort), DIST: 'dist-pseudo' },
+      reuseExistingServer: !process.env.CI,
+    },
+  ],
 });

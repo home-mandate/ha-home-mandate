@@ -386,6 +386,26 @@ describe('createMockClient: approvals, settings, audit, approvers, emergency sto
     expect((await api.system()).chain).toMatchObject({ valid: false, broken_at_seq: 7 });
   });
 
+  it('starts an empty household: no agents, mandates, log entries or requests', async () => {
+    const api = createMockClient({ empty: true });
+    expect(await api.agents()).toEqual([]);
+    expect(await api.mandates()).toEqual([]);
+    expect(await api.approvals()).toEqual({ open: [], history: [] });
+    expect((await api.audit({})).entries).toEqual([]);
+    expect((await api.templates()).length).toBeGreaterThan(0);
+  });
+
+  it('switches the emergency stop from the test controls, like the API', async () => {
+    const api = createMockClient();
+    const { events } = listen(api);
+    api.control.setEmergencyStop(true);
+    expect((await api.system()).emergency_stop).toMatchObject({ active: true, by_name: 'Markus' });
+    expect((await api.approvals()).open).toEqual([]);
+    expect(types(events)).toContain('system');
+    api.control.setEmergencyStop(false);
+    expect((await api.system()).emergency_stop.active).toBe(false);
+  });
+
   it('manages approvers only from the candidates and updates the system count', async () => {
     const api = createMockClient();
     const list = await api.putApprover('u-partner', { devices: [{ service: 'mobile_app_iphone', critical: true }], ui: false, ui_critical: false, language: 'en' });

@@ -12,6 +12,13 @@ describe('pseudo', () => {
     expect(pseudo('12:30, 3 items')).toMatch(/^\[12:30, 3 ïtéms ~+\]$/);
   });
 
+  it('pads in word-sized pieces, so long texts can still wrap like real ones', () => {
+    const text = 'Home-Mandate checks every action of your agents against the mandate before it reaches Home Assistant.';
+    const padding = pseudo(text).slice(text.length + 2, -1);
+    expect(padding.replace(/ /g, '').length).toBe(Math.round(text.length * 0.4) - 2);
+    expect(Math.max(...padding.split(' ').map((w) => w.length))).toBeLessThanOrEqual(8);
+  });
+
   it('marks even empty text, so missing padding is visible', () => {
     expect(pseudo('')).toBe('[ ~]');
   });

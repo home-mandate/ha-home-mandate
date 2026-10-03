@@ -47,6 +47,15 @@ protection class, expired, not yet valid) needs its own named test.
 - **UI:** Playwright against the UI (mandate editor, emergency stop, revoke agent), every UI
   scenario in German **and** English, embedded under a random Ingress path so that relative
   paths and hash routing are verified.
+- **UI screen sweep** (`web/e2e/sweep.spec.ts`): every screen and state (empty household, all
+  banners, emergency stop sheet, no access, start-up error, long and bidi names) in light and
+  dark, left-to-right and right-to-left (`dir=rtl` forced, no RTL language yet), at 375 and
+  1280 px, in German, English and the pseudo-localized build. Each variant fails on: horizontal
+  page scrolling, content clipped without an ellipsis or line clamp, text outside the
+  viewport, any WCAG 2.2 A/AA violation found by axe. Two opposite variants are also walked
+  with the Tab key only: every stop needs a visible focus indicator and must not be hidden,
+  covered or inside inert content. The helpers have their own tests
+  (`web/e2e/sweep-helpers.spec.ts`), so a green sweep cannot come from a check that finds nothing.
 - Start and teardown via `docker compose` or Podman; every test run starts from a fresh state.
 
 ### Mandatory E2E scenarios
@@ -202,8 +211,10 @@ Every commit automatically checks:
 - **No hard-coded texts:** lint rule against visible strings in Svelte components outside the
   message catalogs.
 - **Pseudo-localization:** a test build (`pnpm build:pseudo`) with texts lengthened by 40 % and
-  accented characters; Playwright checks that nothing is truncated or overflows. The release
-  build does not contain it.
+  accented characters; the padding comes in word-sized pieces (at most 8 characters), so it
+  lengthens texts the way a real language does instead of adding one unbreakable word.
+  Playwright checks every screen for truncation and overflow (screen sweep, section 3). The
+  release build does not contain it.
 - **Formatting:** unit tests for date, time, numbers and relative times in `de-DE` and
   `en-US`, each with a household time zone that differs from the test machine's time zone;
   edge case DST change on 2026-10-25.

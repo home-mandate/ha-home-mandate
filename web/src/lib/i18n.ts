@@ -15,12 +15,15 @@ const ACCENTS: Readonly<Record<string, string>> = {
   A: 'Å', E: 'É', I: 'Î', O: 'Ö', U: 'Ü', C: 'Ç', N: 'Ñ',
 };
 const LENGTHEN = 0.4;
+/** Longest padding piece: real languages wrap between words, so one huge "word" would only test the padding. */
+const PIECE = 8;
 
-/** pseudo returns text accented and padded the way the design's pseudoStr does. */
+/** pseudo returns text accented and padded the way the design's pseudoStr does, padding in word-sized pieces. */
 export function pseudo(text: string): string {
   const accented = text.replace(/[A-Za-z]/g, (ch) => ACCENTS[ch] ?? ch);
   const pad = Math.max(1, Math.round(text.length * LENGTHEN) - 2);
-  return `[${accented} ${'~'.repeat(pad)}]`;
+  const pieces = Array.from({ length: Math.ceil(pad / PIECE) }, (_, i) => '~'.repeat(Math.min(PIECE, pad - i * PIECE)));
+  return `[${accented} ${pieces.join(' ')}]`;
 }
 
 /** pseudoMessages wraps every message function of a catalog with pseudo. */

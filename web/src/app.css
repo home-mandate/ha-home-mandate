@@ -35,6 +35,13 @@ body {
   outline-offset: var(--hm-focus-offset);
 }
 
+/* Date and time fields: Chromium's built-in picker button takes focus on its own, without
+   :focus or a ring; the field shows the ring while focus is inside it. */
+input:is([type='date'], [type='time']):focus-within {
+  outline: var(--hm-focus-width) solid var(--hm-color-focus);
+  outline-offset: var(--hm-focus-offset);
+}
+
 /* Text from agents and Home Assistant wraps instead of overflowing (README section 7). */
 bdi,
 .hm-wrap {
