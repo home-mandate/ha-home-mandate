@@ -18,17 +18,17 @@
   import EmptyState from '../components/EmptyState.svelte';
   import ErrorState from '../components/ErrorState.svelte';
   import BackLink from '../components/BackLink.svelte';
+  import ConflictNotice from '../components/mandate/ConflictNotice.svelte';
+  import EditorHeader from '../components/mandate/EditorHeader.svelte';
   import Icon from '../components/Icon.svelte';
   import Skeleton from '../components/Skeleton.svelte';
   import TextField from '../components/TextField.svelte';
   import ApprovalFields from '../components/mandate/ApprovalFields.svelte';
   import BasicsForm from '../components/mandate/BasicsForm.svelte';
-  import MandateStatus from '../components/mandate/MandateStatus.svelte';
   import PreviewMatrix from '../components/mandate/PreviewMatrix.svelte';
   import RuleCard from '../components/mandate/RuleCard.svelte';
   import RuleForm from '../components/mandate/RuleForm.svelte';
   import SaveDialog from '../components/mandate/SaveDialog.svelte';
-  import VersionChip from '../components/mandate/VersionChip.svelte';
   import { overrides, ruleMatches } from '../engine/analysis.ts';
   import { canonical, needsCriticalConfirmation } from '../engine/vocabulary.ts';
   import { m } from '../i18n.ts';
@@ -46,7 +46,7 @@
   import { focusables } from '../ui/focus.ts';
   import { Media, DESKTOP, WIDE } from '../ui/media.svelte.ts';
   import { toasts } from '../ui/toasts.ts';
-  import { cleanUntrusted, isolate } from '../untrusted.ts';
+  import { isolate } from '../untrusted.ts';
 
   interface Props {
     app: AppState;
@@ -451,7 +451,6 @@
     tabButtons[index]?.focus();
   }
 
-  const problemText = (p: FieldProblem) => (p.rule === null ? p.text : m.validation_in_rule({ rule: m.rule_ref({ n: p.rule + 1 }), problem: p.text }));
 </script>
 
 <svelte:window onkeydown={keydown} onbeforeunload={beforeunload} />
@@ -465,48 +464,22 @@
 {:else if !stored || !draft || !base || !edited}
   <div role="status" aria-busy="true" aria-label={m.common_loading()}><Skeleton lines={['30%', '70%', '50%']} /></div>
 {:else}
-  <div class="head">
-    <BackLink href={href({ name: 'mandates' })} label={m.editor_back()} />
-    <div class="bar">
-      <div class="title">
-        <h1><bdi>{cleanUntrusted(name) || cleanUntrusted(stored.summary.name)}</bdi></h1>
-        <MandateStatus status={effectiveStatus({ status: stored.summary.status, valid_from: base.draft.valid_from, expires: base.draft.expires }, serverNow)} />
-        <VersionChip {version} digest={stored.summary.digest} />
-      </div>
-      <div class="actions">
-        {#if !readonly}
-          <span id="{uid}-state" class="state" class:dirty={changes > 0}>
-            <span class="mark" aria-hidden="true"></span>{changes > 0 ? m.editor_unsaved({ count: changes }) : m.editor_saved_state()}
-          </span>
-          <!-- Announced when the state flips, not with every change of the count. -->
-          <span class="hm-visually-hidden" role="status">{changes > 0 ? m.editor_unsaved_any() : m.editor_saved_state()}</span>
-        {/if}
-        <a class="versions" href={href({ name: 'mandate_versions', id })}><Icon name="history" />{m.editor_versions()}</a>
-        {#if !readonly}
-          <Button
-            variant="primary"
-            size="lg"
-            disabled={changes === 0 && problems.length === 0}
-            aria-describedby={visible.length > 0 ? `${uid}-problems` : changes === 0 ? `${uid}-state` : undefined}
-            aria-keyshortcuts="Control+S Meta+S"
-            onclick={() => void trySave()}
-          >
-            {m.editor_save()}
-          </Button>
-        {/if}
-      </div>
-    </div>
-    {#if visible.length > 0}
-      <div bind:this={summary} id="{uid}-problems" class="problems" role="group" aria-labelledby="{uid}-problem-count" tabindex="-1">
-        <span id="{uid}-problem-count" class="count" role="alert"><Icon name="warning" />{m.validation_summary({ count: visible.length })}</span>
-        <ul role="list">
-          {#each visible as p (`${p.rule}/${p.part}/${p.text}`)}
-            <li><button type="button" onclick={() => void show(p)}>{problemText(p)}</button></li>
-          {/each}
-        </ul>
-      </div>
-    {/if}
-  </div>
+  <EditorHeader
+    backHref={href({ name: 'mandates' })}
+    versionsHref={href({ name: 'mandate_versions', id })}
+    {name}
+    storedName={stored.summary.name}
+    status={effectiveStatus({ status: stored.summary.status, valid_from: base.draft.valid_from, expires: base.draft.expires }, serverNow)}
+    {version}
+    digest={stored.summary.digest}
+    {readonly}
+    {changes}
+    idle={changes === 0 && problems.length === 0}
+    problems={visible}
+    onsave={() => void trySave()}
+    onshow={(p) => void show(p)}
+    bind:summary
+  />
 
   {#if readonly}
     <Banner kind="info" body={m.editor_revoked_note()} />
@@ -514,14 +487,7 @@
     <Banner kind="critical" body={m.code_invalid_mandate()} />
   {/if}
   {#if newer}
-    <div class="conflict" role="alert">
-      <span class="lead"><Icon name="warning" /><strong>{m.editor_conflict_title()}</strong></span>
-      <span>{m.editor_conflict_body({ version: currentNumber(newer.versions) })}</span>
-      <div class="choices">
-        <Button size="lg" onclick={rebase}>{m.editor_conflict_keep({ version: currentNumber(newer.versions) })}</Button>
-        <Button size="lg" onclick={() => newer && adopt(newer)}>{m.editor_conflict_discard()}</Button>
-      </div>
-    </div>
+    <ConflictNotice version={currentNumber(newer.versions)} onkeep={rebase} ondiscard={() => newer && adopt(newer)} />
   {/if}
 
   {#if !wide.matches}
@@ -696,124 +662,6 @@
 {/if}
 
 <style>
-  .head {
-    display: flex;
-    flex-direction: column;
-    gap: var(--hm-space-3);
-  }
-  .bar,
-  .title,
-  .actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--hm-space-2) var(--hm-space-3);
-  }
-  .bar {
-    gap: var(--hm-space-3) var(--hm-space-4);
-  }
-  .title {
-    flex: 1 1 320px;
-    min-inline-size: 0;
-  }
-  h1 {
-    margin: 0;
-    font-size: var(--hm-font-size-2xl);
-    line-height: var(--hm-line-height-tight);
-    font-weight: var(--hm-font-weight-semibold);
-    overflow-wrap: anywhere;
-  }
-  .state {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: var(--hm-font-size-sm);
-    color: var(--hm-color-text-subtle);
-  }
-  .state.dirty {
-    color: var(--hm-color-text);
-  }
-  .mark {
-    inline-size: 8px;
-    block-size: 8px;
-    border-radius: var(--hm-radius-pill);
-    background: var(--hm-color-positive-fg);
-  }
-  .dirty .mark {
-    background: var(--hm-color-accent);
-  }
-  .versions {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    box-sizing: border-box;
-    min-block-size: var(--hm-size-touch);
-    padding-inline: 14px;
-    border-radius: var(--hm-radius-md);
-    font-size: 15px;
-    font-weight: var(--hm-font-weight-semibold);
-    text-decoration: none;
-    color: var(--hm-color-text);
-    background: var(--hm-color-surface);
-    border: var(--hm-border-width) solid var(--hm-color-border-strong);
-  }
-  .versions:hover {
-    background: var(--hm-color-surface-hover);
-  }
-  .problems,
-  .conflict {
-    display: flex;
-    flex-direction: column;
-    gap: var(--hm-space-2);
-    padding: var(--hm-space-3) var(--hm-space-4);
-    border-radius: 10px;
-    font-size: 15px;
-  }
-  .problems {
-    color: var(--hm-color-danger-fg);
-    background: var(--hm-color-danger-bg);
-    border: var(--hm-border-width) solid var(--hm-color-danger-border);
-  }
-  .count,
-  .lead {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-weight: var(--hm-font-weight-medium);
-  }
-  .problems ul {
-    margin: 0;
-    padding-inline-start: 30px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .problems button {
-    min-block-size: 32px;
-    padding: 0;
-    border: none;
-    background: transparent;
-    font: inherit;
-    font-size: var(--hm-font-size-sm);
-    text-align: start;
-    text-decoration: underline;
-    color: inherit;
-    cursor: pointer;
-  }
-  .conflict {
-    color: var(--hm-color-text);
-    background: var(--hm-color-warning-bg);
-    border: var(--hm-border-width) solid var(--hm-color-warning-border);
-  }
-  .lead {
-    color: var(--hm-color-warning-fg);
-  }
-  .choices {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--hm-space-2);
-  }
   .tabs {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -944,22 +792,6 @@
   [hidden] {
     display: none;
   }
-  @media (pointer: coarse), (max-width: 767px) {
-    .problems button {
-      min-block-size: var(--hm-size-touch);
-    }
-  }
   @media (max-width: 767px) {
-    .state {
-      flex: 1 1 100%;
-    }
-    .versions,
-    .actions :global(.btn) {
-      flex: 1 1 0;
-      justify-content: center;
-    }
-    .actions {
-      flex: 1 1 100%;
-    }
   }
 </style>
