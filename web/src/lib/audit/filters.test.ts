@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_FILTERS, activeCount, parseFilters, toAuditQuery, toQuery, type AuditFilters } from './filters.ts';
+import { DEFAULT_FILTERS, SEARCH_MAX, activeCount, cleanSearch, parseFilters, toAuditQuery, toQuery, type AuditFilters } from './filters.ts';
 
 const NOW = Date.parse('2026-10-02T17:42:00Z');
 
@@ -11,6 +11,7 @@ describe('parseFilters', () => {
       period: ['24h'],
       agent: ['pair:voice-assistant'],
       device: ['lock.front_door'],
+      q: ['Haustür'],
       type: ['decision'],
       decision: ['allow', 'default'],
       seq: ['14'],
@@ -19,6 +20,7 @@ describe('parseFilters', () => {
       period: '24h',
       agent: 'pair:voice-assistant',
       device: 'lock.front_door',
+      q: 'Haustür',
       type: 'decision',
       decisions: ['allow', 'default'],
       seq: 14,
@@ -38,6 +40,25 @@ describe('parseFilters', () => {
     expect(f).toEqual({ ...DEFAULT_FILTERS, agent: 'a', period: '24h', decisions: ['deny'] });
   });
 
+  it('drops agent and device values that would look different from what they filter', () => {
+    expect(parseFilters({ device: ['lock.front\u200B'] }).device).toBeNull();
+    expect(parseFilters({ device: ['lock.frоnt_door'] }).device).toBeNull(); // Cyrillic o
+    expect(parseFilters({ device: ['Lock.Front door'] }).device).toBeNull();
+    expect(parseFilters({ device: ['\u202E'] }).device).toBeNull();
+    expect(parseFilters({ device: ['hallway'] }).device).toBe('hallway');
+    expect(parseFilters({ agent: ['pair:x\u202E'] }).agent).toBeNull();
+    expect(parseFilters({ agent: ['https://claude.ai/oauth/claude-code-client-metadata'] }).agent).toBe(
+      'https://claude.ai/oauth/claude-code-client-metadata',
+    );
+  });
+
+  it('cleans the search text and drops one that is too long', () => {
+    expect(parseFilters({ q: ['  Haus\u202Etür \n Flur '] }).q).toBe('Haustür Flur');
+    expect(parseFilters({ q: ['\u200B \u0007'] }).q).toBe('');
+    expect(parseFilters({ q: ['x'.repeat(SEARCH_MAX)] }).q).toHaveLength(SEARCH_MAX);
+    expect(parseFilters({ q: ['x'.repeat(SEARCH_MAX + 1)] }).q).toBe('');
+  });
+
   it('accepts every administrative event type', () => {
     for (const type of ['agent.registered', 'agent.revoked', 'mandate.created', 'mandate.updated', 'mandate.revoked',
       'emergency_stop.activated', 'emergency_stop.released', 'auth.rejected', 'log.truncated']) {
@@ -50,7 +71,7 @@ describe('parseFilters', () => {
 describe('toQuery', () => {
   it('writes only what differs from the defaults, and reads back the same', () => {
     expect(toQuery(DEFAULT_FILTERS)).toEqual({});
-    const f: AuditFilters = { period: '7d', agent: 'pair:x', device: 'hallway', type: 'auth.rejected', decisions: ['deny'], seq: 3 };
+    const f: AuditFilters = { period: '7d', agent: 'pair:x', device: 'hallway', q: 'Tür', type: 'auth.rejected', decisions: ['deny'], seq: 3 };
     expect(parseFilters(toQuery(f))).toEqual(f);
   });
 });
@@ -70,12 +91,30 @@ describe('toAuditQuery', () => {
     expect(q.group).toBeUndefined();
     expect(toAuditQuery(DEFAULT_FILTERS, NOW)).toEqual({});
   });
+
+  it('passes the search text on, and leaves an empty one out', () => {
+    expect(toAuditQuery({ ...DEFAULT_FILTERS, q: 'tür' }, NOW)).toEqual({ q: 'tür' });
+    expect(toAuditQuery({ ...DEFAULT_FILTERS, q: '' }, NOW)).toEqual({});
+  });
+});
+
+describe('cleanSearch', () => {
+  it('removes control and format characters, joins whitespace and trims', () => {
+    expect(cleanSearch(' a\u0000b\u2066c\t\r\nd  ')).toBe('abc d');
+    expect(cleanSearch('Garten\u00ADtor')).toBe('Gartentor');
+  });
+
+  it('counts characters, not UTF-16 units, against the limit', () => {
+    expect(cleanSearch('🚪'.repeat(SEARCH_MAX))).toBe('🚪'.repeat(SEARCH_MAX));
+    expect(cleanSearch('🚪'.repeat(SEARCH_MAX + 1))).toBeNull();
+    expect(cleanSearch(' '.repeat(10_000))).toBeNull(); // huge input is refused before any work
+  });
 });
 
 describe('activeCount', () => {
   it('counts the filters that narrow the list; the selected entry is no filter', () => {
     expect(activeCount(DEFAULT_FILTERS)).toBe(0);
     expect(activeCount({ ...DEFAULT_FILTERS, seq: 4 })).toBe(0);
-    expect(activeCount({ period: '24h', agent: 'a', device: 'd', type: 'decision', decisions: ['allow', 'deny'], seq: null })).toBe(5);
+    expect(activeCount({ period: '24h', agent: 'a', device: 'd', q: 'x', type: 'decision', decisions: ['allow', 'deny'], seq: null })).toBe(6);
   });
 });

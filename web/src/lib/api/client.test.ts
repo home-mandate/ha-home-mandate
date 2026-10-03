@@ -149,13 +149,14 @@ describe('createHttpClient', () => {
       until: '2026-10-02T00:00:00Z',
       agent: 'pair:a b',
       device: 'lock.front_door',
+      q: 'Haus tür&x',
       group: 'decision',
       event: 'decision',
       decisions: ['deny', 'default'],
     });
     expect(calls[0]?.url).toBe(
       `${BASE}api/audit?before=120&limit=50&since=2026-10-01T00%3A00%3A00Z&until=2026-10-02T00%3A00%3A00Z` +
-        '&agent=pair%3Aa+b&device=lock.front_door&group=decision&event=decision&decision=deny&decision=default',
+        '&agent=pair%3Aa+b&device=lock.front_door&q=Haus+t%C3%BCr%26x&group=decision&event=decision&decision=deny&decision=default',
     );
   });
 

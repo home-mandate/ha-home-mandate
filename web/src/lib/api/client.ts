@@ -180,6 +180,7 @@ function auditQuery(q: AuditQuery): string {
   if (q.until !== undefined) params.set('until', q.until);
   if (q.agent !== undefined) params.set('agent', q.agent);
   if (q.device !== undefined) params.set('device', q.device);
+  if (q.q !== undefined) params.set('q', q.q);
   if (q.group !== undefined) params.set('group', q.group);
   if (q.event !== undefined) params.set('event', q.event);
   for (const d of q.decisions ?? []) params.append('decision', d);

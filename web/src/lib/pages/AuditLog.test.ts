@@ -234,10 +234,94 @@ describe('AuditLog: races and edge cases', () => {
   });
 
   it('shows a filter value from the URL that is no option, so nothing is filtered invisibly', async () => {
-    await start({ agent: ['pair:unknown\u202E'] });
+    await start({ agent: ['pair:unknown'] });
     await count('0 entries');
     const select = screen.getByLabelText('Agent') as HTMLSelectElement;
     expect(select.selectedOptions[0]?.textContent).toBe('pair:unknown');
+  });
+
+  it('ignores a filter value from the URL with hidden characters instead of showing it cleaned', async () => {
+    await start({ agent: ['pair:voice-assistant\u202E'], device: ['lock.front_door\u200B'] });
+    await count('15 entries');
+  });
+});
+
+describe('AuditLog: search', () => {
+  beforeEach(desktop);
+
+  const field = () => screen.getByRole('searchbox', { name: 'Device, area or agent' }) as HTMLInputElement;
+  const query = () => new URLSearchParams(window.location.hash.split('?')[1] ?? '');
+
+  it('searches devices, areas and agents after a pause in typing, and keeps the text in the URL', async () => {
+    const { api } = await start();
+    await count('15 entries');
+    const audit = vi.spyOn(api, 'audit');
+    await fireEvent.input(field(), { target: { value: 'H' } });
+    await fireEvent.input(field(), { target: { value: 'Haus' } });
+    await fireEvent.input(field(), { target: { value: 'Haustür' } });
+    await count('4 entries');
+    expect(audit.mock.calls.filter(([q]) => q.limit !== 1).map(([q]) => q.q)).toEqual(['Haustür']); // one request, not one per key
+    expect(query().get('q')).toBe('Haustür');
+  });
+
+  it('searches at once on Enter', async () => {
+    const { api } = await start();
+    await count('15 entries');
+    const audit = vi.spyOn(api, 'audit');
+    await fireEvent.input(field(), { target: { value: 'claude' } });
+    await fireEvent.keyDown(field(), { key: 'Enter' });
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ q: 'claude' })); // without waiting for the pause
+    await count('2 entries');
+  });
+
+  it('starts with the search from the URL and empties the field on reset', async () => {
+    await start({ q: ['licht'] });
+    await count('3 entries');
+    expect(field().value).toBe('licht');
+    await fireEvent.click(within(screen.getByRole('search')).getByRole('button', { name: 'Reset filters' }));
+    await count('15 entries');
+    expect(field().value).toBe('');
+    expect(window.location.hash).toBe('#/audit');
+  });
+
+  it('drops a search still waiting for the pause when the filters are reset', async () => {
+    const { api } = await start({ decision: ['ask'] });
+    await count('5 entries');
+    const audit = vi.spyOn(api, 'audit');
+    await fireEvent.input(field(), { target: { value: 'licht' } });
+    await fireEvent.click(within(screen.getByRole('search')).getByRole('button', { name: 'Reset filters' }));
+    await count('15 entries');
+    expect(field().value).toBe('');
+    await new Promise((resolve) => setTimeout(resolve, 400)); // past the pause
+    expect(audit.mock.calls.some(([q]) => q.q !== undefined)).toBe(false);
+    expect(window.location.hash).toBe('#/audit');
+  });
+
+  it('takes typed text along when another filter changes within the pause', async () => {
+    await start();
+    await count('15 entries');
+    await fireEvent.input(field(), { target: { value: 'tür' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Ask first' }));
+    await count('4 entries');
+    expect(field().value).toBe('tür');
+    expect(query().get('q')).toBe('tür');
+  });
+
+  it('shows an exact device from a link by name, and moves the focus to the search when it is cleared', async () => {
+    await start({ device: ['lock.front_door'] });
+    await count('4 entries');
+    const search = screen.getByRole('search');
+    expect(plain(within(search).getByText('Haustür').closest('span')?.textContent)).toBe('Only Haustür');
+    await fireEvent.click(within(search).getByRole('button', { name: /Clear the filter for .Haustür./ }));
+    await count('15 entries');
+    expect(document.activeElement).toBe(field());
+    expect(query().has('device')).toBe(false);
+  });
+
+  it('shows an exact device that is not in the catalog by its ID, so nothing is filtered invisibly', async () => {
+    await start({ device: ['switch.gone'] });
+    await count('0 entries');
+    expect(within(screen.getByRole('search')).getByText('switch.gone')).toBeTruthy();
   });
 });
 

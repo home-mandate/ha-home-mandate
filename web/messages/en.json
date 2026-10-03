@@ -435,7 +435,7 @@
   "filter_agent": "Agent",
   "filter_agent_all": "All agents",
   "filter_decision": "Decision",
-  "filter_device": "Device or area",
+  "filter_device": "Device, area or agent",
   "filter_device_ph": "e.g. front door or hallway",
   "filter_event_type": "Event type",
   "filter_label": "Filters",
@@ -638,9 +638,6 @@
   "matrix_not_in_effect": "This mandate doesn’t apply right now ({status}). The preview shows what applies while it is valid.",
   "filter_period_7d": "Last 7 days",
   "filter_period_all": "All (30 days)",
-  "filter_device_all": "All devices and areas",
-  "filter_areas": "Areas",
-  "filter_devices": "Devices",
   "audit_new_entries": "{count, plural, one {{count, number} new entry} other {{count, number} new entries}}",
   "audit_via_push": "on the phone",
   "audit_via_ui": "in Home-Mandate",
@@ -656,5 +653,7 @@
   "request_closed_live": "Approval for {device} ended: {result}",
   "request_confirm_label": "Confirm approval",
   "audit_tab_pending_count": "{count} pending",
+  "filter_device_exact": "Only {device}",
+  "filter_device_exact_clear": "Clear the filter for {device}",
   "filter_active_count": "{count} active"
 }

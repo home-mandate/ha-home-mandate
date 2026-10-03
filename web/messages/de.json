@@ -435,7 +435,7 @@
   "filter_agent": "Agent",
   "filter_agent_all": "Alle Agenten",
   "filter_decision": "Entscheidung",
-  "filter_device": "Gerät oder Bereich",
+  "filter_device": "Gerät, Bereich oder Agent",
   "filter_device_ph": "z. B. Haustür oder Flur",
   "filter_event_type": "Ereignistyp",
   "filter_label": "Filter",
@@ -638,9 +638,6 @@
   "matrix_not_in_effect": "Dieses Mandat gilt derzeit nicht ({status}). Die Vorschau zeigt, was während seiner Gültigkeit gilt.",
   "filter_period_7d": "Letzte 7 Tage",
   "filter_period_all": "Alle (30 Tage)",
-  "filter_device_all": "Alle Geräte und Bereiche",
-  "filter_areas": "Bereiche",
-  "filter_devices": "Geräte",
   "audit_new_entries": "{count, plural, one {{count, number} neuer Eintrag} other {{count, number} neue Einträge}}",
   "audit_via_push": "am Handy",
   "audit_via_ui": "in Home-Mandate",
@@ -656,5 +653,7 @@
   "request_closed_live": "Rückfrage zu {device} beendet: {result}",
   "request_confirm_label": "Freigabe bestätigen",
   "audit_tab_pending_count": "{count} offen",
+  "filter_device_exact": "Nur {device}",
+  "filter_device_exact_clear": "Filter auf {device} aufheben",
   "filter_active_count": "{count} aktiv"
 }

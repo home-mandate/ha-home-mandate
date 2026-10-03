@@ -307,6 +307,33 @@ describe('createMockClient: approvals, settings, audit, approvers, emergency sto
     expect(page.total).toBe(seqs.length);
   });
 
+  it.each([
+    ['licht', [14, 7, 3]], // two device names
+    ['HAUSTÜR', [11, 10, 8, 4]], // case-insensitive, with umlaut
+    ['Wohnzimmer', [7]], // area name
+    ['garage', [9, 5]], // area id and entity_id
+    ['front_door', [11, 10, 8, 4]], // entity_id
+    ['claude code', [10, 9]], // agent name
+    ['claude-code-client', [10, 9]], // client_id
+    ['  Haus\u202Etür ', [11, 10, 8, 4]], // cleaned before matching
+    ['nirgendwo', []],
+  ])('searches the audit log for %j', async (q, seqs) => {
+    const page = await createMockClient().audit({ q });
+    expect(page.entries.map((e) => e.seq)).toEqual(seqs);
+    expect(page.total).toBe(seqs.length);
+  });
+
+  it('combines the search with the other filters, and ignores an empty one', async () => {
+    const api = createMockClient();
+    expect((await api.audit({ q: 'tür', agent: 'https://claude.ai/oauth/claude-code-client-metadata' })).entries.map((e) => e.seq)).toEqual([10]);
+    expect((await api.audit({ q: 'licht', device: 'lock.front_door' })).total).toBe(0);
+    expect((await api.audit({ q: ' \u200B ' })).total).toBe(15);
+  });
+
+  it('rejects a search text longer than 100 characters', async () => {
+    await expect(createMockClient().audit({ q: 'x'.repeat(101) })).rejects.toMatchObject({ code: 'invalid_input', field: '/q' });
+  });
+
   it('rejects an audit limit outside 1–100', async () => {
     const api = createMockClient();
     await expect(api.audit({ limit: 0 })).rejects.toMatchObject({ code: 'invalid_input' });

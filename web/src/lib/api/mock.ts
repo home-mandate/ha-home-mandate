@@ -6,6 +6,8 @@
 // simulates what only the server can cause: approval requests, HA going down, a broken
 // audit chain.
 
+import { cleanSearch } from '../audit/filters.ts';
+import { cleanUntrusted } from '../untrusted.ts';
 import { checkDraft, timeoutSeconds } from '../engine/check.ts';
 import { canonical, needsCriticalConfirmation } from '../engine/vocabulary.ts';
 import { ApiError, type ApiClient, type EventHandlers } from './client.ts';
@@ -36,6 +38,7 @@ import type {
   AuditEntry,
   AuditEvent,
   AuditQuery,
+  DeviceCatalog,
   Defaults,
   MandateDetail,
   MandateDocument,
@@ -149,6 +152,32 @@ const draftOf = (d: MandateDocument): MandateDraft => ({
 function validate(draft: MandateDraft): void {
   const [first] = checkDraft(draft);
   if (first) fail('invalid_mandate', `/draft${first.field}`);
+}
+
+/**
+ * searchMatcher is the search of the audit log as the server does it: the text, ignoring
+ * case, in the entry's entity_id, area_id, agent name or client_id, or in the name of its
+ * device or area in the current catalog. Null means no search.
+ */
+function searchMatcher(text: string | undefined, catalog: DeviceCatalog): ((e: AuditEntry) => boolean) | null {
+  const q = cleanSearch(text ?? '') ?? fail('invalid_input', '/q');
+  if (q === '') return null;
+  const needle = q.toLowerCase();
+  const has = (value: string | null | undefined) => value?.toLowerCase().includes(needle) ?? false;
+  // Names as the UI shows them, so search and display agree.
+  const devices = new Set(catalog.devices.filter((d) => has(cleanUntrusted(d.name))).map((d) => d.entity_id));
+  const areas = new Set(catalog.areas.filter((a) => has(cleanUntrusted(a.name))).map((a) => a.id));
+  return (e) => {
+    const res = e.request?.resource;
+    return (
+      has(res?.entity_id) ||
+      has(res?.area) ||
+      (res !== undefined && devices.has(res.entity_id)) ||
+      (res?.area !== undefined && areas.has(res.area)) ||
+      has(cleanUntrusted(e.agent?.display_name)) ||
+      has(e.agent?.client_id)
+    );
+  };
 }
 
 /** matchesQuery applies the filters; the cursor (before) is applied after counting. */
@@ -493,7 +522,8 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     async audit(query) {
       const limit = query.limit ?? 50;
       if (!Number.isInteger(limit) || limit < 1 || limit > 100) fail('invalid_input', '/limit');
-      const matching = state.audit.filter((e) => matchesQuery(e, query)).toReversed();
+      const search = searchMatcher(query.q, devicesFixture);
+      const matching = state.audit.filter((e) => matchesQuery(e, query) && (search?.(e) ?? true)).toReversed();
       const page = matching.filter((e) => query.before === undefined || e.seq < query.before);
       const entries = page.slice(0, limit);
       const more = page.length > limit;

@@ -199,12 +199,13 @@
   const checked = $derived(
     chain?.checked_at ? m.audit_chain_checked({ relative: formatRelative(new Date(chain.checked_at), new Date(now - app.offsetMs), ctx) }) : '',
   );
-  const options = $derived.by(() => {
+  /** Name of the exact device or area filter in the catalog, if it is there. */
+  const deviceName = $derived.by(() => {
+    const device = filters.device;
     const catalog = meta.data?.catalog;
-    return {
-      areas: (catalog?.areas ?? []).map((a) => ({ value: a.id, label: cleanUntrusted(a.name) })),
-      devices: (catalog?.devices ?? []).map((d) => ({ value: d.entity_id, label: cleanUntrusted(d.name || d.entity_id) })),
-    };
+    if (device === null || !catalog) return null;
+    const name = catalog.devices.find((d) => d.entity_id === device)?.name ?? catalog.areas.find((a) => a.id === device)?.name;
+    return name ? cleanUntrusted(name) : null;
   });
 
   // The selected entry: from the list, or loaded alone once (e.g. from a bookmark).
@@ -267,8 +268,7 @@
 <AuditFilterBar
   {filters}
   agents={meta.data?.agents ?? []}
-  areas={options.areas}
-  devices={options.devices}
+  {deviceName}
   total={list.data?.total ?? null}
   compact={!desktop.matches}
   onchange={apply}

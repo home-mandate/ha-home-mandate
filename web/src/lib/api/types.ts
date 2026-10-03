@@ -506,6 +506,12 @@ export interface AuditQuery {
   agent?: string;
   /** Exact entity_id or area_id. */
   device?: string;
+  /**
+   * Search text (at most 100 characters after cleaning; empty means none). Matches entries
+   * whose entity_id, area_id, agent name or client_id, or whose device or area name in the
+   * current catalog contains it, ignoring case. Combined with the other filters by AND.
+   */
+  q?: string;
   /** decision: requests only; admin: everything else. */
   group?: 'decision' | 'admin';
   event?: AuditEvent;

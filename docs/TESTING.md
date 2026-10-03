@@ -148,6 +148,14 @@ Every line is at least one test. New attack ideas are added here before they are
 **Audit log**
 - Tampered entry in the database → chain verification fails and reports the position
 - No tokens, nonces or HA credentials in logs (a test searches the log output of all E2E runs)
+- Search text with `%`, `_`, `\`, quotes, control, bidi or zero-width characters → cleaned, then matched literally (bound parameter, wildcards escaped or `instr`); errors name only `/q`, never the text
+- Search text over 100 characters after cleaning, a repeated `q`, or invalid UTF-8 → `invalid_input`, nothing run; empty or whitespace-only `q` → same result as no search
+- Search: client and server clean and fold case the same way (shared test vectors incl. ß, İ, Σ/ς, composed/decomposed é); device and area names are matched as the UI shows them
+- Search over a large log or catalog (one-letter `q`, 40,000 devices) → finishes within the query timeout, no SQL variable limit hit, writing the log is not blocked
+- Search text and the query string never appear in logs
+- Agent named like a device or area → the search finds only that agent's own entries, shown as the agent's claim
+- Link with a crafted `agent` or `device` filter (hidden characters, look-alike letters, not an HA ID) → filter ignored, never shown as a clean-looking value that filters something else
+- Audit log or search requested without an admin session or over MCP → rejected or not present
 
 **Home Assistant connection**
 - WebSocket command not on the allowlist (ARCHITECTURE section 11.2) → rejected before sending, nothing reaches HA
