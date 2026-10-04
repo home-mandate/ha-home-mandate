@@ -116,6 +116,7 @@ func serve(ctx context.Context, e env) int {
 }
 
 type gateway struct {
+	marks    *catalog.Marks
 	state    *state
 	logger   *slog.Logger
 	client   *ha.Client
@@ -156,6 +157,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		return nil, err
 	}
 	g.catalog.SetMarks(marks)
+	g.marks = marks
 	for _, event := range append([]string{ha.EventStateChanged}, registryEvents...) {
 		if _, err := client.SubscribeEvents(ctx, event, g.catalog.HandleEvent); err != nil {
 			return nil, fmt.Errorf("subscribe %s: %w", event, err)
@@ -221,7 +223,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 
 	apiCfg := api.Config{Proxy: trustedProxy(ctx, s.cfg, lookupHost, logger), Store: s.store, Log: s.log, Agents: s.agents, Mandates: s.mandates, Admission: s.admission,
-		Approvers: s.approvers, Approvals: approvals, HA: client, Catalog: g.catalog, Status: g.status, UI: webui.Handler(),
+		Approvers: s.approvers, Approvals: approvals, HA: client, Catalog: g.catalog, Marks: g.marks, Status: g.status, UI: webui.Handler(),
 		Principal: s.household, Mode: string(s.cfg.Mode), Version: version, Commit: commit, Retention: retention,
 		TLS: func() (bool, time.Time) { return !g.tlsUntil.IsZero(), g.tlsUntil }, Logger: logger}
 	if as != nil {

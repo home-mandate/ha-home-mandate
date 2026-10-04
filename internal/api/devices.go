@@ -17,6 +17,8 @@ type wireDevice struct {
 	Category string   `json:"category"`
 	Area     *string  `json:"area"`
 	Actions  []string `json:"actions"`
+	// Critical: the household marked the device; every action except read is critical.
+	Critical bool `json:"critical"`
 }
 
 type wireDeviceCatalog struct {
@@ -42,7 +44,33 @@ func (s *Server) getDevices(*request) (any, error) {
 			actions = []string{}
 		}
 		out.Devices = append(out.Devices, wireDevice{EntityID: d.EntityID, Name: name, Category: d.Category, Area: optional(d.Area),
-			Actions: actions})
+			Actions: actions, Critical: d.Critical})
 	}
 	return out, nil
+}
+
+// putDeviceCritical marks a device as critical or removes the mark (SPEC-v0 section 4,
+// step 5). Removing a mark lowers the protection of the device, so both are logged.
+func (s *Server) putDeviceCritical(r *request) (any, error) {
+	var in struct {
+		EntityID *string `json:"entity_id"`
+		Critical *bool   `json:"critical"`
+	}
+	if err := r.decode(&in); err != nil {
+		return nil, err
+	}
+	if in.EntityID == nil {
+		return nil, failField(codeInvalidInput, "/entity_id")
+	}
+	if in.Critical == nil {
+		return nil, failField(codeInvalidInput, "/critical")
+	}
+	if _, ok := s.cfg.Catalog.Lookup(*in.EntityID); !ok {
+		return nil, fail(codeNotFound)
+	}
+	if err := s.cfg.Marks.Set(r.Context(), *in.EntityID, *in.Critical, r.user); err != nil {
+		return nil, err
+	}
+	s.cfg.Logger.Warn("device marked as critical changed", "entity_id", *in.EntityID, "critical", *in.Critical, "by", r.user)
+	return nil, nil
 }

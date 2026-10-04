@@ -88,7 +88,11 @@ type Config struct {
 	Pairing Pairing
 	HA      HA
 	Catalog Catalog
-	Status  func() Status
+	// Marks stores which devices the household marked as critical.
+	Marks interface {
+		Set(ctx context.Context, entityID string, critical bool, by string) error
+	}
+	Status func() Status
 	// UI serves everything outside /api/; nil answers 404.
 	UI http.Handler
 	// Proxy is the one address requests may come from: the Supervisor in app mode, the

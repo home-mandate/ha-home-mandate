@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/home-mandate/home-mandate/internal/agent"
 	"github.com/home-mandate/home-mandate/internal/approval"
 	"github.com/home-mandate/home-mandate/internal/audit"
+	"github.com/home-mandate/home-mandate/internal/catalog"
 	"github.com/home-mandate/home-mandate/internal/mandate"
 	"github.com/home-mandate/home-mandate/internal/oauth"
 )
@@ -310,5 +312,63 @@ func TestPairingWithTheAuthorizationServer(t *testing.T) {
 	r := h.do(http.MethodPost, "/api/pairing/check", map[string]any{"code": "BBBB-BBBB"})
 	if r.errCode() != codePairingLocked || r.header.Get("Retry-After") != "600" {
 		t.Errorf("locked = %d %s %v", r.code, r.body, r.header)
+	}
+}
+
+// fakeMarks records what the API marks as critical.
+type fakeMarks struct {
+	set map[string]string // entity → user
+	err error
+}
+
+func (m *fakeMarks) Set(_ context.Context, entityID string, critical bool, by string) error {
+	if m.err != nil {
+		return m.err
+	}
+	if critical {
+		m.set[entityID] = by
+	} else {
+		delete(m.set, entityID)
+	}
+	return nil
+}
+
+// An administrator marks a device as critical: every action on it except read then
+// needs a confirmation or allow_critical (SPEC-v0 section 4, step 5).
+func TestMarkDeviceCritical(t *testing.T) {
+	h := newHarness(t)
+	h.ok(http.MethodPut, "/api/devices/critical", map[string]any{"entity_id": "light.kitchen", "critical": true}, nil)
+	if h.marks.set["light.kitchen"] == "" {
+		t.Fatalf("marks = %v", h.marks.set)
+	}
+	h.cat.devices[slices.IndexFunc(h.cat.devices, func(d catalog.Device) bool { return d.EntityID == "light.kitchen" })].Critical = true
+	var c wireDeviceCatalog
+	h.ok(http.MethodGet, "/api/devices", nil, &c)
+	for _, d := range c.Devices {
+		if d.Critical != (d.EntityID == "light.kitchen") {
+			t.Errorf("%s: critical = %v", d.EntityID, d.Critical)
+		}
+	}
+	h.ok(http.MethodPut, "/api/devices/critical", map[string]any{"entity_id": "light.kitchen", "critical": false}, nil)
+	if len(h.marks.set) != 0 {
+		t.Errorf("marks after removing = %v", h.marks.set)
+	}
+	for name, tt := range map[string]struct {
+		body   map[string]any
+		status int
+	}{
+		"unknown device": {map[string]any{"entity_id": "light.nowhere", "critical": true}, http.StatusNotFound},
+		"no entity":      {map[string]any{"critical": true}, http.StatusBadRequest},
+		"no value":       {map[string]any{"entity_id": "light.kitchen"}, http.StatusBadRequest},
+		"wrong type":     {map[string]any{"entity_id": "light.kitchen", "critical": "yes"}, http.StatusBadRequest},
+		"unknown member": {map[string]any{"entity_id": "light.kitchen", "critical": true, "all": true}, http.StatusBadRequest},
+	} {
+		if r := h.do(http.MethodPut, "/api/devices/critical", tt.body); r.code != tt.status {
+			t.Errorf("%s: status %d, want %d", name, r.code, tt.status)
+		}
+	}
+	h.marks.err = errors.New("database gone")
+	if r := h.do(http.MethodPut, "/api/devices/critical", map[string]any{"entity_id": "light.kitchen", "critical": true}); r.code != http.StatusInternalServerError {
+		t.Errorf("store error: status %d", r.code)
 	}
 }

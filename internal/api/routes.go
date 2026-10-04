@@ -59,6 +59,7 @@ func (s *Server) routes() *http.ServeMux {
 	route("POST /api/pairing/deny", jsonBody, s.pairingDeny)
 
 	route("GET /api/devices", noBody, s.getDevices)
+	route("PUT /api/devices/critical", jsonBody, s.putDeviceCritical)
 
 	route("GET /api/mandates", noBody, s.getMandates)
 	route("POST /api/mandates", jsonBody, s.createMandate)
