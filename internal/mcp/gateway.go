@@ -83,7 +83,8 @@ type (
 		Connected() bool
 	}
 	Limiter interface {
-		Allow(clientID string, perHour int) bool
+		// Allow counts a request for key (pdp.RateKey) against perHour.
+		Allow(key string, perHour int) bool
 	}
 	Auditor interface {
 		Append(ctx context.Context, e audit.Entry) (int64, error)
@@ -329,7 +330,7 @@ func (g *Gateway) listSnapshot(ctx context.Context, req *sdk.CallToolRequest) (*
 	if err != nil {
 		g.cfg.Logger.Error("loading the mandate failed", "error", err)
 	}
-	if !g.cfg.Limiter.Allow(a.ClientID, limitOf(snap)) {
+	if !g.cfg.Limiter.Allow(snap.RateKey(), limitOf(snap)) {
 		return nil, errors.New(codeRateLimited)
 	}
 	return snap, nil
@@ -491,7 +492,7 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusFailed, Error: "timezone_unknown"})
 		return pdp.Decision{}, errors.New(codeUnavailable)
 	}
-	if !g.cfg.Limiter.Allow(a.ClientID, limitOf(snap)) {
+	if !g.cfg.Limiter.Allow(snap.RateKey(), limitOf(snap)) {
 		g.recordRateLimited(ctx, a, d)
 		return pdp.Decision{}, errors.New(codeRateLimited)
 	}

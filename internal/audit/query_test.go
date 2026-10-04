@@ -504,8 +504,12 @@ func TestUnreadableRowsAreErrors(t *testing.T) {
 // emergency stop do not.
 func TestRequestsSince(t *testing.T) {
 	l, now := clocked(t, start)
+	withMandate := func(e audit.Entry) audit.Entry {
+		e.Mandate = &audit.Mandate{ID: "m-voice", Digest: "sha256:" + strings.Repeat("a", 64)}
+		return e
+	}
 	appendAll(t, l, []audit.Entry{
-		decision("hm-client:voice-1", "Voice", "light.kitchen", "kitchen", "allow", "rule"),
+		withMandate(decision("hm-client:voice-1", "Voice", "light.kitchen", "kitchen", "allow", "rule")),
 		decision("hm-client:n8n-2", "n8n", "light.garden", "garden", "deny", "no_match"),
 		{Event: audit.EventEmergencyStopActivated, Actor: &audit.Actor{Kind: audit.ActorUser, ID: "u1"}},
 		{Event: audit.EventDecision, Agent: &audit.Agent{ClientID: "hm-client:voice-1"},
@@ -514,25 +518,28 @@ func TestRequestsSince(t *testing.T) {
 		{Event: audit.EventDecision, Agent: &audit.Agent{ClientID: "hm-client:voice-1"},
 			Request: &audit.Request{Time: start, Resource: audit.Resource{EntityID: "light.kitchen"}, Action: "turn_on"},
 			Result:  &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop}},
-		decision("hm-client:voice-1", "Voice", "lock.front_door", "hall", "ask", "rule"),
+		withMandate(decision("hm-client:voice-1", "Voice", "lock.front_door", "hall", "ask", "rule")),
 	})
-	got, err := l.RequestsSince(context.Background(), start)
+	key := func(clientID, mandateID string) string { return clientID + "|" + mandateID }
+	got, err := l.RequestsSince(context.Background(), start, key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || len(got["hm-client:voice-1"]) != 2 || len(got["hm-client:n8n-2"]) != 1 {
+	// Requests with a mandate count for it, those without for the agent (SPEC-v0 section 11.2).
+	voice, n8n := key("hm-client:voice-1", "m-voice"), key("hm-client:n8n-2", "")
+	if len(got) != 2 || len(got[voice]) != 2 || len(got[n8n]) != 1 {
 		t.Fatalf("RequestsSince = %v", got)
 	}
-	if first := got["hm-client:voice-1"][0]; first.Before(start) || first.After(now()) {
+	if first := got[voice][0]; first.Before(start) || first.After(now()) {
 		t.Errorf("time %v outside the log", first)
 	}
-	later, err := l.RequestsSince(context.Background(), now().Add(time.Hour))
+	later, err := l.RequestsSince(context.Background(), now().Add(time.Hour), key)
 	if err != nil || len(later) != 0 {
 		t.Errorf("RequestsSince after the last entry = %v, %v", later, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := l.RequestsSince(ctx, start); err == nil {
+	if _, err := l.RequestsSince(ctx, start, key); err == nil {
 		t.Error("RequestsSince with a cancelled context succeeded")
 	}
 }

@@ -149,7 +149,7 @@ func TestHTTPBindingNeedsTheToken(t *testing.T) {
 	evaluation := `{"subject":{"type":"agent","id":"hm-client:voice-7c21e9a4","properties":{"principal":"household:hm-7f3a"}},"action":{"name":"unlock"},"resource":{"id":"lock.front"}}`
 	for _, tc := range []struct {
 		name, method, path, auth, body string
-		want                            int
+		want                           int
 	}{
 		{"no token", http.MethodPut, controlPath, "", state, http.StatusUnauthorized},
 		{"wrong token", http.MethodPut, controlPath, "Bearer " + strings.Repeat("x", minTokenLength), state, http.StatusUnauthorized},

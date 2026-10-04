@@ -318,11 +318,11 @@ func (l *Log) IndexSearch(ctx context.Context) (int, error) {
 
 // RequestsSince returns, per agent, when its requests since a point in time reached the
 // evaluation: the decision entries without the refusals of the rate limit and the
-// emergency stop. After a restart the rate limiter is filled with them, so that a crash
+// emergency stop, grouped by key(agent, mandate ID; empty without a mandate). After a restart the rate limiter is filled with them, so that a crash
 // does not hand every agent a fresh limit (SPEC-v0 section 11.2). Requests that leave
 // no entry of their own, such as listing devices, are not included.
-func (l *Log) RequestsSince(ctx context.Context, since time.Time) (map[string][]time.Time, error) {
-	rows, err := l.db.QueryContext(ctx, `SELECT json_extract(entry, '$.agent.client_id'), recorded_at FROM audit_log
+func (l *Log) RequestsSince(ctx context.Context, since time.Time, key func(clientID, mandateID string) string) (map[string][]time.Time, error) {
+	rows, err := l.db.QueryContext(ctx, `SELECT json_extract(entry, '$.agent.client_id'), json_extract(entry, '$.mandate.id'), recorded_at FROM audit_log
 		WHERE event = ? AND recorded_at >= ?
 		AND coalesce(json_extract(entry, '$.result.denied_by'), '') NOT IN (?, ?) ORDER BY seq`,
 		EventDecision, since.UTC().Format(timeFormat), DeniedByRateLimit, DeniedByEmergencyStop)
@@ -332,16 +332,17 @@ func (l *Log) RequestsSince(ctx context.Context, since time.Time) (map[string][]
 	defer rows.Close()
 	out := map[string][]time.Time{}
 	for rows.Next() {
-		var clientID sql.NullString
+		var clientID, mandateID sql.NullString
 		var recordedAt string
-		if err := rows.Scan(&clientID, &recordedAt); err != nil {
+		if err := rows.Scan(&clientID, &mandateID, &recordedAt); err != nil {
 			return nil, fmt.Errorf("audit: read: %w", err)
 		}
 		at, err := time.Parse(timeFormat, recordedAt)
 		if err != nil || !clientID.Valid {
 			continue
 		}
-		out[clientID.String] = append(out[clientID.String], at)
+		k := key(clientID.String, mandateID.String)
+		out[k] = append(out[k], at)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("audit: read: %w", err)

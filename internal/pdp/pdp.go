@@ -135,6 +135,24 @@ func (s *Snapshot) Decide(entityID, action string, parameters map[string]int64) 
 	return d
 }
 
+// RateKey is what the rate limit counts for (SPEC-v0 section 11.2): the mandate, so that a
+// new version does not reset the count; the agent while it has none.
+func RateKey(clientID, mandateID string) string {
+	if mandateID != "" {
+		return "mandate:" + mandateID
+	}
+	return "agent:" + clientID
+}
+
+// RateKey is the key of the rate limit for this request: the mandate if the agent has
+// exactly one candidate (at most one is active), otherwise the agent.
+func (s *Snapshot) RateKey() string {
+	if len(s.candidates) == 1 {
+		return RateKey(s.clientID, s.candidates[0].Info.ID)
+	}
+	return RateKey(s.clientID, "")
+}
+
 // MaxActionsPerHour is the agent's rate limit, known before a mandate is selected: the
 // strictest limit among its candidates; 0 without one.
 func (s *Snapshot) MaxActionsPerHour() int {

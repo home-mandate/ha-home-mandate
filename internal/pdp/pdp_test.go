@@ -487,3 +487,20 @@ func TestInvalidMandateIsNamed(t *testing.T) {
 		t.Errorf("Decide = %+v, %v", d, err)
 	}
 }
+
+// SPEC-v0 section 11.2: the count belongs to the mandate; an agent without one is counted
+// on its own.
+func TestRateKeyIsTheMandate(t *testing.T) {
+	cfg, clientID := voice(t)
+	snap, err := New(cfg).Snapshot(context.Background(), clientID)
+	if err != nil || snap.RateKey() != "mandate:m-voice-assistant" {
+		t.Errorf("RateKey = %q, %v", snap.RateKey(), err)
+	}
+	cfg.Mandates = fakeMandates{}
+	if snap, _ := New(cfg).Snapshot(context.Background(), clientID); snap.RateKey() != "agent:"+clientID {
+		t.Errorf("without a mandate = %q", snap.RateKey())
+	}
+	if RateKey("a", "m") == RateKey("m", "") || RateKey("x", "") == RateKey("y", "x") {
+		t.Error("keys of agents and mandates can collide")
+	}
+}

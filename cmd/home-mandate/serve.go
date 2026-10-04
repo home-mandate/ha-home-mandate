@@ -50,13 +50,13 @@ var registryEvents = []string{"entity_registry_updated", "device_registry_update
 // (SPEC-v0 section 11.2). If the log cannot be read, the limiter starts empty.
 func restoredLimiter(ctx context.Context, log *audit.Log, now func() time.Time, logger *slog.Logger) *ratelimit.Limiter {
 	limiter := ratelimit.New(now)
-	requests, err := log.RequestsSince(ctx, now().Add(-ratelimit.Window))
+	requests, err := log.RequestsSince(ctx, now().Add(-ratelimit.Window), pdp.RateKey)
 	if err != nil {
 		logger.Warn("cannot restore the rate limits from the audit log", "error", err)
 		return limiter
 	}
-	for clientID, times := range requests {
-		limiter.Restore(clientID, times)
+	for key, times := range requests {
+		limiter.Restore(key, times)
 	}
 	return limiter
 }
