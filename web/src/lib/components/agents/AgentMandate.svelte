@@ -8,7 +8,7 @@
 -->
 <script lang="ts">
   import { ApiError, type ApiClient } from '../../api/client.ts';
-  import type { Agent, Template } from '../../api/types.ts';
+  import type { Agent, Rule, Template } from '../../api/types.ts';
   import { formatNumber, type FormatContext } from '../../format.ts';
   import { m } from '../../i18n.ts';
   import { templateName } from '../../mandate/template.ts';
@@ -19,6 +19,7 @@
   import Button from '../Button.svelte';
   import Icon from '../Icon.svelte';
   import SelectField from '../SelectField.svelte';
+  import CriticalTemplateConfirm from '../mandate/CriticalTemplateConfirm.svelte';
   import MandateStatus from '../mandate/MandateStatus.svelte';
 
   interface Props {
@@ -35,6 +36,10 @@
   let template = $state('');
   let busy = $state(false);
   let error = $state('');
+  /** The server asked for the separate confirmation (U9): the template and its critical rules. */
+  let confirming: { template: string; rules: Rule[] | null } | null = $state(null);
+  let apply: HTMLButtonElement | undefined = $state();
+  const NO_CATALOG = { areas: [], devices: [] };
 
   const mandate = $derived(agent.mandate);
   const active = $derived(agent.status === 'active');
@@ -48,23 +53,44 @@
       : m.agent_detail_rate_usage({ used: formatNumber(agent.actions_last_hour, ctx), limit: formatNumber(mandate.max_actions_per_hour, ctx) }),
   );
 
-  async function change() {
+  async function change(confirm = false) {
     if (busy || chosen === '') return;
     busy = true;
     error = '';
+    const extra = confirm ? { confirm_critical: true } : {};
     try {
       const detail = mandate && replaces
         ? // The version shown here is the base: a change by someone else since then is a conflict.
-          await api.applyTemplate(mandate.id, { template: chosen, base_digest: mandate.digest })
-        : await api.createMandate({ client_id: agent.client_id, template: chosen, name: templateName(chosen) });
+          await api.applyTemplate(mandate.id, { template: chosen, base_digest: mandate.digest, ...extra })
+        : await api.createMandate({ client_id: agent.client_id, template: chosen, name: templateName(chosen), ...extra });
+      confirming = null;
       toasts.show({ kind: 'success', text: m.toast_saved({ version: currentNumber(detail.versions) }) });
     } catch (err) {
+      if (!confirm && err instanceof ApiError && err.code === 'critical_confirmation_required') {
+        confirming = { template: chosen, rules: await criticalRules(chosen) };
+        return;
+      }
+      confirming = null;
       const conflict = err instanceof ApiError && err.code === 'conflict';
       // Creating: another mandate came first. Changing: the mandate changed since it was shown.
       error = conflict ? (replaces ? m.agent_detail_change_conflict() : m.mandates_new_conflict()) : m.agent_detail_change_failed();
     } finally {
       busy = false;
     }
+  }
+
+  /** The template's rules that allow critical actions without approval; null if it cannot be read. */
+  async function criticalRules(name: string): Promise<Rule[] | null> {
+    try {
+      return (await api.template(name)).draft.rules.filter((r) => r.allow_critical === true);
+    } catch {
+      return null;
+    }
+  }
+
+  function cancelCritical() {
+    confirming = null;
+    apply?.focus();
   }
 </script>
 
@@ -92,10 +118,25 @@
         value={chosen}
         {options}
         help={replaces ? m.agent_detail_change_help() : undefined}
-        onchange={(v) => (template = v)}
+        onchange={(v) => {
+          template = v;
+          confirming = null; // another template: its own confirmation
+        }}
       />
-      <Button {busy} onclick={change}>{m.agent_detail_change_apply()}</Button>
+      <Button bind:element={apply} {busy} disabled={confirming !== null} onclick={() => change()}>{m.agent_detail_change_apply()}</Button>
     </div>
+    {#if confirming}
+      <CriticalTemplateConfirm
+        template={confirming.template}
+        agent={agent.display_name}
+        rules={confirming.rules}
+        catalog={NO_CATALOG}
+        locale={ctx.locale}
+        {busy}
+        oncancel={cancelCritical}
+        onconfirm={() => change(true)}
+      />
+    {/if}
     <p class="error" role="alert">{#if error}<Icon name="warning" size={16} />{error}{/if}</p>
   {/if}
 </div>

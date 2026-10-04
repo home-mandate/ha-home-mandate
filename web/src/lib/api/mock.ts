@@ -402,6 +402,11 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     return state.templates.find((t) => t.name === name) ?? fail('invalid_input', field);
   }
 
+  /** The server asks for the separate confirmation when a template allows critical actions (U9). */
+  function checkCritical(name: string, confirm: boolean | undefined): void {
+    if (needsCriticalConfirmation(null, template(name).draft) && confirm !== true) fail('critical_confirmation_required');
+  }
+
   function createFromTemplate(clientId: string, name: string, mandateName?: string): string {
     const agent = state.agents.find((a) => a.client_id === clientId) ?? fail('not_found');
     const t = template(name);
@@ -514,6 +519,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       template(req.template);
       const key = checkPairing(req.code);
       if (req.pairing_id !== pairingCandidate.pairing_id) fail('conflict');
+      checkCritical(req.template, req.confirm_critical);
       const clientId = `pair:${pairingCandidate.client}-${++counter}`;
       const agent: Agent = {
         client_id: clientId,
@@ -551,9 +557,10 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     async mandates() {
       return Object.keys(state.mandates).map((id) => detail(id).summary);
     },
-    async createMandate({ client_id: clientId, template: name, name: mandateName }) {
+    async createMandate({ client_id: clientId, template: name, name: mandateName, confirm_critical: confirm }) {
       const agent = state.agents.find((a) => a.client_id === clientId) ?? fail('not_found');
       if (agent.status !== 'active' || agent.mandate?.status === 'active') return fail('conflict');
+      checkCritical(name, confirm);
       return detail(createFromTemplate(clientId, name, mandateName));
     },
     async mandate(id) {

@@ -7,6 +7,7 @@ import { createMockClient, type MockClient, type MockOptions } from '../api/mock
 import { AppState } from '../app/state.svelte.ts';
 import { setLocale } from '../paraglide/runtime.js';
 import MandateList from './MandateList.svelte';
+import { addCriticalTemplate, DOORS } from '../test/critical.ts';
 
 beforeEach(() => setLocale('en', { reload: false }));
 afterEach(() => {
@@ -205,6 +206,33 @@ describe('new mandate', () => {
     await waitFor(() => expect(window.location.hash).toMatch(/^#\/mandates\/mandate-mock-\d+$/));
     const created = (await api.mandates()).find((x) => x.name === 'Tablet');
     expect(created).toMatchObject({ client_id: 'pair:long', rule_count: 1, status: 'active' });
+  });
+
+  it('creates from a critical template only after the separate confirmation (U9)', async () => {
+    const { api } = await start({}, async (a) => {
+      await a.revokeMandate('mandate-long');
+      await addCriticalTemplate(a);
+    });
+    await fireEvent.click(await screen.findByRole('button', { name: 'New mandate' }));
+    const dialog = await screen.findByRole('dialog', { name: 'New mandate' });
+    await fireEvent.change(within(dialog).getByLabelText('Template') as HTMLSelectElement, { target: { value: DOORS } });
+    const create = vi.spyOn(api, 'createMandate');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Create mandate' }));
+    const box = await within(dialog).findByRole('alertdialog', { name: 'Critical actions without approval' });
+    expect(within(box).getByRole('listitem').textContent).toContain('unlock');
+    expect(window.location.hash).not.toMatch(/^#\/mandates\/mandate-mock/);
+    // Choosing another template drops the confirmation.
+    await fireEvent.change(within(dialog).getByLabelText('Template') as HTMLSelectElement, { target: { value: 'read-only' } });
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull();
+    await fireEvent.change(within(dialog).getByLabelText('Template') as HTMLSelectElement, { target: { value: DOORS } });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Create mandate' }));
+    const again = await within(dialog).findByRole('alertdialog');
+    await fireEvent.click(within(again).getByRole('button', { name: 'Cancel' }));
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull();
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Create mandate' }));
+    await fireEvent.click(within(await within(dialog).findByRole('alertdialog')).getByRole('button', { name: 'Allow without approval' }));
+    await waitFor(() => expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ template: DOORS, confirm_critical: true })));
+    await waitFor(() => expect(window.location.hash).toMatch(/^#\/mandates\/mandate-mock-\d+$/));
   });
 
   it('asks for a name and reports a conflict without closing', async () => {

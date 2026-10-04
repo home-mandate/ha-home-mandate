@@ -185,7 +185,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - Agent and display names made only of blank-looking letters (Hangul fillers, braille blank), variation selectors or stacked combining marks → cleaned; a display name without a letter or digit → refused (UI and server alike)
 - MCP address with quotes, spaces, `;`, `$`, backticks, a backslash or a line break, or not built from the configuration → no copy-paste command is shown; the server never derives it from request headers
 - Revoke whose answer is lost although the server revoked → the UI reloads and shows the agent as revoked; a repeated revoke answers like the first; agent, tokens, mandate and pending approvals end in one transaction
-- `apply-template`, `POST mandates` and pairing approval with a template whose rules allow critical actions without approval → refused without the separate confirmation, like a mandate edit
+- `apply-template`, `POST mandates` and pairing approval with a template whose rules allow critical actions without approval → refused without the separate confirmation, like a mandate edit; the UI then asks for it in a box that names the template, the agent and every such rule, with Cancel first and focused (Escape cancels, another template drops it), and only "Allow without approval" repeats the request with the confirmation
 - Mandate change from an agent's page based on an outdated version → `conflict`, nothing replaced
 
 **Audit log**

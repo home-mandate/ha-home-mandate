@@ -12,7 +12,7 @@
   import { Loader } from '../app/loader.svelte.ts';
   import { ApiError } from '../api/client.ts';
   import type { AppState } from '../app/state.svelte.ts';
-  import type { Agent, DeviceCatalog, PairingCandidate, Template } from '../api/types.ts';
+  import type { Agent, DeviceCatalog, PairingCandidate, Rule, Template } from '../api/types.ts';
   import { codeError, type CodeState } from '../agents/pairing.ts';
   import BackLink from '../components/BackLink.svelte';
   import ErrorState from '../components/ErrorState.svelte';
@@ -22,6 +22,7 @@
   import PairMandate from '../components/agents/PairMandate.svelte';
   import PairSteps from '../components/agents/PairSteps.svelte';
   import PairVerify from '../components/agents/PairVerify.svelte';
+  import CriticalTemplateConfirm from '../components/mandate/CriticalTemplateConfirm.svelte';
   import { m } from '../i18n.ts';
   import { NAME_MAX } from '../mandate/problems.ts';
   import { templateName } from '../mandate/template.ts';
@@ -66,6 +67,8 @@
   let mandateName = $state('');
   let busy = $state(false);
   let error = $state('');
+  /** The server asked for the separate confirmation (U9) for this template and name. */
+  let critical: { template: string; name: string; rules: Rule[] } | null = $state(null);
   /** Remounts the code step, so it starts from the given code and state. */
   let round = $state(0);
 
@@ -157,15 +160,24 @@
     }
   }
 
-  async function confirm(template: string, name: string) {
+  async function confirm(template: string, name: string, confirmCritical = false) {
     if (busy || !candidate) return;
     const c = candidate;
     busy = true;
     error = '';
     const mandate = templateName(template);
     try {
-      admitted = await app.api.pairingApprove({ code, pairing_id: c.pairing_id, display_name: name, template, mandate_name: mandate });
+      admitted = await app.api.pairingApprove({ code, pairing_id: c.pairing_id, display_name: name, template, mandate_name: mandate,
+        ...(confirmCritical ? { confirm_critical: true } : {}) });
+      critical = null;
     } catch (err) {
+      if (!confirmCritical && err instanceof ApiError && err.code === 'critical_confirmation_required') {
+        const rules = choices.data?.templates.find((t) => t.name === template)?.draft.rules ?? [];
+        critical = { template, name, rules: rules.filter((r) => r.allow_critical === true) };
+        busy = false;
+        return;
+      }
+      critical = null;
       admitted = await admittedMeanwhile(err, c, name);
       if (!admitted) {
         const result = codeError(err);
@@ -228,9 +240,27 @@
         {headingId}
         {busy}
         {error}
-        onback={() => void go('verify')}
-        onconfirm={confirm}
+        onback={() => {
+          critical = null;
+          void go('verify');
+        }}
+        onconfirm={(t, n) => {
+          critical = null;
+          void confirm(t, n);
+        }}
       />
+      {#if critical}
+        <CriticalTemplateConfirm
+          template={critical.template}
+          agent={critical.name}
+          rules={critical.rules}
+          catalog={choices.data.catalog}
+          locale={ctx.locale}
+          {busy}
+          oncancel={() => (critical = null)}
+          onconfirm={() => critical && void confirm(critical.template, critical.name, true)}
+        />
+      {/if}
     {:else}
       <h2 id={headingId} tabindex="-1" class="hm-visually-hidden">{m.pair_step_mandate()}</h2>
       <p role="status">{m.common_loading()}</p>

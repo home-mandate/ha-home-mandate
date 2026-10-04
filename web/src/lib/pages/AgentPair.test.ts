@@ -8,6 +8,7 @@ import { createMockClient, MOCK_EXPIRED_CODE, MOCK_PAIRING_CODE, type MockClient
 import { AppState } from '../app/state.svelte.ts';
 import { setLocale } from '../paraglide/runtime.js';
 import AgentPair from './AgentPair.svelte';
+import { addCriticalTemplate, DOORS } from '../test/critical.ts';
 
 beforeEach(() => setLocale('en', { reload: false }));
 afterEach(() => {
@@ -74,6 +75,24 @@ describe('AgentPair', () => {
     expect(screen.getByRole('link', { name: 'Go to agent' }).getAttribute('href')).toBe(`#/agents/id/${encodeURIComponent(agent?.client_id ?? '')}`);
     expect(screen.getByRole('link', { name: 'Adjust mandate' }).getAttribute('href')).toBe(`#/mandates/${agent?.mandate?.id}`);
     expect(screen.queryByRole('list', { name: /Step/ })).toBeNull();
+  });
+
+  it('approves with a critical template only after the separate confirmation (U9)', async () => {
+    const { api } = await start((a) => void addCriticalTemplate(a));
+    await enter(MOCK_PAIRING_CODE);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+    await screen.findByRole('heading', { name: /What may/ });
+    await fireEvent.click(screen.getByRole('radio', { name: new RegExp(DOORS, 'i') }));
+    const approve = vi.spyOn(api, 'pairingApprove');
+    await fireEvent.click(screen.getByRole('button', { name: 'Approve agent' }));
+    const box = await screen.findByRole('alertdialog', { name: 'Critical actions without approval' });
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(approve.mock.calls[0]?.[0]).not.toHaveProperty('confirm_critical');
+    expect(box.textContent).toContain('Küchen-Tablet');
+    expect(within(box).getByRole('listitem').textContent).toContain('unlock');
+    await fireEvent.click(within(box).getByRole('button', { name: 'Allow without approval' }));
+    await screen.findByRole('heading', { name: /is connected/ });
+    expect(approve).toHaveBeenLastCalledWith(expect.objectContaining({ template: DOORS, confirm_critical: true }));
   });
 
   it('does not send an incomplete code or one outside the alphabet, and says why', async () => {

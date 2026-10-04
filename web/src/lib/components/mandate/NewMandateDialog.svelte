@@ -7,8 +7,9 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte';
   import { ApiError, type ApiClient } from '../../api/client.ts';
-  import type { Agent, Template } from '../../api/types.ts';
+  import type { Agent, Rule, Template } from '../../api/types.ts';
   import { m } from '../../i18n.ts';
+  import { getLocale } from '../../paraglide/runtime.js';
   import { NAME_MAX } from '../../mandate/problems.ts';
   import { templateName } from '../../mandate/template.ts';
   import { href } from '../../router.ts';
@@ -19,6 +20,7 @@
   import Icon from '../Icon.svelte';
   import SelectField from '../SelectField.svelte';
   import TextField from '../TextField.svelte';
+  import CriticalTemplateConfirm from './CriticalTemplateConfirm.svelte';
 
   interface Props {
     open: boolean;
@@ -42,6 +44,8 @@
   let checked = $state(false);
   let busy = $state(false);
   let error = $state('');
+  /** Rules of the template that need the separate confirmation (U9), once the server asked. */
+  let confirming: Rule[] | null = $state(null);
   let nameField: HTMLInputElement | undefined = $state();
 
   $effect(() => {
@@ -54,6 +58,7 @@
       checked = false;
       busy = false;
       error = '';
+      confirming = null;
     });
   });
 
@@ -70,11 +75,18 @@
   const possible = $derived(agents.length > 0 && templates.length > 0);
 
   function pickTemplate(next: string) {
+    confirming = null; // another template: its own confirmation
     if (!named) name = templateName(next);
   }
 
+  const agentName = $derived(agents.find((a) => a.client_id === agent)?.display_name ?? '');
+
   async function create(event: SubmitEvent) {
     event.preventDefault();
+    await send(false);
+  }
+
+  async function send(confirm: boolean) {
     checked = true;
     if (possible && (length < 1 || length > NAME_MAX)) {
       await tick();
@@ -85,9 +97,15 @@
     busy = true;
     error = '';
     try {
-      const created = await api.createMandate({ client_id: agent, template: chosen, name: name.trim() });
+      const created = await api.createMandate({ client_id: agent, template: chosen, name: name.trim(), ...(confirm ? { confirm_critical: true } : {}) });
+      confirming = null;
       oncreated(created.summary.id);
     } catch (err) {
+      if (!confirm && err instanceof ApiError && err.code === 'critical_confirmation_required') {
+        confirming = templates.find((t) => t.name === chosen)?.draft.rules.filter((r) => r.allow_critical === true) ?? [];
+        return;
+      }
+      confirming = null;
       error = err instanceof ApiError && err.code === 'conflict' ? m.mandates_new_conflict() : m.mandates_new_failed();
     } finally {
       busy = false;
@@ -106,6 +124,18 @@
     {:else}
       <p id="{id}-body">{m.mandates_new_none()}</p>
       <a href={href({ name: 'agents' })} onclick={onclose}>{m.mandates_agents_link()}</a>
+    {/if}
+    {#if confirming}
+      <CriticalTemplateConfirm
+        template={chosen}
+        agent={agentName}
+        rules={confirming}
+        catalog={{ areas: [], devices: [] }}
+        locale={getLocale()}
+        {busy}
+        oncancel={() => (confirming = null)}
+        onconfirm={() => void send(true)}
+      />
     {/if}
     <p class="error" role="alert">{#if error}<Icon name="warning" size={16} />{error}{/if}</p>
     <div class="actions">

@@ -8,6 +8,7 @@ import { createMockClient, type MockClient } from '../api/mock.ts';
 import { AppState } from '../app/state.svelte.ts';
 import { setLocale } from '../paraglide/runtime.js';
 import AgentDetail from './AgentDetail.svelte';
+import { addCriticalTemplate, DOORS } from '../test/critical.ts';
 
 beforeEach(() => setLocale('en', { reload: false }));
 afterEach(() => {
@@ -156,6 +157,72 @@ describe('AgentDetail', () => {
     const create = vi.spyOn(api, 'createMandate');
     await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ client_id: VOICE })));
+  });
+
+  it('asks for the separate confirmation when a template allows critical actions (U9)', async () => {
+    const { api } = await start(VOICE, (api) => void addCriticalTemplate(api));
+    const select = (await screen.findByLabelText('Change mandate')) as HTMLSelectElement;
+    await fireEvent.change(select, { target: { value: DOORS } });
+    const apply = vi.spyOn(api, 'applyTemplate');
+    const button = screen.getByRole('button', { name: 'Apply' });
+    await fireEvent.click(button);
+    const box = await screen.findByRole('alertdialog', { name: 'Critical actions without approval' });
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(apply.mock.calls[0]?.[1]).not.toHaveProperty('confirm_critical');
+    // The safe choice has the focus; the rule is named; nothing was stored.
+    await waitFor(() => expect(document.activeElement).toBe(within(box).getByRole('button', { name: 'Cancel' })));
+    expect(within(box).getByRole('listitem').textContent).toContain('unlock');
+    expect((await api.mandate('mandate-voice')).versions).toHaveLength(1);
+    await fireEvent.click(within(box).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(document.activeElement).toBe(button);
+    // Again, and this time confirmed.
+    await fireEvent.click(button);
+    const again = await screen.findByRole('alertdialog');
+    await fireEvent.click(within(again).getByRole('button', { name: 'Allow without approval' }));
+    await waitFor(() => expect(apply).toHaveBeenLastCalledWith('mandate-voice', expect.objectContaining({ template: DOORS, confirm_critical: true })));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect((await api.mandate('mandate-voice')).versions).toHaveLength(2);
+  });
+
+  it('cancels the confirmation with Escape and when another template is chosen', async () => {
+    await start(VOICE, (api) => void addCriticalTemplate(api));
+    const select = (await screen.findByLabelText('Change mandate')) as HTMLSelectElement;
+    await fireEvent.change(select, { target: { value: DOORS } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    const box = await screen.findByRole('alertdialog');
+    await fireEvent.keyDown(box, { key: 'Escape' });
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await screen.findByRole('alertdialog');
+    await fireEvent.change(select, { target: { value: 'read-only' } });
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  });
+
+  it('confirms a critical template for a new mandate too', async () => {
+    const { api } = await start(VOICE, (api) => {
+      void api.revokeMandate('mandate-voice');
+      void addCriticalTemplate(api);
+    });
+    const select = (await screen.findByLabelText('New mandate from template')) as HTMLSelectElement;
+    await fireEvent.change(select, { target: { value: DOORS } });
+    const create = vi.spyOn(api, 'createMandate');
+    await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    const box = await screen.findByRole('alertdialog');
+    await fireEvent.click(within(box).getByRole('button', { name: 'Allow without approval' }));
+    await waitFor(() => expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ template: DOORS, confirm_critical: true })));
+  });
+
+  it('says so when the critical rules cannot be loaded', async () => {
+    const { api } = await start(VOICE, (api) => void addCriticalTemplate(api));
+    api.template = async () => {
+      throw new ApiError('unavailable', 0);
+    };
+    const select = (await screen.findByLabelText('Change mandate')) as HTMLSelectElement;
+    await fireEvent.change(select, { target: { value: DOORS } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    const box = await screen.findByRole('alertdialog');
+    expect(box.textContent).toContain('could not be loaded');
   });
 
   it('looks like any missing page for an unknown agent', async () => {
