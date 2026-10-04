@@ -95,8 +95,8 @@ func TestTheBinaryHasLicensesForEverything(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// mandate-spec ships its license files with its release (tasks); until then declared.
-	text, err := licenses(modules, goroot, pending{"github.com/mandate-spec/mandate-spec": "Apache-2.0"})
+	// Every module ships its license text; nothing has to be declared.
+	text, err := licenses(modules, goroot, pending{})
 	if err != nil {
 		t.Fatal(err)
 	}

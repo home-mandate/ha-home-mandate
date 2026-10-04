@@ -53,17 +53,13 @@ build:
 			-o bin/home-mandate-linux-$$arch ./cmd/home-mandate || exit 1; \
 	done
 
-# Modules that declare a license but ship no license file yet (tools/golicenses); goes
-# once mandate-spec ships its license files.
-LICENSES_PENDING := -pending github.com/mandate-spec/mandate-spec=Apache-2.0
-
 ## webui: build the UI and put it where the binary embeds it, with the licenses of the
 ## Go code appended to licenses.txt (run before build for a binary with the UI)
 webui:
 	cd web && pnpm build
 	find internal/webui/dist -mindepth 1 ! -name .keep -delete
 	cp -R web/dist/. internal/webui/dist/
-	go run ./tools/golicenses -file internal/webui/dist/licenses.txt $(LICENSES_PENDING)
+	go run ./tools/golicenses -file internal/webui/dist/licenses.txt
 
 ## web-install: install the UI dependencies exactly as locked (no install scripts run)
 web-install:
