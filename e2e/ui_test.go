@@ -440,9 +440,24 @@ func TestUIScenario11Restart(t *testing.T) {
 	eventually(t, "UI back", time.Minute, func() bool { status, _ := ui.do(http.MethodGet, "api/system", nil); return status == http.StatusOK })
 	ui = uiLogin(t, adminApprover)
 	a2, m2, t2 := snapshot()
-	if a2 != agents || m2 != mandates || t2 != total {
+	if a2 != agents || m2 != mandates || t2 < total {
 		t.Errorf("after restart: agents equal %v, mandates equal %v, entries %d → %d", a2 == agents, m2 == mandates, total, t2)
 	}
+	// The only entries a restart adds are checkpoints that anchor the log.
+	if added := t2 - total; added > 0 {
+		var page struct {
+			Entries []struct {
+				Event string `json:"event"`
+			} `json:"entries"`
+		}
+		ui.ok(http.MethodGet, fmt.Sprintf("api/audit?limit=%d", added), nil, &page)
+		for _, e := range page.Entries {
+			if e.Event != "log.checkpoint" {
+				t.Errorf("the restart added a %q entry", e.Event)
+			}
+		}
+	}
+	total = t2
 	var v struct {
 		Valid   bool `json:"valid"`
 		Checked int  `json:"checked"`
