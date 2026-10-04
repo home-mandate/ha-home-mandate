@@ -126,3 +126,57 @@ func TestInvalidListsMandatesTheEvaluatorRejects(t *testing.T) {
 		t.Error("Invalid on a closed database succeeded")
 	}
 }
+
+// A mandate whose current version row is missing denies with invalid_mandate and is
+// never silently dropped from the selection; storing a new version repairs it.
+func TestMissingVersionRowIsAnInvalidCandidate(t *testing.T) {
+	e, db := newEnvWithDB(t)
+	ctx := context.Background()
+	a := e.agent(t, "Voice assistant")
+	info, err := e.mandates.Put(ctx, voiceAssistant(t, a.ClientID, nil), admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM mandate_versions`); err != nil {
+		t.Fatal(err)
+	}
+	fresh := mandate.New(db, e.log, household, issuer)
+	list, err := fresh.Candidates(ctx, a.ClientID)
+	if err != nil || len(list) != 1 || list[0].Info.ID != info.ID {
+		t.Fatalf("Candidates = %+v, %v", list, err)
+	}
+	req := evaluator.Request{Resource: evaluator.Resource{EntityID: "light.kitchen", Category: "light"}, Action: "turn_on",
+		Time: time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC), TimeZone: "UTC"}
+	if _, res := evaluator.SelectAndEvaluate([]evaluator.Stored{list[0].Stored}, a.ClientID, household, req); res.Reason != evaluator.ReasonInvalidMandate {
+		t.Errorf("evaluation = %+v", res)
+	}
+	limited := voiceAssistant(t, a.ClientID, func(d map[string]any) { d["limits"] = map[string]any{"max_actions_per_hour": 10} })
+	if _, err := fresh.Put(ctx, limited, admin); err != nil {
+		t.Errorf("Put repairing the mandate: %v", err)
+	}
+}
+
+// A row changed after it was read once is checked anew, not served from the cache.
+func TestTamperingAfterTheFirstReadIsNoticed(t *testing.T) {
+	e, db := newEnvWithDB(t)
+	ctx := context.Background()
+	a := e.agent(t, "Voice assistant")
+	if _, err := e.mandates.Put(ctx, voiceAssistant(t, a.ClientID, nil), admin); err != nil {
+		t.Fatal(err)
+	}
+	if list, err := e.mandates.Candidates(ctx, a.ClientID); err != nil || len(list) != 1 {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE mandate_versions SET document = replace(document, '"camera"', '"sensor"')`); err != nil {
+		t.Fatal(err)
+	}
+	list, err := e.mandates.Candidates(ctx, a.ClientID)
+	if err != nil || len(list) != 1 {
+		t.Fatal(err)
+	}
+	req := evaluator.Request{Resource: evaluator.Resource{EntityID: "light.kitchen", Category: "light"}, Action: "turn_on",
+		Time: time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC), TimeZone: "UTC"}
+	if _, res := evaluator.SelectAndEvaluate([]evaluator.Stored{list[0].Stored}, a.ClientID, household, req); res.Reason != evaluator.ReasonInvalidMandate {
+		t.Errorf("evaluation after tampering = %+v", res)
+	}
+}

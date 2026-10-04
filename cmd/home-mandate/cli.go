@@ -105,15 +105,7 @@ const settingMandateIssuer = "mandate_issuer"
 // 3.5), created once. It must never change: a mandate with a version only follows one
 // of the same issuer.
 func mandateIssuer(ctx context.Context, st *store.Store) (string, error) {
-	issuer, found, err := st.Setting(ctx, settingMandateIssuer)
-	if err != nil || found {
-		return issuer, err
-	}
-	issuer = "urn:uuid:" + newUUID()
-	if err := st.SetSetting(ctx, settingMandateIssuer, issuer); err != nil {
-		return "", err
-	}
-	return issuer, nil
+	return st.SettingOnce(ctx, settingMandateIssuer, "urn:uuid:"+newUUID())
 }
 
 // withState opens the state, runs fn and reports its error.

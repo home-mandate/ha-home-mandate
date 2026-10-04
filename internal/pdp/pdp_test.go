@@ -475,3 +475,15 @@ func TestRateLimitOfTheCandidates(t *testing.T) {
 		t.Errorf("without a mandate = %d", snap.MaxActionsPerHour())
 	}
 }
+
+// An invalid stored mandate has no digest from the evaluation; the decision still names
+// it, so that the audit entry says which mandate denied.
+func TestInvalidMandateIsNamed(t *testing.T) {
+	cfg, clientID := voice(t)
+	cfg.Mandates = fakeMandates{candidates: []mandate.Candidate{{Stored: evaluator.NewStored(nil, evaluator.StatusActive),
+		Info: mandate.Info{ID: "m-broken", Digest: "sha256:" + strings.Repeat("a", 64), MaxActionsPerHour: 5}}}}
+	d, err := New(cfg).Decide(context.Background(), clientID, "light.kitchen", "turn_on", nil)
+	if err != nil || d.Result.Reason != evaluator.ReasonInvalidMandate || d.MandateID != "m-broken" || d.StoredDigest == "" || d.MaxActionsPerHour != 5 {
+		t.Errorf("Decide = %+v, %v", d, err)
+	}
+}

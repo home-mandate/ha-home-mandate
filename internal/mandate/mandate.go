@@ -8,7 +8,9 @@ package mandate
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -174,6 +176,10 @@ func (s *Store) issue(document []byte, current *evaluator.Mandate, currentDigest
 		return nil, Info{}, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	if offered.Version() != 0 {
+		if current != nil && offered.Digest() == currentDigest {
+			info, err := s.check(document) // the current version itself, offered again: unchanged
+			return document, info, err
+		}
 		if offered.Version() <= highest {
 			return nil, Info{}, fmt.Errorf("%w: version %d does not follow version %d", ErrConflict, offered.Version(), highest)
 		}
@@ -250,11 +256,12 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, info Info, document []byte,
 		return fmt.Errorf("mandate: read: %w", err)
 	}
 	var existing struct {
-		clientID, status, digest, document string
-		highest                            int64
+		clientID, status, digest string
+		document                 sql.NullString // NULL: the row of the current version is missing
+		highest                  int64
 	}
 	err = tx.QueryRowContext(ctx, `SELECT m.client_id, m.status, m.current_digest, m.highest_version, v.document FROM mandates m
-		JOIN mandate_versions v ON v.mandate_id = m.id AND v.digest = m.current_digest
+		LEFT JOIN mandate_versions v ON v.mandate_id = m.id AND v.digest = m.current_digest
 		WHERE m.id = ? ORDER BY v.version DESC LIMIT 1`, info.ID).
 		Scan(&existing.clientID, &existing.status, &existing.digest, &existing.highest, &existing.document)
 	switch {
@@ -271,9 +278,11 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, info Info, document []byte,
 	}
 	// A current version that no longer parses (the specification became stricter) is
 	// replaced like a new one; the highest version still rules out older ones.
-	current, err := s.parse(existing.digest, existing.document)
-	if err != nil {
-		current = nil
+	var current *evaluator.Mandate
+	if existing.document.Valid {
+		if m, err := s.parse(existing.digest, existing.document.String); err == nil {
+			current = m
+		}
 	}
 	document, info, err = s.issue(document, current, existing.digest, existing.highest)
 	if err != nil || info.Digest == existing.digest {
@@ -405,7 +414,7 @@ type Candidate struct {
 func (s *Store) Candidates(ctx context.Context, clientID string) ([]Candidate, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.client_id, m.status, m.current_digest, m.max_actions_per_hour, m.updated_at, v.document
 		FROM mandates m JOIN agents a ON a.client_id = m.client_id
-		JOIN mandate_versions v ON v.mandate_id = m.id AND v.version = (SELECT max(version) FROM mandate_versions
+		LEFT JOIN mandate_versions v ON v.mandate_id = m.id AND v.version = (SELECT max(version) FROM mandate_versions
 			WHERE mandate_id = m.id AND digest = m.current_digest)
 		WHERE m.client_id = ? AND m.status = 'active' AND a.status = 'active' ORDER BY m.rowid`, clientID)
 	if err != nil {
@@ -415,12 +424,17 @@ func (s *Store) Candidates(ctx context.Context, clientID string) ([]Candidate, e
 	var out []Candidate
 	for rows.Next() {
 		var c Candidate
-		var updatedAt, document string
+		var updatedAt string
+		var document sql.NullString // NULL: the row of the current version is missing
 		if err := rows.Scan(&c.Info.ID, &c.Info.ClientID, &c.Info.Status, &c.Info.Digest, &c.Info.MaxActionsPerHour, &updatedAt, &document); err != nil {
 			return nil, fmt.Errorf("mandate: read: %w", err)
 		}
 		c.Info.UpdatedAt, _ = time.Parse(timeFormat, updatedAt)
-		c.Stored = s.candidate(c.Info.Digest, document)
+		if document.Valid {
+			c.Stored = s.candidate(c.Info.Digest, document.String)
+		} else {
+			c.Stored = evaluator.NewStored(nil, evaluator.StatusActive) // denies with invalid_mandate
+		}
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -429,16 +443,19 @@ func (s *Store) Candidates(ctx context.Context, clientID string) ([]Candidate, e
 // candidate parses an active stored version once. A version whose content does not have
 // the digest it was stored with was changed outside Home-Mandate: it is no valid mandate.
 func (s *Store) candidate(digest, document string) evaluator.Stored {
+	// The key covers the stored text too: a row changed after it was first read is checked anew.
+	sum := sha256.Sum256([]byte(document))
+	key := digest + " " + hex.EncodeToString(sum[:])
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if c, ok := s.stored[digest]; ok {
+	if c, ok := s.stored[key]; ok {
 		return c
 	}
 	if m, err := evaluator.Parse([]byte(document)); err == nil && m.Digest() != digest {
 		return evaluator.NewStored(nil, evaluator.StatusActive) // not cached: the row may be repaired
 	}
 	c := evaluator.NewStored([]byte(document), evaluator.StatusActive)
-	s.stored[digest] = c
+	s.stored[key] = c
 	return c
 }
 

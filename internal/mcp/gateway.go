@@ -573,8 +573,11 @@ func (g *Gateway) entry(a agent.Agent, d pdp.Decision, withEvaluation bool, resu
 		if r.Decision == evaluator.Ask && r.Approval != nil {
 			e.Evaluation.ApprovalTimeout = r.Approval.Timeout
 		}
-		if r.MandateDigest != "" {
+		switch {
+		case r.MandateDigest != "":
 			e.Mandate = &audit.Mandate{ID: d.MandateID, Digest: r.MandateDigest}
+		case d.StoredDigest != "": // an invalid mandate: name the stored version that denied
+			e.Mandate = &audit.Mandate{ID: d.MandateID, Digest: d.StoredDigest}
 		}
 	}
 	return e

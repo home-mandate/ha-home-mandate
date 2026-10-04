@@ -38,6 +38,17 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	return nil
 }
 
+// SettingOnce stores value under key unless the key exists, and returns the stored value:
+// for values that must never change once set, also when two processes start at once.
+func (s *Store) SettingOnce(ctx context.Context, key, value string) (string, error) {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT (key) DO NOTHING`,
+		key, value, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return "", fmt.Errorf("store: write setting %s: %w", key, err)
+	}
+	stored, _, err := s.Setting(ctx, key)
+	return stored, err
+}
+
 // SetSettings stores several values in one transaction: all or none.
 func (s *Store) SetSettings(ctx context.Context, values map[string]string) error {
 	tx, err := s.db.BeginTx(ctx, nil)

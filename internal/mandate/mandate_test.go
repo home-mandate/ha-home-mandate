@@ -521,6 +521,11 @@ func TestEveryStoredVersionIsIssuedWithTheNextVersion(t *testing.T) {
 		t.Fatalf("second = %+v, %v", second, err)
 	}
 
+	// The current version offered again as it is stored, with its version: unchanged.
+	stored := current()
+	if again, err := e.mandates.Put(ctx, stored, admin); err != nil || again.Digest != second.Digest || issued(t, current()) != 2 {
+		t.Errorf("current version again = %+v, %v", again, err)
+	}
 	// Rollback: an older version offered with its own version number is refused.
 	old, _, err := e.mandates.VersionDocument(ctx, first.ID, 1)
 	if err != nil {

@@ -329,9 +329,17 @@ func (c *Catalog) noteRename(data json.RawMessage) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.renames) < maxRenames {
-		c.renames = append(c.renames, Rename{Old: oldID, New: newID})
+	// The mark moves at once, before the new ID can be decided on; Run stores it.
+	if h, ok := c.marks.(interface {
+		Hold(oldID, newID string) bool
+	}); ok && h.Hold(oldID, newID) {
+		c.log.Warn("critical mark held for the renamed entity", "old", oldID, "new", newID)
 	}
+	if len(c.renames) >= maxRenames {
+		c.log.Error("rename not reported: too many renames since the last refresh", "old", oldID, "new", newID)
+		return
+	}
+	c.renames = append(c.renames, Rename{Old: oldID, New: newID})
 }
 
 func (c *Catalog) applyLocked(ch stateChange) {

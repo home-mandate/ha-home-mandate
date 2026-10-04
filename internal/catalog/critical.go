@@ -92,20 +92,45 @@ func (m *Marks) Set(ctx context.Context, entityID string, critical bool, by stri
 	return nil
 }
 
-// Carry marks the new ID of a renamed entity if its old ID is marked, so that a rename
-// in Home Assistant does not silently lower the protection. The old ID keeps its mark: an
-// entity that takes it later is protected too. It reports whether it marked newID.
+// Hold marks the new ID of a renamed entity in memory if its old ID is marked, at once
+// and without waiting for the database, so that the renamed entity is never without its
+// mark (it runs when the rename event arrives). Carry stores it. The old ID keeps its
+// mark: an entity that takes it later is protected too. It reports whether it marked newID.
+func (m *Marks) Hold(oldID, newID string) bool {
+	if !opaque(newID) {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.set[oldID]; !ok {
+		return false
+	}
+	if _, ok := m.set[newID]; ok {
+		return false
+	}
+	m.set[newID] = struct{}{}
+	return true
+}
+
+// Carry stores the mark of the new ID of a renamed entity if its old ID is marked (see
+// Hold). It reports whether the database had no mark for newID before.
 func (m *Marks) Carry(ctx context.Context, oldID, newID string) (bool, error) {
+	if !opaque(newID) {
+		return false, errors.New("catalog: not a valid entity ID")
+	}
 	if !m.Critical(oldID) {
 		return false, nil
 	}
-	if m.Critical(newID) {
-		return false, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	res, err := m.db.ExecContext(ctx, `INSERT INTO critical_entities (entity_id, marked_at, marked_by) VALUES (?, ?, ?)
+		ON CONFLICT (entity_id) DO NOTHING`, newID, time.Now().UTC().Format(time.RFC3339), systemActor)
+	if err != nil {
+		return false, fmt.Errorf("catalog: store critical entity: %w", err)
 	}
-	if err := m.Set(ctx, newID, true, systemActor); err != nil {
-		return false, err
-	}
-	return true, nil
+	m.set[newID] = struct{}{}
+	n, err := res.RowsAffected()
+	return err == nil && n > 0, nil
 }
 
 // systemActor is marked_by for marks Home-Mandate sets itself.

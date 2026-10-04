@@ -64,15 +64,18 @@ func New(cfg Config) *PDP {
 // Decision is the result of an evaluation together with the inputs it was based on, for
 // the PEP and the audit log.
 type Decision struct {
-	Result            evaluator.Result
-	Resource          evaluator.Resource
-	Action            string
-	Parameters        map[string]int64
-	Known             bool // the entity is in the catalog
-	Time              time.Time
-	TimeZone          string
-	Status            evaluator.MandateStatus
-	MandateID         string
+	Result     evaluator.Result
+	Resource   evaluator.Resource
+	Action     string
+	Parameters map[string]int64
+	Known      bool // the entity is in the catalog
+	Time       time.Time
+	TimeZone   string
+	Status     evaluator.MandateStatus
+	MandateID  string
+	// StoredDigest is the digest the store recorded for a mandate that the evaluation found
+	// invalid (it then has none of its own); empty otherwise.
+	StoredDigest      string
 	MaxActionsPerHour int
 }
 
@@ -122,6 +125,12 @@ func (s *Snapshot) Decide(entityID, action string, parameters map[string]int64) 
 		if d.Result.MandateDigest != "" && c.Info.Digest == d.Result.MandateDigest {
 			d.MandateID, d.MaxActionsPerHour = c.Info.ID, c.Info.MaxActionsPerHour
 		}
+	}
+	// An invalid mandate has no digest from the evaluation; with a single candidate the
+	// audit entry still names which mandate denied.
+	if d.MandateID == "" && len(s.candidates) == 1 && d.Result.Reason == evaluator.ReasonInvalidMandate {
+		c := s.candidates[0]
+		d.MandateID, d.StoredDigest, d.MaxActionsPerHour = c.Info.ID, c.Info.Digest, c.Info.MaxActionsPerHour
 	}
 	return d
 }

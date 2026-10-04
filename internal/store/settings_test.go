@@ -95,3 +95,15 @@ func TestSetSettingsIsAllOrNothing(t *testing.T) {
 		t.Errorf("a = %q after a failed write", v)
 	}
 }
+
+func TestSettingOnceKeepsTheFirstValue(t *testing.T) {
+	s, _ := openTemp(t)
+	ctx := context.Background()
+	first, err := s.SettingOnce(ctx, "mandate_issuer", "urn:uuid:a")
+	if err != nil || first != "urn:uuid:a" {
+		t.Fatalf("first = %q, %v", first, err)
+	}
+	if second, err := s.SettingOnce(ctx, "mandate_issuer", "urn:uuid:b"); err != nil || second != "urn:uuid:a" {
+		t.Errorf("second = %q, %v", second, err)
+	}
+}

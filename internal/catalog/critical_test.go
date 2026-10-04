@@ -110,3 +110,27 @@ func TestCarryMarksTheNewIDOfARenamedEntity(t *testing.T) {
 		t.Error("Carry accepted an invalid entity ID")
 	}
 }
+
+func TestHoldMarksTheNewIDAtOnceInMemory(t *testing.T) {
+	m, s := newMarks(t)
+	ctx := context.Background()
+	if err := m.Set(ctx, "lock.cellar", true, "user-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !m.Hold("lock.cellar", "lock.cellar_door") || !m.Critical("lock.cellar_door") {
+		t.Fatal("Hold did not mark the new ID")
+	}
+	if m.Hold("lock.cellar", "lock.cellar_door") || m.Hold("light.kitchen", "light.x") || m.Hold("lock.cellar", "lock. bad") {
+		t.Error("Hold marked again, an unmarked entity, or an invalid ID")
+	}
+	// Held, not stored: a restart before Carry would lose it, so Carry stores it.
+	if reloaded, _ := catalog.LoadMarks(ctx, s.DB()); reloaded.Critical("lock.cellar_door") {
+		t.Error("Hold wrote to the database")
+	}
+	if carried, err := m.Carry(ctx, "lock.cellar", "lock.cellar_door"); err != nil || !carried {
+		t.Errorf("Carry after Hold = %v, %v", carried, err)
+	}
+	if reloaded, _ := catalog.LoadMarks(ctx, s.DB()); !reloaded.Critical("lock.cellar_door") {
+		t.Error("Carry did not store the held mark")
+	}
+}

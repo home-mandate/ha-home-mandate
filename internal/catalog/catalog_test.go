@@ -466,3 +466,31 @@ func TestRenamesAreBounded(t *testing.T) {
 		t.Errorf("kept %d renames, want %d", len(c.renames), maxRenames)
 	}
 }
+
+type holdingMarks map[string]bool
+
+func (h holdingMarks) Critical(id string) bool { return h[id] }
+func (h holdingMarks) Hold(oldID, newID string) bool {
+	if !h[oldID] || h[newID] {
+		return false
+	}
+	h[newID] = true
+	return true
+}
+
+// The renamed entity is never decided on without its mark: the mark moves when the event
+// arrives, before the refresh that brings the new ID.
+func TestRenameMovesTheMarkBeforeTheRefresh(t *testing.T) {
+	src := house()
+	c := loaded(t, src)
+	marks := holdingMarks{"light.kitchen": true}
+	c.SetMarks(marks)
+	c.HandleEvent(event(t, "entity_registry_updated", map[string]any{"action": "update",
+		"entity_id": "light.kitchen_ceiling", "old_entity_id": "light.kitchen"}))
+	// The state of the new ID may arrive before any refresh.
+	c.HandleEvent(event(t, "state_changed", map[string]any{"entity_id": "light.kitchen_ceiling",
+		"new_state": map[string]any{"entity_id": "light.kitchen_ceiling", "state": "on"}}))
+	if d, ok := c.Lookup("light.kitchen_ceiling"); !ok || !d.Critical {
+		t.Errorf("renamed entity = %+v, %v; want it critical at once", d, ok)
+	}
+}
