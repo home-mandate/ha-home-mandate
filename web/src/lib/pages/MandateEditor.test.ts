@@ -130,6 +130,40 @@ describe('MandateEditor', () => {
     expect(screen.queryByText(/Please fix before saving/)).toBeNull();
   });
 
+  it('limits the values an allowing rule lets through, in the unit of the form (SPEC-v0 section 4.5)', async () => {
+    const { api } = await start();
+    const climate = await open(2);
+    // "read" carries no temperature: only a rule with nothing but "set temperature" can be limited.
+    expect(climate.queryByRole('group', { name: 'Temperature' })).toBeNull();
+    await fireEvent.click(climate.getByRole('button', { name: 'read' }));
+    const temperature = within((await card(2)).getByRole('group', { name: 'Temperature' }));
+    await fireEvent.input(temperature.getByLabelText('From'), { target: { value: '16' } });
+    await fireEvent.input(temperature.getByLabelText('To'), { target: { value: '23,5' } });
+    expect((await cards())[1]?.textContent).toMatch(/set temperature \(Temperature 16\s?(°C)?\s?–\s?23\.5\s?°C\)/);
+    // Something that is no number in range keeps the last limit and says so.
+    await fireEvent.input(temperature.getByLabelText('To'), { target: { value: 'warm' } });
+    expect((await card(2)).getByText('Enter a number in the allowed range.')).toBeTruthy();
+    expect((await cards())[1]?.textContent).toMatch(/23\.5\s?°C/);
+    await fireEvent.input(temperature.getByLabelText('To'), { target: { value: '23' } });
+
+    // Adding "read" again makes the limits invalid; they are never dropped silently.
+    await fireEvent.click((await card(2)).getByRole('button', { name: 'read' }));
+    await fireEvent.click(saveButton());
+    expect(await screen.findByText('Limits need a rule whose actions all carry this value, e.g. only “set”. Remove the other actions or the limits.')).toBeTruthy();
+    await fireEvent.click((await card(2)).getByRole('button', { name: 'Remove limits' }));
+    expect((await card(2)).queryByRole('group', { name: 'Temperature' })).toBeNull();
+
+    // Stored as hundredths of a degree.
+    await fireEvent.click((await card(2)).getByRole('button', { name: 'read' }));
+    const again = within((await card(2)).getByRole('group', { name: 'Temperature' }));
+    await fireEvent.input(again.getByLabelText('To'), { target: { value: '22.5' } });
+    const put = vi.spyOn(api, 'putMandate');
+    await fireEvent.click(saveButton());
+    await fireEvent.click(within(await screen.findByRole('dialog', { name: 'Save changes?' })).getByRole('button', { name: 'Save as version 2' }));
+    await waitFor(() => expect(put).toHaveBeenCalled());
+    expect(put.mock.calls[0]?.[1].draft.rules[1]).toMatchObject({ actions: ['set_temperature'], constraints: { temperature: { max: 2250 } } });
+  });
+
   it('says that write actions do not include reading and what "all actions" includes', async () => {
     await start();
     const door = await open(3);

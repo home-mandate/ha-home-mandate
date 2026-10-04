@@ -39,6 +39,11 @@ export function actionsOf(category: Category): readonly string[] {
   return VOCABULARY[category].actions;
 }
 
+/** parametersOf returns the names of an action's integer parameters (SPEC-v0 section 4.5). */
+export function parametersOf(category: Category, action: string): readonly string[] {
+  return VOCABULARY[category]?.parameters[action] ?? [];
+}
+
 export function criticalActionsOf(category: Category): readonly string[] {
   return VOCABULARY[category].critical;
 }

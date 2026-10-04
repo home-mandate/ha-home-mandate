@@ -768,5 +768,21 @@
   "rule_area_follows": "Diese Regel gilt für die Geräte, die jetzt in diesem Bereich sind. Ein Gerät, das in einen anderen Bereich wechselt, ist nicht mehr erfasst.",
   "mandates_stale": "{count, plural, one {{count, number} Regel nennt ein Gerät oder einen Bereich, den es nicht mehr gibt} other {{count, number} Regeln nennen Geräte oder Bereiche, die es nicht mehr gibt}}",
   "editor_stale_title": "Home Assistant hat sich geändert",
-  "editor_stale_body": "{count, plural, one {{count, number} Regel nennt ein Gerät oder einen Bereich, den es nicht mehr gibt. Umbenannte Geräte schützt sie nicht mehr.} other {{count, number} Regeln nennen Geräte oder Bereiche, die es nicht mehr gibt. Umbenannte Geräte schützen sie nicht mehr.}}"
+  "editor_stale_body": "{count, plural, one {{count, number} Regel nennt ein Gerät oder einen Bereich, den es nicht mehr gibt. Umbenannte Geräte schützt sie nicht mehr.} other {{count, number} Regeln nennen Geräte oder Bereiche, die es nicht mehr gibt. Umbenannte Geräte schützen sie nicht mehr.}}",
+  "limits_legend": "Grenzen",
+  "limits_note": "Werte außerhalb der Grenzen werden abgelehnt. Lass ein Feld leer, wenn es keine Grenze geben soll.",
+  "limits_min": "Von",
+  "limits_max": "Bis",
+  "limit_brightness": "Helligkeit",
+  "limit_temperature": "Temperatur",
+  "limit_position": "Position",
+  "limit_volume": "Lautstärke",
+  "limits_range": "{name} {range}",
+  "limits_from": "{name} ab {value}",
+  "limits_to": "{name} bis {value}",
+  "limits_remove": "Grenzen entfernen",
+  "validation_limits_allow_only": "Grenzen gelten nur für eine erlaubende Regel mit ausgewählten Aktionen. Wähle „Erlauben“ oder entferne die Grenzen.",
+  "validation_limits_unknown": "Grenzen brauchen eine Regel, deren Aktionen alle diesen Wert haben, z. B. nur „einstellen“. Entferne die anderen Aktionen oder die Grenzen.",
+  "validation_limits_order": "„Von“ ist größer als „Bis“.",
+  "validation_limits_format": "Gib eine Zahl im erlaubten Bereich ein."
 }

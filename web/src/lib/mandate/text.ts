@@ -9,6 +9,7 @@ import { windowMinutes } from '../engine/check.ts';
 import { m } from '../i18n.ts';
 import { cleanUntrusted, isolate } from '../untrusted.ts';
 import { actionLabel, categoryLabel, WEEKDAYS, weekdayNames } from './labels.ts';
+import { limitsText } from './limits.ts';
 import { categoryOf } from './scope.ts';
 
 export interface RuleText {
@@ -70,11 +71,13 @@ export function conditionsText(rule: Rule, locale: string): string {
   return [daysText(rule.conditions?.weekdays, locale), windowText(rule.conditions?.time_window, locale)].filter(Boolean).join(' · ');
 }
 
-/** actionsText lists a rule's actions by name; "*" is "all actions". */
+/** actionsText lists a rule's actions by name, with their limits; "*" is "all actions". */
 export function actionsText(rule: Rule, catalog: DeviceCatalog, locale: string): string {
   if (rule.actions.includes('*')) return m.rule_all_actions();
   const category = categoryOf(rule, catalog.devices);
-  return listText(rule.actions.map((a) => actionLabel(category, a)), locale);
+  const actions = listText(rule.actions.map((a) => actionLabel(category, a)), locale);
+  const limits = limitsText(rule, locale);
+  return limits ? `${actions} (${limits})` : actions;
 }
 
 export function ruleText(rule: Rule, catalog: DeviceCatalog, locale: string): RuleText {

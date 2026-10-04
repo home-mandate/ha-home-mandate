@@ -22,6 +22,7 @@
     withWindow,
   } from '../../mandate/edit.ts';
   import { actionLabel, categoryLabel, WEEKDAYS, weekdayNames } from '../../mandate/labels.ts';
+  import { fromInput, limitableParameters, parameterLabel, toInput, unitOf, withConstraint, withoutConstraints } from '../../mandate/limits.ts';
   import { criticalDevices, demotedNames, includedNames } from '../../mandate/notes.ts';
   import type { FieldProblem, Part } from '../../mandate/problems.ts';
   import { categoryOf, deviceOptions, scopeOf, vocabularyOf, type ScopeCategory } from '../../mandate/scope.ts';
@@ -83,6 +84,34 @@
   const weekdaysError = $derived(problem('weekdays'));
   const timeoutError = $derived(problem('timeout'));
   const approversError = $derived(problem('approvers'));
+  const limitsError = $derived(problem('limits'));
+
+  /** Values the rule can be limited by, and those it is limited by already (perhaps no longer fitting). */
+  const limitable = $derived(limitableParameters(rule, devices));
+  const limited = $derived([...new Set([...limitable, ...Object.keys(rule.constraints ?? {})])]);
+  /** What was typed into a limit field and is no number in range; the rule keeps its last valid limit. */
+  const typed: Record<string, string> = $state({});
+  const UNIT_SIGNS = { percent: '%', celsius: '°C' } as const;
+  const BOUNDS = ['min', 'max'] as const;
+  const BOUND_LABELS = { min: () => m.limits_min(), max: () => m.limits_max() };
+
+  function setLimit(name: string, bound: 'min' | 'max', text: string) {
+    const key = `${name}.${bound}`;
+    const value = fromInput(name, text);
+    if (value === 'invalid') {
+      typed[key] = text;
+      return;
+    }
+    delete typed[key];
+    const current = rule.constraints?.[name] ?? {};
+    const next = { ...current, [bound]: value ?? undefined };
+    change(withConstraint(rule, name, next.min, next.max), false);
+  }
+
+  function removeLimits() {
+    for (const key of Object.keys(typed)) delete typed[key];
+    change(withoutConstraints(rule));
+  }
 
   const categoryOptions = $derived([
     { value: 'all', label: m.rule_all_devices() },
@@ -196,6 +225,49 @@
       onconfirm={() => change(withAllowCritical(rule, true))}
       onoff={() => change(withAllowCritical(rule, false))}
     />
+  {/if}
+
+  {#if limited.length > 0}
+    <fieldset class="limits" aria-describedby="{id}-limits">
+      <legend>{m.limits_legend()}</legend>
+      {#each limited as name (name)}
+        {@const unit = unitOf(name)}
+        <div class="limit" role="group" aria-label={parameterLabel(name)}>
+          <span class="limit-name">{parameterLabel(name)}</span>
+          {#each BOUNDS as bound (bound)}
+            {@const key = `${name}.${bound}`}
+            <span class="time">
+              <label for="{id}-{key}">{BOUND_LABELS[bound]()}</label>
+              <span class="unit">
+                <input
+                  id="{id}-{key}"
+                  type="text"
+                  inputmode="decimal"
+                  autocomplete="off"
+                  value={typed[key] ?? toInput(name, rule.constraints?.[name]?.[bound])}
+                  aria-invalid={typed[key] !== undefined || limitsError ? 'true' : undefined}
+                  aria-describedby="{id}-limits"
+                  oninput={(e) => setLimit(name, bound, e.currentTarget.value)}
+                />
+                <span aria-hidden="true">{UNIT_SIGNS[unit.unit]}</span>
+              </span>
+            </span>
+          {/each}
+        </div>
+      {/each}
+      <span id="{id}-limits" class="note" class:danger={limitsError || Object.keys(typed).length > 0}>
+        {#if limitsError}
+          <Icon name="warning" size={16} /><span>{limitsError}</span>
+        {:else if Object.keys(typed).length > 0}
+          <Icon name="warning" size={16} /><span>{m.validation_limits_format()}</span>
+        {:else}
+          <Icon name="info" size={16} /><span>{m.limits_note()}</span>
+        {/if}
+      </span>
+      {#if rule.constraints}
+        <Button variant="text" size="lg" onclick={removeLimits}>{m.limits_remove()}</Button>
+      {/if}
+    </fieldset>
   {/if}
 
   {#if rule.decision === 'ask'}
@@ -424,10 +496,35 @@
     background: var(--hm-color-surface);
     border: var(--hm-border-width) solid var(--hm-color-border-strong);
   }
-  .time input[aria-invalid='true'] {
+  .time input[aria-invalid='true'],
+  .unit input[aria-invalid='true'] {
     border-color: var(--hm-color-danger-fg);
     /* A shadow, not an outline: the outline stays free for the focus ring. */
     box-shadow: 0 0 0 1px var(--hm-color-danger-fg);
+  }
+  .limits :global(.btn) {
+    align-self: flex-start;
+  }
+  .limit {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--hm-space-2) var(--hm-space-3);
+  }
+  .limit-name {
+    min-inline-size: 7em;
+    padding-block-end: 10px;
+    font-size: var(--hm-font-size-sm);
+  }
+  .unit {
+    display: flex;
+    align-items: center;
+    gap: var(--hm-space-1);
+    font-size: var(--hm-font-size-sm);
+    color: var(--hm-color-text-muted);
+  }
+  .unit input {
+    inline-size: 6em;
   }
   .foot {
     display: flex;

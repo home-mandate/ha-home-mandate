@@ -768,5 +768,21 @@
   "rule_area_follows": "This rule covers the devices that are in this area now. A device moved to another area is no longer covered.",
   "mandates_stale": "{count, plural, one {{count, number} rule names a device or area that no longer exists} other {{count, number} rules name devices or areas that no longer exist}}",
   "editor_stale_title": "Home Assistant changed",
-  "editor_stale_body": "{count, plural, one {{count, number} rule names a device or area that no longer exists. Renamed devices are no longer protected by it.} other {{count, number} rules name devices or areas that no longer exist. Renamed devices are no longer protected by them.}}"
+  "editor_stale_body": "{count, plural, one {{count, number} rule names a device or area that no longer exists. Renamed devices are no longer protected by it.} other {{count, number} rules name devices or areas that no longer exist. Renamed devices are no longer protected by them.}}",
+  "limits_legend": "Limits",
+  "limits_note": "Values outside the limits are denied. Leave a field empty for no limit.",
+  "limits_min": "From",
+  "limits_max": "To",
+  "limit_brightness": "Brightness",
+  "limit_temperature": "Temperature",
+  "limit_position": "Position",
+  "limit_volume": "Volume",
+  "limits_range": "{name} {range}",
+  "limits_from": "{name} from {value}",
+  "limits_to": "{name} up to {value}",
+  "limits_remove": "Remove limits",
+  "validation_limits_allow_only": "Limits only apply to an allowing rule with chosen actions. Choose “Allow” or remove the limits.",
+  "validation_limits_unknown": "Limits need a rule whose actions all carry this value, e.g. only “set”. Remove the other actions or the limits.",
+  "validation_limits_order": "“From” is greater than “To”.",
+  "validation_limits_format": "Enter a number in the allowed range."
 }

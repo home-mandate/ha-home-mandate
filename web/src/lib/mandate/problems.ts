@@ -22,7 +22,8 @@ export type Part =
   | 'actions'
   | 'decision'
   | 'window'
-  | 'weekdays';
+  | 'weekdays'
+  | 'limits';
 
 export interface FieldProblem {
   /** Index of the rule, or null for the settings of the mandate. */
@@ -53,6 +54,19 @@ function settingProblem(path: readonly string[], code: Problem['code']): Describ
   }
 }
 
+function limitsProblem(code: Problem['code']): string {
+  switch (code) {
+    case 'allow_only':
+      return m.validation_limits_allow_only();
+    case 'unknown':
+      return m.validation_limits_unknown();
+    case 'order':
+      return m.validation_limits_order();
+    default:
+      return m.validation_limits_format();
+  }
+}
+
 function ruleProblem(draft: MandateDraft, index: number, path: readonly string[], code: Problem['code']): Described {
   const rule = draft.rules[index];
   const [first, second] = path;
@@ -70,6 +84,8 @@ function ruleProblem(draft: MandateDraft, index: number, path: readonly string[]
       if (second === 'time_window') return { part: 'window', text: code === 'empty' ? m.time_error_equal() : m.validation_window_incomplete() };
       if (second === 'weekdays') return { part: 'weekdays', text: m.validation_weekdays_required() };
       return { part: 'window', text: invalid };
+    case 'constraints':
+      return { part: 'limits', text: limitsProblem(code) };
     case 'approval':
       if (second === 'approvers') return { part: 'approvers', text: m.validation_approvers() };
       if (second === 'timeout') return { part: 'timeout', text: m.timeout_error() };

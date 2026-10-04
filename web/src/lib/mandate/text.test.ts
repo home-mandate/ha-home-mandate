@@ -87,3 +87,10 @@ describe('ruleText', () => {
     expect(text(rule({ conditions: { time_window: '22:00-06:00' } })).conditions).toMatch(/^10:00\sPM to 06:00\sAM the next day$/);
   });
 });
+
+describe('limits in the sentence', () => {
+  it('follows the actions they limit', () => {
+    const limited = rule({ resource: { category: 'climate' }, actions: ['set_temperature'], constraints: { temperature: { min: 1600, max: 2300 } } });
+    expect(ruleText(limited, devicesFixture, 'en').actions).toMatch(/^set temperature \(Temperature 16\s?(°C)?\s?–\s?23\s?°C\)$/);
+  });
+});
