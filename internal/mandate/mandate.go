@@ -91,11 +91,13 @@ type Store struct {
 
 	mu     sync.Mutex
 	parsed map[string]*evaluator.Mandate // by digest; versions never change
+	stored map[string]evaluator.Stored   // active candidates by digest
 }
 
 // New returns the Store for principal; issuer is the URI of this installation.
 func New(db *sql.DB, log *audit.Log, principal, issuer string) *Store {
-	return &Store{db: db, log: log, principal: principal, issuer: issuer, parsed: map[string]*evaluator.Mandate{}}
+	return &Store{db: db, log: log, principal: principal, issuer: issuer, parsed: map[string]*evaluator.Mandate{},
+		stored: map[string]evaluator.Stored{}}
 }
 
 // meta holds the fields the evaluator does not expose.
@@ -387,6 +389,57 @@ func (s *Store) ForAgent(ctx context.Context, clientID string) (Loaded, error) {
 		status = evaluator.StatusRevoked
 	}
 	return Loaded{Info: info, Mandate: m, Status: status}, nil
+}
+
+// Candidate is a stored mandate that the selection of SPEC-v0 section 4.3 considers.
+type Candidate struct {
+	Info   Info
+	Stored evaluator.Stored
+}
+
+// Candidates returns the mandates of an agent that the selection considers: the active
+// ones, and only while the agent is active. A revoked mandate and the mandates of a
+// revoked agent are no candidates (SPEC-v0 section 4.3, step 1), so the agent then has
+// no mandate. A current version that no longer parses, or whose content no longer has
+// its digest, stays a candidate and denies with invalid_mandate.
+func (s *Store) Candidates(ctx context.Context, clientID string) ([]Candidate, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.client_id, m.status, m.current_digest, m.max_actions_per_hour, m.updated_at, v.document
+		FROM mandates m JOIN agents a ON a.client_id = m.client_id
+		JOIN mandate_versions v ON v.mandate_id = m.id AND v.version = (SELECT max(version) FROM mandate_versions
+			WHERE mandate_id = m.id AND digest = m.current_digest)
+		WHERE m.client_id = ? AND m.status = 'active' AND a.status = 'active' ORDER BY m.rowid`, clientID)
+	if err != nil {
+		return nil, fmt.Errorf("mandate: read: %w", err)
+	}
+	defer rows.Close()
+	var out []Candidate
+	for rows.Next() {
+		var c Candidate
+		var updatedAt, document string
+		if err := rows.Scan(&c.Info.ID, &c.Info.ClientID, &c.Info.Status, &c.Info.Digest, &c.Info.MaxActionsPerHour, &updatedAt, &document); err != nil {
+			return nil, fmt.Errorf("mandate: read: %w", err)
+		}
+		c.Info.UpdatedAt, _ = time.Parse(timeFormat, updatedAt)
+		c.Stored = s.candidate(c.Info.Digest, document)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// candidate parses an active stored version once. A version whose content does not have
+// the digest it was stored with was changed outside Home-Mandate: it is no valid mandate.
+func (s *Store) candidate(digest, document string) evaluator.Stored {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.stored[digest]; ok {
+		return c
+	}
+	if m, err := evaluator.Parse([]byte(document)); err == nil && m.Digest() != digest {
+		return evaluator.NewStored(nil, evaluator.StatusActive) // not cached: the row may be repaired
+	}
+	c := evaluator.NewStored([]byte(document), evaluator.StatusActive)
+	s.stored[digest] = c
+	return c
 }
 
 // parse parses a stored version once; a version that no longer parses (e.g. after an

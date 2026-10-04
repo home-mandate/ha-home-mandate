@@ -21,14 +21,22 @@ import (
 	"github.com/home-mandate/home-mandate/internal/mandate"
 )
 
-// fakeMandates returns one parsed mandate for every agent (nil if it does not parse).
+// fakeMandates returns the same candidates for every agent.
 type fakeMandates struct {
-	loaded mandate.Loaded
-	err    error
+	candidates []mandate.Candidate
+	err        error
 }
 
-func (f fakeMandates) ForAgent(context.Context, string) (mandate.Loaded, error) {
-	return f.loaded, f.err
+func (f fakeMandates) Candidates(context.Context, string) ([]mandate.Candidate, error) {
+	return f.candidates, f.err
+}
+
+// stored is a candidate of the document with its digest (empty if it does not parse).
+func stored(doc []byte, info mandate.Info) mandate.Candidate {
+	if m, err := evaluator.Parse(doc); err == nil && info.Digest == "" {
+		info.Digest = m.Digest()
+	}
+	return mandate.Candidate{Info: info, Stored: evaluator.NewStored(doc, evaluator.StatusActive)}
 }
 
 type fakeCatalog map[string]catalog.Device
@@ -80,7 +88,7 @@ func loadCases(t *testing.T) []conformanceCase {
 
 // pdpFor builds a PDP whose sources answer with the inputs of the case: the catalog
 // knows the resource, the clock returns the case time, the household zone is the case
-// zone, and the mandate store returns the case mandate with its status.
+// zone, and the mandate store has the case mandate as the agent's only candidate.
 func pdpFor(t *testing.T, c conformanceCase) (*PDP, string) {
 	t.Helper()
 	doc := []byte(c.MandateInline)
@@ -90,7 +98,6 @@ func pdpFor(t *testing.T, c conformanceCase) (*PDP, string) {
 			t.Fatal(err)
 		}
 	}
-	m, _ := evaluator.Parse(doc) // invalid mandates stay nil and must be denied
 	var meta struct {
 		Principal string `json:"principal"`
 		Agent     struct {
@@ -98,10 +105,6 @@ func pdpFor(t *testing.T, c conformanceCase) (*PDP, string) {
 		} `json:"agent"`
 	}
 	_ = json.Unmarshal(doc, &meta)
-	status := evaluator.StatusActive
-	if c.Revoked {
-		status = evaluator.StatusRevoked
-	}
 	at, err := time.Parse(time.RFC3339, c.Time)
 	if err != nil {
 		t.Fatalf("%s: time %q: %v", c.ID, c.Time, err)
@@ -109,7 +112,7 @@ func pdpFor(t *testing.T, c conformanceCase) (*PDP, string) {
 	r := c.RawResource
 	p := New(Config{
 		Principal: meta.Principal,
-		Mandates:  fakeMandates{loaded: mandate.Loaded{Mandate: m, Status: status}},
+		Mandates:  fakeMandates{candidates: []mandate.Candidate{stored(doc, mandate.Info{})}},
 		Catalog:   catalogFor(r.EntityID, r.Category, r.Area, r.Critical),
 		TimeZone:  func() string { return c.Timezone },
 		Now:       func() time.Time { return at },
@@ -140,8 +143,13 @@ func post(t *testing.T, url string, body any) (*http.Response, Response) {
 }
 
 // Every conformance case of mandate-spec runs against the AuthZEN endpoint over HTTP.
+// A revoked mandate is never a candidate of the selection (SPEC-v0 section 4.3); those
+// cases belong to the evaluator class, the selection cases cover them for the PDP.
 func TestConformanceCasesOverHTTP(t *testing.T) {
 	for _, c := range loadCases(t) {
+		if c.Revoked {
+			continue
+		}
 		t.Run(c.ID, func(t *testing.T) {
 			p, clientID := pdpFor(t, c)
 			srv := httptest.NewServer(p.Handler())
@@ -181,8 +189,8 @@ func voice(t *testing.T) (Config, string) {
 	}
 	return Config{
 		Principal: "household:hm-7f3a",
-		Mandates: fakeMandates{loaded: mandate.Loaded{Mandate: m, Status: evaluator.StatusActive,
-			Info: mandate.Info{ID: "m-voice-assistant", MaxActionsPerHour: 60}}},
+		Mandates: fakeMandates{candidates: []mandate.Candidate{{Stored: evaluator.NewStored(doc, evaluator.StatusActive),
+			Info: mandate.Info{ID: "m-voice-assistant", Digest: m.Digest(), MaxActionsPerHour: 60}}}},
 		Catalog: fakeCatalog{
 			"light.kitchen": {EntityID: "light.kitchen", Category: "light", Area: "kitchen"},
 			"camera.porch":  {EntityID: "camera.porch", Category: "camera", Area: "porch"},
@@ -236,7 +244,7 @@ func TestUnknownEntityIsDenied(t *testing.T) {
 
 func TestMissingMandateIsDenied(t *testing.T) {
 	cfg, clientID := voice(t)
-	cfg.Mandates = fakeMandates{err: mandate.ErrNotFound}
+	cfg.Mandates = fakeMandates{}
 	d, err := New(cfg).Decide(context.Background(), clientID, "light.kitchen", "turn_on", nil)
 	if err != nil || d.Result.Decision != evaluator.Deny || d.Result.Reason != evaluator.ReasonNoMandate {
 		t.Errorf("Decide = %+v, %v", d, err)
@@ -394,5 +402,76 @@ func TestCriticalEntityNeedsConfirmation(t *testing.T) {
 	d, _ := New(cfg).Decide(context.Background(), clientID, "light.kitchen", "turn_on", nil)
 	if d.Result.Decision != evaluator.Ask || d.Result.Reason != evaluator.ReasonCriticalDemotion || !d.Resource.Critical {
 		t.Errorf("Decide on an entity marked as critical = %+v", d.Result)
+	}
+}
+
+// Every selection case of mandate-spec (SPEC-v0 section 4.3) runs against the AuthZEN
+// endpoint: the store returns all mandates of the case, revoked ones included, and the
+// PDP selects. A revoked mandate alone is no_mandate, two current ones are ambiguous.
+func TestSelectionCasesOverHTTP(t *testing.T) {
+	data, err := fs.ReadFile(mandatespec.FS(), mandatespec.SelectionCasesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		Cases []struct {
+			conformanceCase
+			Mandates []struct {
+				MandateInline json.RawMessage `json:"mandate_inline"`
+				Revoked       bool            `json:"revoked"`
+			} `json:"mandates"`
+			Subject struct {
+				ClientID  string `json:"client_id"`
+				Principal string `json:"principal"`
+			} `json:"subject"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil || len(file.Cases) == 0 {
+		t.Fatalf("selection cases: %v", err)
+	}
+	for _, c := range file.Cases {
+		t.Run(c.ID, func(t *testing.T) {
+			var candidates []mandate.Candidate
+			for _, m := range c.Mandates {
+				if !m.Revoked { // the store returns only active mandates
+					candidates = append(candidates, stored(m.MandateInline, mandate.Info{}))
+				}
+			}
+			at, err := time.Parse(time.RFC3339, c.Time)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := c.RawResource
+			p := New(Config{Principal: c.Subject.Principal, Mandates: fakeMandates{candidates: candidates},
+				Catalog:  catalogFor(r.EntityID, r.Category, r.Area, r.Critical),
+				TimeZone: func() string { return c.Timezone }, Now: func() time.Time { return at }})
+			srv := httptest.NewServer(p.Handler())
+			defer srv.Close()
+			resp, got := post(t, srv.URL, Request{
+				Subject:  Subject{Type: "agent", ID: c.Subject.ClientID, Properties: SubjectProperties{Principal: c.Subject.Principal}},
+				Action:   Action{Name: c.Action, Properties: c.Parameters},
+				Resource: Resource{ID: r.EntityID},
+			})
+			if resp.StatusCode != http.StatusOK || got.Decision != (c.Expected == "allow") || got.Context.Outcome != c.Expected || got.Context.Reason != c.Reason {
+				t.Errorf("%s (%s): got %+v, want %s/%s", c.ID, c.Why, got, c.Expected, c.Reason)
+			}
+		})
+	}
+}
+
+// The rate limit is known before a mandate is selected: the strictest of the candidates.
+func TestRateLimitOfTheCandidates(t *testing.T) {
+	cfg, clientID := voice(t)
+	doc, _ := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+	cfg.Mandates = fakeMandates{candidates: []mandate.Candidate{
+		stored(doc, mandate.Info{MaxActionsPerHour: 60}), stored(doc, mandate.Info{MaxActionsPerHour: 0}), stored(doc, mandate.Info{MaxActionsPerHour: 20}),
+	}}
+	snap, err := New(cfg).Snapshot(context.Background(), clientID)
+	if err != nil || snap.MaxActionsPerHour() != 20 {
+		t.Errorf("MaxActionsPerHour = %d, %v", snap.MaxActionsPerHour(), err)
+	}
+	cfg.Mandates = fakeMandates{}
+	if snap, _ := New(cfg).Snapshot(context.Background(), clientID); snap.MaxActionsPerHour() != 0 {
+		t.Errorf("without a mandate = %d", snap.MaxActionsPerHour())
 	}
 }

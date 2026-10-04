@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/mandate-spec/mandate-spec/evaluator"
 
 	"github.com/home-mandate/home-mandate/internal/agent"
 	"github.com/home-mandate/home-mandate/internal/audit"
@@ -41,6 +44,17 @@ func TestTamperedStoredVersionIsNotEvaluated(t *testing.T) {
 	fresh := mandate.New(db, e.log, household, issuer) // no cached parse
 	if _, err := fresh.ForAgent(ctx, a.ClientID); !errors.Is(err, mandate.ErrInvalid) {
 		t.Errorf("ForAgent on a tampered version = %v, want ErrInvalid", err)
+	}
+	// For the PDP it stays a candidate that denies with invalid_mandate.
+	list, err := fresh.Candidates(ctx, a.ClientID)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("Candidates = %+v, %v", list, err)
+	}
+	req := evaluator.Request{Resource: evaluator.Resource{EntityID: "light.kitchen", Category: "light"}, Action: "turn_on",
+		Time: time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC), TimeZone: "UTC"}
+	if _, res := evaluator.SelectAndEvaluate([]evaluator.Stored{list[0].Stored}, a.ClientID, household, req); res.Decision != evaluator.Deny ||
+		res.Reason != evaluator.ReasonInvalidMandate {
+		t.Errorf("evaluation of a tampered version = %+v", res)
 	}
 }
 

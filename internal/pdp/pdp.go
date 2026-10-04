@@ -10,7 +10,6 @@ package pdp
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -29,9 +28,9 @@ const (
 	maxRequestBytes = 64 << 10
 )
 
-// Mandates provides the current mandate of an agent.
+// Mandates provides the stored mandates of an agent that the selection considers.
 type Mandates interface {
-	ForAgent(ctx context.Context, clientID string) (mandate.Loaded, error)
+	Candidates(ctx context.Context, clientID string) ([]mandate.Candidate, error)
 }
 
 // Catalog resolves entities to category and area.
@@ -77,27 +76,29 @@ type Decision struct {
 	MaxActionsPerHour int
 }
 
-// Snapshot holds an agent's mandate, the time and the household time zone for a
-// series of decisions, so that one request (e.g. a list) is decided on one mandate
-// version with one store query.
+// Snapshot holds an agent's candidate mandates, the time and the household time zone for
+// a series of decisions, so that one request (e.g. a list) is decided on the same
+// mandates with one store query.
 type Snapshot struct {
-	p        *PDP
-	loaded   mandate.Loaded
-	found    bool
-	now      time.Time
-	timeZone string
+	p          *PDP
+	clientID   string
+	candidates []mandate.Candidate
+	stored     []evaluator.Stored
+	now        time.Time
+	timeZone   string
 }
 
-// Snapshot loads the mandate of clientID. A store error is returned together with a
-// snapshot that denies everything.
+// Snapshot loads the candidate mandates of clientID. A store error is returned together
+// with a snapshot that has none and so denies everything with no_mandate.
 func (p *PDP) Snapshot(ctx context.Context, clientID string) (*Snapshot, error) {
-	s := &Snapshot{p: p, now: p.cfg.Now(), timeZone: p.cfg.TimeZone()}
-	loaded, err := p.cfg.Mandates.ForAgent(ctx, clientID)
-	switch {
-	case err == nil:
-		s.loaded, s.found = loaded, true
-	case !errors.Is(err, mandate.ErrNotFound):
+	s := &Snapshot{p: p, clientID: clientID, now: p.cfg.Now(), timeZone: p.cfg.TimeZone()}
+	candidates, err := p.cfg.Mandates.Candidates(ctx, clientID)
+	if err != nil {
 		return s, fmt.Errorf("pdp: load mandate: %w", err)
+	}
+	s.candidates = candidates
+	for _, c := range candidates {
+		s.stored = append(s.stored, c.Stored)
 	}
 	return s, nil
 }
@@ -105,26 +106,36 @@ func (p *PDP) Snapshot(ctx context.Context, clientID string) (*Snapshot, error) 
 // Decide evaluates action on entityID. parameters are the parameters of the action in
 // the units of the vocabulary (SPEC-v0 section 4.5); nil if the action has none.
 // Category, area and the critical marking come from the catalog; an entity the catalog
-// does not know has no category and is denied with unknown_resource.
+// does not know has no category and is denied with unknown_resource. The mandate is
+// selected per SPEC-v0 section 4.3 among the agent's candidates for this household.
 func (s *Snapshot) Decide(entityID, action string, parameters map[string]int64) Decision {
 	d := Decision{Time: s.now, TimeZone: s.timeZone, Resource: evaluator.Resource{EntityID: entityID}, Action: action, Parameters: parameters}
 	if dev, ok := s.p.cfg.Catalog.Lookup(entityID); ok {
 		d.Known, d.Resource.Category, d.Resource.Area, d.Resource.Critical = true, dev.Category, dev.Area, dev.Critical
 	}
-	if !s.found {
-		d.Result = evaluator.Result{Decision: evaluator.Deny, Reason: evaluator.ReasonNoMandate}
-		return d
-	}
-	d.Status, d.MandateID, d.MaxActionsPerHour = s.loaded.Status, s.loaded.Info.ID, s.loaded.Info.MaxActionsPerHour
-	d.Result = evaluator.Evaluate(s.loaded.Mandate, evaluator.Request{
-		Resource: d.Resource, Action: action, Parameters: parameters, Time: d.Time, TimeZone: d.TimeZone, Status: d.Status,
+	_, d.Result = evaluator.SelectAndEvaluate(s.stored, s.clientID, s.p.cfg.Principal, evaluator.Request{
+		Resource: d.Resource, Action: action, Parameters: parameters, Time: d.Time, TimeZone: d.TimeZone,
 	})
+	// A selected mandate is never revoked: revoked ones are no candidates.
+	d.Status = evaluator.StatusActive
+	for _, c := range s.candidates {
+		if d.Result.MandateDigest != "" && c.Info.Digest == d.Result.MandateDigest {
+			d.MandateID, d.MaxActionsPerHour = c.Info.ID, c.Info.MaxActionsPerHour
+		}
+	}
 	return d
 }
 
-// MaxActionsPerHour is the agent's rate limit; 0 without a mandate.
+// MaxActionsPerHour is the agent's rate limit, known before a mandate is selected: the
+// strictest limit among its candidates; 0 without one.
 func (s *Snapshot) MaxActionsPerHour() int {
-	return s.loaded.Info.MaxActionsPerHour
+	limit := 0
+	for _, c := range s.candidates {
+		if n := c.Info.MaxActionsPerHour; n > 0 && (limit == 0 || n < limit) {
+			limit = n
+		}
+	}
+	return limit
 }
 
 // Decide evaluates action on entityID for the agent clientID. A store error is returned
