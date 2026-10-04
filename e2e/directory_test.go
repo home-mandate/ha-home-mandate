@@ -118,7 +118,7 @@ func TestDirectoryRenameIsReported(t *testing.T) {
 		t.Errorf("renamed light before the rename is resolved = %q, want denied", errText)
 	}
 	// Dismissed: the rule on the former ID no longer applies, the broad rule does.
-	ui.ok(http.MethodPost, "api/renames/dismiss", map[string]any{"entity_id": renamed}, nil)
+	ui.ok(http.MethodPost, "api/renames/dismiss", map[string]any{"entity_id": renamed, "formers": []string{old}, "confirm": true}, nil)
 	if _, errText := call(t, s, "perform_action", map[string]any{"entity_id": renamed, "action": "turn_on"}); errText != "" {
 		t.Errorf("renamed light after dismissing = %q, want executed", errText)
 	}
