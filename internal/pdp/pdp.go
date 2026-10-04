@@ -73,6 +73,9 @@ type Decision struct {
 	TimeZone   string
 	Status     evaluator.MandateStatus
 	MandateID  string
+	// Former is the former ID of a renamed entity whose rules decided, because they were
+	// stricter; empty otherwise.
+	Former string
 	// StoredDigest is the digest the store recorded for a mandate that the evaluation found
 	// invalid (it then has none of its own); empty otherwise.
 	StoredDigest      string
@@ -119,6 +122,23 @@ func (s *Snapshot) Decide(entityID, action string, parameters map[string]int64) 
 	_, d.Result = evaluator.SelectAndEvaluate(s.stored, s.clientID, s.p.cfg.Principal, evaluator.Request{
 		Resource: d.Resource, Action: action, Parameters: parameters, Time: d.Time, TimeZone: d.TimeZone,
 	})
+	// A renamed entity whose rename a human has not resolved: rules on its former IDs keep
+	// applying, and the stricter evaluation wins (fail closed).
+	if dev, ok := s.p.cfg.Catalog.Lookup(entityID); ok {
+		for _, former := range dev.Formers {
+			if !s.names(former) {
+				continue
+			}
+			formerResource := d.Resource
+			formerResource.EntityID = former
+			_, r := evaluator.SelectAndEvaluate(s.stored, s.clientID, s.p.cfg.Principal, evaluator.Request{
+				Resource: formerResource, Action: action, Parameters: parameters, Time: d.Time, TimeZone: d.TimeZone,
+			})
+			if strictness[r.Decision] > strictness[d.Result.Decision] {
+				d.Result, d.Former = r, former
+			}
+		}
+	}
 	// A selected mandate is never revoked: revoked ones are no candidates.
 	d.Status = evaluator.StatusActive
 	for _, c := range s.candidates {
@@ -151,6 +171,19 @@ func (s *Snapshot) RateKey() string {
 		return RateKey(s.clientID, s.candidates[0].Info.ID)
 	}
 	return RateKey(s.clientID, "")
+}
+
+// strictness orders decisions: the higher wins between two evaluations of one request.
+var strictness = map[evaluator.Decision]int{evaluator.Allow: 0, evaluator.Ask: 1, evaluator.Deny: 2}
+
+// names tells whether a candidate's rules name entityID.
+func (s *Snapshot) names(entityID string) bool {
+	for _, c := range s.candidates {
+		if c.Entities[entityID] {
+			return true
+		}
+	}
+	return false
 }
 
 // MaxActionsPerHour is the agent's rate limit, known before a mandate is selected: the

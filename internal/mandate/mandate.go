@@ -93,13 +93,13 @@ type Store struct {
 
 	mu     sync.Mutex
 	parsed map[string]*evaluator.Mandate // by digest; versions never change
-	stored map[string]evaluator.Stored   // active candidates by digest
+	stored map[string]cached             // active candidates by digest and content
 }
 
 // New returns the Store for principal; issuer is the URI of this installation.
 func New(db *sql.DB, log *audit.Log, principal, issuer string) *Store {
 	return &Store{db: db, log: log, principal: principal, issuer: issuer, parsed: map[string]*evaluator.Mandate{},
-		stored: map[string]evaluator.Stored{}}
+		stored: map[string]cached{}}
 }
 
 // meta holds the fields the evaluator does not expose.
@@ -404,6 +404,14 @@ func (s *Store) ForAgent(ctx context.Context, clientID string) (Loaded, error) {
 type Candidate struct {
 	Info   Info
 	Stored evaluator.Stored
+	// Entities are the entity IDs its rules name.
+	Entities map[string]bool
+}
+
+// cached is a parsed active version.
+type cached struct {
+	stored   evaluator.Stored
+	entities map[string]bool
 }
 
 // Candidates returns the mandates of an agent that the selection considers: the active
@@ -431,7 +439,7 @@ func (s *Store) Candidates(ctx context.Context, clientID string) ([]Candidate, e
 		}
 		c.Info.UpdatedAt, _ = time.Parse(timeFormat, updatedAt)
 		if document.Valid {
-			c.Stored = s.candidate(c.Info.Digest, document.String)
+			c.Stored, c.Entities = s.candidate(c.Info.Digest, document.String)
 		} else {
 			c.Stored = evaluator.NewStored(nil, evaluator.StatusActive) // denies with invalid_mandate
 		}
@@ -442,21 +450,42 @@ func (s *Store) Candidates(ctx context.Context, clientID string) ([]Candidate, e
 
 // candidate parses an active stored version once. A version whose content does not have
 // the digest it was stored with was changed outside Home-Mandate: it is no valid mandate.
-func (s *Store) candidate(digest, document string) evaluator.Stored {
+func (s *Store) candidate(digest, document string) (evaluator.Stored, map[string]bool) {
 	// The key covers the stored text too: a row changed after it was first read is checked anew.
 	sum := sha256.Sum256([]byte(document))
 	key := digest + " " + hex.EncodeToString(sum[:])
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if c, ok := s.stored[key]; ok {
-		return c
+		return c.stored, c.entities
 	}
 	if m, err := evaluator.Parse([]byte(document)); err == nil && m.Digest() != digest {
-		return evaluator.NewStored(nil, evaluator.StatusActive) // not cached: the row may be repaired
+		return evaluator.NewStored(nil, evaluator.StatusActive), nil // not cached: the row may be repaired
 	}
-	c := evaluator.NewStored([]byte(document), evaluator.StatusActive)
+	c := cached{stored: evaluator.NewStored([]byte(document), evaluator.StatusActive), entities: NamedEntities([]byte(document))}
 	s.stored[key] = c
-	return c
+	return c.stored, c.entities
+}
+
+// NamedEntities returns the entity IDs the rules of a document name.
+func NamedEntities(document []byte) map[string]bool {
+	var doc struct {
+		Rules []struct {
+			Resource struct {
+				EntityID string `json:"entity_id"`
+			} `json:"resource"`
+		} `json:"rules"`
+	}
+	if json.Unmarshal(document, &doc) != nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, r := range doc.Rules {
+		if r.Resource.EntityID != "" {
+			out[r.Resource.EntityID] = true
+		}
+	}
+	return out
 }
 
 // parse parses a stored version once; a version that no longer parses (e.g. after an

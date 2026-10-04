@@ -121,6 +121,7 @@ func serve(ctx context.Context, e env) int {
 
 type gateway struct {
 	marks    *catalog.Marks
+	renames  *catalog.Renames
 	state    *state
 	logger   *slog.Logger
 	client   *ha.Client
@@ -162,6 +163,13 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	g.catalog.SetMarks(marks)
 	g.marks = marks
+	// Renames a human has not resolved keep the rules on the former IDs in force.
+	renames, err := catalog.LoadRenames(ctx, s.store.DB())
+	if err != nil {
+		return nil, err
+	}
+	g.catalog.SetAliases(renames)
+	g.renames = renames
 	for _, event := range append([]string{ha.EventStateChanged}, registryEvents...) {
 		if _, err := client.SubscribeEvents(ctx, event, g.catalog.HandleEvent); err != nil {
 			return nil, fmt.Errorf("subscribe %s: %w", event, err)
@@ -239,7 +247,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	g.api = api.New(apiCfg)
 	g.catalog.OnRefresh(func(renames []catalog.Rename) {
-		directoryChanged(ctx, logger, g.marks, g.api.DevicesChanged, renames)
+		directoryChanged(ctx, logger, g.marks, g.renames, g.api.DevicesChanged, renames)
 	})
 	if err := g.api.LoadSettings(ctx); err != nil {
 		g.listener.Close()
