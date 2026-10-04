@@ -72,6 +72,12 @@ var vocabulary = map[string]map[string]actionSpec{
 	"other":  {"read": {}, "set": {}}, // arbitrary entities have no safe mapping
 }
 
+// Actions returns the vocabulary actions of a category (SPEC-v0 section 5), sorted; the
+// UI's device catalog offers exactly these. Unknown categories have none.
+func Actions(category string) []string {
+	return actionsOf(category)
+}
+
 // actionsOf returns the vocabulary of a category in a fixed order.
 func actionsOf(category string) []string {
 	var actions []string

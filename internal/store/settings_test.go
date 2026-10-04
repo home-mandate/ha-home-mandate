@@ -24,6 +24,14 @@ func TestSettingRoundTrip(t *testing.T) {
 	if v, ok, err := s.Setting(ctx, "k"); err != nil || !ok || v != "v2" {
 		t.Errorf("Setting = %q, %v, %v; want v2", v, ok, err)
 	}
+	for range 2 { // deleting a missing key is no error
+		if err := s.DeleteSetting(ctx, "k"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, ok, err := s.Setting(ctx, "k"); err != nil || ok {
+		t.Errorf("after delete: ok %v, err %v", ok, err)
+	}
 }
 
 func TestHouseholdIsCreatedOnceAndMatchesTheSpec(t *testing.T) {
@@ -62,5 +70,40 @@ func TestSettingsReportDatabaseErrors(t *testing.T) {
 	}
 	if _, err := s.Household(ctx); err == nil {
 		t.Error("Household on a closed store succeeded")
+	}
+	if err := s.DeleteSetting(ctx, "k"); err == nil {
+		t.Error("DeleteSetting on a closed store succeeded")
+	}
+	if err := s.SetSettings(ctx, map[string]string{"k": "v"}); err == nil {
+		t.Error("SetSettings on a closed store succeeded")
+	}
+}
+
+func TestSetSettingsIsAllOrNothing(t *testing.T) {
+	s, _ := openTemp(t)
+	ctx := context.Background()
+	if err := s.SetSettings(ctx, map[string]string{"a": "1", "b": "2"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`CREATE TRIGGER no_c BEFORE INSERT ON settings WHEN NEW.key = 'c' BEGIN SELECT RAISE(ABORT, 'x'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSettings(ctx, map[string]string{"a": "9", "c": "3"}); err == nil {
+		t.Fatal("SetSettings succeeded")
+	}
+	if v, _, _ := s.Setting(ctx, "a"); v != "1" {
+		t.Errorf("a = %q after a failed write", v)
+	}
+}
+
+func TestSettingOnceKeepsTheFirstValue(t *testing.T) {
+	s, _ := openTemp(t)
+	ctx := context.Background()
+	first, err := s.SettingOnce(ctx, "mandate_issuer", "urn:uuid:a")
+	if err != nil || first != "urn:uuid:a" {
+		t.Fatalf("first = %q, %v", first, err)
+	}
+	if second, err := s.SettingOnce(ctx, "mandate_issuer", "urn:uuid:b"); err != nil || second != "urn:uuid:a" {
+		t.Errorf("second = %q, %v", second, err)
 	}
 }

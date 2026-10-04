@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import { formatDate, formatDateTime, formatNumber, formatRelative, formatTime } from './format.ts';
+import { formatDate, formatDateTime, formatNumber, formatRelative, formatTime, formatList } from './format.ts';
 
 const berlinDE = { locale: 'de-DE', timeZone: 'Europe/Berlin' };
 const newYorkUS = { locale: 'en-US', timeZone: 'America/New_York' };
@@ -77,5 +77,14 @@ describe('format', () => {
 
   it('rejects an invalid time zone instead of falling back silently', () => {
     expect(() => formatDate(new Date(), { locale: 'de', timeZone: 'Mars/Olympus' })).toThrow(RangeError);
+  });
+});
+
+describe('formatList', () => {
+  it('joins names the way the language does', () => {
+    expect(formatList(['Anna', 'Jonas'], { locale: 'de', timeZone: 'UTC' })).toBe('Anna und Jonas');
+    expect(formatList(['Anna', 'Jonas', 'Kim'], { locale: 'en', timeZone: 'UTC' })).toBe('Anna, Jonas, and Kim');
+    expect(formatList(['Anna'], { locale: 'en', timeZone: 'UTC' })).toBe('Anna');
+    expect(formatList([], { locale: 'en', timeZone: 'UTC' })).toBe('');
   });
 });

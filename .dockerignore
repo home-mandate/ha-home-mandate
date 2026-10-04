@@ -20,3 +20,6 @@ web/src/lib/paraglide
 *.db
 *.db-*
 data/
+web/dist-pseudo
+web/dist-mock
+web/.env*.local

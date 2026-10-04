@@ -18,12 +18,13 @@ STRICT_PKGS   := internal/pdp internal/oauth internal/approval internal/audit in
 COVER_FLAGS   := -default $(COVER_DEFAULT) $(foreach p,$(STRICT_PKGS),$(if $(wildcard $(p)),-min $(p)=95))
 
 VERSION ?= dev
+COMMIT  ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
 GOARCHES := amd64 arm64
 
-.PHONY: check test cover vet staticcheck vulncheck actionlint build web-install web-check web-e2e e2e
+.PHONY: check test cover vet staticcheck vulncheck actionlint conformance build webui web-install web-check web-conformance web-e2e e2e e2e-ui
 
 ## check: everything that must be green before a commit
-check: vet staticcheck cover vulncheck actionlint
+check: vet staticcheck cover vulncheck actionlint conformance
 
 test:
 	go test -race ./...
@@ -44,13 +45,26 @@ vulncheck:
 actionlint:
 	go run $(ACTIONLINT)
 
+## conformance: mandate-conformance against Home-Mandate's PDP over both bindings of the
+## test interface (SPEC-v0 section 10); the test tool is never part of the binary
+conformance:
+	tools/conformance/run.sh
+
 ## build: static binaries for all release architectures in bin/
 build:
 	@for arch in $(GOARCHES); do \
 		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -buildvcs=false \
-			-ldflags="-s -w -buildid= -X main.version=$(VERSION)" \
+			-ldflags="-s -w -buildid= -X main.version=$(VERSION) -X main.commit=$(COMMIT)" \
 			-o bin/home-mandate-linux-$$arch ./cmd/home-mandate || exit 1; \
 	done
+
+## webui: build the UI and put it where the binary embeds it, with the licenses of the
+## Go code appended to licenses.txt (run before build for a binary with the UI)
+webui:
+	cd web && pnpm build
+	find internal/webui/dist -mindepth 1 ! -name .keep -delete
+	cp -R web/dist/. internal/webui/dist/
+	go run ./tools/golicenses -file internal/webui/dist/licenses.txt
 
 ## web-install: install the UI dependencies exactly as locked (no install scripts run)
 web-install:
@@ -61,7 +75,12 @@ web-install:
 web-check:
 	cd web && pnpm lint && pnpm typecheck && pnpm test && pnpm i18n:check && pnpm build && pnpm audit
 
-## web-e2e: Playwright in de and en under a random Ingress path
+## web-conformance: copy the mandate-spec evaluation cases into the UI (a Go test fails
+## if the copy differs from the pinned mandate-spec version)
+web-conformance:
+	go run ./tools/webconformance
+
+## web-e2e: Playwright in de, en and pseudo under a random Ingress path
 web-e2e:
 	cd web && pnpm e2e
 
@@ -69,3 +88,8 @@ web-e2e:
 ## image (podman, or docker with E2E_RUNTIME=docker)
 e2e:
 	cd e2e && go test -tags e2e -count=1 -timeout 25m -v .
+
+## e2e-ui: the E2E scenarios plus Playwright (de, en) against the release image behind the
+## Ingress stand-in (needs make web-install and Playwright's Chromium)
+e2e-ui:
+	cd e2e && E2E_PLAYWRIGHT=1 go test -tags e2e -count=1 -timeout 30m -v .

@@ -5,16 +5,17 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -26,11 +27,15 @@ import (
 	"github.com/home-mandate/home-mandate/internal/ha"
 	"github.com/home-mandate/home-mandate/internal/mandate"
 	"github.com/home-mandate/home-mandate/internal/pdp"
-	"github.com/home-mandate/home-mandate/internal/ratelimit"
 	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/mandate-spec/mandate-spec/ratelimit"
 )
 
-const household = "household:hm-0123456789ab"
+const (
+	household       = "household:hm-0123456789ab"
+	testResource    = "https://hm.test/mcp"
+	testMetadataURL = "https://hm.test/.well-known/oauth-protected-resource/mcp"
+)
 
 var admin = audit.Actor{Kind: audit.ActorUser, ID: "user-1"}
 
@@ -112,15 +117,19 @@ func (f *fakeHA) recorded() []ha.ServiceCall {
 }
 
 type harness struct {
-	t       *testing.T
-	url     string
-	token   string
-	agent   agent.Agent
-	agents  *agent.Store
-	ha      *fakeHA
-	catalog *fakeCatalog
-	log     *audit.Log
-	pdp     *pdp.PDP
+	t        *testing.T
+	url      string
+	token    string
+	agent    agent.Agent
+	agents   *agent.Store
+	ha       *fakeHA
+	catalog  *fakeCatalog
+	log      *audit.Log
+	db       *sql.DB
+	pdp      *pdp.PDP
+	mandates *mandate.Store
+	approver Approver
+	decider  Decider // replaces pdp when set
 
 	mu sync.Mutex
 	tz string
@@ -144,13 +153,13 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 	t.Cleanup(func() { _ = st.Close() })
 	log := audit.New(st.DB(), household)
 	agents := agent.New(st.DB(), log)
-	mandates := mandate.New(st.DB(), log, household)
+	mandates := mandate.New(st.DB(), log, household, "urn:uuid:5b0c9f4e-8f1a-4c2e-9d3b-7a6e5f4d3c2b")
 
 	a, err := agents.Register(ctx, "Voice assistant", admin)
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := agents.IssueToken(ctx, a.ClientID, time.Hour)
+	tokens, err := agents.IssueTokens(ctx, a.ClientID, testResource)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +167,7 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 		t.Fatal(err)
 	}
 
-	h := &harness{t: t, token: token, agent: a, agents: agents, log: log, tz: "Europe/Berlin",
+	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin",
 		ha: &fakeHA{connected: true},
 		catalog: &fakeCatalog{ready: true, devices: map[string]catalog.Device{
 			"light.kitchen":            {EntityID: "light.kitchen", Category: "light", Area: "kitchen", State: "off", Attributes: map[string]any{"friendly_name": "Kitchen"}},
@@ -175,10 +184,24 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 
 // serve starts a gateway on the harness with auditor and returns its URL.
 func (h *harness) serve(auditor Auditor) string {
-	g := New(Config{Agents: h.agents, PDP: h.pdp, Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test"})
+	var decider Decider = h.pdp
+	if h.decider != nil {
+		decider = h.decider
+	}
+	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test"})
 	srv := httptest.NewServer(g.Handler())
 	h.t.Cleanup(srv.Close)
 	return srv.URL + Path
+}
+
+// issue returns a new access token of clientID for the test resource.
+func (h *harness) issue(clientID string) string {
+	h.t.Helper()
+	p, err := h.agents.IssueTokens(context.Background(), clientID, testResource)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return p.AccessToken
 }
 
 func mandateDoc(t *testing.T, clientID string, edit func(map[string]any)) []byte {
@@ -470,7 +493,8 @@ func TestExecutionFailures(t *testing.T) {
 func TestParametersAreChecked(t *testing.T) {
 	h := newHarness(t, func(d map[string]any) {
 		d["rules"] = []any{
-			map[string]any{"id": "r-all", "resource": map[string]any{"any": true}, "actions": []any{"*"}, "decision": "allow", "allow_critical": true},
+			map[string]any{"id": "r-all", "resource": map[string]any{"any": true}, "actions": []any{"set", "set_temperature", "set_mode", "arm", "snapshot"},
+				"decision": "allow", "allow_critical": true},
 		}
 	})
 	s := h.session()
@@ -611,12 +635,12 @@ func TestMissingMandateIsNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.token, _, _ = h.agents.IssueToken(ctx, other.ClientID, time.Hour)
+	h.token = h.issue(other.ClientID)
 	_, errText := h.call(h.session(), "perform_action", map[string]any{"entity_id": "light.kitchen", "action": "turn_on"})
 	if errText != "not_found" {
 		t.Errorf("agent without mandate: %q", errText)
 	}
-	if e := h.lastEntry(); path(e, "evaluation", "reason") != "invalid_mandate" || e["mandate"] != nil {
+	if e := h.lastEntry(); path(e, "evaluation", "reason") != "no_mandate" || e["mandate"] != nil {
 		t.Errorf("audit entry = %v", e)
 	}
 }
@@ -707,7 +731,7 @@ func TestAgentsWithoutMandateAreRateLimited(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.token, _, _ = h.agents.IssueToken(ctx, other.ClientID, time.Hour)
+	h.token = h.issue(other.ClientID)
 	s := h.session()
 	last := ""
 	for range noMandateLimit + 1 {
@@ -729,5 +753,57 @@ func TestSanitizeRemovesTokenCarryingAttributes(t *testing.T) {
 	})
 	if len(got) != 2 || got["friendly_name"] != "TV" || got["volume_level"] != 0.4 {
 		t.Errorf("sanitize = %v", got)
+	}
+}
+
+// The UI offers per category exactly the actions of the vocabulary the PEP enforces.
+func TestActionsOfTheVocabulary(t *testing.T) {
+	if got := Actions("light"); !slices.Equal(got, []string{"read", "set", "turn_off", "turn_on"}) {
+		t.Errorf("Actions(light) = %v", got)
+	}
+	if got := Actions("lock"); !slices.Equal(got, []string{"lock", "open", "read", "unlock"}) {
+		t.Errorf("Actions(lock) = %v", got)
+	}
+	if got := Actions("paperless:document"); len(got) != 0 {
+		t.Errorf("unknown category = %v", got)
+	}
+}
+
+// A constraint of the mandate limits what the agent may set; the evaluated value is the
+// one in the audit log and the one sent to Home Assistant (SPEC-v0 section 4.5).
+func TestConstraintsLimitParameters(t *testing.T) {
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-heating", "resource": map[string]any{"category": "climate"}, "actions": []any{"set_temperature"},
+				"decision": "allow", "constraints": map[string]any{"temperature": map[string]any{"min": 1600, "max": 2300}}},
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+		}
+	})
+	s := h.session()
+	set := func(value any) string {
+		_, errText := h.call(s, "perform_action", map[string]any{"entity_id": "climate.living_room", "action": "set_temperature",
+			"params": map[string]any{"temperature": value}})
+		return errText
+	}
+	if errText := set(21.5); errText != "" {
+		t.Fatalf("21.5 degrees within the limits: %q", errText)
+	}
+	e := h.lastEntry()
+	if path(e, "request", "parameters", "temperature") != float64(2150) || path(e, "evaluation", "rule_id") != "r-heating" {
+		t.Errorf("audit entry = %v", e)
+	}
+	if calls := h.ha.recorded(); len(calls) != 1 || calls[0].Data["temperature"] != 21.5 {
+		t.Errorf("HA calls = %+v", calls)
+	}
+	for _, value := range []any{23.5, 15.0, 21.555} {
+		if errText := set(value); !strings.HasPrefix(errText, "denied") {
+			t.Errorf("%v degrees: %q, want denied", value, errText)
+		}
+		if e := h.lastEntry(); path(e, "evaluation", "reason") != "no_match" {
+			t.Errorf("%v degrees: audit entry = %v", value, e)
+		}
+	}
+	if calls := h.ha.recorded(); len(calls) != 1 {
+		t.Errorf("a denied value reached Home Assistant: %+v", calls)
 	}
 }

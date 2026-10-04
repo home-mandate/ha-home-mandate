@@ -42,7 +42,7 @@ func TestLoadAppMode(t *testing.T) {
 	}
 	if cfg.Mode != ModeApp || cfg.HAURL != "ws://supervisor/core/websocket" || string(cfg.HAToken) != "sup-secret" ||
 		cfg.DataDir != "/data" || cfg.TLSCert != "/ssl/fullchain.pem" || cfg.TLSKey != "/ssl/privkey.pem" ||
-		cfg.MCPAddr != ":8765" || cfg.ApprovalTimeout != 2*time.Minute || cfg.LogLevel != slog.LevelInfo {
+		cfg.MCPAddr != ":8765" || cfg.IngressAddr != ":8099" || cfg.IngressProxy.String() != "172.30.32.2" || cfg.ApprovalTimeout != 2*time.Minute || cfg.LogLevel != slog.LevelInfo {
 		t.Errorf("config = %+v", cfg)
 	}
 }
@@ -100,7 +100,7 @@ func TestLoadContainerMode(t *testing.T) {
 	}
 	if cfg.Mode != ModeContainer || cfg.HAURL != "wss://ha.example.org/api/websocket" || string(cfg.HAToken) != "long-lived" ||
 		cfg.DataDir != "/var/lib/home-mandate" || cfg.MCPAddr != "0.0.0.0:9000" || cfg.ApprovalTimeout != DefaultApprovalTimeout ||
-		cfg.LogLevel != slog.LevelWarn {
+		cfg.LogLevel != slog.LevelWarn || cfg.IngressAddr != "" {
 		t.Errorf("config = %+v", cfg)
 	}
 }
@@ -245,6 +245,69 @@ func TestPDPAddrMustBeLoopback(t *testing.T) {
 		cfg, err := Load(env(m), files(nil))
 		if (err == nil) != ok || ok && cfg.PDPAddr != addr {
 			t.Errorf("HM_PDP_ADDR=%s: %+v, %v", addr, cfg.PDPAddr, err)
+		}
+	}
+}
+
+// The UI listener is opt-in in container mode (decision U3); its address is checked,
+// the source of requests is checked by internal/api whatever the address.
+func TestIngressAddr(t *testing.T) {
+	base := map[string]string{"HM_HA_URL": "ws://localhost:8123/api/websocket", "HM_HA_TOKEN": "t"}
+	for addr, ok := range map[string]bool{
+		"":               true, // no listener, no proxy
+		":8099":          true,
+		"0.0.0.0:8099":   true,
+		"[::]:8099":      true,
+		"8099":           false,
+		":0":             false,
+		":65536":         false,
+		":http":          false,
+		"host:":          false,
+		"a:b:8099":       false,
+		"172.30.32.1:-1": false,
+	} {
+		m := map[string]string{"HM_INGRESS_ADDR": addr}
+		if addr != "" {
+			m["HM_INGRESS_PROXY"] = "10.0.0.2"
+		}
+		for k, v := range base {
+			m[k] = v
+		}
+		cfg, err := Load(env(m), files(nil))
+		if (err == nil) != ok || ok && cfg.IngressAddr != addr || !ok && !errors.Is(err, ErrInvalid) {
+			t.Errorf("HM_INGRESS_ADDR=%q: %q, %v", addr, cfg.IngressAddr, err)
+		}
+	}
+}
+
+// Decision U2: in container mode the proxy in front of the UI is named, exactly one IP.
+func TestIngressProxy(t *testing.T) {
+	base := map[string]string{"HM_HA_URL": "ws://localhost:8123/api/websocket", "HM_HA_TOKEN": "t"}
+	for _, tc := range []struct {
+		addr, proxy, want string
+		ok                bool
+	}{
+		{":8099", "10.0.0.2", "10.0.0.2", true},
+		{":8099", "::ffff:10.0.0.2", "10.0.0.2", true},
+		{":8099", "fd00::2", "fd00::2", true},
+		{":8099", "", "", false},
+		{":8099", "10.0.0.0/24", "", false},
+		{":8099", "10.0.0.2,10.0.0.3", "", false},
+		{":8099", "0.0.0.0", "", false},
+		{":8099", "::", "", false},
+		{":8099", "fe80::1%eth0", "", false},
+		{":8099", "224.0.0.1", "", false},
+		{":8099", "proxy.local", "", false},
+		{"", "10.0.0.2", "", false},
+		{"", "", "invalid IP", true},
+	} {
+		m := map[string]string{"HM_INGRESS_ADDR": tc.addr, "HM_INGRESS_PROXY": tc.proxy}
+		for k, v := range base {
+			m[k] = v
+		}
+		cfg, err := Load(env(m), files(nil))
+		if (err == nil) != tc.ok || tc.ok && cfg.IngressProxy.String() != tc.want || !tc.ok && !errors.Is(err, ErrInvalid) {
+			t.Errorf("%+v: %v, %v", tc, cfg.IngressProxy, err)
 		}
 	}
 }

@@ -8,50 +8,13 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"io/fs"
 	"net/http"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
-
-	mandatespec "github.com/mandate-spec/mandate-spec"
 )
-
-// newAgent registers an agent with the voice assistant mandate of mandate-spec (edited
-// by edit) through the administration commands and returns its token.
-func newAgent(t *testing.T, name string, edit func(map[string]any)) string {
-	t.Helper()
-	household := strings.TrimSpace(cli(t, "", "household"))
-	out := cli(t, "", "agent", "add", "--name", name)
-	field := func(key string) string {
-		m := regexp.MustCompile(`(?m)^` + key + `=(\S+)$`).FindStringSubmatch(out)
-		if m == nil {
-			t.Fatalf("no %s in agent add output", key)
-		}
-		return m[1]
-	}
-	clientID, token := field("client_id"), field("token")
-	env.secrets = append(env.secrets, token)
-
-	data, err := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]any
-	_ = json.Unmarshal(data, &doc)
-	doc["id"] = "m-" + strings.TrimPrefix(clientID, "hm-client:")
-	doc["principal"] = household
-	doc["agent"] = map[string]any{"client_id": clientID, "display_name": name}
-	if edit != nil {
-		edit(doc)
-	}
-	mandate, _ := json.Marshal(doc)
-	cli(t, string(mandate), "mandate", "import", "-")
-	return token
-}
 
 type bearer struct{ token string }
 
@@ -128,8 +91,8 @@ func hasLine(log string, parts ...string) bool {
 	return false
 }
 
-// Scenario 1 (TESTING.md §3), without the pairing code that comes with OAuth in week 3:
-// an agent with the voice assistant mandate switches a light; it is executed and logged.
+// Scenario 1 (TESTING.md §3): an agent is paired via code with the voice assistant
+// mandate and switches a light; it is executed and logged.
 func TestScenario01VoiceAssistantSwitchesALight(t *testing.T) {
 	s := session(t, newAgent(t, "Voice assistant", nil))
 	ready(t, s)
@@ -222,21 +185,5 @@ func TestScenario12UnreachableHomeAssistant(t *testing.T) {
 	}
 	if !strings.Contains(auditLog(t), `"error":"ha_unavailable"`) {
 		t.Error("outage refusals not logged")
-	}
-}
-
-// TESTING.md §4: no tokens or Home Assistant credentials in the logs of any run.
-func TestZZLogsContainNoSecrets(t *testing.T) {
-	logs := logsOf(env.hm)
-	if !strings.Contains(logs, "home-mandate started") {
-		t.Fatalf("unexpected gateway logs:\n%s", logs)
-	}
-	for _, secret := range env.secrets {
-		if secret != "" && strings.Contains(logs, secret) {
-			t.Error("a token appears in the gateway logs")
-		}
-	}
-	if strings.Contains(logs, "hma_") {
-		t.Error("something that looks like an agent token appears in the gateway logs")
 	}
 }

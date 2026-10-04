@@ -49,6 +49,21 @@ describe('checkFile', () => {
   });
 });
 
+describe('check-dist exceptions', () => {
+  it('allows the source code link only for the project repository', () => {
+    expect(isAllowedUrl('https://github.com/home-mandate/home-mandate')).toBe(true);
+    expect(isAllowedUrl('https://github.com/home-mandate/home-mandate/tree/main')).toBe(true);
+    expect(isAllowedUrl('https://github.com/home-mandate/home-mandate-evil')).toBe(false);
+    expect(isAllowedUrl('https://github.com/other/repo')).toBe(false);
+  });
+
+  it('skips the URLs of the top-level licenses.txt only, and still finds the mock in it', () => {
+    expect(checkFile('licenses.txt', 'see https://opensource.org/licenses/MIT')).toEqual([]);
+    expect(checkFile('assets/licenses.txt', 'see https://opensource.org/licenses/MIT')).not.toEqual([]);
+    expect(checkFile('licenses.txt', 'hmMock')).not.toEqual([]);
+  });
+});
+
 describe('isAllowedUrl', () => {
   it('rejects unparseable URLs', () => {
     expect(isAllowedUrl('http://')).toBe(false);
@@ -69,6 +84,55 @@ describe('run', () => {
         `${join('assets', 'a.js')}: external reference https://evil.example.com/x.js`,
         `${join('assets', 'a.js.map')}: external reference https://evil.example.com/src.ts`,
       ]));
+    } finally {
+      rmSync(dist, { recursive: true });
+    }
+  });
+
+  function withMockChunk(content: string, test: (dist: string) => void) {
+    const dist = mkdtempSync(join(tmpdir(), 'dist-'));
+    try {
+      mkdirSync(join(dist, 'assets'));
+      writeFileSync(join(dist, 'assets', 'mock-Ab12.js'), content);
+      test(dist);
+    } finally {
+      rmSync(dist, { recursive: true });
+    }
+  }
+
+  it('rejects any mock chunk in a release build', () => {
+    withMockChunk('const x = 1;', (dist) => {
+      expect(run(dist)).toEqual([`${join('assets', 'mock-Ab12.js')}: mock client in a release build`]);
+    });
+  });
+
+  it('allows the fixture hosts in the mock chunk of a test build, and nothing else', () => {
+    withMockChunk('"https://home.example:8765/mcp" "https://claude.ai/oauth/x" "https://mandate-spec.org/mandate/v0"', (dist) => {
+      expect(run(dist, { fixtures: true })).toEqual([]);
+    });
+    withMockChunk('"https://evil.example.com/x.js"', (dist) => {
+      expect(run(dist, { fixtures: true })).toEqual([`${join('assets', 'mock-Ab12.js')}: external reference https://evil.example.com/x.js`]);
+    });
+  });
+
+  it('finds the mock client in a release build even when it was merged into another chunk', () => {
+    const dist = mkdtempSync(join(tmpdir(), 'dist-'));
+    try {
+      mkdirSync(join(dist, 'assets'));
+      writeFileSync(join(dist, 'assets', 'index-1.js'), 'window.hmMock = control;');
+      expect(run(dist)).toEqual([`${join('assets', 'index-1.js')}: mock client in a release build`]);
+      expect(run(dist, { fixtures: true })).toEqual([]);
+    } finally {
+      rmSync(dist, { recursive: true });
+    }
+  });
+
+  it('allows fixture hosts only in the mock chunk', () => {
+    const dist = mkdtempSync(join(tmpdir(), 'dist-'));
+    try {
+      mkdirSync(join(dist, 'assets'));
+      writeFileSync(join(dist, 'assets', 'index-1.js'), '"https://claude.ai/x"');
+      expect(run(dist, { fixtures: true })).toEqual([`${join('assets', 'index-1.js')}: external reference https://claude.ai/x`]);
     } finally {
       rmSync(dist, { recursive: true });
     }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"testing/iotest"
 	"time"
@@ -33,6 +34,41 @@ func TestApprovedAskIsRecordedWithApproval(t *testing.T) {
 	bad.Result = &audit.Result{Status: audit.StatusExecuted}
 	if _, err := l.Append(context.Background(), bad); !errors.Is(err, audit.ErrInvalidEntry) {
 		t.Errorf("Append(executed ask without approval) = %v, want ErrInvalidEntry", err)
+	}
+}
+
+// Decision F2: the channel of the answer is recorded (approval.via); F1: a request ended
+// by the emergency stop or a revocation has no approval, only the denial.
+func TestApprovalChannelAndCancellation(t *testing.T) {
+	l, _ := newLog(t)
+	at := time.Date(2026, 10, 6, 19, 1, 0, 0, time.UTC)
+	ui := samples()[4]
+	ui.Result = &audit.Result{Status: audit.StatusExecuted, DurationMs: 900}
+	ui.Approval = &audit.Approval{Outcome: "approved", By: "user-1", Via: "ui", At: at}
+	push := samples()[4]
+	push.Result = &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}
+	push.Approval = &audit.Approval{Outcome: "rejected", By: "user-2", Via: "push", At: at}
+	stopped := samples()[4]
+	stopped.Approval = nil
+	stopped.Result = &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop}
+	revoked := stopped
+	revoked.Result = &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication}
+	appendAll(t, l, []audit.Entry{ui, push, stopped, revoked})
+	if r := verify(t, l); !r.Valid {
+		t.Errorf("Verify = %+v", r)
+	}
+	var buf strings.Builder
+	if err := l.Export(context.Background(), &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"via":"ui"`) || !strings.Contains(buf.String(), `"via":"push"`) {
+		t.Errorf("via missing in export:\n%s", buf.String())
+	}
+	// via without a person who answered violates the schema.
+	bad := samples()[4]
+	bad.Approval = &audit.Approval{Outcome: "timeout", Via: "push", At: at}
+	if _, err := l.Append(context.Background(), bad); !errors.Is(err, audit.ErrInvalidEntry) {
+		t.Errorf("Append(via on a timeout) = %v, want ErrInvalidEntry", err)
 	}
 }
 

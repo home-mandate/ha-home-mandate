@@ -4,9 +4,11 @@
 //
 //	home-mandate [serve]            run the gateway (default)
 //	home-mandate household          print the household principal
-//	home-mandate agent …            manage agents (local administration only)
+//	home-mandate agent …            list and revoke agents (local administration only)
+//	home-mandate emergency-stop …   block all agents at once, or release the stop
+//	home-mandate approver …         who receives approval requests, on which phone
 //	home-mandate mandate …          manage mandates (local administration only)
-//	home-mandate audit verify|export
+//	home-mandate audit verify|export|key
 //
 // The administration commands work on the local database only; they are never
 // reachable over the network.
@@ -23,8 +25,11 @@ import (
 	"syscall"
 )
 
-// version is set at build time via -ldflags "-X main.version=…".
-var version = "dev"
+// version and commit are set at build time via -ldflags "-X main.version=… -X main.commit=…".
+var (
+	version = "dev"
+	commit  = "unknown"
+)
 
 const (
 	exitOK      = 0
@@ -35,9 +40,12 @@ const (
 const usage = `Usage:
   home-mandate [-version] [serve]
   home-mandate household
-  home-mandate agent add --name NAME [--days N] | list | revoke CLIENT_ID
-  home-mandate mandate import FILE|- | list | revoke ID
-  home-mandate audit verify | export
+  home-mandate agent list | revoke CLIENT_ID
+  home-mandate emergency-stop on | off | status
+  home-mandate approver add USER_ID NOTIFY_SERVICE [de|en] | list | remove USER_ID
+  home-mandate mandate import FILE|- | list | revoke ID | check
+  home-mandate mandate template import NAME FILE|- | list | remove NAME
+  home-mandate audit verify | export | key
 `
 
 // env is the process environment, replaceable in tests.
@@ -103,6 +111,10 @@ func run(ctx context.Context, args []string, e env) int {
 		})
 	case "agent":
 		return agentCommand(ctx, e, rest)
+	case "emergency-stop":
+		return emergencyStopCommand(ctx, e, rest)
+	case "approver":
+		return approverCommand(ctx, e, rest)
 	case "mandate":
 		return mandateCommand(ctx, e, rest)
 	case "audit":

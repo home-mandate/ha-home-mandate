@@ -59,8 +59,14 @@ var env struct {
 	roots    *x509.CertPool
 	haURL    string // https://127.0.0.1:<port>
 	haToken  string // long-lived token of the onboarding admin
-	mcpURL   string // https://127.0.0.1:<port>/mcp
+	mcpURL   string // https://localhost:<port>/mcp
+	public   string // https://localhost:<port>, HM_PUBLIC_URL
+	users    map[string]*haUser
 	ha, hm   string // container names
+	ingress  string // the Ingress stand-in (tools/ingressproxy) at ingressIP
+	uiURL    string // http://127.0.0.1:<port> of the stand-in
+	uiPath   string // /api/hassio_ingress/<token>
+	uiDirect string // http://127.0.0.1:<port> of the gateway's UI listener, bypassing Ingress
 	network  string
 	volume   string
 	secrets  []string // must never appear in logs
@@ -98,7 +104,7 @@ func setUp() error {
 	env.ha, env.hm = "hm-e2e-ha-"+env.id, "hm-e2e-gw-"+env.id
 	env.network, env.volume = "hm-e2e-net-"+env.id, "hm-e2e-data-"+env.id
 
-	for _, step := range []func() error{prepareImage, makeCertificates, createNetwork, startHA, onboard, startGateway} {
+	for _, step := range []func() error{prepareImage, makeCertificates, createNetwork, startHA, onboard, createUsers, startGateway, startIngress} {
 		if err := step(); err != nil {
 			return err
 		}
@@ -179,8 +185,18 @@ func makeCertificates() error {
 	return nil
 }
 
+// supervisorSubnet is the hassio network of Home Assistant OS. The Ingress stand-in gets
+// a fixed address in it that is deliberately not the Supervisor's: container mode trusts
+// the proxy named in HM_INGRESS_PROXY (decision U2). The other containers get addresses
+// from dynamicRange only.
+const (
+	supervisorSubnet = "172.30.32.0/23"
+	dynamicRange     = "172.30.33.0/24"
+	ingressIP        = "172.30.32.50"
+)
+
 func createNetwork() error {
-	if _, err := run("network", "create", env.network); err != nil {
+	if _, err := run("network", "create", "--subnet", supervisorSubnet, "--ip-range", dynamicRange, env.network); err != nil {
 		return err
 	}
 	env.teardown = append(env.teardown, func() { _, _ = run("network", "rm", "-f", env.network) })
@@ -329,23 +345,86 @@ func startGateway() error {
 		return err
 	}
 	env.teardown = append(env.teardown, func() { _, _ = run("volume", "rm", "-f", env.volume) })
-	if _, err := run("run", "-d", "--name", env.hm, "--network", env.network, "-p", "127.0.0.1::8765",
+	port, err := freePort()
+	if err != nil {
+		return err
+	}
+	env.public = "https://localhost:" + port
+	if _, err := run("run", "-d", "--name", env.hm, "--network", env.network, "-p", "127.0.0.1:"+port+":8765", "-p", "127.0.0.1::8099",
+		"-e", "HM_INGRESS_ADDR=:8099", "-e", "HM_INGRESS_PROXY="+ingressIP,
 		"-v", env.volume+":/data", "-v", env.certs+":/certs:ro",
 		"-e", "HM_HA_URL=wss://homeassistant:8123/api/websocket",
 		"-e", "HM_HA_TOKEN_FILE=/certs/ha-token",
 		"-e", "HM_HA_CA_FILE=/certs/ca.pem",
 		"-e", "HM_TLS_CERT=/certs/cert.pem", "-e", "HM_TLS_KEY=/certs/key.pem",
 		"-e", "HM_LOG_LEVEL=debug",
+		"-e", "HM_PUBLIC_URL="+env.public,
+		"-e", "HM_APPROVAL_TIMEOUT=30",
 		env.image); err != nil {
 		return err
 	}
 	env.teardown = append(env.teardown, func() { _, _ = run("rm", "-f", env.hm) })
-	addr, err := hostPort(env.hm, "8765")
+	env.mcpURL = env.public + "/mcp"
+	if err := waitHTTP(env.mcpURL, time.Minute); err != nil { // 401 means it is up
+		return err
+	}
+	direct, err := hostPort(env.hm, "8099")
 	if err != nil {
 		return err
 	}
-	env.mcpURL = "https://" + addr + "/mcp"
-	return waitHTTP(env.mcpURL, time.Minute) // 401 means it is up
+	env.uiDirect = "http://" + direct
+	return nil
+}
+
+// startIngress builds the Ingress stand-in from tools/ingressproxy and runs it at
+// ingressIP, in front of the gateway's UI listener.
+func startIngress() error {
+	dir, err := os.MkdirTemp("", "hm-e2e-ingress-")
+	if err != nil {
+		return err
+	}
+	env.teardown = append(env.teardown, func() { _ = os.RemoveAll(dir) })
+	build := exec.Command("go", "build", "-trimpath", "-o", filepath.Join(dir, "ingressproxy"), "../tools/ingressproxy")
+	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOWORK=off")
+	if out, err := build.CombinedOutput(); err != nil {
+		return fmt.Errorf("build ingressproxy: %w: %s", err, out)
+	}
+	containerfile := "FROM scratch\nCOPY ingressproxy /ingressproxy\nENTRYPOINT [\"/ingressproxy\"]\n"
+	if err := os.WriteFile(filepath.Join(dir, "Containerfile"), []byte(containerfile), 0o644); err != nil {
+		return err
+	}
+	image := "localhost/hm-e2e-ingress:" + env.id
+	if _, err := run("build", "-q", "-f", filepath.Join(dir, "Containerfile"), "-t", image, dir); err != nil {
+		return err
+	}
+	env.teardown = append(env.teardown, func() { _, _ = run("rmi", "-f", image) })
+	env.ingress = "hm-e2e-ingress-" + env.id
+	token := randomHex(32)
+	env.uiPath = "/api/hassio_ingress/" + token
+	if _, err := run("run", "-d", "--name", env.ingress, "--network", env.network, "--ip", ingressIP, "-p", "127.0.0.1::8080",
+		"-v", env.certs+":/certs:ro", image, "-listen", ":8080", "-target", "http://"+env.hm+":8099",
+		"-ha", "https://homeassistant:8123", "-ca", "/certs/ca.pem", "-token", token); err != nil {
+		return err
+	}
+	env.teardown = append(env.teardown, func() { _, _ = run("rm", "-f", env.ingress) })
+	addr, err := hostPort(env.ingress, "8080")
+	if err != nil {
+		return err
+	}
+	env.uiURL = "http://" + addr
+	return waitHTTP(env.uiURL+"/", time.Minute) // 404 means it is up
+}
+
+// freePort returns a free TCP port on the host for the gateway: its public URL must be
+// known before it starts.
+func freePort() (string, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", err
+	}
+	defer ln.Close()
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	return port, err
 }
 
 // cli runs a Home-Mandate administration command inside the gateway container.
@@ -389,12 +468,12 @@ func eventually(t *testing.T, what string, limit time.Duration, cond func() bool
 }
 
 func dumpLogs() {
-	for _, c := range []string{env.hm, env.ha} {
+	for _, c := range []string{env.hm, env.ha, env.ingress} {
 		if c == "" {
 			continue
 		}
-		out, _ := run("logs", "--tail", "60", c)
-		fmt.Fprintf(os.Stderr, "--- logs of %s ---\n%s\n", c, out)
+		lines := strings.Split(strings.TrimSpace(logsOf(c)), "\n") // stdout and stderr
+		fmt.Fprintf(os.Stderr, "--- logs of %s ---\n%s\n", c, strings.Join(lines[max(0, len(lines)-80):], "\n"))
 	}
 }
 

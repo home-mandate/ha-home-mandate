@@ -7,12 +7,12 @@ import svelte from 'eslint-plugin-svelte';
 import globals from 'globals';
 
 export default defineConfig(
-  { ignores: ['dist/', 'coverage/', 'src/lib/paraglide/', 'playwright-report/', 'test-results/'] },
+  { ignores: ['dist/', 'dist-pseudo/', 'dist-mock/', 'coverage/', 'src/lib/paraglide/', 'playwright-report/', 'test-results/'] },
   js.configs.recommended,
   ts.configs.recommended,
   svelte.configs.recommended,
   { files: ['src/**'], languageOptions: { globals: globals.browser } },
-  { files: ['scripts/**', 'e2e/**', '*.config.*'], languageOptions: { globals: globals.node } },
+  { files: ['scripts/**', 'e2e/**', 'e2e-live/**', '*.config.*'], languageOptions: { globals: globals.node } },
   {
     files: ['**/*.svelte', '**/*.svelte.ts'],
     languageOptions: { parserOptions: { parser: ts.parser } },

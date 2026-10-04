@@ -17,11 +17,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
 	specaudit "github.com/mandate-spec/mandate-spec/audit"
 	"github.com/mandate-spec/mandate-spec/jcs"
+	"github.com/mandate-spec/mandate-spec/jws"
+
+	"github.com/home-mandate/home-mandate/internal/untrusted"
 )
 
 // ErrInvalidEntry means an entry does not conform to the audit schema; it is not written.
@@ -39,6 +43,7 @@ const (
 	EventEmergencyStopReleased  = "emergency_stop.released"
 	EventAuthRejected           = "auth.rejected"
 	EventLogTruncated           = "log.truncated"
+	EventLogCheckpoint          = "log.checkpoint"
 )
 
 const (
@@ -78,6 +83,13 @@ type Entry struct {
 	Approval   *Approval
 	Result     *Result
 	Truncated  *Truncated
+	// checkpoint marks an entry of Checkpoint; its signature is made when the entry
+	// gets its place in the chain.
+	checkpoint bool
+	// ApprovalID is the ID of the approval request (internal/approval) that this decision
+	// entry ends. It is not part of the entry: it only tells the OnCommit hook which open
+	// request in the UI the entry closes.
+	ApprovalID string
 }
 
 // Actor is who triggered a change.
@@ -97,6 +109,8 @@ type Resource struct {
 	EntityID string `json:"entity_id"`
 	Category string `json:"category,omitempty"`
 	Area     string `json:"area,omitempty"`
+	// Critical: the household had marked the entity as critical (SPEC-v0 section 4).
+	Critical bool `json:"critical,omitempty"`
 }
 
 // Request is the input of an evaluation.
@@ -106,18 +120,21 @@ type Request struct {
 	Revoked  bool
 	Resource Resource
 	Action   string
+	// Parameters of the action that were input to the evaluation (SPEC-v0 section 4.5).
+	Parameters map[string]int64
 }
 
 // MarshalJSON writes the time in RFC 3339 with milliseconds.
 func (r Request) MarshalJSON() ([]byte, error) {
 	type wire struct {
-		Time     string   `json:"time"`
-		Timezone string   `json:"timezone,omitempty"`
-		Revoked  bool     `json:"revoked,omitempty"`
-		Resource Resource `json:"resource"`
-		Action   string   `json:"action"`
+		Time       string           `json:"time"`
+		Timezone   string           `json:"timezone,omitempty"`
+		Revoked    bool             `json:"revoked,omitempty"`
+		Resource   Resource         `json:"resource"`
+		Action     string           `json:"action"`
+		Parameters map[string]int64 `json:"parameters,omitempty"`
 	}
-	return json.Marshal(wire{r.Time.UTC().Format(timeFormat), r.Timezone, r.Revoked, r.Resource, r.Action})
+	return json.Marshal(wire{r.Time.UTC().Format(timeFormat), r.Timezone, r.Revoked, r.Resource, r.Action, r.Parameters})
 }
 
 // Mandate refers to a mandate version by digest, never by content.
@@ -135,10 +152,12 @@ type Evaluation struct {
 	ApprovalTimeout string  `json:"approval_timeout,omitempty"`
 }
 
-// Approval is the outcome of an approval request.
+// Approval is the outcome of an approval request; Via is the channel the answer came
+// through (push or ui), empty for a timeout.
 type Approval struct {
 	Outcome string
 	By      string
+	Via     string
 	At      time.Time
 }
 
@@ -147,9 +166,10 @@ func (a Approval) MarshalJSON() ([]byte, error) {
 	type wire struct {
 		Outcome string `json:"outcome"`
 		By      string `json:"by,omitempty"`
+		Via     string `json:"via,omitempty"`
 		At      string `json:"at"`
 	}
-	return json.Marshal(wire{a.Outcome, a.By, a.At.UTC().Format(timeFormat)})
+	return json.Marshal(wire{a.Outcome, a.By, a.Via, a.At.UTC().Format(timeFormat)})
 }
 
 // Result is what happened with a request.
@@ -181,6 +201,7 @@ type wire struct {
 	Approval   *Approval   `json:"approval,omitempty"`
 	Result     *Result     `json:"result,omitempty"`
 	Truncated  *Truncated  `json:"truncated,omitempty"`
+	Checkpoint *checkpoint `json:"checkpoint,omitempty"`
 	Prev       *string     `json:"prev"`
 }
 
@@ -189,8 +210,13 @@ type Log struct {
 	db        *sql.DB
 	principal string
 
-	mu  sync.Mutex
-	now func() time.Time
+	mu       sync.Mutex
+	now      func() time.Time
+	onCommit func(seq int64, e Entry)
+
+	// checkpointSigner signs checkpoints; nil: the log writes none.
+	signerMu         sync.Mutex
+	checkpointSigner *Signer
 }
 
 // New returns the log for principal on db (opened by internal/store).
@@ -211,6 +237,24 @@ func (l *Log) clock() time.Time {
 	return l.now()
 }
 
+// OnCommit sets a function that is called after an entry written by Append or WithEntry
+// was committed (not for AppendTx, whose transaction belongs to the caller). It must not
+// block.
+func (l *Log) OnCommit(fn func(seq int64, e Entry)) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.onCommit = fn
+}
+
+func (l *Log) committed(seq int64, e Entry) {
+	l.mu.Lock()
+	fn := l.onCommit
+	l.mu.Unlock()
+	if fn != nil {
+		fn(seq, e)
+	}
+}
+
 // Append writes e in its own transaction and returns its seq.
 func (l *Log) Append(ctx context.Context, e Entry) (int64, error) {
 	var seq int64
@@ -219,6 +263,9 @@ func (l *Log) Append(ctx context.Context, e Entry) (int64, error) {
 		seq, err = l.AppendTx(ctx, tx, e)
 		return err
 	})
+	if err == nil {
+		l.committed(seq, e)
+	}
 	return seq, err
 }
 
@@ -233,8 +280,10 @@ func (e *ActionError) Unwrap() error { return e.Err }
 // fails, the entry is rolled back and the error is returned as *ActionError. The write
 // lock is held while action runs.
 func (l *Log) WithEntry(ctx context.Context, e Entry, action func() error) error {
-	return l.inTx(ctx, func(tx *sql.Tx) error {
-		if _, err := l.AppendTx(ctx, tx, e); err != nil {
+	var seq int64
+	err := l.inTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		if seq, err = l.AppendTx(ctx, tx, e); err != nil {
 			return err
 		}
 		if err := action(); err != nil {
@@ -242,6 +291,10 @@ func (l *Log) WithEntry(ctx context.Context, e Entry, action func() error) error
 		}
 		return nil
 	})
+	if err == nil {
+		l.committed(seq, e)
+	}
+	return err
 }
 
 func (l *Log) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
@@ -278,6 +331,11 @@ func (l *Log) AppendTx(ctx context.Context, tx *sql.Tx, e Entry) (int64, error) 
 	if lastSeq > 0 {
 		w.Prev = &lastDigest
 	}
+	if e.checkpoint {
+		if w.Checkpoint, err = l.sign(lastSeq, lastDigest); err != nil {
+			return 0, err
+		}
+	}
 	canonical, digest, err := encode(w)
 	if err != nil {
 		return 0, err
@@ -286,7 +344,28 @@ func (l *Log) AppendTx(ctx context.Context, tx *sql.Tx, e Entry) (int64, error) 
 		w.Seq, w.RecordedAt, w.Event, string(canonical), digest); err != nil {
 		return 0, fmt.Errorf("audit: insert: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_search (seq, text) VALUES (?, ?)`, w.Seq, searchText(e.Agent, e.Request)); err != nil {
+		return 0, fmt.Errorf("audit: insert search text: %w", err)
+	}
 	return w.Seq, nil
+}
+
+// searchText is what the search of the UI matches in an entry (decision B2): its
+// entity_id, area, agent name as the UI shows it and client ID, folded, one per line (a
+// search text never has a line break, so it cannot match across fields). Device and
+// area names come from the current catalog at search time, not from here.
+func searchText(a *Agent, r *Request) string {
+	var parts []string
+	if r != nil {
+		parts = append(parts, r.Resource.EntityID, r.Resource.Area)
+	}
+	if a != nil {
+		parts = append(parts, untrusted.Clean(a.DisplayName, untrusted.Max), a.ClientID)
+	}
+	for i, p := range parts {
+		parts[i] = untrusted.Fold(p)
+	}
+	return strings.Join(parts, "\n")
 }
 
 // encode returns the canonical form (RFC 8785) and digest of w after checking it
@@ -321,12 +400,25 @@ func canonicalJSON(v any) ([]byte, error) {
 // validate checks the schema with the reference verifier: a copy of the entry as the
 // first entry of a log (seq 1, prev null) must be a valid log on its own.
 func validate(w wire) error {
+	entries := [][]byte{}
 	w.Seq, w.Prev = 1, nil
+	if w.Checkpoint != nil {
+		// A checkpoint is never the first entry: check it behind a placeholder.
+		first := wire{Type: entryType, ID: w.ID, Seq: 1, RecordedAt: w.RecordedAt, Event: EventEmergencyStopActivated,
+			Principal: w.Principal, Actor: &Actor{Kind: ActorSystem, ID: "placeholder"}}
+		data, err := canonicalJSON(first)
+		digest, digestErr := specaudit.Digest(data)
+		if err := errors.Join(err, digestErr); err != nil {
+			return err
+		}
+		entries = append(entries, data)
+		w.Seq, w.Prev = 2, &digest
+	}
 	data, err := canonicalJSON(w)
 	if err != nil {
 		return err
 	}
-	if r, err := specaudit.Verify([][]byte{data}); err != nil || !r.Valid {
+	if r, err := specaudit.Verify(append(entries, data)); err != nil || !r.Valid {
 		return fmt.Errorf("%w: event %q", ErrInvalidEntry, w.Event)
 	}
 	return nil
@@ -334,15 +426,27 @@ func validate(w wire) error {
 
 // Verify checks the whole stored log with mandate-spec (SPEC-v0 section 9.4).
 func (l *Log) Verify(ctx context.Context) (specaudit.Result, error) {
+	r, _, err := l.Check(ctx)
+	return r, err
+}
+
+// Check is Verify that also returns how many entries it checked.
+func (l *Log) Check(ctx context.Context) (specaudit.Result, int, error) {
 	var entries [][]byte
 	err := l.each(ctx, func(entry []byte) error {
 		entries = append(entries, entry)
 		return nil
 	})
 	if err != nil {
-		return specaudit.Result{}, err
+		return specaudit.Result{}, 0, err
 	}
-	return specaudit.Verify(entries)
+	if signer := l.signer(); signer != nil {
+		r, err := specaudit.VerifyAnchored(entries, specaudit.Anchor{
+			Keys: jws.Keys{signer.KeyID: signer.Key.Public()}, LogID: signer.LogID})
+		return r, len(entries), err
+	}
+	r, err := specaudit.Verify(entries)
+	return r, len(entries), err
 }
 
 // Export writes the log as JSON Lines, the exchange format of SPEC-v0 section 9.4.
@@ -401,6 +505,12 @@ func (l *Log) Truncate(ctx context.Context, cutoff time.Time, actor Actor) (int6
 			return fmt.Errorf("audit: delete: %w", err)
 		}
 		removed, _ = res.RowsAffected()
+		// The entry that accounts for the removed beginning must itself be anchored.
+		if l.signer() != nil {
+			if _, err := l.AppendTx(ctx, tx, Entry{Event: EventLogCheckpoint, checkpoint: true}); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	return removed, err

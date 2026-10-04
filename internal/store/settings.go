@@ -38,6 +38,45 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	return nil
 }
 
+// SettingOnce stores value under key unless the key exists, and returns the stored value:
+// for values that must never change once set, also when two processes start at once.
+func (s *Store) SettingOnce(ctx context.Context, key, value string) (string, error) {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT (key) DO NOTHING`,
+		key, value, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return "", fmt.Errorf("store: write setting %s: %w", key, err)
+	}
+	stored, _, err := s.Setting(ctx, key)
+	return stored, err
+}
+
+// SetSettings stores several values in one transaction: all or none.
+func (s *Store) SetSettings(ctx context.Context, values map[string]string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: write settings: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for key, value := range values {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+			ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, key, value, now); err != nil {
+			return fmt.Errorf("store: write setting %s: %w", key, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: write settings: %w", err)
+	}
+	return nil
+}
+
+// DeleteSetting removes key; a missing key is no error.
+func (s *Store) DeleteSetting(ctx context.Context, key string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, key); err != nil {
+		return fmt.Errorf("store: delete setting %s: %w", key, err)
+	}
+	return nil
+}
+
 // Household returns the principal of this installation ("household:hm-<12 hex>",
 // SPEC-v0 section 3), creating it with crypto/rand on first use.
 func (s *Store) Household(ctx context.Context) (string, error) {

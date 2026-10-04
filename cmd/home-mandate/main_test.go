@@ -8,10 +8,29 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 )
+
+// lockedBuffer is a buffer the server may write while the test reads it.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 // bareEnv has no configuration at all.
 func bareEnv() (env, *bytes.Buffer, *bytes.Buffer) {
@@ -93,16 +112,26 @@ func TestServeNeedsAValidConfiguration(t *testing.T) {
 
 func TestServeStopsWhenContextIsCancelled(t *testing.T) {
 	c := newCLI(t)
-	e, _, stderr := c.env("")
+	e, _, _ := c.env("")
+	stderr := &lockedBuffer{}
+	e.stderr = stderr
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan int, 1)
 
 	go func() { done <- run(ctx, []string{"serve"}, e) }()
 
-	select {
-	case code := <-done:
-		t.Fatalf("run returned %d before the context was cancelled: %s", code, stderr)
-	case <-time.After(200 * time.Millisecond):
+	// Cancel only once the gateway runs: a fixed wait made slow CI machines cancel during
+	// start-up, so the test (and the coverage) depended on the machine.
+	started := time.After(10 * time.Second)
+	for !strings.Contains(stderr.String(), "home-mandate started") {
+		select {
+		case code := <-done:
+			t.Fatalf("run returned %d before the context was cancelled: %s", code, stderr)
+		case <-started:
+			t.Fatalf("gateway did not start: %s", stderr)
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 
 	cancel()
@@ -119,8 +148,8 @@ func TestServeStopsWhenContextIsCancelled(t *testing.T) {
 
 func TestServeRefusesABrokenAuditLog(t *testing.T) {
 	c := newCLI(t)
-	c.mustRun("", "agent", "add", "--name", "A")
-	c.mustRun("", "agent", "add", "--name", "B")
+	c.register("A")
+	c.register("B")
 	if err := tamper(c.envVars["HM_DATA_DIR"] + "/home-mandate.db"); err != nil {
 		t.Fatal(err)
 	}

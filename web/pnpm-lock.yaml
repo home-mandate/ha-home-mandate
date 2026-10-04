@@ -166,15 +166,21 @@ importers:
 
   .:
     devDependencies:
+      '@axe-core/playwright':
+        specifier: 4.13.0
+        version: 4.13.0(playwright-core@1.63.0)
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.11.0(jiti@2.7.0))
       '@inlang/paraglide-js':
         specifier: 2.25.4
         version: 2.25.4(typescript@6.0.3)(vite@8.3.1(@types/node@24.13.6)(jiti@2.7.0))
-      '@inlang/plugin-message-format':
-        specifier: 4.4.4
-        version: 4.4.4
+      '@inlang/plugin-icu1':
+        specifier: 1.1.0
+        version: 1.1.0
+      '@messageformat/parser':
+        specifier: 5.1.1
+        version: 5.1.1
       '@playwright/test':
         specifier: 1.63.0
         version: 1.63.0
@@ -230,6 +236,11 @@ packages:
   '@asamuzakjp/dom-selector@9.2.1':
     resolution: {integrity: sha512-NT4s3yZLjovPpliRpTvdsdzyPjqRqiCZj9MxnarBihbaY5MbAG7DWAJcrLlhmC7xKTNCXsTELcqB8YsqpLnUFQ==}
     engines: {node: ^22.22.2 || ^24.15.0 || >=26.0.0}
+
+  '@axe-core/playwright@4.13.0':
+    resolution: {integrity: sha512-6YLx+kxXu5GJceG4ozFg+33a2EMTdjYwWGloJ3sb9Kta5pp+ZNS53uxGVog5JetIY8s++P5UrtX+cri+u0VAVg==}
+    peerDependencies:
+      playwright-core: '>= 1.0.0'
 
   '@babel/code-frame@7.29.7':
     resolution: {integrity: sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw==}
@@ -463,8 +474,8 @@ packages:
       vite:
         optional: true
 
-  '@inlang/plugin-message-format@4.4.4':
-    resolution: {integrity: sha512-50tkyH/qMFudcIOZSCRdi+BeCVuJQo3BWbvfRTVKr8pEslBiRaZDTKBC1NkCI3ivmkyqzK8k+ktBci3NtDu3Lg==}
+  '@inlang/plugin-icu1@1.1.0':
+    resolution: {integrity: sha512-UJ5v6HI2dd9WMXdELh2uWOB7Ec4wTmLnazKpwYNrvqjTVrY/Sqx7mTPHqFrR0QFlOKnZiBws4JOJDODb9bQRQQ==}
 
   '@inlang/recommend-sherlock@0.2.1':
     resolution: {integrity: sha512-ckv8HvHy/iTqaVAEKrr+gnl+p3XFNwe5D2+6w6wJk2ORV2XkcRkKOJ/XsTUJbPSiyi4PI+p+T3bqbmNx/rDUlg==}
@@ -520,6 +531,9 @@ packages:
 
   '@lix-js/sdk@0.17.0':
     resolution: {integrity: sha512-xplbKYEokKbm0/soUy9eXlROF55Si1J9HK97iwJrNl/av1VixZ2mvpDTa0QsX96UyxFnzkXru6hngjtIJTl73g==}
+
+  '@messageformat/parser@5.1.1':
+    resolution: {integrity: sha512-3p0YRGCcTUCYvBKLIxtDDyrJ0YijGIwrTRu1DT8gIviIDZru8H23+FkY6MJBzM1n9n20CiM4VeDYuBsrrwnLjg==}
 
   '@napi-rs/wasm-runtime@1.2.4':
     resolution: {integrity: sha512-AJxoUD2/15ESHbvpcyjU274nsAPLuOtPHCk0vKJM5pj//Fg/B1FXNWjPnXTT9PymCYYiHo4zPj0ZomXBKhoy7g==}
@@ -956,6 +970,10 @@ packages:
   ast-v8-to-istanbul@1.0.7:
     resolution: {integrity: sha512-kFL68AG6ajd8fg248zwM9GQrUWEp79gsmjum34OEXjs4yHuUMZfYKwOLW9GMmB4oNvVrj+EAGxsP7ye2UR9UlA==}
 
+  axe-core@4.13.0:
+    resolution: {integrity: sha512-UzGt8zg7Ny8djbYMhxl2zuEevVa7r2gJjYY5Lwr1xM7+XU2nd6CkIWFTVcCIbAP63vSz71NaVyyuSk9lHKcy0A==}
+    engines: {node: '>=4'}
+
   axobject-query@4.1.0:
     resolution: {integrity: sha512-qIj0G9wZbMGNLjLmg1PT6v2mE9AH2zlnADJD/2tC6E00hgmhUOfEB6greHPAfLRSufHqROIUTkw6E+M3lH0PTQ==}
     engines: {node: '>= 0.4'}
@@ -1181,11 +1199,6 @@ packages:
   flat-cache@6.1.23:
     resolution: {integrity: sha512-f++BY9pTk+983xK1FLzlLpmM0i0z+jHmx3QESGkURMXujQZz1k5wzwX6hjnQ8goaD0B+sYnDK1yZ6MTyZfUaqA==}
 
-  flat@6.0.1:
-    resolution: {integrity: sha512-/3FfIa8mbrg3xE7+wAhWeV+bd7L2Mof+xtZb5dRDKZ+wDvYJK4WDYeIOuOhre5Yv5aQObZrlbRmk3RTSiuQBtw==}
-    engines: {node: '>=18'}
-    hasBin: true
-
   flatted@3.4.4:
     resolution: {integrity: sha512-5+ybhBZANEJxaH3X5evAFatUxLfEHSr7n6kYJ+1Qd0mUqr4eu9gIf6GDbWHf8RJijHrjjO8G+la14SlL2SeS1Q==}
 
@@ -1401,6 +1414,9 @@ packages:
   minimatch@10.2.6:
     resolution: {integrity: sha512-vpLQEs+VLCr1nU0BXS07maYoFwlDAH0gngQuuttxIwutDFEMHq2blX+8vpgxDdK3J1PwjCJiep77OitTZ4Ll1A==}
     engines: {node: 18 || 20 || >=22}
+
+  moo@0.5.3:
+    resolution: {integrity: sha512-m2fmM2dDm7GZQsY7KK2cme8agi+AAljILjQnof7p1ZMDe6dQ4bdnSMx0cPppudoeNv5hEFQirN6u+O4fDE0IWA==}
 
   mri@1.2.0:
     resolution: {integrity: sha512-tzzskb3bG8LvYGFF/mDTpq3jpI6Q9wc3LEmBaghu+DdCssd1FakN7Bc0hVNmEyGq1bq3RgfkCb3cmQLpNPOroA==}
@@ -1836,6 +1852,11 @@ snapshots:
       is-potential-custom-element-name: 1.0.1
       lru-cache: 11.5.3
 
+  '@axe-core/playwright@4.13.0(playwright-core@1.63.0)':
+    dependencies:
+      axe-core: 4.13.0
+      playwright-core: 1.63.0
+
   '@babel/code-frame@7.29.7':
     dependencies:
       '@babel/helper-validator-identifier': 7.29.7
@@ -2037,9 +2058,9 @@ snapshots:
       typescript: 6.0.3
       vite: 8.3.1(@types/node@24.13.6)(jiti@2.7.0)
 
-  '@inlang/plugin-message-format@4.4.4':
+  '@inlang/plugin-icu1@1.1.0':
     dependencies:
-      flat: 6.0.1
+      '@messageformat/parser': 5.1.1
 
   '@inlang/recommend-sherlock@0.2.1':
     dependencies:
@@ -2101,6 +2122,10 @@ snapshots:
       '@lix-js/sdk-linux-arm64': 0.17.0
       '@lix-js/sdk-linux-x64': 0.17.0
       '@lix-js/sdk-win32-x64': 0.17.0
+
+  '@messageformat/parser@5.1.1':
+    dependencies:
+      moo: 0.5.3
 
   '@napi-rs/wasm-runtime@1.2.4(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)':
     dependencies:
@@ -2444,6 +2469,8 @@ snapshots:
       estree-walker: 3.0.3
       js-tokens: 10.0.0
 
+  axe-core@4.13.0: {}
+
   axobject-query@4.1.0: {}
 
   balanced-match@4.0.4: {}
@@ -2667,8 +2694,6 @@ snapshots:
       flatted: 3.4.4
       hookified: 1.15.1
 
-  flat@6.0.1: {}
-
   flatted@3.4.4: {}
 
   fsevents@2.3.3:
@@ -2846,6 +2871,8 @@ snapshots:
   minimatch@10.2.6:
     dependencies:
       brace-expansion: 5.0.12
+
+  moo@0.5.3: {}
 
   mri@1.2.0: {}
 

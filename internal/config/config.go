@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -39,6 +40,7 @@ const (
 	appSSLDir     = "/ssl"
 	supervisorWS  = "ws://supervisor/core/websocket"
 	mcpPort       = "8765"
+	ingressPort   = "8099"
 	minApproval   = 30 * time.Second
 	maxApproval   = 600 * time.Second
 	maxTokenBytes = 4096
@@ -62,15 +64,35 @@ type Config struct {
 	// address (decision 1: no plaintext on the LAN).
 	MCPAddr string
 	// PDPAddr, if set, serves the AuthZEN endpoint for other gateways; loopback only.
-	PDPAddr         string
+	PDPAddr string
+	// IngressAddr is the listen address of the local UI behind Home Assistant Ingress:
+	// always :8099 in app mode, opt-in through HM_INGRESS_ADDR in container mode (decision
+	// U3). Whatever the address, only requests from the Supervisor (172.30.32.2) are served.
+	IngressAddr string
+	// IngressProxy is the one address requests to the UI listener may come from: the
+	// Supervisor (172.30.32.2, fixed in Home Assistant OS) in app mode, HM_INGRESS_PROXY in
+	// container mode (decision U2). Exactly one IP, never a range.
+	IngressProxy netip.Addr
+	// PublicURL is the origin agents and browsers reach Home-Mandate at, e.g.
+	// https://hm.example.org:8765: OAuth issuer, base of the MCP resource and of the
+	// sign-in pages. Empty means OAuth is off. Plaintext only for loopback (decision 1).
+	PublicURL string
+	// HABrowserURL is the origin of Home Assistant as the human's browser reaches it, for
+	// the sign-in redirect; empty in app mode without the option.
+	HABrowserURL string
+	// HAHTTPURL is the origin of Home Assistant's HTTP API as Home-Mandate reaches it,
+	// for exchanging and revoking sign-in codes.
+	HAHTTPURL string
+	// ApprovalTimeout is the upper limit for waiting for an approval; a mandate may
+	// only shorten it.
 	ApprovalTimeout time.Duration
 	LogLevel        slog.Level
 }
 
 // String omits nothing but the token, which Secret redacts.
 func (c Config) String() string {
-	return fmt.Sprintf("mode=%s data=%s ha=%s token=%s tls=%t mcp=%s approval=%s log=%s",
-		c.Mode, c.DataDir, c.HAURL, c.HAToken, c.TLSCert != "", c.MCPAddr, c.ApprovalTimeout, c.LogLevel)
+	return fmt.Sprintf("mode=%s data=%s ha=%s token=%s tls=%t mcp=%s ingress=%s public=%s approval=%s log=%s",
+		c.Mode, c.DataDir, c.HAURL, c.HAToken, c.TLSCert != "", c.MCPAddr, c.IngressAddr, c.PublicURL, c.ApprovalTimeout, c.LogLevel)
 }
 
 // DataDir returns the data directory without reading the rest of the configuration, so
@@ -103,6 +125,8 @@ type appOptionsFile struct {
 	TLSKeyFile             string `json:"tls_keyfile"`
 	ApprovalTimeoutSeconds int    `json:"approval_timeout_seconds"`
 	LogLevel               string `json:"log_level"`
+	PublicURL              string `json:"public_url"`
+	HABrowserURL           string `json:"ha_browser_url"`
 }
 
 func loadApp(token ha.Secret, readFile func(string) ([]byte, error)) (Config, error) {
@@ -126,10 +150,22 @@ func loadApp(token ha.Secret, readFile func(string) ([]byte, error)) (Config, er
 	if cfg.LogLevel, err = logLevel(opts.LogLevel); err != nil {
 		return Config{}, err
 	}
+	cfg.IngressAddr = ":" + ingressPort
+	cfg.IngressProxy = SupervisorAddr
 	cfg.MCPAddr = net.JoinHostPort("127.0.0.1", mcpPort)
 	if cfg.TLSCert != "" {
 		cfg.MCPAddr = ":" + mcpPort
 	}
+	if cfg.PublicURL, err = publicURL(opts.PublicURL); err != nil {
+		return Config{}, err
+	}
+	if cfg.HABrowserURL, err = browserURL(opts.HABrowserURL); err != nil {
+		return Config{}, err
+	}
+	if cfg.PublicURL != "" && cfg.HABrowserURL == "" {
+		return Config{}, fmt.Errorf("%w: public_url needs ha_browser_url for the sign-in of humans", ErrInvalid)
+	}
+	cfg.HAHTTPURL = appHAHTTP
 	return cfg, nil
 }
 
@@ -178,6 +214,12 @@ func loadContainer(getenv func(string) string, readFile func(string) ([]byte, er
 			return Config{}, fmt.Errorf("%w: HM_PDP_ADDR must be a loopback address", ErrInvalid)
 		}
 	}
+	if cfg.IngressAddr, err = ingressAddr(getenv("HM_INGRESS_ADDR")); err != nil {
+		return Config{}, err
+	}
+	if cfg.IngressProxy, err = ingressProxy(getenv("HM_INGRESS_PROXY"), cfg.IngressAddr != ""); err != nil {
+		return Config{}, err
+	}
 	cfg.ApprovalTimeout = DefaultApprovalTimeout
 	if s := getenv("HM_APPROVAL_TIMEOUT"); s != "" {
 		seconds, err := strconv.Atoi(s)
@@ -190,6 +232,16 @@ func loadContainer(getenv func(string) string, readFile func(string) ([]byte, er
 	}
 	if cfg.LogLevel, err = logLevel(getenv("HM_LOG_LEVEL")); err != nil {
 		return Config{}, err
+	}
+	if cfg.PublicURL, err = publicURL(getenv("HM_PUBLIC_URL")); err != nil {
+		return Config{}, err
+	}
+	cfg.HAHTTPURL = httpOrigin(cfg.HAURL)
+	cfg.HABrowserURL = cfg.HAHTTPURL
+	if s := getenv("HM_HA_BROWSER_URL"); s != "" {
+		if cfg.HABrowserURL, err = browserURL(s); err != nil {
+			return Config{}, err
+		}
 	}
 	return cfg, nil
 }
@@ -248,6 +300,43 @@ func mcpAddr(addr string, tls bool) (string, error) {
 		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
 			return "", fmt.Errorf("%w: without TLS the MCP endpoint may only listen on loopback", ErrInvalid)
 		}
+	}
+	return addr, nil
+}
+
+// SupervisorAddr is the Supervisor's address in Home Assistant OS: the hassio network
+// 172.30.32.0/23 and the Supervisor at .2 are constants of the Supervisor.
+var SupervisorAddr = netip.MustParseAddr("172.30.32.2")
+
+// ingressProxy reads HM_INGRESS_PROXY: required with HM_INGRESS_ADDR, one IP address (no
+// range, zone, unspecified or multicast address), meaningless without it.
+func ingressProxy(value string, listening bool) (netip.Addr, error) {
+	switch {
+	case value == "" && listening:
+		return netip.Addr{}, fmt.Errorf("%w: HM_INGRESS_ADDR needs HM_INGRESS_PROXY, the address of the proxy in front of it", ErrInvalid)
+	case value == "":
+		return netip.Addr{}, nil
+	case !listening:
+		return netip.Addr{}, fmt.Errorf("%w: HM_INGRESS_PROXY without HM_INGRESS_ADDR", ErrInvalid)
+	}
+	ip, err := netip.ParseAddr(value)
+	if err != nil || ip.Zone() != "" || ip.IsUnspecified() || ip.IsMulticast() {
+		return netip.Addr{}, fmt.Errorf("%w: HM_INGRESS_PROXY must be one IP address", ErrInvalid)
+	}
+	return ip.Unmap(), nil
+}
+
+// ingressAddr accepts host:port with a numeric port, or nothing (no UI listener).
+func ingressAddr(addr string) (string, error) {
+	if addr == "" {
+		return "", nil
+	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", fmt.Errorf("%w: HM_INGRESS_ADDR: %w", ErrInvalid, err)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return "", fmt.Errorf("%w: HM_INGRESS_ADDR needs a port between 1 and 65535", ErrInvalid)
 	}
 	return addr, nil
 }

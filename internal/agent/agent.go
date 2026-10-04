@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Package agent manages agents and their access tokens. Tokens are 256-bit random values
-// from crypto/rand; only their SHA-256 hash is stored. Every registration and revocation
-// is written to the audit log in the same transaction.
+// Package agent manages agents, their OAuth tokens and the emergency stop. Tokens are
+// 256-bit random values from crypto/rand; only their SHA-256 hash is stored. Every
+// registration, revocation and emergency stop is written to the audit log in the same
+// transaction.
 package agent
 
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/home-mandate/home-mandate/internal/audit"
+	"github.com/home-mandate/home-mandate/internal/untrusted"
 )
 
 var (
@@ -31,8 +32,8 @@ var (
 	ErrInvalidName = errors.New("agent: invalid display name")
 	// ErrRevoked means the agent was revoked.
 	ErrRevoked = errors.New("agent: revoked")
-	// ErrUnauthorized means a token is unknown, malformed, expired or revoked, or its
-	// agent is revoked. Callers must not tell these cases apart to the client.
+	// ErrUnauthorized means a token is unknown, malformed, expired, revoked or bound to
+	// another resource, its agent is revoked or the emergency stop is active. Callers must not tell these cases apart to the client.
 	ErrUnauthorized = errors.New("agent: unauthorized")
 )
 
@@ -44,14 +45,10 @@ const (
 
 const (
 	clientIDNamespace = "hm-client:"
-	tokenPrefix       = "hma_"
-	tokenBytes        = 32
 	maxNameRunes      = 80
 	maxSlugLen        = 24
 	timeFormat        = time.RFC3339Nano
 )
-
-var tokenLen = len(tokenPrefix) + base64.RawURLEncoding.EncodedLen(tokenBytes)
 
 // Agent is a registered agent.
 type Agent struct {
@@ -60,6 +57,22 @@ type Agent struct {
 	Status      string
 	CreatedAt   time.Time
 	CreatedBy   string
+	// OAuthClient is the OAuth client ID the agent was admitted with: a Client ID
+	// Metadata Document URL (ClientVerified) or a free identifier from a pairing code.
+	OAuthClient    string
+	ClientVerified bool
+	// RedirectURIs are the redirect URIs of the client at admission; never widened later.
+	RedirectURIs []string
+	// RevokedAt and RevokedBy are set once the agent is revoked.
+	RevokedAt time.Time
+	RevokedBy string
+}
+
+// Client is the OAuth client an agent is admitted with.
+type Client struct {
+	ID           string
+	Verified     bool
+	RedirectURIs []string
 }
 
 // Store manages agents in the database opened by internal/store.
@@ -91,18 +104,10 @@ func (s *Store) clock() time.Time {
 
 // Register creates an agent with a new client ID of the form hm-client:<slug>-<hex>.
 func (s *Store) Register(ctx context.Context, displayName string, by audit.Actor) (Agent, error) {
-	name, err := validName(displayName)
-	if err != nil {
-		return Agent{}, err
-	}
-	a := Agent{ClientID: newClientID(name), DisplayName: name, Status: StatusActive, CreatedAt: s.clock(), CreatedBy: by.ID}
-	err = s.inTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO agents (client_id, display_name, status, created_at, created_by) VALUES (?, ?, ?, ?, ?)`,
-			a.ClientID, a.DisplayName, a.Status, a.CreatedAt.Format(timeFormat), a.CreatedBy); err != nil {
-			return fmt.Errorf("agent: insert: %w", err)
-		}
-		_, err := s.log.AppendTx(ctx, tx, audit.Entry{Event: audit.EventAgentRegistered, Actor: &by,
-			Agent: &audit.Agent{ClientID: a.ClientID, DisplayName: a.DisplayName}})
+	var a Agent
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		a, err = s.RegisterTx(ctx, tx, displayName, Client{}, by)
 		return err
 	})
 	if err != nil {
@@ -111,57 +116,32 @@ func (s *Store) Register(ctx context.Context, displayName string, by audit.Actor
 	return a, nil
 }
 
-// IssueToken creates a token for an active agent, valid for ttl. The token is returned
-// once and never stored.
-func (s *Store) IssueToken(ctx context.Context, clientID string, ttl time.Duration) (string, time.Time, error) {
-	if ttl <= 0 {
-		return "", time.Time{}, errors.New("agent: token lifetime must be positive")
-	}
-	a, err := s.Get(ctx, clientID)
+// RegisterTx registers an agent inside tx for the OAuth client it is admitted with.
+func (s *Store) RegisterTx(ctx context.Context, tx *sql.Tx, displayName string, client Client, by audit.Actor) (Agent, error) {
+	name, err := validName(displayName)
 	if err != nil {
-		return "", time.Time{}, err
+		return Agent{}, err
 	}
-	if a.Status != StatusActive {
-		return "", time.Time{}, ErrRevoked
+	uris := client.RedirectURIs
+	if uris == nil {
+		uris = []string{}
 	}
-	var raw [tokenBytes]byte
-	_, _ = rand.Read(raw[:]) // crypto/rand.Read never fails (Go ≥ 1.24)
-	token := tokenPrefix + base64.RawURLEncoding.EncodeToString(raw[:])
-	now := s.clock()
-	expires := now.Add(ttl)
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO agent_tokens (token_hash, client_id, created_at, expires_at) VALUES (?, ?, ?, ?)`,
-		hashToken(token), clientID, now.Format(timeFormat), expires.Format(timeFormat)); err != nil {
-		return "", time.Time{}, fmt.Errorf("agent: store token: %w", err)
-	}
-	return token, expires, nil
-}
-
-// Authenticate returns the agent a token belongs to. Every failure is ErrUnauthorized,
-// except database errors.
-func (s *Store) Authenticate(ctx context.Context, token string) (Agent, error) {
-	if len(token) != tokenLen || !strings.HasPrefix(token, tokenPrefix) {
-		return Agent{}, ErrUnauthorized
-	}
-	if raw, err := base64.RawURLEncoding.DecodeString(token[len(tokenPrefix):]); err != nil || len(raw) != tokenBytes {
-		return Agent{}, ErrUnauthorized
-	}
-	var a Agent
-	var createdAt, expiresAt string
-	var revokedAt sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT a.client_id, a.display_name, a.status, a.created_at, a.created_by, t.expires_at, t.revoked_at
-		FROM agent_tokens t JOIN agents a ON a.client_id = t.client_id WHERE t.token_hash = ?`, hashToken(token)).
-		Scan(&a.ClientID, &a.DisplayName, &a.Status, &createdAt, &a.CreatedBy, &expiresAt, &revokedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Agent{}, ErrUnauthorized
-	}
+	encoded, err := json.Marshal(uris)
 	if err != nil {
-		return Agent{}, fmt.Errorf("agent: authenticate: %w", err)
+		return Agent{}, fmt.Errorf("agent: redirect URIs: %w", err)
 	}
-	expires, err := time.Parse(timeFormat, expiresAt)
-	if err != nil || revokedAt.Valid || a.Status != StatusActive || !s.clock().Before(expires) {
-		return Agent{}, ErrUnauthorized
+	a := Agent{ClientID: newClientID(name), DisplayName: name, Status: StatusActive, CreatedAt: s.clock(), CreatedBy: by.ID,
+		OAuthClient: client.ID, ClientVerified: client.Verified, RedirectURIs: uris}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agents (client_id, display_name, status, created_at, created_by, oauth_client, client_verified, redirect_uris)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, a.ClientID, a.DisplayName, a.Status, a.CreatedAt.Format(timeFormat), a.CreatedBy,
+		a.OAuthClient, a.ClientVerified, string(encoded)); err != nil {
+		return Agent{}, fmt.Errorf("agent: insert: %w", err)
 	}
-	a.CreatedAt, _ = time.Parse(timeFormat, createdAt)
+	_, err = s.log.AppendTx(ctx, tx, audit.Entry{Event: audit.EventAgentRegistered, Actor: &by,
+		Agent: &audit.Agent{ClientID: a.ClientID, DisplayName: a.DisplayName}})
+	if err != nil {
+		return Agent{}, err
+	}
 	return a, nil
 }
 
@@ -169,28 +149,38 @@ func (s *Store) Authenticate(ctx context.Context, token string) (Agent, error) {
 // no-op.
 func (s *Store) Revoke(ctx context.Context, clientID string, by audit.Actor) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
-		var status, name string
-		err := tx.QueryRowContext(ctx, `SELECT status, display_name FROM agents WHERE client_id = ?`, clientID).Scan(&status, &name)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("agent: read: %w", err)
-		}
-		if status == StatusRevoked {
-			return nil
-		}
-		now := s.clock().Format(timeFormat)
-		if _, err := tx.ExecContext(ctx, `UPDATE agents SET status = ?, revoked_at = ? WHERE client_id = ?`, StatusRevoked, now, clientID); err != nil {
-			return fmt.Errorf("agent: revoke: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE agent_tokens SET revoked_at = ? WHERE client_id = ? AND revoked_at IS NULL`, now, clientID); err != nil {
-			return fmt.Errorf("agent: revoke tokens: %w", err)
-		}
-		_, err = s.log.AppendTx(ctx, tx, audit.Entry{Event: audit.EventAgentRevoked, Actor: &by,
-			Agent: &audit.Agent{ClientID: clientID, DisplayName: name}})
+		_, err := s.RevokeTx(ctx, tx, clientID, by)
 		return err
 	})
+}
+
+// RevokeTx is Revoke inside tx, so that the agent, its tokens and its mandate end in
+// one transaction. It reports whether the agent was active until now.
+func (s *Store) RevokeTx(ctx context.Context, tx *sql.Tx, clientID string, by audit.Actor) (bool, error) {
+	var status, name string
+	err := tx.QueryRowContext(ctx, `SELECT status, display_name FROM agents WHERE client_id = ?`, clientID).Scan(&status, &name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("agent: read: %w", err)
+	}
+	if status == StatusRevoked {
+		return false, nil
+	}
+	now := s.clock().Format(timeFormat)
+	if _, err := tx.ExecContext(ctx, `UPDATE agents SET status = ?, revoked_at = ?, revoked_by = ? WHERE client_id = ?`,
+		StatusRevoked, now, by.ID, clientID); err != nil {
+		return false, fmt.Errorf("agent: revoke: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE tokens SET revoked_at = ? WHERE client_id = ? AND revoked_at IS NULL`, now, clientID); err != nil {
+		return false, fmt.Errorf("agent: revoke tokens: %w", err)
+	}
+	if _, err := s.log.AppendTx(ctx, tx, audit.Entry{Event: audit.EventAgentRevoked, Actor: &by,
+		Agent: &audit.Agent{ClientID: clientID, DisplayName: name}}); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // Get returns the agent with clientID.
@@ -211,7 +201,9 @@ func (s *Store) List(ctx context.Context) ([]Agent, error) {
 }
 
 func (s *Store) query(ctx context.Context, where string, args ...any) ([]Agent, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT client_id, display_name, status, created_at, created_by FROM agents `+where+` ORDER BY rowid`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT client_id, display_name, status, created_at, created_by, oauth_client, client_verified,
+			redirect_uris, coalesce(revoked_at, ''), revoked_by
+		FROM agents `+where+` ORDER BY rowid`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("agent: query: %w", err)
 	}
@@ -219,11 +211,16 @@ func (s *Store) query(ctx context.Context, where string, args ...any) ([]Agent, 
 	var agents []Agent
 	for rows.Next() {
 		var a Agent
-		var createdAt string
-		if err := rows.Scan(&a.ClientID, &a.DisplayName, &a.Status, &createdAt, &a.CreatedBy); err != nil {
+		var createdAt, uris, revokedAt string
+		if err := rows.Scan(&a.ClientID, &a.DisplayName, &a.Status, &createdAt, &a.CreatedBy, &a.OAuthClient, &a.ClientVerified,
+			&uris, &revokedAt, &a.RevokedBy); err != nil {
 			return nil, fmt.Errorf("agent: query: %w", err)
 		}
 		a.CreatedAt, _ = time.Parse(timeFormat, createdAt)
+		a.RevokedAt, _ = time.Parse(timeFormat, revokedAt)
+		if err := json.Unmarshal([]byte(uris), &a.RedirectURIs); err != nil {
+			return nil, fmt.Errorf("agent: redirect URIs of %s: %w", a.ClientID, err)
+		}
 		agents = append(agents, a)
 	}
 	return agents, rows.Err()
@@ -244,13 +241,9 @@ func (s *Store) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
 	return nil
 }
 
-func hashToken(token string) []byte {
-	sum := sha256.Sum256([]byte(token))
-	return sum[:]
-}
-
 // validName trims surrounding spaces and rejects texts that could mislead a human in an
-// approval request.
+// approval request, and names that show no letter or digit once cleaned as the UI shows
+// them (only blank-looking letters, selectors or marks).
 func validName(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || utf8.RuneCountInString(name) > maxNameRunes || !utf8.ValidString(name) {
@@ -261,7 +254,16 @@ func validName(name string) (string, error) {
 			return "", ErrInvalidName
 		}
 	}
+	if !strings.ContainsFunc(untrusted.Clean(name, untrusted.Max), func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) {
+		return "", ErrInvalidName
+	}
 	return name, nil
+}
+
+// ValidName reports whether name is acceptable as a display name, and returns it trimmed.
+func ValidName(name string) (string, bool) {
+	n, err := validName(name)
+	return n, err == nil
 }
 
 // newClientID derives a readable, unique client ID from the display name.

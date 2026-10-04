@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // i18n checks for every commit (docs/TESTING.md section 5): same keys in every catalog,
-// no orphaned or unknown keys, same placeholders, no hard-coded visible text in Svelte
-// markup, and only logical CSS properties. Run with: node scripts/check-i18n.ts
+// valid ICU MessageFormat, no orphaned or unknown keys, same placeholders, no hard-coded
+// visible text in Svelte markup, and only logical CSS properties.
+// Run with: node scripts/check-i18n.ts
+//
+// Keys of the design catalogs whose screens are not built yet stay in
+// scripts/i18n-pending.json; the list must be empty for the release.
 //
 // Limits: string literals in <script> blocks and .ts files are not checked; text built
 // there must come from a catalog by review.
@@ -10,6 +14,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { parse } from 'svelte/compiler';
+import { parse as parseIcu, type Token } from '@messageformat/parser';
 
 export type Catalog = Record<string, unknown>;
 
@@ -63,16 +68,24 @@ export function comparePlaceholders(catalogs: Record<string, Catalog>): string[]
   return problems;
 }
 
-/** compareUsage reports catalog keys never used in the sources and used keys that do not exist. */
-export function compareUsage(catalog: Catalog, sources: Record<string, string>): string[] {
+/**
+ * compareUsage reports catalog keys never used in the sources (unless pending), pending
+ * keys that are used or gone, and used keys that do not exist.
+ */
+export function compareUsage(catalog: Catalog, sources: Record<string, string>, pending: readonly string[] = []): string[] {
   const keys = new Set(messageKeys(catalog));
+  const waiting = new Set(pending);
   const used = new Map<string, string>();
   for (const [file, source] of Object.entries(sources)) {
     for (const key of usedKeys(source)) used.set(key, file);
   }
   const problems: string[] = [];
   for (const key of [...keys].sort()) {
-    if (!used.has(key)) problems.push(`orphaned key "${key}"`);
+    if (!used.has(key) && !waiting.has(key)) problems.push(`orphaned key "${key}"`);
+  }
+  for (const key of [...waiting].sort()) {
+    if (!keys.has(key)) problems.push(`pending key "${key}" is not in the catalog`);
+    else if (used.has(key)) problems.push(`pending key "${key}" is used now; remove it from scripts/i18n-pending.json`);
   }
   for (const [key, file] of used) {
     if (!keys.has(key)) problems.push(`${file}: unknown key "${key}"`);
@@ -215,17 +228,54 @@ function messageKeys(catalog: Catalog): string[] {
   return Object.keys(catalog).filter((k) => k !== '$schema');
 }
 
+/** tokensOf parses an ICU message; null if it is not valid ICU MessageFormat. */
+function tokensOf(message: string): Token[] | null {
+  try {
+    return parseIcu(message);
+  } catch {
+    return null;
+  }
+}
+
+/** walkTokens visits every token, also inside plural and select cases. */
+function walkTokens(tokens: Token[], visit: (t: Token) => void): void {
+  for (const t of tokens) {
+    visit(t);
+    if ('cases' in t) for (const c of t.cases) walkTokens(c.tokens, visit);
+  }
+}
+
 function placeholders(message: unknown): string[] {
+  const tokens = typeof message === 'string' ? tokensOf(message) : null;
   const names = new Set<string>();
-  const walk = (v: unknown): void => {
-    if (typeof v === 'string') {
-      for (const match of v.matchAll(/\{([A-Za-z_][\w]*)\}/g)) names.add(match[1] as string);
-    } else if (v && typeof v === 'object') {
-      Object.values(v).forEach(walk);
-    }
-  };
-  walk(message);
+  walkTokens(tokens ?? [], (t) => {
+    if ('arg' in t) names.add(t.arg);
+  });
   return [...names].sort();
+}
+
+/**
+ * checkMessages reports messages that are not valid ICU MessageFormat, plurals or selects
+ * without "other", and "#": Paraglide inserts it unformatted, {count, number} formats
+ * the number for the locale (1.204 / 1,204).
+ */
+export function checkMessages(locale: string, catalog: Catalog): string[] {
+  return messageKeys(catalog).flatMap((key) => {
+    const message = catalog[key];
+    if (typeof message !== 'string') return [`${locale}: "${key}" is not a string`];
+    const tokens = tokensOf(message);
+    if (!tokens) return [`${locale}: "${key}" is not valid ICU MessageFormat`];
+    const problems = new Set<string>();
+    walkTokens(tokens, (t) => {
+      if ('cases' in t && !t.cases.some((c) => c.key === 'other')) {
+        problems.add(`${locale}: "${key}" has a plural or select without "other"`);
+      }
+      if (t.type === 'octothorpe') {
+        problems.add(`${locale}: "${key}" uses #; write {count, number} so the number is formatted for the locale`);
+      }
+    });
+    return [...problems];
+  });
 }
 
 function listFiles(dir: string, skip: string): string[] {
@@ -248,10 +298,12 @@ export function run(root: string): string[] {
     (f) => /\.(svelte|ts|css)$/.test(f) && !f.endsWith('.test.ts'),
   );
   const sources = Object.fromEntries(files.map((f) => [relative(root, f), readFileSync(f, 'utf8')]));
+  const pending = JSON.parse(readFileSync(join(root, 'scripts/i18n-pending.json'), 'utf8')) as string[];
   return [
     ...compareKeys(catalogs),
+    ...Object.entries(catalogs).flatMap(([locale, catalog]) => checkMessages(locale, catalog)),
     ...comparePlaceholders(catalogs),
-    ...compareUsage(catalogs[settings.baseLocale] ?? {}, sources),
+    ...compareUsage(catalogs[settings.baseLocale] ?? {}, sources, pending),
     ...Object.entries(sources)
       .filter(([f]) => f.endsWith('.svelte'))
       .flatMap(([f, s]) => findHardcodedText(s, f)),

@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,8 +21,19 @@ type fakeSource struct {
 	states   []ha.State
 	entities []ha.EntityEntry
 	devices  []ha.Device
+	areas    []ha.Area
 	err      error
+	areaErr  error
 	calls    int
+}
+
+func (f *fakeSource) ListAreas(context.Context) ([]ha.Area, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.areas, f.areaErr
 }
 
 func (f *fakeSource) GetStates(context.Context) ([]ha.State, error) {
@@ -355,5 +368,129 @@ func TestInvalidateUntilTheNextRefresh(t *testing.T) {
 	}
 	if err := c.Refresh(context.Background()); err != nil || !c.Ready() {
 		t.Errorf("not ready after a refresh: %v", err)
+	}
+}
+
+func TestAreasAndNames(t *testing.T) {
+	src := house()
+	src.areas = []ha.Area{{AreaID: "living_room", Name: "Wohnzimmer"}, {AreaID: "kitchen", Name: "Küche"}, {AreaID: "", Name: "broken"}}
+	c := New(src, nil)
+	if err := c.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	areas := c.Areas()
+	if len(areas) != 2 || areas[0] != (Area{ID: "kitchen", Name: "Küche"}) || areas[1].ID != "living_room" {
+		t.Errorf("areas = %+v", areas)
+	}
+	areas[0].Name = "changed"
+	if c.Areas()[0].Name != "Küche" {
+		t.Error("Areas returned the catalog's own slice")
+	}
+	if d, _ := c.Lookup("light.kitchen"); d.Name() != "Kitchen" {
+		t.Errorf("Name = %q", d.Name())
+	}
+	if d, _ := c.Lookup("switch.pool_pump"); d.Name() != "" {
+		t.Errorf("Name without friendly_name = %q", d.Name())
+	}
+	src.set(func(f *fakeSource) { f.areaErr = errors.New("area registry down") })
+	if err := c.Refresh(context.Background()); err == nil {
+		t.Error("Refresh succeeded without the area registry")
+	}
+	if len(c.Areas()) != 2 {
+		t.Error("a failed refresh dropped the areas")
+	}
+}
+
+func TestRenamesAreReportedAfterTheRefresh(t *testing.T) {
+	src := house()
+	c := New(src, nil)
+	reports := make(chan []Rename, 4)
+	c.OnRefresh(func(renames []Rename) { reports <- renames })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.Run(ctx, 5*time.Millisecond)
+	c.RequestRefresh()
+	if got := <-reports; len(got) != 0 {
+		t.Fatalf("first refresh reported renames %v", got)
+	}
+
+	src.set(func(f *fakeSource) { f.states[0].EntityID = "light.kitchen_ceiling" })
+	c.HandleEvent(event(t, "entity_registry_updated", map[string]any{"action": "update",
+		"entity_id": "light.kitchen_ceiling", "old_entity_id": "light.kitchen", "changes": map[string]any{"entity_id": "light.kitchen"}}))
+	got := <-reports
+	if len(got) != 1 || got[0] != (Rename{Old: "light.kitchen", New: "light.kitchen_ceiling"}) {
+		t.Fatalf("renames = %v", got)
+	}
+	if _, ok := c.Lookup("light.kitchen_ceiling"); !ok {
+		t.Error("the hook ran before the new snapshot")
+	}
+
+	// A registry change without a rename reports an empty list: the directory changed.
+	c.HandleEvent(event(t, "area_registry_updated", map[string]any{"action": "remove", "area_id": "garden"}))
+	if got := <-reports; len(got) != 0 {
+		t.Errorf("area change reported renames %v", got)
+	}
+}
+
+func TestMalformedRenamesAreIgnored(t *testing.T) {
+	for name, data := range map[string]map[string]any{
+		"same id":          {"action": "update", "entity_id": "light.a", "old_entity_id": "light.a"},
+		"no new id":        {"action": "update", "old_entity_id": "light.a"},
+		"create":           {"action": "create", "entity_id": "light.b", "old_entity_id": "light.a"},
+		"space":            {"action": "update", "entity_id": "light.b", "old_entity_id": "light. a"},
+		"control":          {"action": "update", "entity_id": "light.b\n", "old_entity_id": "light.a"},
+		"not a string":     {"action": "update", "entity_id": 7, "old_entity_id": "light.a"},
+		"oversized new id": {"action": "update", "entity_id": "light." + strings.Repeat("a", 300), "old_entity_id": "light.a"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := New(house(), nil)
+			c.HandleEvent(event(t, "entity_registry_updated", data))
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if len(c.renames) != 0 {
+				t.Errorf("kept %v", c.renames)
+			}
+		})
+	}
+}
+
+func TestRenamesAreBounded(t *testing.T) {
+	c := New(house(), nil)
+	for i := range maxRenames + 10 {
+		c.HandleEvent(event(t, "entity_registry_updated", map[string]any{"action": "update",
+			"entity_id": fmt.Sprintf("light.new_%d", i), "old_entity_id": fmt.Sprintf("light.old_%d", i)}))
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.renames) != maxRenames {
+		t.Errorf("kept %d renames, want %d", len(c.renames), maxRenames)
+	}
+}
+
+type holdingMarks map[string]bool
+
+func (h holdingMarks) Critical(id string) bool { return h[id] }
+func (h holdingMarks) Hold(oldID, newID string) bool {
+	if !h[oldID] || h[newID] {
+		return false
+	}
+	h[newID] = true
+	return true
+}
+
+// The renamed entity is never decided on without its mark: the mark moves when the event
+// arrives, before the refresh that brings the new ID.
+func TestRenameMovesTheMarkBeforeTheRefresh(t *testing.T) {
+	src := house()
+	c := loaded(t, src)
+	marks := holdingMarks{"light.kitchen": true}
+	c.SetMarks(marks)
+	c.HandleEvent(event(t, "entity_registry_updated", map[string]any{"action": "update",
+		"entity_id": "light.kitchen_ceiling", "old_entity_id": "light.kitchen"}))
+	// The state of the new ID may arrive before any refresh.
+	c.HandleEvent(event(t, "state_changed", map[string]any{"entity_id": "light.kitchen_ceiling",
+		"new_state": map[string]any{"entity_id": "light.kitchen_ceiling", "state": "on"}}))
+	if d, ok := c.Lookup("light.kitchen_ceiling"); !ok || !d.Critical {
+		t.Errorf("renamed entity = %+v, %v; want it critical at once", d, ok)
 	}
 }

@@ -16,9 +16,13 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web /web/dist ./internal/webui/dist
+# The licenses of the linked Go modules join those of the UI (decision B10).
+RUN go run ./tools/golicenses -file internal/webui/dist/licenses.txt \
+      -pending github.com/mandate-spec/mandate-spec=Apache-2.0
 ARG VERSION=dev
+ARG COMMIT=unknown
 RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false \
-      -ldflags="-s -w -buildid= -X main.version=${VERSION}" \
+      -ldflags="-s -w -buildid= -X main.version=${VERSION} -X main.commit=${COMMIT}" \
       -o /out/home-mandate ./cmd/home-mandate
 
 # 3) Runtime: only the binary and CA certificates, no Node runtime

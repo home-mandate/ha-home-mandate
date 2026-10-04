@@ -1,18 +1,70 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
-/* Logical properties only (inline/block), so right-to-left languages work later. */
+/* Base styles on the design tokens. Logical properties only (inline/block), so
+   right-to-left languages work without rework. */
+
+@import './lib/tokens/tokens.css';
 
 :root {
-  font-family: system-ui, sans-serif;
-  line-height: 1.5;
+  --hm-page-pad: var(--hm-space-8);
+  font-family: var(--hm-font-sans);
+  font-size: 100%;
+  line-height: var(--hm-line-height-normal);
+  color: var(--hm-color-text);
+  background: var(--hm-color-bg);
 }
 
 body {
   margin: 0;
 }
 
-main {
-  max-inline-size: 48rem;
-  margin-inline: auto;
-  padding-block: 2rem;
-  padding-inline: 1rem;
+#app {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 100dvh;
+}
+
+@media (max-width: 767px) {
+  :root {
+    --hm-page-pad: var(--hm-space-4);
+  }
+}
+
+/* Visible focus on every interactive element (design README section 4). */
+:focus-visible {
+  outline: var(--hm-focus-width) solid var(--hm-color-focus);
+  outline-offset: var(--hm-focus-offset);
+}
+
+/* Date and time fields: Chromium's built-in picker button takes focus on its own, without
+   :focus or a ring; the field shows the ring while focus is inside it. */
+input:is([type='date'], [type='time']):focus-within {
+  outline: var(--hm-focus-width) solid var(--hm-color-focus);
+  outline-offset: var(--hm-focus-offset);
+}
+
+/* Text from agents and Home Assistant wraps instead of overflowing (README section 7). */
+bdi,
+.hm-wrap {
+  overflow-wrap: anywhere;
+}
+
+code,
+.hm-mono {
+  font-family: var(--hm-font-mono);
+}
+
+/* Touch: every control at least 44 px (design README section 4, touch target). */
+@media (pointer: coarse), (max-width: 767px) {
+  :root {
+    --hm-size-control: var(--hm-size-touch);
+  }
+}
+
+.hm-visually-hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

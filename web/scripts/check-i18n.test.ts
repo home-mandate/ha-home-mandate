@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import { compareKeys, comparePlaceholders, compareUsage, findHardcodedText, findPhysicalCss, run, usedKeys } from './check-i18n.ts';
+import { checkMessages, compareKeys, comparePlaceholders, compareUsage, findHardcodedText, findPhysicalCss, run, usedKeys } from './check-i18n.ts';
 
 describe('compareKeys', () => {
   it('accepts identical key sets', () => {
@@ -28,13 +28,43 @@ describe('comparePlaceholders', () => {
     ]);
     expect(comparePlaceholders({ en: { a: 'at {date}' }, de: { a: 'am' } })).toHaveLength(1);
   });
-  it('looks into structured (plural) messages', () => {
-    const en = { a: [{ match: { 'n=one': '{n} agent', 'n=other': '{n} agents' } }] };
-    const de = { a: [{ match: { 'n=one': '{n} Agent', 'n=other': '{count} Agenten' } }] };
-    expect(comparePlaceholders({ en, de })).toHaveLength(1);
+  it('reads ICU arguments, also inside plural and select cases', () => {
+    const en = { a: '{count, plural, one {{count, number} agent of {total}} other {{count, number} agents}}' };
+    const de = { a: '{count, plural, one {{count, number} Agent} other {{count, number} Agenten von {gesamt}}}' };
+    expect(comparePlaceholders({ en, de })).toEqual(['de: "a" has placeholders {count}, {gesamt}, en has {count}, {total}']);
+    expect(comparePlaceholders({ en: { s: '{kind, select, a {{x}} other {}}' }, de: { s: '{kind, select, a {} other {{x}}}' } })).toEqual([]);
   });
   it('handles no catalogs', () => {
     expect(comparePlaceholders({})).toEqual([]);
+  });
+});
+
+describe('checkMessages (ICU MessageFormat)', () => {
+  it('accepts plain text, arguments, plurals with other and number formatting', () => {
+    expect(
+      checkMessages('en', {
+        a: 'Plain',
+        b: 'Hello {name}',
+        c: '{count, plural, one {{count, number} entry} other {{count, number} entries}}',
+        d: "It''s quoted",
+      }),
+    ).toEqual([]);
+  });
+
+  it('reports syntax errors, plurals without other and the unformatted #', () => {
+    expect(
+      checkMessages('de', {
+        broken: 'Hallo {name',
+        noOther: '{count, plural, one {eins}}',
+        pound: '{count, plural, one {# Eintrag} other {# Einträge}}',
+        notString: 42,
+      }),
+    ).toEqual([
+      'de: "broken" is not valid ICU MessageFormat',
+      'de: "noOther" has a plural or select without "other"',
+      'de: "pound" uses #; write {count, number} so the number is formatted for the locale',
+      'de: "notString" is not a string',
+    ]);
   });
 });
 
@@ -45,6 +75,16 @@ describe('usedKeys and compareUsage', () => {
   it('ignores other objects named like m', () => {
     expect(usedKeys('foo.m.bar() + item.x() + $m.y()')).toEqual([]);
   });
+  it('accepts unused keys only while they are pending, and pending keys only while unused', () => {
+    const catalog = { used: 'U', waiting: 'W', forgotten: 'F', done: 'D' };
+    const sources = { 'a.svelte': 'm.used() m.done()' };
+    expect(compareUsage(catalog, sources, ['waiting', 'done', 'gone'])).toEqual([
+      'orphaned key "forgotten"',
+      'pending key "done" is used now; remove it from scripts/i18n-pending.json',
+      'pending key "gone" is not in the catalog',
+    ]);
+  });
+
   it('reports orphaned and unknown keys', () => {
     const problems = compareUsage({ used: 'U', orphan: 'O' }, { 'App.svelte': '{m.used()} {m.missing()}' });
     expect(problems).toEqual(['orphaned key "orphan"', 'App.svelte: unknown key "missing"']);

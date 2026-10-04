@@ -1,0 +1,59 @@
+{{/* SPDX-License-Identifier: AGPL-3.0-or-later */}}
+{{/* Pages of the authorization server: no scripts, no inline styles, every text from
+     internal/i18n, every value escaped by html/template. */}}
+{{define "head"}}<!doctype html>
+<html lang="{{.Lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{{.T .Title}} · Home-Mandate</title>
+<link rel="stylesheet" href="/oauth/static/style.css">
+</head>
+<body>
+<main>
+<h1>{{.T .Title}}</h1>
+{{if .User}}<p class="user">{{.T "page_signed_in_as" "user" .User}}</p>{{end}}
+{{end}}
+
+{{define "foot"}}</main>
+</body>
+</html>
+{{end}}
+
+{{define "message"}}{{template "head" .}}
+<p>{{.T .Message}}</p>
+{{template "foot" .}}{{end}}
+
+{{define "consent"}}{{template "head" .}}
+<p>{{.T "page_consent_claimed" "name" .Claimed}}</p>
+{{if .Verified}}<p>{{.T "page_consent_verified" "host" .Host}}</p>{{else}}<p class="warn">{{.T "page_consent_unverified" "client" .ClientID}}</p>{{end}}
+{{if .ReturnHost}}<p>{{.T "page_consent_return" "host" .ReturnHost}}</p>{{end}}
+{{if .Error}}<p class="error" role="alert">{{.T .Error}}</p>{{end}}
+<form method="post" action="/oauth/consent">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label for="name">{{.T "page_consent_name"}}</label>
+<input id="name" name="name" value="{{.Name}}" maxlength="80" required>
+<label for="template">{{.T "page_consent_template"}}</label>
+<select id="template" name="template" required>
+{{range .Templates}}<option value="{{.}}"{{if eq . $.Selected}} selected{{end}}>{{.}}</option>
+{{end}}</select>
+<div class="actions">
+<button type="submit" name="action" value="approve">{{.T "page_consent_approve"}}</button>
+<button type="submit" name="action" value="deny" class="secondary">{{.T "page_consent_deny"}}</button>
+</div>
+</form>
+{{template "foot" .}}{{end}}
+
+{{define "pair"}}{{template "head" .}}
+<p>{{.T "page_pair_intro"}}</p>
+{{if .Error}}<p class="error" role="alert">{{.T .Error}}</p>{{end}}
+<form method="post" action="/pair">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label for="code">{{.T "page_pair_code"}}</label>
+<input id="code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="16" required>
+<div class="actions">
+<button type="submit">{{.T "page_pair_submit"}}</button>
+</div>
+</form>
+{{template "foot" .}}{{end}}

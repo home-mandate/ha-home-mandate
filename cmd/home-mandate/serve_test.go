@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -10,16 +11,20 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"io"
 	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/home-mandate/home-mandate/internal/audit"
 	"github.com/home-mandate/home-mandate/internal/config"
+	"github.com/home-mandate/home-mandate/internal/store"
 )
 
 // selfSigned writes a certificate for 127.0.0.1 and its key into dir.
@@ -102,5 +107,123 @@ func TestListenWithoutCertificateInAppModeFallsBackToLoopback(t *testing.T) {
 	defer ln.Close()
 	if host, _, _ := net.SplitHostPort(ln.Addr().String()); host != "127.0.0.1" {
 		t.Errorf("listening on %s, want loopback", ln.Addr())
+	}
+}
+
+func TestWithOAuth(t *testing.T) {
+	c := newCLI(t)
+	s, err := openStore(context.Background(), c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.store.Close()
+	mcpHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	logger := slog.New(slog.DiscardHandler)
+
+	// Without a public URL, only the MCP endpoint is served.
+	as, h, err := withOAuth(s, mcpHandler, "", logger)
+	if err != nil || as != nil {
+		t.Fatal(as, err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil))
+	if rec.Code != http.StatusTeapot {
+		t.Errorf("OAuth off: %d", rec.Code)
+	}
+
+	s.cfg = config.Config{PublicURL: "https://hm.example.org", HABrowserURL: "https://ha.example.org",
+		HAHTTPURL: "https://ha.example.org", HAURL: "wss://ha.example.org/api/websocket"}
+	as, h, err = withOAuth(s, mcpHandler, "https://hm.example.org/mcp", logger)
+	if err != nil || as == nil {
+		t.Fatal(as, err)
+	}
+	for path, want := range map[string]int{"/.well-known/oauth-authorization-server": http.StatusOK, "/mcp": http.StatusTeapot} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != want {
+			t.Errorf("%s: %d", path, rec.Code)
+		}
+	}
+
+	s.cfg.HAHTTPURL = "http://ha.example.org" // plaintext on the LAN
+	if _, _, err := withOAuth(s, mcpHandler, "https://hm.example.org/mcp", logger); err == nil {
+		t.Error("plaintext Home Assistant accepted")
+	}
+}
+
+func TestWriteTimeoutCoversTheApprovalWait(t *testing.T) {
+	if got := writeTimeout(2 * time.Minute); got != 150*time.Second {
+		t.Errorf("writeTimeout(2m) = %v", got)
+	}
+	if got := writeTimeout(10 * time.Second); got != time.Minute {
+		t.Errorf("writeTimeout(10s) = %v", got)
+	}
+}
+
+// The gateway that serve starts serves the authorization server next to /mcp; checked on
+// newGateway itself, not only on withOAuth.
+func TestNewGatewayServesOAuth(t *testing.T) {
+	c := newCLI(t)
+	s, err := openStore(context.Background(), c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.store.Close()
+	s.cfg = config.Config{Mode: config.ModeContainer, HAURL: "ws://localhost:1/api/websocket", HAToken: "t",
+		MCPAddr: "127.0.0.1:0", PublicURL: "http://localhost:8765", HABrowserURL: "http://localhost:1",
+		HAHTTPURL: "http://localhost:1", ApprovalTimeout: 2 * time.Minute}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	g, err := newGateway(ctx, s, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.listener.Close()
+	for path, want := range map[string]int{"/.well-known/oauth-authorization-server": http.StatusOK, "/mcp": http.StatusUnauthorized} {
+		rec := httptest.NewRecorder()
+		g.server.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != want {
+			t.Errorf("%s: %d, want %d", path, rec.Code, want)
+		}
+	}
+	if g.server.WriteTimeout != 150*time.Second {
+		t.Errorf("write timeout %v", g.server.WriteTimeout)
+	}
+}
+
+// A restart must not hand an agent a fresh rate limit (SPEC-v0 section 11.2).
+func TestRestoredLimiterCountsTheLastHour(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "hm.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	log := audit.New(st.DB(), "household:t")
+	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	log.SetClock(func() time.Time { return now.Add(-10 * time.Minute) })
+	for range 2 {
+		if _, err := log.Append(ctx, audit.Entry{Event: audit.EventDecision, Agent: &audit.Agent{ClientID: "hm-client:a"},
+			Request:    &audit.Request{Time: now, Resource: audit.Resource{EntityID: "light.x"}, Action: "turn_on"},
+			Evaluation: &audit.Evaluation{Decision: "deny", Reason: "no_match"},
+			Result:     &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	limiter := restoredLimiter(ctx, log, func() time.Time { return now }, logger)
+	if !limiter.Allow("hm-client:a", 3) {
+		t.Error("third request within the hour denied")
+	}
+	if limiter.Allow("hm-client:a", 3) {
+		t.Error("fourth request within the hour allowed after a restart")
+	}
+	if !limiter.Allow("hm-client:b", 1) {
+		t.Error("another agent is affected")
+	}
+	// A log that cannot be read leaves the limiter empty instead of failing the start.
+	_ = st.Close()
+	if !restoredLimiter(ctx, log, func() time.Time { return now }, logger).Allow("hm-client:a", 1) {
+		t.Error("limiter unusable after a failed restore")
 	}
 }

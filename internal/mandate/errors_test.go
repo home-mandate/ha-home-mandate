@@ -7,7 +7,11 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/mandate-spec/mandate-spec/evaluator"
 
 	"github.com/home-mandate/home-mandate/internal/agent"
 	"github.com/home-mandate/home-mandate/internal/audit"
@@ -23,7 +27,7 @@ func newEnvWithDB(t *testing.T) (env, *sql.DB) {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	log := audit.New(s.DB(), household)
-	return env{mandates: mandate.New(s.DB(), log, household), agents: agent.New(s.DB(), log), log: log}, s.DB()
+	return env{mandates: mandate.New(s.DB(), log, household, issuer), agents: agent.New(s.DB(), log), log: log}, s.DB()
 }
 
 func TestTamperedStoredVersionIsNotEvaluated(t *testing.T) {
@@ -37,9 +41,20 @@ func TestTamperedStoredVersionIsNotEvaluated(t *testing.T) {
 	if _, err := db.Exec(`UPDATE mandate_versions SET document = replace(document, '"camera"', '"sensor"')`); err != nil {
 		t.Fatal(err)
 	}
-	fresh := mandate.New(db, e.log, household) // no cached parse
+	fresh := mandate.New(db, e.log, household, issuer) // no cached parse
 	if _, err := fresh.ForAgent(ctx, a.ClientID); !errors.Is(err, mandate.ErrInvalid) {
 		t.Errorf("ForAgent on a tampered version = %v, want ErrInvalid", err)
+	}
+	// For the PDP it stays a candidate that denies with invalid_mandate.
+	list, err := fresh.Candidates(ctx, a.ClientID)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("Candidates = %+v, %v", list, err)
+	}
+	req := evaluator.Request{Resource: evaluator.Resource{EntityID: "light.kitchen", Category: "light"}, Action: "turn_on",
+		Time: time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC), TimeZone: "UTC"}
+	if _, res := evaluator.SelectAndEvaluate([]evaluator.Stored{list[0].Stored}, a.ClientID, household, req); res.Decision != evaluator.Deny ||
+		res.Reason != evaluator.ReasonInvalidMandate {
+		t.Errorf("evaluation of a tampered version = %+v", res)
 	}
 }
 
@@ -76,5 +91,92 @@ func TestPutRejectsMalformedJSON(t *testing.T) {
 		if _, err := e.mandates.Put(context.Background(), []byte(doc), admin); !errors.Is(err, mandate.ErrInvalid) {
 			t.Errorf("Put(%q) = %v, want ErrInvalid", doc, err)
 		}
+	}
+}
+
+// Invalid lists the stored mandates that the evaluator no longer accepts, for example
+// after an update of the specification; such a mandate denies every request.
+func TestInvalidListsMandatesTheEvaluatorRejects(t *testing.T) {
+	e, db := newEnvWithDB(t)
+	ctx := context.Background()
+	good := e.agent(t, "Voice assistant")
+	bad := e.agent(t, "Energy agent")
+	for id, a := range map[string]string{"m-good": good.ClientID, "m-bad": bad.ClientID} {
+		if _, err := e.mandates.Put(ctx, voiceAssistant(t, a, func(d map[string]any) { d["id"] = id }), admin); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if invalid, err := e.mandates.Invalid(ctx); err != nil || len(invalid) != 0 {
+		t.Fatalf("Invalid on valid mandates = %v, %v", invalid, err)
+	}
+	// What an older version of the specification accepted: a timestamp with offset -00:00.
+	if _, err := db.Exec(`UPDATE mandate_versions SET document = replace(document, '"default"', '"unknown_member":1,"default"')
+		WHERE mandate_id IN (SELECT id FROM mandates WHERE client_id = ?)`, bad.ClientID); err != nil {
+		t.Fatal(err)
+	}
+	invalid, err := mandate.New(db, e.log, household, issuer).Invalid(ctx)
+	if err != nil || len(invalid) != 1 || invalid[0].ClientID != bad.ClientID || invalid[0].Problem == "" {
+		t.Fatalf("Invalid = %+v, %v; want the mandate of %s", invalid, err, bad.ClientID)
+	}
+	if strings.Contains(invalid[0].Problem, "\n") {
+		t.Errorf("problem spans several lines: %q", invalid[0].Problem)
+	}
+	_ = db.Close()
+	if _, err := mandate.New(db, e.log, household, issuer).Invalid(ctx); err == nil {
+		t.Error("Invalid on a closed database succeeded")
+	}
+}
+
+// A mandate whose current version row is missing denies with invalid_mandate and is
+// never silently dropped from the selection; storing a new version repairs it.
+func TestMissingVersionRowIsAnInvalidCandidate(t *testing.T) {
+	e, db := newEnvWithDB(t)
+	ctx := context.Background()
+	a := e.agent(t, "Voice assistant")
+	info, err := e.mandates.Put(ctx, voiceAssistant(t, a.ClientID, nil), admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM mandate_versions`); err != nil {
+		t.Fatal(err)
+	}
+	fresh := mandate.New(db, e.log, household, issuer)
+	list, err := fresh.Candidates(ctx, a.ClientID)
+	if err != nil || len(list) != 1 || list[0].Info.ID != info.ID {
+		t.Fatalf("Candidates = %+v, %v", list, err)
+	}
+	req := evaluator.Request{Resource: evaluator.Resource{EntityID: "light.kitchen", Category: "light"}, Action: "turn_on",
+		Time: time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC), TimeZone: "UTC"}
+	if _, res := evaluator.SelectAndEvaluate([]evaluator.Stored{list[0].Stored}, a.ClientID, household, req); res.Reason != evaluator.ReasonInvalidMandate {
+		t.Errorf("evaluation = %+v", res)
+	}
+	limited := voiceAssistant(t, a.ClientID, func(d map[string]any) { d["limits"] = map[string]any{"max_actions_per_hour": 10} })
+	if _, err := fresh.Put(ctx, limited, admin); err != nil {
+		t.Errorf("Put repairing the mandate: %v", err)
+	}
+}
+
+// A row changed after it was read once is checked anew, not served from the cache.
+func TestTamperingAfterTheFirstReadIsNoticed(t *testing.T) {
+	e, db := newEnvWithDB(t)
+	ctx := context.Background()
+	a := e.agent(t, "Voice assistant")
+	if _, err := e.mandates.Put(ctx, voiceAssistant(t, a.ClientID, nil), admin); err != nil {
+		t.Fatal(err)
+	}
+	if list, err := e.mandates.Candidates(ctx, a.ClientID); err != nil || len(list) != 1 {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE mandate_versions SET document = replace(document, '"camera"', '"sensor"')`); err != nil {
+		t.Fatal(err)
+	}
+	list, err := e.mandates.Candidates(ctx, a.ClientID)
+	if err != nil || len(list) != 1 {
+		t.Fatal(err)
+	}
+	req := evaluator.Request{Resource: evaluator.Resource{EntityID: "light.kitchen", Category: "light"}, Action: "turn_on",
+		Time: time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC), TimeZone: "UTC"}
+	if _, res := evaluator.SelectAndEvaluate([]evaluator.Stored{list[0].Stored}, a.ClientID, household, req); res.Reason != evaluator.ReasonInvalidMandate {
+		t.Errorf("evaluation after tampering = %+v", res)
 	}
 }

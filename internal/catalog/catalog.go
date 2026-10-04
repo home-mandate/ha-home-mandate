@@ -24,13 +24,23 @@ type Source interface {
 	GetStates(ctx context.Context) ([]ha.State, error)
 	ListEntities(ctx context.Context) ([]ha.EntityEntry, error)
 	ListDevices(ctx context.Context) ([]ha.Device, error)
+	ListAreas(ctx context.Context) ([]ha.Area, error)
+}
+
+// Area is an area with its name, for the UI.
+type Area struct {
+	ID   string
+	Name string
 }
 
 // Device is an entity as the PEP sees it.
 type Device struct {
-	EntityID   string
-	Category   string
-	Area       string
+	EntityID string
+	Category string
+	Area     string
+	// Critical is true if the household marked the entity as critical: every action on
+	// it except read then needs a confirmation or allow_critical (SPEC-v0 section 4).
+	Critical   bool
 	State      string
 	Attributes map[string]any
 }
@@ -75,13 +85,38 @@ type Catalog struct {
 	ready      bool
 	devices    map[string]Device
 	entityArea map[string]string // entity → area from the registries
+	areas      []Area            // sorted by ID
 	disabled   map[string]bool
+	// marks are the entities the household marked as critical; nil: none.
+	marks interface{ Critical(entityID string) bool }
 	// While a refresh fetches, state changes are also kept here and applied on top of
 	// the new snapshot, so that an older snapshot never overwrites a newer event.
 	refreshing bool
 	pending    []stateChange
+	// renames are the entity IDs Home Assistant renamed since the last refresh by Run.
+	renames   []Rename
+	onRefresh func([]Rename)
 
 	refresh chan struct{}
+}
+
+// Rename is an entity ID that Home Assistant changed. Rules and marks name entities by
+// ID, so they no longer apply to the renamed entity (decision H-E1: report, never rewrite).
+type Rename struct {
+	Old string
+	New string
+}
+
+// maxRenames bounds the renames kept between two refreshes.
+const maxRenames = 1000
+
+// OnRefresh sets fn to run after every successful refresh by Run, with the renames that
+// refresh covers (possibly none: the directory may have changed in other ways). fn runs
+// on Run's goroutine and may block it; call OnRefresh before Run.
+func (c *Catalog) OnRefresh(fn func(renames []Rename)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onRefresh = fn
 }
 
 // New returns an empty catalog; call Refresh or Run to load it.
@@ -107,7 +142,21 @@ func (c *Catalog) Lookup(entityID string) (Device, bool) {
 	if !ok {
 		return Device{}, false
 	}
-	return clone(d), true
+	return c.marked(clone(d)), true
+}
+
+// SetMarks tells the catalog which entities the household marked as critical; without
+// it no entity is.
+func (c *Catalog) SetMarks(marks interface{ Critical(entityID string) bool }) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.marks = marks
+}
+
+// marked sets Critical from the marks of the household; the caller holds the lock.
+func (c *Catalog) marked(d Device) Device {
+	d.Critical = c.marks != nil && c.marks.Critical(d.EntityID)
+	return d
 }
 
 // All returns copies of all devices, sorted by entity ID.
@@ -116,9 +165,22 @@ func (c *Catalog) All() []Device {
 	defer c.mu.RUnlock()
 	out := make([]Device, 0, len(c.devices))
 	for _, id := range slices.Sorted(maps.Keys(c.devices)) {
-		out = append(out, clone(c.devices[id]))
+		out = append(out, c.marked(clone(c.devices[id])))
 	}
 	return out
+}
+
+// Areas returns the areas of Home Assistant, sorted by ID.
+func (c *Catalog) Areas() []Area {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return slices.Clone(c.areas)
+}
+
+// Name is the device's friendly_name from Home Assistant, untrusted; empty if it has none.
+func (d Device) Name() string {
+	name, _ := d.Attributes["friendly_name"].(string)
+	return name
 }
 
 func clone(d Device) Device {
@@ -164,6 +226,17 @@ func (c *Catalog) Refresh(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("catalog: device registry: %w", err)
 	}
+	areaList, err := c.src.ListAreas(ctx)
+	if err != nil {
+		return fmt.Errorf("catalog: area registry: %w", err)
+	}
+	areas := make([]Area, 0, len(areaList))
+	for _, a := range areaList {
+		if a.AreaID != "" {
+			areas = append(areas, Area{ID: a.AreaID, Name: a.Name})
+		}
+	}
+	slices.SortFunc(areas, func(a, b Area) int { return strings.Compare(a.ID, b.ID) })
 
 	deviceArea := make(map[string]string, len(devices))
 	for _, d := range devices {
@@ -194,7 +267,7 @@ func (c *Catalog) Refresh(ctx context.Context) error {
 	if len(c.pending) >= maxPending {
 		return fmt.Errorf("catalog: too many changes during refresh")
 	}
-	c.devices, c.entityArea, c.disabled = snapshot, entityArea, disabled
+	c.devices, c.entityArea, c.disabled, c.areas = snapshot, entityArea, disabled, areas
 	for _, ch := range c.pending {
 		c.applyLocked(ch)
 	}
@@ -212,6 +285,9 @@ func device(s ha.State, area string) Device {
 // change. It runs on the Home Assistant read loop and never blocks.
 func (c *Catalog) HandleEvent(e ha.Event) {
 	if strings.HasSuffix(e.EventType, "_registry_updated") {
+		if e.EventType == "entity_registry_updated" {
+			c.noteRename(e.Data)
+		}
 		c.RequestRefresh()
 		return
 	}
@@ -233,6 +309,37 @@ func (c *Catalog) HandleEvent(e ha.Event) {
 		c.pending = append(c.pending, ch)
 	}
 	c.applyLocked(ch)
+}
+
+// noteRename keeps a rename from an entity_registry_updated event; anything else in the
+// event is ignored, the refresh reads the registries anew.
+func (c *Catalog) noteRename(data json.RawMessage) {
+	var d struct {
+		Action      string `json:"action"`
+		EntityID    any    `json:"entity_id"`
+		OldEntityID any    `json:"old_entity_id"`
+	}
+	if json.Unmarshal(data, &d) != nil || d.Action != "update" {
+		return
+	}
+	newID, ok1 := d.EntityID.(string)
+	oldID, ok2 := d.OldEntityID.(string)
+	if !ok1 || !ok2 || !opaque(newID) || !opaque(oldID) || newID == oldID {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// The mark moves at once, before the new ID can be decided on; Run stores it.
+	if h, ok := c.marks.(interface {
+		Hold(oldID, newID string) bool
+	}); ok && h.Hold(oldID, newID) {
+		c.log.Warn("critical mark held for the renamed entity", "old", oldID, "new", newID)
+	}
+	if len(c.renames) >= maxRenames {
+		c.log.Error("rename not reported: too many renames since the last refresh", "old", oldID, "new", newID)
+		return
+	}
+	c.renames = append(c.renames, Rename{Old: oldID, New: newID})
 }
 
 func (c *Catalog) applyLocked(ch stateChange) {
@@ -272,9 +379,25 @@ func (c *Catalog) Run(ctx context.Context, debounce time.Duration) {
 		case <-c.refresh:
 		default:
 		}
-		if err := c.Refresh(ctx); err != nil && ctx.Err() == nil {
-			c.log.Warn("catalog refresh failed, retrying", "error", err)
-			c.RequestRefresh()
+		c.mu.Lock()
+		renames := c.renames
+		c.renames = nil
+		c.mu.Unlock()
+		if err := c.Refresh(ctx); err != nil {
+			c.mu.Lock() // report them after the refresh that succeeds
+			c.renames = append(renames, c.renames...)[:min(len(renames)+len(c.renames), maxRenames)]
+			c.mu.Unlock()
+			if ctx.Err() == nil {
+				c.log.Warn("catalog refresh failed, retrying", "error", err)
+				c.RequestRefresh()
+			}
+			continue
+		}
+		c.mu.RLock()
+		fn := c.onRefresh
+		c.mu.RUnlock()
+		if fn != nil {
+			fn(renames)
 		}
 	}
 }

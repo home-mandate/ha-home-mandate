@@ -10,9 +10,9 @@ package pdp
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"time"
@@ -28,9 +28,9 @@ const (
 	maxRequestBytes = 64 << 10
 )
 
-// Mandates provides the current mandate of an agent.
+// Mandates provides the stored mandates of an agent that the selection considers.
 type Mandates interface {
-	ForAgent(ctx context.Context, clientID string) (mandate.Loaded, error)
+	Candidates(ctx context.Context, clientID string) ([]mandate.Candidate, error)
 }
 
 // Catalog resolves entities to category and area.
@@ -64,69 +64,94 @@ func New(cfg Config) *PDP {
 // Decision is the result of an evaluation together with the inputs it was based on, for
 // the PEP and the audit log.
 type Decision struct {
-	Result            evaluator.Result
-	Resource          evaluator.Resource
-	Action            string
-	Known             bool // the entity is in the catalog
-	Time              time.Time
-	TimeZone          string
-	Status            evaluator.MandateStatus
-	MandateID         string
+	Result     evaluator.Result
+	Resource   evaluator.Resource
+	Action     string
+	Parameters map[string]int64
+	Known      bool // the entity is in the catalog
+	Time       time.Time
+	TimeZone   string
+	Status     evaluator.MandateStatus
+	MandateID  string
+	// StoredDigest is the digest the store recorded for a mandate that the evaluation found
+	// invalid (it then has none of its own); empty otherwise.
+	StoredDigest      string
 	MaxActionsPerHour int
 }
 
-// Snapshot holds an agent's mandate, the time and the household time zone for a
-// series of decisions, so that one request (e.g. a list) is decided on one mandate
-// version with one store query.
+// Snapshot holds an agent's candidate mandates, the time and the household time zone for
+// a series of decisions, so that one request (e.g. a list) is decided on the same
+// mandates with one store query.
 type Snapshot struct {
-	p        *PDP
-	loaded   mandate.Loaded
-	found    bool
-	now      time.Time
-	timeZone string
+	p          *PDP
+	clientID   string
+	candidates []mandate.Candidate
+	stored     []evaluator.Stored
+	now        time.Time
+	timeZone   string
 }
 
-// Snapshot loads the mandate of clientID. A store error is returned together with a
-// snapshot that denies everything.
+// Snapshot loads the candidate mandates of clientID. A store error is returned together
+// with a snapshot that has none and so denies everything with no_mandate.
 func (p *PDP) Snapshot(ctx context.Context, clientID string) (*Snapshot, error) {
-	s := &Snapshot{p: p, now: p.cfg.Now(), timeZone: p.cfg.TimeZone()}
-	loaded, err := p.cfg.Mandates.ForAgent(ctx, clientID)
-	switch {
-	case err == nil:
-		s.loaded, s.found = loaded, true
-	case !errors.Is(err, mandate.ErrNotFound):
+	s := &Snapshot{p: p, clientID: clientID, now: p.cfg.Now(), timeZone: p.cfg.TimeZone()}
+	candidates, err := p.cfg.Mandates.Candidates(ctx, clientID)
+	if err != nil {
 		return s, fmt.Errorf("pdp: load mandate: %w", err)
+	}
+	s.candidates = candidates
+	for _, c := range candidates {
+		s.stored = append(s.stored, c.Stored)
 	}
 	return s, nil
 }
 
-// Decide evaluates action on entityID.
-func (s *Snapshot) Decide(entityID, action string) Decision {
-	d := Decision{Time: s.now, TimeZone: s.timeZone, Resource: evaluator.Resource{EntityID: entityID}, Action: action}
+// Decide evaluates action on entityID. parameters are the parameters of the action in
+// the units of the vocabulary (SPEC-v0 section 4.5); nil if the action has none.
+// Category, area and the critical marking come from the catalog; an entity the catalog
+// does not know has no category and is denied with unknown_resource. The mandate is
+// selected per SPEC-v0 section 4.3 among the agent's candidates for this household.
+func (s *Snapshot) Decide(entityID, action string, parameters map[string]int64) Decision {
+	d := Decision{Time: s.now, TimeZone: s.timeZone, Resource: evaluator.Resource{EntityID: entityID}, Action: action, Parameters: parameters}
 	if dev, ok := s.p.cfg.Catalog.Lookup(entityID); ok {
-		d.Known, d.Resource.Category, d.Resource.Area = true, dev.Category, dev.Area
+		d.Known, d.Resource.Category, d.Resource.Area, d.Resource.Critical = true, dev.Category, dev.Area, dev.Critical
 	}
-	if !s.found {
-		d.Result = evaluator.Result{Decision: evaluator.Deny, Reason: evaluator.ReasonInvalidMandate}
-		return d
-	}
-	d.Status, d.MandateID, d.MaxActionsPerHour = s.loaded.Status, s.loaded.Info.ID, s.loaded.Info.MaxActionsPerHour
-	d.Result = evaluator.Evaluate(s.loaded.Mandate, evaluator.Request{
-		Resource: d.Resource, Action: action, Time: d.Time, TimeZone: d.TimeZone, Status: d.Status,
+	_, d.Result = evaluator.SelectAndEvaluate(s.stored, s.clientID, s.p.cfg.Principal, evaluator.Request{
+		Resource: d.Resource, Action: action, Parameters: parameters, Time: d.Time, TimeZone: d.TimeZone,
 	})
+	// A selected mandate is never revoked: revoked ones are no candidates.
+	d.Status = evaluator.StatusActive
+	for _, c := range s.candidates {
+		if d.Result.MandateDigest != "" && c.Info.Digest == d.Result.MandateDigest {
+			d.MandateID, d.MaxActionsPerHour = c.Info.ID, c.Info.MaxActionsPerHour
+		}
+	}
+	// An invalid mandate has no digest from the evaluation; with a single candidate the
+	// audit entry still names which mandate denied.
+	if d.MandateID == "" && len(s.candidates) == 1 && d.Result.Reason == evaluator.ReasonInvalidMandate {
+		c := s.candidates[0]
+		d.MandateID, d.StoredDigest, d.MaxActionsPerHour = c.Info.ID, c.Info.Digest, c.Info.MaxActionsPerHour
+	}
 	return d
 }
 
-// MaxActionsPerHour is the agent's rate limit; 0 without a mandate.
+// MaxActionsPerHour is the agent's rate limit, known before a mandate is selected: the
+// strictest limit among its candidates; 0 without one.
 func (s *Snapshot) MaxActionsPerHour() int {
-	return s.loaded.Info.MaxActionsPerHour
+	limit := 0
+	for _, c := range s.candidates {
+		if n := c.Info.MaxActionsPerHour; n > 0 && (limit == 0 || n < limit) {
+			limit = n
+		}
+	}
+	return limit
 }
 
 // Decide evaluates action on entityID for the agent clientID. A store error is returned
 // together with a deny decision.
-func (p *PDP) Decide(ctx context.Context, clientID, entityID, action string) (Decision, error) {
+func (p *PDP) Decide(ctx context.Context, clientID, entityID, action string, parameters map[string]int64) (Decision, error) {
 	s, err := p.Snapshot(ctx, clientID)
-	return s.Decide(entityID, action), err
+	return s.Decide(entityID, action, parameters), err
 }
 
 // AuthZEN request and response (SPEC-v0 section 6).
@@ -147,6 +172,8 @@ type (
 	}
 	Action struct {
 		Name string `json:"name"`
+		// Properties are the parameters of the action (SPEC-v0 section 4.5).
+		Properties map[string]json.Number `json:"properties,omitempty"`
 	}
 	Resource struct {
 		Type       string             `json:"type"`
@@ -164,23 +191,56 @@ type (
 		Context  ResponseContext `json:"context"`
 	}
 	ResponseContext struct {
-		Outcome         string `json:"outcome"`
-		Reason          string `json:"reason"`
-		RuleID          string `json:"rule_id,omitempty"`
-		ApprovalTimeout string `json:"approval_timeout,omitempty"`
-		MandateDigest   string `json:"mandate_digest,omitempty"`
+		Outcome         string   `json:"outcome"`
+		Reason          string   `json:"reason"`
+		RuleID          string   `json:"rule_id,omitempty"`
+		ApprovalTimeout string   `json:"approval_timeout,omitempty"`
+		Approvers       []string `json:"approvers,omitempty"`
+		MandateDigest   string   `json:"mandate_digest,omitempty"`
 	}
 )
 
 // Evaluate answers an AuthZEN request. resource.type, resource.properties.area and
-// context.time are not used (SPEC-v0 section 6). An unknown subject is deny with
-// invalid_mandate.
+// context.time are not used (SPEC-v0 section 6). A subject that is no agent is an invalid
+// request; an agent without a mandate for this household is deny with no_mandate.
 func (p *PDP) Evaluate(ctx context.Context, req Request) Response {
-	if req.Subject.Type != "agent" || req.Subject.ID == "" || req.Subject.Properties.Principal != p.cfg.Principal {
-		return response(evaluator.Result{Decision: evaluator.Deny, Reason: evaluator.ReasonInvalidMandate})
+	if req.Subject.Type != "agent" {
+		return response(evaluator.Result{Decision: evaluator.Deny, Reason: evaluator.ReasonInvalidRequest})
 	}
-	d, _ := p.Decide(ctx, req.Subject.ID, req.Resource.ID, req.Action.Name) // an error is a deny already
+	if req.Subject.ID == "" || req.Subject.Properties.Principal != p.cfg.Principal {
+		return response(evaluator.Result{Decision: evaluator.Deny, Reason: evaluator.ReasonNoMandate})
+	}
+	parameters, ok := integerParameters(req.Action.Properties)
+	d, _ := p.Decide(ctx, req.Subject.ID, req.Resource.ID, req.Action.Name, parameters) // an error is a deny already
+	if !ok && d.Result.MandateDigest != "" {
+		// A parameter that is no integer cannot be passed to the evaluation. The request is
+		// invalid; only a missing or invalid mandate comes before that (SPEC-v0 section 4.1).
+		return response(evaluator.Result{Decision: evaluator.Deny, Reason: evaluator.ReasonInvalidRequest, MandateDigest: d.Result.MandateDigest})
+	}
+	if !ok {
+		return response(evaluator.Result{Decision: evaluator.Deny, Reason: d.Result.Reason})
+	}
 	return response(d.Result)
+}
+
+// maxParameter is the largest magnitude of a parameter (SPEC-v0 section 4.5).
+const maxParameter = 1<<53 - 1
+
+// integerParameters converts the parameters of a request; ok is false if one of them
+// is not an integer in the exact range.
+func integerParameters(raw map[string]json.Number) (map[string]int64, bool) {
+	if len(raw) == 0 {
+		return nil, true
+	}
+	out := make(map[string]int64, len(raw))
+	for name, n := range raw {
+		f, err := n.Float64()
+		if err != nil || f != math.Trunc(f) || math.Abs(f) > maxParameter {
+			return nil, false
+		}
+		out[name] = int64(f)
+	}
+	return out, true
 }
 
 func response(r evaluator.Result) Response {
@@ -188,7 +248,7 @@ func response(r evaluator.Result) Response {
 		Outcome: string(r.Decision), Reason: string(r.Reason), RuleID: r.RuleID, MandateDigest: r.MandateDigest,
 	}}
 	if r.Decision == evaluator.Ask && r.Approval != nil {
-		out.Context.ApprovalTimeout = r.Approval.Timeout
+		out.Context.ApprovalTimeout, out.Context.Approvers = r.Approval.Timeout, r.Approval.Approvers
 	}
 	return out
 }

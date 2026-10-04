@@ -4,8 +4,8 @@ import { expect, test, type Page } from '@playwright/test';
 import { CSP } from '../scripts/serve-ingress.ts';
 
 const text = {
-  de: { heading: 'Mandate für deine KI-Agenten', release: '31. Oktober 2026', notFound: 'Seite nicht gefunden', back: 'Zurück zur Übersicht' },
-  en: { heading: 'Mandates for your AI agents', release: 'October 31, 2026', notFound: 'Page not found', back: 'Back to the overview' },
+  de: { heading: 'Übersicht', notFound: 'Seite nicht gefunden', back: 'Zur Übersicht' },
+  en: { heading: 'Overview', notFound: 'Page not found', back: 'Go to overview' },
 } as const;
 
 /** collectViolations fails the test on CSP violations and console errors. */
@@ -30,7 +30,6 @@ test('overview under a random Ingress path', async ({ page }, testInfo) => {
   expect(response?.headers()['content-security-policy']).toBe(CSP);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(t.heading);
   await expect(page.locator('html')).toHaveAttribute('lang', testInfo.project.name);
-  await expect(page.getByText(t.release)).toBeVisible();
   expect(problems).toEqual([]);
 });
 
