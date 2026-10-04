@@ -58,6 +58,8 @@ type wireSystem struct {
 	EmergencyStop       wireStop  `json:"emergency_stop"`
 	Chain               wireChain `json:"chain"`
 	ApproversConfigured int       `json:"approvers_configured"`
+	// ClockBehind: the clock lies behind the newest audit entry; nothing is decided.
+	ClockBehind bool `json:"clock_behind"`
 }
 
 func optional(s string) *string {
@@ -81,6 +83,10 @@ func (s *Server) system(ctx context.Context) (wireSystem, error) {
 	if err != nil {
 		return wireSystem{}, err
 	}
+	behind, err := s.cfg.Log.ClockBehind(ctx)
+	if err != nil {
+		return wireSystem{}, err
+	}
 	present, until := s.cfg.TLS()
 	out := wireSystem{
 		Mode: s.cfg.Mode, Version: s.cfg.Version, Commit: s.cfg.Commit, ServerTime: *formatTime(s.now()),
@@ -92,6 +98,7 @@ func (s *Server) system(ctx context.Context) (wireSystem, error) {
 		EmergencyStop:       stop,
 		Chain:               s.chain.get(),
 		ApproversConfigured: len(approvers),
+		ClockBehind:         behind,
 	}
 	if !present {
 		out.TLS.ValidUntil = nil

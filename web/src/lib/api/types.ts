@@ -87,6 +87,8 @@ export interface SystemStatus {
   mcp_url: string | null;
   tls: { present: boolean; valid_until: string | null };
   emergency_stop: EmergencyStop;
+  /** The server clock lies behind the newest audit entry: no request is decided (SPEC-v0 section 11.4). */
+  clock_behind: boolean;
   chain: ChainStatus;
   /** Approvers set up; 0 means every approval request is denied at once. */
   approvers_configured: number;

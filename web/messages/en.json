@@ -784,5 +784,7 @@
   "validation_limits_allow_only": "Limits only apply to an allowing rule with chosen actions. Choose “Allow” or remove the limits.",
   "validation_limits_unknown": "Limits need a rule whose actions all carry this value, e.g. only “set”. Remove the other actions or the limits.",
   "validation_limits_order": "“From” is greater than “To”.",
-  "validation_limits_format": "Enter a number in the allowed range."
+  "validation_limits_format": "Enter a number in the allowed range.",
+  "banner_clock_title": "Clock of the host is wrong",
+  "banner_clock_body": "The clock shows an earlier time than the newest entry of the audit log. All requests are declined until it is right; check the time synchronization of the host."
 }

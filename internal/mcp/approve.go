@@ -138,6 +138,10 @@ func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: "ha_unavailable"}, appr)
 		return nil, actionOut{}, errors.New(codeUnavailable)
 	}
+	if g.clockWrong(ctx) {
+		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: errClockBehind}, appr)
+		return nil, actionOut{}, errors.New(codeUnavailable)
+	}
 	if !g.cfg.Now().Before(expires) {
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}, appr)
 		return nil, actionOut{}, errors.New(codeDenied + ": approval_expired")

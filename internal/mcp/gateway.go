@@ -37,6 +37,8 @@ const Path = "/mcp"
 const (
 	maxRequestBytes    = 64 << 10
 	defaultCallTimeout = 10 * time.Second
+	// errClockBehind is the error of a request refused because the clock is wrong.
+	errClockBehind = "clock_behind"
 	// defaultApprovalLimit is the upper limit of an approval wait without configuration.
 	defaultApprovalLimit = 2 * time.Minute
 	// noMandateLimit bounds requests of agents without a usable mandate, which would
@@ -84,6 +86,10 @@ type (
 		CallService(ctx context.Context, call ha.ServiceCall) error
 		Connected() bool
 	}
+	// Clock tells whether the clock lies behind the newest audit entry (audit.Log).
+	Clock interface {
+		ClockBehind(ctx context.Context) (bool, error)
+	}
 	Limiter interface {
 		// Allow counts a request for key (pdp.RateKey) against perHour.
 		Allow(key string, perHour int) bool
@@ -111,7 +117,9 @@ type Config struct {
 	Catalog Catalog
 	HA      Executor
 	Limiter Limiter
-	Audit   Auditor
+	// Clock, if set, stops all decisions while the clock is behind (SPEC-v0 section 11.4).
+	Clock Clock
+	Audit Auditor
 	// Approvals asks humans for ask decisions; nil refuses every ask.
 	Approvals Approver
 	Logger    *slog.Logger
@@ -243,6 +251,24 @@ func (g *Gateway) available() bool {
 	return g.cfg.HA.Connected() && g.cfg.Catalog.Ready()
 }
 
+// clockWrong reports whether the clock lies behind the newest audit entry: validity
+// periods and time windows cannot be trusted then (SPEC-v0 section 11.4), and nothing is
+// decided. A failed check counts as wrong.
+func (g *Gateway) clockWrong(ctx context.Context) bool {
+	if g.cfg.Clock == nil {
+		return false
+	}
+	behind, err := g.cfg.Clock.ClockBehind(ctx)
+	if err != nil {
+		g.cfg.Logger.Error("cannot check the clock against the audit log", "error", err)
+		return true
+	}
+	if behind {
+		g.cfg.Logger.Error("the clock is behind the newest audit entry; no request is decided until it is right")
+	}
+	return behind
+}
+
 // Tool inputs and outputs.
 type (
 	noInput     struct{}
@@ -331,7 +357,7 @@ func (g *Gateway) listSnapshot(ctx context.Context, req *sdk.CallToolRequest) (*
 	if g.stopped(ctx) {
 		return nil, errors.New(codeDenied + ": emergency_stop")
 	}
-	if !g.available() {
+	if !g.available() || g.clockWrong(ctx) {
 		return nil, errors.New(codeUnavailable)
 	}
 	snap, err := g.cfg.PDP.Snapshot(ctx, a.ClientID)
@@ -496,6 +522,11 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 	if !g.available() {
 		d := pdp.Decision{Time: g.cfg.Now(), Resource: evaluator.Resource{EntityID: entityID}, Action: action}
 		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusFailed, Error: "ha_unavailable"})
+		return pdp.Decision{}, errors.New(codeUnavailable)
+	}
+	if g.clockWrong(ctx) {
+		d := pdp.Decision{Time: g.cfg.Now(), Resource: evaluator.Resource{EntityID: entityID}, Action: action}
+		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusFailed, Error: errClockBehind})
 		return pdp.Decision{}, errors.New(codeUnavailable)
 	}
 	snap, err := g.cfg.PDP.Snapshot(ctx, a.ClientID)

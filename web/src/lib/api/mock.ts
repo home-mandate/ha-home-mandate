@@ -123,6 +123,8 @@ export interface MockControls {
   openApproval(request: ApprovalRequest): void;
   closeApproval(id: string, outcome: ApprovalHistoryEntry['outcome'], byName: string | null, via?: 'push' | 'ui'): void;
   setHaConnected(connected: boolean): void;
+  /** As a host clock behind the newest audit entry. */
+  setClockBehind(behind: boolean): void;
   /** As a rename in Home Assistant: the device gets another entity ID, rules keep the old one. */
   renameDevice(from: string, to: string): void;
   breakChain(seq: number): void;
@@ -514,6 +516,9 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       const devices = state.devices.devices.map((d) => (d.entity_id === from ? { ...d, entity_id: to } : d));
       state = { ...state, devices: { ...state.devices, devices } };
       emit({ type: 'devices.changed' });
+    },
+    setClockBehind(behind) {
+      setSystem({ ...state.system, clock_behind: behind });
     },
     setHaConnected(connected) {
       setSystem({ ...state.system, ha: { ...state.system.ha, connected, since: now().toISOString() } });

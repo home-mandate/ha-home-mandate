@@ -72,9 +72,20 @@ func TestSystem(t *testing.T) {
 		*sys.HA.UserName != "Home-Mandate" || !slices.Contains(sys.HA.Commands, "config/auth/list") ||
 		*sys.MCPURL != "https://hm.example.org:8765/mcp" || !sys.TLS.Present || *sys.TLS.ValidUntil != "2027-01-01T10:00:00.000Z" ||
 		sys.EmergencyStop.Active || sys.EmergencyStop.Since != nil || !sys.Chain.Valid || sys.Chain.CheckedAt != nil ||
-		sys.ApproversConfigured != 1 {
+		sys.ApproversConfigured != 1 || sys.ClockBehind {
 		t.Errorf("system = %+v", sys)
 	}
+	// A clock behind the newest audit entry is reported (SPEC-v0 section 11.4).
+	if _, err := h.srv.cfg.Log.Append(t.Context(), audit.Entry{Event: audit.EventEmergencyStopReleased,
+		Actor: &audit.Actor{Kind: audit.ActorUser, ID: adminID}}); err != nil {
+		t.Fatal(err)
+	}
+	h.srv.cfg.Log.SetClock(func() time.Time { return time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC) })
+	h.ok(http.MethodGet, "/api/system", nil, &sys)
+	if !sys.ClockBehind {
+		t.Error("clock_behind not reported")
+	}
+	h.srv.cfg.Log.SetClock(time.Now)
 	if _, err := h.agents.SetEmergencyStop(t.Context(), true, audit.Actor{Kind: audit.ActorUser, ID: annaID}); err != nil {
 		t.Fatal(err)
 	}

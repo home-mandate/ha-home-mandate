@@ -224,6 +224,30 @@ func New(db *sql.DB, principal string) *Log {
 	return &Log{db: db, principal: principal, now: time.Now}
 }
 
+// ClockTolerance is how far the clock may lie behind the newest entry, e.g. after a
+// small correction by NTP, before Home-Mandate stops deciding.
+const ClockTolerance = time.Minute
+
+// ClockBehind reports whether the clock lies more than ClockTolerance before the newest
+// entry of the log: then it is wrong, and validity periods and time windows cannot be
+// trusted (SPEC-v0 section 11.4).
+func (l *Log) ClockBehind(ctx context.Context) (bool, error) {
+	// The latest time, not the last entry: entries written while the clock was behind
+	// must not hide it. timeFormat has a fixed width in UTC, so text order is time order.
+	var newest sql.NullString
+	if err := l.db.QueryRowContext(ctx, `SELECT max(recorded_at) FROM audit_log`).Scan(&newest); err != nil {
+		return false, fmt.Errorf("audit: read: %w", err)
+	}
+	if !newest.Valid {
+		return false, nil
+	}
+	at, err := time.Parse(timeFormat, newest.String)
+	if err != nil {
+		return false, fmt.Errorf("audit: newest entry: %w", err)
+	}
+	return l.clock().Add(ClockTolerance).Before(at), nil
+}
+
 // SetClock replaces the clock, for tests.
 func (l *Log) SetClock(now func() time.Time) {
 	l.mu.Lock()
