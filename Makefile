@@ -21,10 +21,10 @@ VERSION ?= dev
 COMMIT  ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
 GOARCHES := amd64 arm64
 
-.PHONY: check test cover vet staticcheck vulncheck actionlint build webui web-install web-check web-conformance web-e2e e2e e2e-ui
+.PHONY: check test cover vet staticcheck vulncheck actionlint conformance build webui web-install web-check web-conformance web-e2e e2e e2e-ui
 
 ## check: everything that must be green before a commit
-check: vet staticcheck cover vulncheck actionlint
+check: vet staticcheck cover vulncheck actionlint conformance
 
 test:
 	go test -race ./...
@@ -44,6 +44,11 @@ vulncheck:
 
 actionlint:
 	go run $(ACTIONLINT)
+
+## conformance: mandate-conformance against Home-Mandate's PDP over both bindings of the
+## test interface (SPEC-v0 section 10); the test tool is never part of the binary
+conformance:
+	tools/conformance/run.sh
 
 ## build: static binaries for all release architectures in bin/
 build:
