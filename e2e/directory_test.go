@@ -94,7 +94,8 @@ func TestDirectoryRenameIsReported(t *testing.T) {
 		known, marked := critical(renamed)
 		return known && marked
 	})
-	if !hasLine(logsOf(env.hm), "entity renamed in Home Assistant", old, renamed) {
-		t.Error("the rename is not in the server log")
-	}
+	// The log line is written after the refresh that already shows the stale reference.
+	eventually(t, "the rename in the server log", 30*time.Second, func() bool {
+		return hasLine(logsOf(env.hm), "entity renamed in Home Assistant", old, renamed)
+	})
 }
