@@ -8,7 +8,7 @@ a negative test, no release without green end-to-end tests.**
 | Level | Tool | Runs | Purpose |
 |---|---|---|---|
 | Unit | `go test`, table-driven | every commit | Every function, every branch |
-| Conformance | Cases from `mandate-spec` (embedded in the Go module) against our own PDP | every commit | Evaluation exactly per specification |
+| Conformance | Cases from `mandate-spec` (embedded in the Go module) against our own PDP; `mandate-conformance` against `tools/conformance` (process binding: classes evaluator, selection, audit, audit-anchored; HTTP binding: class pdp), `make conformance` | every commit | Evaluation and selection exactly per specification, through Home-Mandate's own decision path |
 | Negative | Own test cases per package, catalog in section 4 | every commit | Attacks and invalid input are rejected |
 | Fuzzing | `go test -fuzz` | nightly, 10 min per target | No panic, unknown input becomes `deny` |
 | Integration | Real HA instance in a container | every push | HA client, catalog, service calls |
@@ -90,7 +90,22 @@ Every line is at least one test. New attack ideas are added here before they are
 - Critical action with `allow` without `allow_critical` → `ask`
 - Edited mandate based on a version that is no longer the current one, or of a revoked mandate → refused as a conflict, nothing stored
 - Edited mandate with an `allow_critical` rule that is new, changed in any field or renamed, without the separate confirmation → refused, nothing stored; an unchanged rule needs no new confirmation
-- Version that restores an earlier one (same digest) → stored as a new version with its own number; versions are addressed by number
+- Version that restores an earlier one → stored as a new version with the next number and the next `version` (SPEC-v0 section 3.5), so its digest differs; versions are addressed by number
+- Older version offered again with its own `version` (rollback), also after a revocation → refused; a mandate of another `issuer` → refused; a mandate stored before versions existed → still evaluated, its next change gets version 1
+- Agent whose only mandate is revoked, or whose agent is revoked → `no_mandate` (revoked mandates are no candidates, SPEC-v0 section 4.3)
+- Stored version that no longer parses after a stricter specification, or whose content no longer has its digest (changed in the database) → `invalid_mandate`, never evaluated; `home-mandate mandate check` lists it
+- Entity in a spelling the directory does not have (`Lock.keller` for `lock.keller`) → `unknown_resource`
+- Rule that names a device together with a category the device does not have → refused when saving (mandate and template); a device the directory does not know → stored and reported as a stale reference
+- Parameter that is no integer in the unit of the vocabulary (21.555 °C, a temperature in a °F household) → not passed, a rule with a limit on it does not match; a call that sets one quantity through two fields (`brightness` and `brightness_pct`) → refused; what is executed is exactly the evaluated value
+- Limits on a `deny` or `ask` rule, on "all actions" or on an action without that value → refused when saving; the editor reports them and never drops them silently (that would widen an allow)
+
+**Resource directory**
+- Entity renamed in Home Assistant → rules on the old ID are reported (`stale_references` in the API, the mandate list, the editor with a danger note on `deny`/`ask` rules), never rewritten; the edit in progress is kept
+- Renamed entity that was marked critical → the mark moves to the new ID, the old ID keeps it; a failed move is logged as an error
+- Rename event with the same ID, without an ID, with a space, control character or more than 255 characters, or not an update → ignored; at most 1000 renames are kept between two refreshes
+- Area removed → rules on it reported like a renamed device; `deny` or `ask` rule that names only an area → the editor says that a device moved elsewhere leaves it
+- Directory not loaded (start, connection lost) → nothing reported as missing, every request denied
+- Critical mark set or removed → only by an administrator with CSRF token; an entity the directory does not know → `not_found`; every change, failed ones included, in the server log with user and previous value
 
 **Tokens and sign-in**
 - No token, wrong scheme, expired, revoked, issued for another resource → 401
@@ -191,6 +206,8 @@ Every line is at least one test. New attack ideas are added here before they are
 
 **Audit log**
 - Tampered entry in the database → chain verification fails and reports the position
+- Log rewritten consistently by someone who can write the database → `audit verify` reports it anchored only up to the last checkpoint; a checkpoint signed with another key or for another log ID → invalid
+- Shortening of the log with an agent as actor → refused; every shortening is followed by a checkpoint
 - No tokens, nonces or HA credentials in logs (a test searches the log output of all E2E runs)
 - Search text with `%`, `_`, `\`, quotes, control, bidi or zero-width characters → cleaned, then matched literally (bound parameter, wildcards escaped or `instr`); errors name only `/q`, never the text
 - Search text over 100 characters after cleaning, a repeated `q`, or invalid UTF-8 → `invalid_input`, nothing run; empty or whitespace-only `q` → same result as no search
@@ -214,6 +231,10 @@ Every line is at least one test. New attack ideas are added here before they are
 - Checksum of an applied migration changed → start aborted
 - Database schema newer than the binary → start aborted (no downgrade)
 - Database directory writable by group or others, or not owned by the service user; database file readable by others, a symlink or hard link → start aborted
+
+**Test interface (SPEC-v0 section 10.1)**
+- The release binary depends on `tools/conformance` or the harness of mandate-spec → a test fails (`go list -deps ./cmd/home-mandate`)
+- HTTP binding without or with a wrong bearer token → 401; a token shorter than 32 characters or an address other than loopback → refused at start
 
 **Transport**
 - TLS 1.2 or older → connection rejected
@@ -248,3 +269,48 @@ Every commit automatically checks:
 - Tests check behaviour, not implementation details. No tests that only test mocks.
 - No skipped tests on the main branch. Flaky tests are fixed, not disabled.
 - Test data contains no real credentials; secrets are generated per run.
+
+## 7. Obligations of the PEP (SPEC-v0 section 11)
+
+How Home-Mandate meets each obligation and which tests show it. Gaps are listed, not hidden.
+
+### 11.1 Approval
+
+| Item | How | Tests | Gap |
+|---|---|---|---|
+| 1 Who | A push answer counts only from a `context.user_id` among the approvers of the request; anyone else denies as `invalid_response` and warns the approvers; the UI checks approver and administrator now; nobody reachable → `denied: no_approver` | `approval.TestAnswerFromANonApprover`, `approval.TestAnswerWithoutUserIsInvalid`, `approval.TestNoApproverCanBeReached`, `approval.TestUIAnswerRejectsUnknownRequestsAndUsers`, `approval.TestWithdrawnApprover`, `api.TestAnswerRefusals`, `mcp.TestRefusedApprovals` | |
+| 2 What is confirmed | The nonce belongs to one pending request (agent, entity, action, parameters); after the answer the digest of a new evaluation must equal the confirmed one; the reason is marked as the agent's claim | `approval.TestParametersAreShown`, `approval.TestShownParamsAndText`, `approval.TestSanitize`, `mcp.TestApprovalShowsTheServiceData`, `mcp.TestRequestIsMarkedAndChannelRecorded`, `api.TestOpenApprovals` | The push notification shows the agent's name and the device's name, not `client_id` and entity ID; the UI shows both |
+| 3 Once | 128-bit nonce from `crypto/rand`, stored as a hash, first answer wins | `approval.TestFirstAnswerCounts`, `approval.TestForeignAndMalformedAnswersAreIgnored`, `approval.TestSecondAnswerAfterTheEnd`, `approval.TestPhoneAndUIRace`, `approval.TestThreeWayRace` | |
+| 4 Independent of the agent | MCP has four tools, none answers; answers come only from Home Assistant notification events or the administrator UI behind Ingress | `mcp.TestOnlyTheFourToolsExist`, `api.TestOnlyTheSupervisorIsServed`, `api.TestAPINeedsAnAdministrator` | |
+| 5 In time | The wait ends at the shorter of the rule's timeout and `HM_APPROVAL_TIMEOUT`; rejection and invalid answers deny | `approval.TestTimeout`, `approval.TestMandateTimeoutShortensTheWait`, `approval.TestDefaultUpperLimit`, `mcp.TestApprovalTimeout`, `mcp.TestRefusedApprovals` | The age of the confirmation is not compared with the timeout at execution; the execution follows at once and the call to Home Assistant has a 10 s deadline, without a test of its own |
+| 6 Evaluated again | After the answer: emergency stop, token and a fresh evaluation; executed only if not `deny` and the digest is unchanged | `mcp.TestChecksAfterApproval`, `mcp.TestRevokedTokenAfterApproval`, `mcp.TestMandateUnavailableAfterApproval` | Expiry and a closing time window after the answer are covered by the fresh evaluation, without tests of their own |
+| 7 Limited | At most 2 waiting requests per agent, further ones `denied: approval_pending`; the rate limit runs before the decision, so `ask` counts | `mcp.TestPendingAsksAreBounded`, `mcp.TestRateLimit` | No test of its own that `ask` requests count towards the rate limit |
+| Audit | Every outcome with `approval.outcome`, `by`, `via`; a cancelled request with `denied_by` | `mcp.TestCancelledApprovals`, `mcp.TestApprovalEntriesNameTheirRequest`, `audit.TestApprovedAskIsRecordedWithApproval`, `audit.TestApprovalChannelAndCancellation` | |
+
+### 11.2 Rate limit
+
+| Item | How | Tests | Gap |
+|---|---|---|---|
+| N in every 3600 s | `mandate-spec/ratelimit` keeps the timestamps of the last hour | `mcp.TestRateLimit`; in mandate-spec `TestNoBurstAfterAnIdlePeriod`, `TestWindowBoundaryIsExact` | |
+| Counted per mandate | Counted per agent; an agent has at most one active mandate | `mandate.TestOneMandatePerAgent` | A new mandate after a revocation continues the agent's count |
+| Every request counts | The limiter runs before every decision and before lists | `mcp.TestRateLimit`, `mcp.TestAgentsWithoutMandateAreRateLimited` | |
+| Refusals by the limit or the stop do not count | The stop is checked first; the limiter does not count its own refusals | `mcp.TestEmergencyStopIsEnforcedByThePEP`; in mandate-spec `TestDeniedRequestsDoNotCount` | |
+| Survives a restart | Restored from the decisions of the last hour in the audit log | `cmd/home-mandate.TestRestoredLimiterCountsTheLastHour`, `audit.TestRequestsSince` | Lists leave no audit entry and are not restored |
+| Change of N | Read from the candidates for every request | `pdp.TestRateLimitOfTheCandidates`; in mandate-spec `TestLoweredLimitAppliesAtOnce` | |
+| Compaction | At most one rate-limit entry per agent and interval | `mcp.TestRateLimitRefusalsAreLoggedOncePerInterval` | |
+
+### 11.3 Revocation and emergency stop
+
+| Item | How | Tests |
+|---|---|---|
+| Next evaluation, no caching | Candidates are read for every request; revoked mandates and agents are no candidates | `mandate.TestCandidatesAreTheActiveMandatesOfAnActiveAgent`, `pdp.TestSelectionCasesOverHTTP`, `mcp.TestAuthentication` |
+| Waiting approvals end | Revoking a mandate or an agent cancels its requests | `api.TestRevokeMandate`, `api.TestRevokeAgent`, `approval.TestCancel`, `mcp.TestCancelledApprovals` |
+| Emergency stop | Checked before everything, `denied_by: emergency_stop`, ends waiting requests, recorded, released only by a human (UI or CLI) | `mcp.TestEmergencyStopIsEnforcedByThePEP`, `mcp.TestEmergencyStopRefusesLists`, `api.TestEmergencyStop`, `cmd/home-mandate.TestEmergencyStopCommand` |
+
+### 11.4 Clock and directory
+
+| Item | How | Tests | Gap |
+|---|---|---|---|
+| Clock | Host clock | – | Not implemented: Home-Mandate does not deny while the clock is behind the newest audit entry |
+| Directory | Exact lookup; unknown → `unknown_resource`; renames reported, marks carried | `pdp.TestUnknownEntityIsDenied`, `catalog.TestRenameMovesTheMarkBeforeTheRefresh`, `api.TestMandatesReportRulesOnMissingDevicesAndAreas` | |
+
