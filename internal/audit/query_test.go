@@ -536,3 +536,23 @@ func TestRequestsSince(t *testing.T) {
 		t.Error("RequestsSince with a cancelled context succeeded")
 	}
 }
+
+// Only a human or the system deletes old entries, never an agent (SPEC-v0 section 9.1).
+func TestTruncateRefusesAnAgentAsActor(t *testing.T) {
+	l := queryFixture(t)
+	ctx := context.Background()
+	before, _ := l.LastSeq(ctx)
+	removed, err := l.Truncate(ctx, start.Add(24*time.Hour), audit.Actor{Kind: audit.ActorAgent, ID: "hm-client:voice-1"})
+	if !errors.Is(err, audit.ErrInvalidEntry) || removed != 0 {
+		t.Fatalf("Truncate by an agent = %d, %v; want ErrInvalidEntry", removed, err)
+	}
+	if after, _ := l.LastSeq(ctx); after != before {
+		t.Errorf("last seq changed from %d to %d", before, after)
+	}
+	if r, err := l.Verify(ctx); err != nil || !r.Valid {
+		t.Errorf("log after the refused truncation: %+v, %v", r, err)
+	}
+	if removed, err := l.Truncate(ctx, start.Add(24*time.Hour), audit.Actor{Kind: audit.ActorSystem, ID: "retention"}); err != nil || removed == 0 {
+		t.Errorf("Truncate by the system = %d, %v", removed, err)
+	}
+}
