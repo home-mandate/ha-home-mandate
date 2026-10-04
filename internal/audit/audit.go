@@ -234,8 +234,10 @@ const ClockTolerance = time.Minute
 func (l *Log) ClockBehind(ctx context.Context) (bool, error) {
 	// The latest time, not the last entry: entries written while the clock was behind
 	// must not hide it. timeFormat has a fixed width in UTC, so text order is time order.
+	// Entries up to an accepted position (AcceptClock) do not count.
 	var newest sql.NullString
-	if err := l.db.QueryRowContext(ctx, `SELECT max(recorded_at) FROM audit_log`).Scan(&newest); err != nil {
+	if err := l.db.QueryRowContext(ctx, `SELECT max(recorded_at) FROM audit_log WHERE seq >
+		coalesce((SELECT CAST(value AS INTEGER) FROM settings WHERE key = ?), 0)`, settingClockAccepted).Scan(&newest); err != nil {
 		return false, fmt.Errorf("audit: read: %w", err)
 	}
 	if !newest.Valid {
@@ -246,6 +248,28 @@ func (l *Log) ClockBehind(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("audit: newest entry: %w", err)
 	}
 	return l.clock().Add(ClockTolerance).Before(at), nil
+}
+
+// settingClockAccepted holds the position up to which entries do not count for
+// ClockBehind.
+const settingClockAccepted = "audit_clock_accepted_seq"
+
+// AcceptClock makes ClockBehind ignore every entry written so far. A human runs it after
+// the clock ran ahead by mistake and was corrected: the entries with the future times
+// would otherwise stop every decision until that time. It returns the position and the
+// latest time it set aside.
+func (l *Log) AcceptClock(ctx context.Context) (int64, string, error) {
+	var seq sql.NullInt64
+	var latest sql.NullString
+	if err := l.db.QueryRowContext(ctx, `SELECT max(seq), max(recorded_at) FROM audit_log`).Scan(&seq, &latest); err != nil {
+		return 0, "", fmt.Errorf("audit: read: %w", err)
+	}
+	if _, err := l.db.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+		settingClockAccepted, fmt.Sprint(seq.Int64), l.clock().UTC().Format(timeFormat)); err != nil {
+		return 0, "", fmt.Errorf("audit: accept clock: %w", err)
+	}
+	return seq.Int64, latest.String, nil
 }
 
 // SetClock replaces the clock, for tests.

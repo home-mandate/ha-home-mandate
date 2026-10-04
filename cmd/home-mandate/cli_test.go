@@ -154,6 +154,9 @@ func TestAgentAndMandateLifecycle(t *testing.T) {
 	if out := c.mustRun("", "audit", "verify"); !strings.Contains(out, "valid") {
 		t.Errorf("audit verify: %q", out)
 	}
+	if out := c.mustRun("", "audit", "accept-clock"); !strings.Contains(out, "no longer count for the clock check") {
+		t.Errorf("accept-clock = %q", out)
+	}
 	export := c.mustRun("", "audit", "export")
 	if strings.Count(export, "\n") != 4 {
 		t.Errorf("audit export (agent.registered, mandate.created, mandate.revoked, agent.revoked):\n%s", export)

@@ -361,7 +361,7 @@ func readDocument(e env, name string) ([]byte, error) {
 
 func auditCommand(ctx context.Context, e env, args []string) int {
 	if len(args) != 1 {
-		return usageError(e, "audit needs verify, export or key")
+		return usageError(e, "audit needs verify, export, key or accept-clock")
 	}
 	switch args[0] {
 	case "verify":
@@ -392,6 +392,17 @@ func auditCommand(ctx context.Context, e env, args []string) int {
 		})
 	case "export":
 		return withState(ctx, e, func(s *state) error { return s.log.Export(ctx, e.stdout) })
+	case "accept-clock":
+		// After the clock ran ahead by mistake and was corrected, the entries with future
+		// times would stop every decision (SPEC-v0 section 11.4) until that time.
+		return withState(ctx, e, func(s *state) error {
+			seq, latest, err := s.log.AcceptClock(ctx)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(e.stdout, "entries up to seq %d (latest time %s) no longer count for the clock check\n", seq, latest)
+			return nil
+		})
 	default:
 		return usageError(e, fmt.Sprintf("unknown audit subcommand %q", args[0]))
 	}

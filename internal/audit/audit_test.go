@@ -282,4 +282,21 @@ func TestClockBehindTheNewestEntry(t *testing.T) {
 	if behind, err := l.ClockBehind(ctx); err != nil || !behind {
 		t.Errorf("after an entry with the wrong time: behind = %v, %v", behind, err)
 	}
+	// The clock had run ahead and is right now: a human sets the entries so far aside.
+	seq, latest, err := l.AcceptClock(ctx)
+	if err != nil || seq != 2 || latest != "2026-10-13T12:00:00.000Z" {
+		t.Fatalf("AcceptClock = %d, %q, %v", seq, latest, err)
+	}
+	if behind, err := l.ClockBehind(ctx); err != nil || behind {
+		t.Errorf("after accepting: behind = %v, %v", behind, err)
+	}
+	// Later entries count again.
+	l.SetClock(func() time.Time { return at })
+	if _, err := l.Append(ctx, audit.Entry{Event: audit.EventEmergencyStopActivated, Actor: &audit.Actor{Kind: audit.ActorUser, ID: "u1"}}); err != nil {
+		t.Fatal(err)
+	}
+	l.SetClock(func() time.Time { return at.Add(-time.Hour) })
+	if behind, err := l.ClockBehind(ctx); err != nil || !behind {
+		t.Errorf("entries after accepting: behind = %v, %v", behind, err)
+	}
 }
