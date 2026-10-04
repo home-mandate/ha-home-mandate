@@ -50,7 +50,7 @@ describe('ruleNotes', () => {
 describe('critical actions of a rule', () => {
   it('names them once, whatever the confirmation says', () => {
     const devices = catalog.devices;
-    expect(demotedNames(rule({ resource: { any: true } }), devices, 'en')).toBe('open, unlock, disarm, get snapshot, run, set');
+    expect(demotedNames(rule({ resource: { any: true } }), devices, 'en')).toBe('open, unlock, disarm, get snapshot, activate, run, set');
     expect(demotedNames(rule({ allow_critical: true }), devices, 'en')).toBe('unlock, open');
     expect(demotedNames(rule({ actions: ['read'] }), devices, 'en')).toBe('');
     expect(demotedNames(rule({ decision: 'ask' }), devices, 'en')).toBe('');
@@ -70,7 +70,7 @@ describe('critical actions of a rule', () => {
     expect(demotedNames(door, devices, 'en')).toBe('unlock, open');
     expect(notes(draftOf(door), 0)).toEqual([['critical', 'Becomes an approval request because the action is critical. (unlock, open)']]);
     // A device the catalog does not know could be anything.
-    expect(includedNames(rule({ resource: { entity_id: 'lock.gone' } }), devices, 'en')).toBe('open, unlock, disarm, get snapshot, run, set');
+    expect(includedNames(rule({ resource: { entity_id: 'lock.gone' } }), devices, 'en')).toBe('open, unlock, disarm, get snapshot, activate, run, set');
   });
 
   it('counts the devices on which the rule covers a critical action', () => {

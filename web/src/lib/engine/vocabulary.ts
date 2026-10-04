@@ -5,27 +5,31 @@
 // (./evaluate.ts) and the editor; the server stays the authority for every decision.
 
 import type { Category, ExtensionCategory, MandateDraft, Rule } from '../api/types.ts';
+import v0 from './conformance/vocabulary/v0.json';
 
 interface CategorySpec {
   actions: readonly string[];
   critical: readonly string[];
+  /** action → names of its integer parameters (SPEC-v0 section 4.5). */
+  parameters: Readonly<Record<string, readonly string[]>>;
 }
 
-const VOCABULARY: Readonly<Record<Category, CategorySpec>> = {
-  light: { actions: ['read', 'turn_on', 'turn_off', 'set'], critical: [] },
-  switch: { actions: ['read', 'turn_on', 'turn_off'], critical: [] },
-  climate: { actions: ['read', 'set_temperature', 'set_mode'], critical: [] },
-  cover: { actions: ['read', 'open', 'close', 'stop', 'set_position'], critical: [] },
-  gate: { actions: ['read', 'open', 'close'], critical: ['open'] },
-  lock: { actions: ['read', 'lock', 'unlock', 'open'], critical: ['unlock', 'open'] },
-  alarm: { actions: ['read', 'arm', 'disarm'], critical: ['disarm'] },
-  camera: { actions: ['read', 'snapshot'], critical: ['snapshot'] },
-  media: { actions: ['read', 'turn_on', 'turn_off', 'play', 'pause', 'set_volume'], critical: [] },
-  sensor: { actions: ['read'], critical: [] },
-  scene: { actions: ['read', 'activate'], critical: [] },
-  script: { actions: ['read', 'run'], critical: ['run'] },
-  other: { actions: ['read', 'set'], critical: ['set'] },
-};
+interface VocabularyFile {
+  categories: Record<string, { actions: Record<string, { critical?: boolean; parameters?: Record<string, unknown> }> }>;
+}
+
+// The normative vocabulary of the pinned mandate-spec version, copied by
+// tools/webconformance; nothing about categories and actions is kept in code.
+const VOCABULARY = Object.fromEntries(
+  Object.entries((v0 as VocabularyFile).categories).map(([category, { actions }]) => [
+    category,
+    {
+      actions: Object.keys(actions),
+      critical: Object.keys(actions).filter((a) => actions[a]?.critical === true),
+      parameters: Object.fromEntries(Object.entries(actions).map(([a, spec]) => [a, Object.keys(spec.parameters ?? {})])),
+    },
+  ]),
+) as unknown as Readonly<Record<Category, CategorySpec>>;
 
 export const CATEGORIES = Object.keys(VOCABULARY) as readonly Category[];
 
@@ -53,6 +57,19 @@ export function lookupAction(category: string, action: string): ActionLookup {
   if (!isKnown(category)) return { categoryKnown: false, actionKnown: false, critical: false };
   const { actions, critical } = VOCABULARY[category];
   return { categoryKnown: true, actionKnown: actions.includes(action), critical: critical.includes(action) };
+}
+
+/** knownAction tells whether any category of the vocabulary has the action. */
+export function knownAction(action: string): boolean {
+  return CATEGORIES.some((c) => VOCABULARY[c].actions.includes(action));
+}
+
+/**
+ * hasParameter tells whether the action has the parameter: in the given category, or
+ * without one in any category of the vocabulary.
+ */
+export function hasParameter(category: string | undefined, action: string, parameter: string): boolean {
+  return CATEGORIES.some((c) => (category === undefined || c === category) && (VOCABULARY[c].parameters[action] ?? []).includes(parameter));
 }
 
 /**

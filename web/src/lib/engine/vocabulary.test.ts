@@ -36,7 +36,7 @@ describe('vocabulary', () => {
   it('marks exactly the critical actions of SPEC-v0 section 5', () => {
     const critical = CATEGORIES.flatMap((c) => criticalActionsOf(c).map((a) => `${c}.${a}`));
     expect(critical.sort()).toEqual(
-      ['alarm.disarm', 'camera.snapshot', 'gate.open', 'lock.open', 'lock.unlock', 'other.set', 'script.run'].sort(),
+      ['alarm.disarm', 'camera.snapshot', 'gate.open', 'lock.open', 'lock.unlock', 'other.set', 'scene.activate', 'script.run'].sort(),
     );
   });
 

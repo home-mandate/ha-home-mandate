@@ -10,8 +10,10 @@ import { checkDraft, parseDateTime, windowMinutes } from './check.ts';
 import { lookupAction } from './vocabulary.ts';
 
 export interface EvalRequest {
-  resource: { entity_id: string; category?: string; area?: string };
+  resource: { entity_id: string; category?: string; area?: string; critical?: boolean };
   action: string;
+  /** Integer parameters of the action in the units of the vocabulary (SPEC-v0 section 4.5). */
+  parameters?: Record<string, number>;
   /** RFC 3339 point in time. */
   time: string;
   /** IANA time zone of the household; absent or empty: the offset in `time` applies. */
@@ -33,8 +35,8 @@ export interface LocalTime {
   minute: number;
 }
 
-const ENTITY_ID = /^[a-z0-9_]+\.[a-z0-9_]+$/;
-const AREA = /^[a-z0-9_]{1,64}$/;
+const ENTITY_ID = /^[!-~]{1,255}$/;
+const AREA = /^[!-~]{1,64}$/;
 const OFFSET = /(Z|([+-])(\d{2}):(\d{2}))$/;
 const ZONE_PART = /^[A-Z][A-Za-z0-9_+-]*$/;
 const MAX_ZONE_LENGTH = 64;
@@ -69,6 +71,10 @@ function zoneFormatter(zone: string): Intl.DateTimeFormat | null {
       minute: '2-digit',
       hourCycle: 'h23',
     });
+    // Intl matches zone names without regard to case; a name that differs from its zone
+    // only in case is not a name of the time zone database (SPEC-v0 section 4.2).
+    const canonical = f.resolvedOptions().timeZone;
+    if (canonical !== zone && canonical.toLowerCase() === zone.toLowerCase()) return null;
     if (formatters.size < MAX_CACHED_ZONES) formatters.set(zone, f);
     return f;
   } catch {
@@ -120,6 +126,14 @@ export function resourceMatches(rule: Rule, resource: EvalRequest['resource']): 
   );
 }
 
+/** constraintsMet: the request carries every constrained parameter within the limits. */
+export function constraintsMet(rule: Rule, parameters: EvalRequest['parameters']): boolean {
+  return Object.entries(rule.constraints ?? {}).every(([name, { min = -Infinity, max = Infinity }]) => {
+    const value = parameters?.[name];
+    return value !== undefined && value >= min && value <= max;
+  });
+}
+
 export function coversAction(rule: Rule, action: string): boolean {
   return rule.actions.includes('*') || rule.actions.includes(action);
 }
@@ -131,12 +145,12 @@ const clone = (a: Approval): Approval => ({ timeout: a.timeout, approvers: [...a
 function precheck(mandate: MandateDraft, req: EvalRequest): { local: LocalTime; critical: boolean } | EvalResult {
   const local = localTime(req.time, req.timezone);
   const res = req.resource;
+  const integers = Object.values(req.parameters ?? {}).every((v) => Number.isInteger(v) && Math.abs(v) <= Number.MAX_SAFE_INTEGER);
   const validRequest =
-    typeof res.category === 'string' &&
-    res.category !== '' &&
-    ENTITY_ID.test(res.entity_id) &&
-    (res.area === undefined || res.area === '' || AREA.test(res.area));
+    typeof res.entity_id === 'string' && ENTITY_ID.test(res.entity_id) && (res.area === undefined || res.area === '' || AREA.test(res.area)) && integers;
   if (!local || !validRequest) return deny('invalid_request');
+  // A resource without category is not in the directory of the PEP.
+  if (typeof res.category !== 'string' || res.category === '') return deny('unknown_resource');
 
   const { categoryKnown, actionKnown, critical } = lookupAction(res.category ?? '', req.action);
   if (!categoryKnown) return deny('unknown_category');
@@ -145,7 +159,8 @@ function precheck(mandate: MandateDraft, req: EvalRequest): { local: LocalTime; 
   const at = parseDateTime(req.time);
   if (at < parseDateTime(mandate.valid_from)) return deny('not_yet_valid');
   if (mandate.expires !== undefined && at >= parseDateTime(mandate.expires)) return deny('expired');
-  return { local, critical };
+  // The directory can mark a resource as critical: then every action except read is.
+  return { local, critical: critical || (res.critical === true && req.action !== 'read') };
 }
 
 /** decide implements steps 4 and 5 and section 4.1 for a non-empty list of matching rules. */
@@ -167,7 +182,9 @@ export function decide(mandate: MandateDraft, matched: Rule[], critical: boolean
 
 /** matchingRules implements step 2 in document order at a given local time. */
 export function matchingRules(mandate: MandateDraft, req: EvalRequest, local: LocalTime): Rule[] {
-  return mandate.rules.filter((r) => resourceMatches(r, req.resource) && coversAction(r, req.action) && conditionsMet(r, local));
+  return mandate.rules.filter(
+    (r) => resourceMatches(r, req.resource) && coversAction(r, req.action) && conditionsMet(r, local) && constraintsMet(r, req.parameters),
+  );
 }
 
 /** evaluate evaluates req against mandate per SPEC-v0 section 4. */

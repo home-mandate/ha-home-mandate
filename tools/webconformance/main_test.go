@@ -30,24 +30,27 @@ func TestWebCopyMatchesMandateSpec(t *testing.T) {
 
 func TestFilesReferencesEveryMandateOnce(t *testing.T) {
 	spec := fstest.MapFS{
-		"conformance/cases-v0.json": {Data: []byte(`{"cases":[{"mandate":"a.json"},{"mandate":"a.json"},{"mandate_inline":{}}]}`)},
-		"a.json":                    {Data: []byte(`{}`)},
+		"conformance/cases-v0.json":         {Data: []byte(`{"cases":[{"mandate":"a.json"},{"mandate":"a.json"},{"mandate_inline":{}}]}`)},
+		"a.json":                            {Data: []byte(`{}`)},
+		"vocabulary/v0.json":                {Data: []byte(`{}`)},
+		"data/forbidden-codepoints-v0.json": {Data: []byte(`{}`)},
 	}
 	got, err := files(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got["a.json"] == nil {
+	if len(got) != 4 || got["a.json"] == nil || got["vocabulary/v0.json"] == nil {
 		t.Fatalf("files = %v", got)
 	}
 }
 
 func TestFilesErrors(t *testing.T) {
 	for name, spec := range map[string]fstest.MapFS{
-		"no cases":     {},
-		"broken json":  {"conformance/cases-v0.json": {Data: []byte(`{`)}},
-		"missing file": {"conformance/cases-v0.json": {Data: []byte(`{"cases":[{"mandate":"nope.json"}]}`)}},
-		"bad path":     {"conformance/cases-v0.json": {Data: []byte(`{"cases":[{"mandate":"../x.json"}]}`)}},
+		"no cases":      {},
+		"no vocabulary": {"conformance/cases-v0.json": {Data: []byte(`{"cases":[]}`)}},
+		"broken json":   {"conformance/cases-v0.json": {Data: []byte(`{`)}},
+		"missing file":  {"conformance/cases-v0.json": {Data: []byte(`{"cases":[{"mandate":"nope.json"}]}`)}},
+		"bad path":      {"conformance/cases-v0.json": {Data: []byte(`{"cases":[{"mandate":"../x.json"}]}`)}},
 	} {
 		if _, err := files(spec); err == nil {
 			t.Errorf("%s: no error", name)

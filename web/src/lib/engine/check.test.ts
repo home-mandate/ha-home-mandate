@@ -78,7 +78,7 @@ describe('checkDraft', () => {
     ['rule id format', withRule({ id: 'a b' }), '/rules/0/id format'],
     ['empty resource', withRule({ resource: {} }), '/rules/0/resource required'],
     ['any with category', withRule({ resource: { any: true, category: 'light' } }), '/rules/0/resource any_alone'],
-    ['entity id pattern', withRule({ resource: { entity_id: 'Light.Flur' } }), '/rules/0/resource/entity_id format'],
+    ['entity id pattern', withRule({ resource: { entity_id: 'Light Flur' } }), '/rules/0/resource/entity_id format'],
     ['area pattern', withRule({ resource: { area: 'Küche' } }), '/rules/0/resource/area format'],
     ['unknown category', withRule({ resource: { category: 'toaster' } }), '/rules/0/resource/category unknown'],
     ['no actions', withRule({ actions: [] }), '/rules/0/actions required'],
@@ -118,5 +118,80 @@ describe('checkDraft', () => {
   it('reports every problem, not only the first', () => {
     const draft = withRule({ id: '', actions: [] });
     expect(fields(checkDraft(draft))).toEqual(['/rules/0/id format', '/rules/0/actions required']);
+  });
+});
+
+describe('checkDraft: rules of the next specification version', () => {
+  const draft = (rule: Record<string, unknown>, extra: Record<string, unknown> = {}): MandateDraft =>
+    ({
+      rules: [{ id: 'r-1', resource: { category: 'climate' }, actions: ['set_temperature'], decision: 'allow', ...rule }],
+      approval: { timeout: 'PT2M', approvers: ['user-1'] },
+      limits: { max_actions_per_hour: 10 },
+      valid_from: '2026-01-01T00:00:00+01:00',
+      ...extra,
+    }) as unknown as MandateDraft;
+  const fields = (d: MandateDraft) => checkDraft(d).map((p) => `${p.field} ${p.code}`);
+
+  it('accepts opaque identifiers and rejects spaces and non-ASCII', () => {
+    for (const entity_id of ['1/2/3', 'Kitchen_Light', 'urn:dev:mac:0024befffe804ff1', 'x'.repeat(255)]) {
+      expect(fields(draft({ resource: { entity_id }, actions: ['read'] }))).toEqual([]);
+    }
+    for (const entity_id of ['Kitchen Light', 'Küche', '', 'x'.repeat(256)]) {
+      expect(fields(draft({ resource: { entity_id }, actions: ['read'] }))).toEqual(['/rules/0/resource/entity_id format']);
+    }
+    expect(fields(draft({ resource: { area: 'Floor-1/Room.2' }, actions: ['read'] }))).toEqual([]);
+    expect(fields(draft({ resource: { area: 'a'.repeat(65) }, actions: ['read'] }))).toEqual(['/rules/0/resource/area format']);
+  });
+
+  it('checks actions of a rule without category against the whole vocabulary', () => {
+    expect(fields(draft({ resource: { entity_id: 'door-1' }, actions: ['unlock', 'turn_on'] }))).toEqual([]);
+    expect(fields(draft({ resource: { entity_id: 'door-1' }, actions: ['unlokc'] }))).toEqual(['/rules/0/actions/0 vocabulary']);
+    expect(fields(draft({ resource: { any: true }, actions: ['read', 'tag'] }))).toEqual(['/rules/0/actions/1 vocabulary']);
+    expect(fields(draft({ resource: { category: 'paperless:document' }, actions: ['tag'] }))).toEqual([]);
+  });
+
+  it('rejects allow_critical together with "*"', () => {
+    expect(fields(draft({ resource: { category: 'lock' }, actions: ['*'], allow_critical: true }))).toEqual(['/rules/0/allow_critical allow_only']);
+    expect(fields(draft({ resource: { category: 'lock' }, actions: ['unlock'], allow_critical: true }))).toEqual([]);
+  });
+
+  it('checks constraints', () => {
+    const c = (constraints: unknown, rule: Record<string, unknown> = {}) => fields(draft({ constraints, ...rule }));
+    expect(c({ temperature: { min: 1600, max: 2300 } })).toEqual([]);
+    expect(c({ temperature: { max: 2300 } })).toEqual([]);
+    expect(c({ temperature: { min: 2400, max: 2300 } })).toEqual(['/rules/0/constraints/temperature order']);
+    expect(c({ temperature: {} })).toEqual(['/rules/0/constraints/temperature required']);
+    expect(c({})).toEqual(['/rules/0/constraints required']);
+    expect(c({ temperature: { max: 22.5 } })).toEqual(['/rules/0/constraints/temperature format']);
+    expect(c({ temperature: { max: '23' } })).toEqual(['/rules/0/constraints/temperature format']);
+    expect(c({ temprature: { max: 2300 } })).toEqual(['/rules/0/constraints/temprature unknown']);
+    expect(c({ brightness: { max: 50 } })).toEqual(['/rules/0/constraints/brightness unknown']);
+    expect(c({ temperature: { max: 2300 } }, { decision: 'deny' })).toEqual(['/rules/0/constraints allow_only']);
+    expect(c({ temperature: { max: 2300 } }, { actions: ['set_temperature', 'set_mode'] })).toEqual(['/rules/0/constraints/temperature unknown']);
+    expect(c({ temperature: { max: 2300 } }, { actions: ['*'] })).toEqual(['/rules/0/constraints allow_only']);
+    expect(c({ position: { min: 20 } }, { resource: { entity_id: 'blind-1' }, actions: ['set_position'] })).toEqual([]);
+  });
+
+  it('accepts timeouts with hours and limits the digits', () => {
+    const t = (timeout: string) => fields(draft({}, { approval: { timeout, approvers: ['user-1'] } }));
+    for (const ok of ['PT1H', 'PT1M30S', 'PT0H59M60S', 'PT10S']) expect(t(ok)).toEqual([]);
+    expect(t('PT2H')).toEqual(['/approval/timeout range']);
+    for (const bad of ['PT', 'PT5S1M', 'PT000010S', 'P1D', 'PT1.5M']) expect(t(bad)).toEqual(['/approval/timeout format']);
+  });
+
+  it('checks timestamps as the specification does', () => {
+    const v = (valid_from: string) => fields(draft({}, { valid_from }));
+    expect(v('2026-01-01T00:00:00.123456789+01:00')).toEqual([]);
+    for (const bad of ['2026-01-01T00:00:00.1234567891+01:00', '0000-01-01T00:00:00Z', '2026-01-01T00:00:00-00:00', '2026-01-01T00:00:00+24:00']) {
+      expect(v(bad)).toEqual(['/valid_from format']);
+    }
+  });
+
+  it('checks approvers as displayed text with the list of the specification', () => {
+    const a = (approver: string) => fields(draft({}, { approval: { timeout: 'PT2M', approvers: [approver] } }));
+    for (const ok of ['user-1', 'Anna Müller', 'می\u200cخواهم']) expect(a(ok)).toEqual([]);
+    for (const bad of [' user', 'user ', 'a\u00a0b', 'a\u202eb', '\u2800', '\u0301a', 'a\u200d', 'a\ufdd0b']) {
+      expect(a(bad)).toEqual(['/approval/approvers/0 format']);
+    }
   });
 });

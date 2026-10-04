@@ -272,6 +272,8 @@ export interface Rule {
   actions: string[];
   decision: Decision;
   conditions?: Conditions;
+  /** Only with decision "allow" and listed actions: limits for integer parameters of the action. */
+  constraints?: Record<string, { min?: number; max?: number }>;
   /** Only with decision "ask". */
   approval?: Approval;
   /** Only with decision "allow"; needs the separate confirmation (confirm_critical). */
@@ -383,8 +385,11 @@ export interface ApplyTemplate {
 
 /** Reason codes of SPEC-v0 section 4.1. */
 export type Reason =
+  | 'no_mandate'
+  | 'ambiguous_mandate'
   | 'invalid_mandate'
   | 'invalid_request'
+  | 'unknown_resource'
   | 'unknown_category'
   | 'unknown_action'
   | 'revoked'

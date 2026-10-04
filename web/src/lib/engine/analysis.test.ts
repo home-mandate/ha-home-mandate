@@ -64,7 +64,7 @@ describe('diff', () => {
     const before = draft([lights, locksAsk]);
     const after = draft([
       { ...lights, actions: ['read'] },
-      { ...locksAsk, decision: 'allow', allow_critical: true },
+      { ...locksAsk, actions: ['read', 'lock', 'unlock', 'open'], decision: 'allow', allow_critical: true },
     ]);
     const changes = diff(before, after, devices);
     expect(changes.map((c) => `${c.device.entity_id} ${c.action} ${c.from.decision}→${c.to.decision}`)).toEqual([
@@ -160,7 +160,7 @@ describe('rule hints', () => {
   it('lists critical actions included by "*"', () => {
     expect(criticalIncluded(locksAsk)).toEqual([['lock', 'unlock'], ['lock', 'open']]);
     expect(criticalIncluded(lights)).toEqual([]);
-    expect(criticalIncluded({ id: 'a', resource: { any: true }, actions: ['*'], decision: 'deny' })).toHaveLength(7);
+    expect(criticalIncluded({ id: 'a', resource: { any: true }, actions: ['*'], decision: 'deny' })).toHaveLength(8);
   });
 
   it('ignores the garage in light rules', () => {

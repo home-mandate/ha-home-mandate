@@ -6,7 +6,8 @@
 // mandate-spec/evaluator and rejects anything this check misses.
 
 import type { Approval, MandateDraft, Rule } from '../api/types.ts';
-import { lookupAction } from './vocabulary.ts';
+import { displayable } from './displaytext.ts';
+import { hasParameter, knownAction, lookupAction } from './vocabulary.ts';
 
 export type ProblemCode =
   | 'required'
@@ -32,19 +33,20 @@ export const MAX_RULES = 200;
 export const MIN_RATE = 1;
 export const MAX_RATE = 1000;
 const RULE_ID = /^[A-Za-z0-9_-]{1,64}$/;
-const ENTITY_ID = /^[a-z0-9_]+\.[a-z0-9_]+$/;
-const AREA = /^[a-z0-9_]{1,64}$/;
+// Opaque identifiers: printable ASCII without space (SPEC-v0 section 3.4).
+const ENTITY_ID = /^[!-~]{1,255}$/;
+const AREA = /^[!-~]{1,64}$/;
+const PARAMETER = /^[a-z][a-z0-9_]{0,63}$/;
+const MAX_LIMIT = Number.MAX_SAFE_INTEGER;
 const EXTENSION_CATEGORY = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_]*$/;
 const ACTION = /^(\*|[a-z][a-z0-9_]{0,63})$/;
-const TIMEOUT = /^PT(?:(\d+)M)?(?:(\d+)S)?$/;
+const TIMEOUT = /^PT(?:([0-9]{1,5})H)?(?:([0-9]{1,5})M)?(?:([0-9]{1,5})S)?$/;
 const TIME_WINDOW = /^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$/;
-const DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
+const DATE_TIME = /^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(\.[0-9]{1,9})?(?:Z|[+-]([0-9]{2}):([0-9]{2}))$/;
 const WEEKDAYS = new Set(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']);
 const DECISIONS = new Set(['allow', 'ask', 'deny']);
 const MIN_TIMEOUT_S = 10;
 const MAX_TIMEOUT_S = 3600;
-// Control, format and separator characters (SPEC-v0 section 3.1 item 8).
-const HIDDEN_CHARACTERS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 
 function daysInMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
@@ -62,6 +64,8 @@ export function parseDateTime(value: unknown): number {
   const offsetHour = Number(match[8] ?? 0);
   const offsetMinute = Number(match[9] ?? 0);
   const valid =
+    year !== 0 &&
+    !(value as string).endsWith('-00:00') &&
     month >= 1 &&
     month <= 12 &&
     day >= 1 &&
@@ -74,11 +78,11 @@ export function parseDateTime(value: unknown): number {
   return valid ? Date.parse(value as string) : NaN;
 }
 
-/** timeoutSeconds returns the seconds of "PTnM", "PTnS" or "PTnMnS", or NaN. */
+/** timeoutSeconds returns the seconds of "PT[nH][nM][nS]" with at least one component, or NaN. */
 export function timeoutSeconds(value: unknown): number {
   const match = typeof value === 'string' ? TIMEOUT.exec(value) : null;
-  if (!match || (match[1] === undefined && match[2] === undefined)) return NaN;
-  return Number(match[1] ?? 0) * 60 + Number(match[2] ?? 0);
+  if (!match || match.slice(1).every((part) => part === undefined)) return NaN;
+  return Number(match[1] ?? 0) * 3600 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0);
 }
 
 /** windowMinutes returns start and end of "HH:MM-HH:MM" in minutes, or null if malformed. */
@@ -115,7 +119,7 @@ function checkApproval(approval: Approval | undefined, at: string): Problem[] {
   if (approvers.length === 0) problems.push({ field: `${at}/approvers`, code: 'required' });
   problems.push(
     ...eachUnique(approvers, `${at}/approvers`, (id, field) =>
-      [...id].length < 1 || [...id].length > 64 || HIDDEN_CHARACTERS.test(id) ? [{ field, code: 'format' }] : [],
+      [...id].length > 64 || !displayable(id) ? [{ field, code: 'format' }] : [],
     ),
   );
   return problems;
@@ -145,13 +149,38 @@ function checkActions(rule: Rule, at: string): Problem[] {
   const actions: unknown[] = Array.isArray(rule.actions) ? rule.actions : [];
   if (actions.length === 0) return [{ field: at, code: 'required' }];
   const category = (rule.resource as { category?: unknown } | undefined)?.category;
-  const checkVocabulary = typeof category === 'string' && lookupAction(category, 'read').categoryKnown;
+  const core = typeof category === 'string' && lookupAction(category, 'read').categoryKnown;
   return eachUnique(actions, at, (action, field) => {
     if (!ACTION.test(action)) return [{ field, code: 'format' }];
-    if (checkVocabulary && action !== '*' && !lookupAction(category, action).actionKnown) {
-      return [{ field, code: 'vocabulary' }];
-    }
-    return [];
+    if (action === '*') return [];
+    // A core category has its own actions; without a category any action of the vocabulary
+    // will do; an extension category is not checked (SPEC-v0 section 3.1 item 4).
+    const known = core ? lookupAction(category, action).actionKnown : category !== undefined || knownAction(action);
+    return known ? [] : [{ field, code: 'vocabulary' }];
+  });
+}
+
+/** checkConstraints implements SPEC-v0 section 3.1 item 10. */
+function checkConstraints(rule: Rule, at: string): Problem[] {
+  const constraints = rule.constraints as unknown;
+  if (constraints === undefined) return [];
+  if (constraints === null || typeof constraints !== 'object' || Object.keys(constraints).length === 0) return [{ field: at, code: 'required' }];
+  const actions: unknown[] = Array.isArray(rule.actions) ? rule.actions : [];
+  if (rule.decision !== 'allow' || actions.includes('*')) return [{ field: at, code: 'allow_only' }];
+  const category = (rule.resource as { category?: unknown } | undefined)?.category;
+  const core = typeof category === 'string' && lookupAction(category, 'read').categoryKnown;
+  const checked = category === undefined || core;
+  return Object.entries(constraints as Record<string, unknown>).flatMap(([name, limits]): Problem[] => {
+    const field = `${at}/${name}`;
+    if (!PARAMETER.test(name) || limits === null || typeof limits !== 'object') return [{ field, code: 'format' }];
+    const { min, max, ...rest } = limits as Record<string, unknown>;
+    if (Object.keys(rest).length > 0) return [{ field, code: 'format' }];
+    if (min === undefined && max === undefined) return [{ field, code: 'required' }];
+    const limit = (v: unknown) => v === undefined || (Number.isInteger(v) && Math.abs(v as number) <= MAX_LIMIT);
+    if (!limit(min) || !limit(max)) return [{ field, code: 'format' }];
+    if (min !== undefined && max !== undefined && (min as number) > (max as number)) return [{ field, code: 'order' }];
+    const fits = actions.every((a) => typeof a === 'string' && hasParameter(core ? category : undefined, a, name));
+    return checked && !fits ? [{ field, code: 'unknown' }] : [];
   });
 }
 
@@ -182,14 +211,15 @@ function checkRule(rule: Rule, at: string, ids: Set<string>): Problem[] {
   else ids.add(rule.id);
   problems.push(...checkResource(rule, `${at}/resource`), ...checkActions(rule, `${at}/actions`));
   if (!DECISIONS.has(rule.decision)) problems.push({ field: `${at}/decision`, code: 'unknown' });
-  if (rule.allow_critical !== undefined && (rule.allow_critical !== true || rule.decision !== 'allow')) {
+  const wildcard = Array.isArray(rule.actions) && rule.actions.includes('*');
+  if (rule.allow_critical !== undefined && (rule.allow_critical !== true || rule.decision !== 'allow' || wildcard)) {
     problems.push({ field: `${at}/allow_critical`, code: 'allow_only' });
   }
   if (rule.approval !== undefined) {
     if (rule.decision !== 'ask') problems.push({ field: `${at}/approval`, code: 'ask_only' });
     else problems.push(...checkApproval(rule.approval, `${at}/approval`));
   }
-  problems.push(...checkConditions(rule, `${at}/conditions`));
+  problems.push(...checkConditions(rule, `${at}/conditions`), ...checkConstraints(rule, `${at}/constraints`));
   return problems;
 }
 

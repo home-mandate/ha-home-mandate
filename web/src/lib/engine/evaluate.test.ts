@@ -14,6 +14,7 @@ interface ConformanceCase {
   mandate_inline?: MandateDraft;
   resource: EvalRequest['resource'];
   action: string;
+  parameters?: Record<string, number>;
   time: string;
   timezone?: string;
   revoked?: boolean;
@@ -34,7 +35,7 @@ function mandateOf(c: ConformanceCase): MandateDraft {
 
 describe('evaluate: mandate-spec conformance cases', () => {
   it('has all cases of the pinned version', () => {
-    expect(casesFile.cases.length).toBeGreaterThanOrEqual(74);
+    expect(casesFile.cases.length).toBeGreaterThanOrEqual(132);
   });
 
   it.each(casesFile.cases.map((c) => [c.id, c] as const))('%s', (_id, c) => {
@@ -42,6 +43,7 @@ describe('evaluate: mandate-spec conformance cases', () => {
       resource: c.resource,
       action: c.action,
       time: c.time,
+      ...(c.parameters === undefined ? {} : { parameters: c.parameters }),
       ...(c.timezone === undefined ? {} : { timezone: c.timezone }),
       ...(c.revoked === undefined ? {} : { revoked: c.revoked }),
     });

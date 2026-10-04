@@ -32,8 +32,11 @@ const EVENTS: Record<AuditEvent, () => string> = {
 };
 
 const REASONS: Record<Reason, () => string> = {
+  no_mandate: () => m.code_no_mandate(),
+  ambiguous_mandate: () => m.code_ambiguous_mandate(),
   invalid_mandate: () => m.code_invalid_mandate(),
   invalid_request: () => m.code_invalid_request(),
+  unknown_resource: () => m.code_unknown_resource(),
   unknown_category: () => m.code_unknown_category(),
   unknown_action: () => m.code_unknown_action(),
   revoked: () => m.code_revoked(),

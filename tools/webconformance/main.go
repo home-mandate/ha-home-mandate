@@ -24,7 +24,12 @@ import (
 	mandatespec "github.com/mandate-spec/mandate-spec"
 )
 
-// files returns the case file and every mandate file it references, path → content.
+// normativeFiles are the vocabulary and the code points of displayed text
+// (SPEC-v0 sections 5 and 3.1 item 8).
+var normativeFiles = []string{"vocabulary/v0.json", "data/forbidden-codepoints-v0.json"}
+
+// files returns the case file, every mandate file it references and the normative data
+// files, path → content.
 func files(spec fs.FS) (map[string][]byte, error) {
 	cases, err := fs.ReadFile(spec, mandatespec.CasesPath)
 	if err != nil {
@@ -39,6 +44,14 @@ func files(spec fs.FS) (map[string][]byte, error) {
 		return nil, fmt.Errorf("%s: %w", mandatespec.CasesPath, err)
 	}
 	out := map[string][]byte{mandatespec.CasesPath: cases}
+	// The normative data the web engine reads instead of keeping its own copy in code.
+	for _, path := range normativeFiles {
+		data, err := fs.ReadFile(spec, path)
+		if err != nil {
+			return nil, err
+		}
+		out[path] = data
+	}
 	for _, c := range doc.Cases {
 		if c.Mandate == "" || out[c.Mandate] != nil {
 			continue
