@@ -80,7 +80,7 @@ func TestEmergencyStopIsEnforcedByThePEP(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := New(Config{Agents: h.agents, PDP: h.pdp, Catalog: h.catalog, HA: h.ha, Audit: h.log})
-	if _, err := g.enforce(context.Background(), h.agent, "light.kitchen", "turn_on"); err == nil || err.Error() != "denied: emergency_stop" {
+	if _, err := g.enforce(context.Background(), h.agent, "light.kitchen", "turn_on", nil); err == nil || err.Error() != "denied: emergency_stop" {
 		t.Errorf("enforce = %v", err)
 	}
 	if e := h.lastEntry(); path(e, "result", "denied_by") != "emergency_stop" || e["evaluation"] != nil {

@@ -493,7 +493,8 @@ func TestExecutionFailures(t *testing.T) {
 func TestParametersAreChecked(t *testing.T) {
 	h := newHarness(t, func(d map[string]any) {
 		d["rules"] = []any{
-			map[string]any{"id": "r-all", "resource": map[string]any{"any": true}, "actions": []any{"*"}, "decision": "allow", "allow_critical": true},
+			map[string]any{"id": "r-all", "resource": map[string]any{"any": true}, "actions": []any{"set", "set_temperature", "set_mode", "arm", "snapshot"},
+				"decision": "allow", "allow_critical": true},
 		}
 	})
 	s := h.session()
@@ -639,7 +640,7 @@ func TestMissingMandateIsNotFound(t *testing.T) {
 	if errText != "not_found" {
 		t.Errorf("agent without mandate: %q", errText)
 	}
-	if e := h.lastEntry(); path(e, "evaluation", "reason") != "invalid_mandate" || e["mandate"] != nil {
+	if e := h.lastEntry(); path(e, "evaluation", "reason") != "no_mandate" || e["mandate"] != nil {
 		t.Errorf("audit entry = %v", e)
 	}
 }
@@ -765,5 +766,44 @@ func TestActionsOfTheVocabulary(t *testing.T) {
 	}
 	if got := Actions("paperless:document"); len(got) != 0 {
 		t.Errorf("unknown category = %v", got)
+	}
+}
+
+// A constraint of the mandate limits what the agent may set; the evaluated value is the
+// one in the audit log and the one sent to Home Assistant (SPEC-v0 section 4.5).
+func TestConstraintsLimitParameters(t *testing.T) {
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-heating", "resource": map[string]any{"category": "climate"}, "actions": []any{"set_temperature"},
+				"decision": "allow", "constraints": map[string]any{"temperature": map[string]any{"min": 1600, "max": 2300}}},
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+		}
+	})
+	s := h.session()
+	set := func(value any) string {
+		_, errText := h.call(s, "perform_action", map[string]any{"entity_id": "climate.living_room", "action": "set_temperature",
+			"params": map[string]any{"temperature": value}})
+		return errText
+	}
+	if errText := set(21.5); errText != "" {
+		t.Fatalf("21.5 degrees within the limits: %q", errText)
+	}
+	e := h.lastEntry()
+	if path(e, "request", "parameters", "temperature") != float64(2150) || path(e, "evaluation", "rule_id") != "r-heating" {
+		t.Errorf("audit entry = %v", e)
+	}
+	if calls := h.ha.recorded(); len(calls) != 1 || calls[0].Data["temperature"] != 21.5 {
+		t.Errorf("HA calls = %+v", calls)
+	}
+	for _, value := range []any{23.5, 15.0, 21.555} {
+		if errText := set(value); !strings.HasPrefix(errText, "denied") {
+			t.Errorf("%v degrees: %q, want denied", value, errText)
+		}
+		if e := h.lastEntry(); path(e, "evaluation", "reason") != "no_match" {
+			t.Errorf("%v degrees: audit entry = %v", value, e)
+		}
+	}
+	if calls := h.ha.recorded(); len(calls) != 1 {
+		t.Errorf("a denied value reached Home Assistant: %+v", calls)
 	}
 }

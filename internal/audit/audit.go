@@ -104,6 +104,8 @@ type Resource struct {
 	EntityID string `json:"entity_id"`
 	Category string `json:"category,omitempty"`
 	Area     string `json:"area,omitempty"`
+	// Critical: the household had marked the entity as critical (SPEC-v0 section 4).
+	Critical bool `json:"critical,omitempty"`
 }
 
 // Request is the input of an evaluation.
@@ -113,18 +115,21 @@ type Request struct {
 	Revoked  bool
 	Resource Resource
 	Action   string
+	// Parameters of the action that were input to the evaluation (SPEC-v0 section 4.5).
+	Parameters map[string]int64
 }
 
 // MarshalJSON writes the time in RFC 3339 with milliseconds.
 func (r Request) MarshalJSON() ([]byte, error) {
 	type wire struct {
-		Time     string   `json:"time"`
-		Timezone string   `json:"timezone,omitempty"`
-		Revoked  bool     `json:"revoked,omitempty"`
-		Resource Resource `json:"resource"`
-		Action   string   `json:"action"`
+		Time       string           `json:"time"`
+		Timezone   string           `json:"timezone,omitempty"`
+		Revoked    bool             `json:"revoked,omitempty"`
+		Resource   Resource         `json:"resource"`
+		Action     string           `json:"action"`
+		Parameters map[string]int64 `json:"parameters,omitempty"`
 	}
-	return json.Marshal(wire{r.Time.UTC().Format(timeFormat), r.Timezone, r.Revoked, r.Resource, r.Action})
+	return json.Marshal(wire{r.Time.UTC().Format(timeFormat), r.Timezone, r.Revoked, r.Resource, r.Action, r.Parameters})
 }
 
 // Mandate refers to a mandate version by digest, never by content.

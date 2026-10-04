@@ -128,7 +128,7 @@ func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: "mandate_unavailable"}, appr)
 		return nil, actionOut{}, errors.New(codeUnavailable)
 	}
-	if now := snap.Decide(d.Resource.EntityID, d.Action); now.Result.Decision == evaluator.Deny || now.Result.MandateDigest != d.Result.MandateDigest {
+	if now := snap.Decide(d.Resource.EntityID, d.Action, d.Parameters); now.Result.Decision == evaluator.Deny || now.Result.MandateDigest != d.Result.MandateDigest {
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate}, appr)
 		return nil, actionOut{}, errors.New(codeDenied + ": mandate_changed")
 	}

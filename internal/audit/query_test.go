@@ -53,7 +53,7 @@ func queryFixture(t *testing.T) *audit.Log {
 		decision("hm-client:n8n-2", "n8n 50%_off", "light.garden", "garden", "deny", "no_match"),                                   // 4
 		decision("hm-client:n8n-2", "n8n 50%_off", "switch.pump", "", "deny", "rule"),                                              // 5
 		{Event: audit.EventEmergencyStopActivated, Actor: user},                                                                    // 6
-		decision("hm-client:voice-1", "Straße\u202e", "cover.garage", "garage", "deny", "no_match"),                                // 7
+		decision("hm-client:voice-1", "Straße", "cover.garage", "garage", "deny", "no_match"),                                      // 7
 		{Event: audit.EventAgentRevoked, Actor: user, Agent: &audit.Agent{ClientID: "hm-client:n8n-2", DisplayName: "n8n"}},        // 8
 	})
 	return l

@@ -110,11 +110,14 @@ type Config struct {
 	Limiter Limiter
 	Audit   Auditor
 	// Approvals asks humans for ask decisions; nil refuses every ask.
-	Approvals   Approver
-	Logger      *slog.Logger
-	Version     string
-	Now         func() time.Time
-	CallTimeout time.Duration
+	Approvals Approver
+	Logger    *slog.Logger
+	Version   string
+	// TemperatureUnit returns the unit Home Assistant uses for temperatures ("°C" or
+	// "°F"); nil or empty counts as degrees Celsius.
+	TemperatureUnit func() string
+	Now             func() time.Time
+	CallTimeout     time.Duration
 }
 
 // Gateway serves the MCP tools.
@@ -280,7 +283,7 @@ func (g *Gateway) listDevices(ctx context.Context, req *sdk.CallToolRequest, _ n
 	}
 	for _, dev := range g.cfg.Catalog.All() {
 		// Only devices the agent may read now; ask would need a human first.
-		if snap.Decide(dev.EntityID, "read").Result.Decision != evaluator.Allow {
+		if snap.Decide(dev.EntityID, "read", nil).Result.Decision != evaluator.Allow {
 			continue
 		}
 		name, _ := dev.Attributes["friendly_name"].(string)
@@ -298,7 +301,7 @@ func (g *Gateway) listPermissions(ctx context.Context, req *sdk.CallToolRequest,
 	for _, dev := range g.cfg.Catalog.All() {
 		p := permissionOut{EntityID: dev.EntityID, Category: dev.Category, Area: dev.Area, Actions: map[string]string{}}
 		for _, action := range actionsOf(dev.Category) {
-			if d := snap.Decide(dev.EntityID, action); d.Result.Decision != evaluator.Deny {
+			if d := snap.Decide(dev.EntityID, action, nil); d.Result.Decision != evaluator.Deny {
 				p.Actions[action] = string(d.Result.Decision)
 			}
 		}
@@ -347,7 +350,7 @@ func (g *Gateway) getState(ctx context.Context, req *sdk.CallToolRequest, in ent
 	if !entityIDPattern.MatchString(in.EntityID) {
 		return nil, stateOut{}, errors.New(codeInvalidParams)
 	}
-	d, err := g.enforce(ctx, a, in.EntityID, "read")
+	d, err := g.enforce(ctx, a, in.EntityID, "read", nil)
 	if err != nil {
 		return nil, stateOut{}, err
 	}
@@ -380,6 +383,14 @@ func sanitize(attrs map[string]any) map[string]any {
 	return out
 }
 
+// temperatureUnit is the unit of temperatures in service calls; empty if unknown.
+func (g *Gateway) temperatureUnit() string {
+	if g.cfg.TemperatureUnit == nil {
+		return ""
+	}
+	return g.cfg.TemperatureUnit()
+}
+
 func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, in actionInput) (*sdk.CallToolResult, actionOut, error) {
 	a, err := agentOf(req)
 	if err != nil {
@@ -389,7 +400,13 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 		utf8.RuneCountInString(in.Reason) > maxReasonRunes {
 		return nil, actionOut{}, errors.New(codeInvalidParams)
 	}
-	d, err := g.enforce(ctx, a, in.EntityID, in.Action)
+	// The parameters of the evaluation come from what will be executed; the category from
+	// the catalog. An entity the catalog does not know has neither and is denied.
+	var parameters map[string]int64
+	if dev, ok := g.cfg.Catalog.Lookup(in.EntityID); ok {
+		parameters = evaluationParameters(dev.Category, in.Action, in.Params, g.temperatureUnit())
+	}
+	d, err := g.enforce(ctx, a, in.EntityID, in.Action, parameters)
 	ask := errors.Is(err, errAsk)
 	if err != nil && !ask {
 		return nil, actionOut{}, err
@@ -454,7 +471,7 @@ func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, ca
 // enforce runs availability, PDP, rate limit and the decision for one request and logs
 // every refusal. It returns the decision only if the action is allowed. An agent that
 // may not read the entity gets not_found for every refusal, as for a missing entity.
-func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action string) (pdp.Decision, error) {
+func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action string, parameters map[string]int64) (pdp.Decision, error) {
 	if g.stopped(ctx) {
 		d := pdp.Decision{Time: g.cfg.Now(), Resource: evaluator.Resource{EntityID: entityID}, Action: action}
 		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop})
@@ -469,7 +486,7 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 	if err != nil {
 		g.cfg.Logger.Error("loading the mandate failed", "error", err)
 	}
-	d := snap.Decide(entityID, action)
+	d := snap.Decide(entityID, action, parameters)
 	if d.TimeZone == "" && err == nil {
 		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusFailed, Error: "timezone_unknown"})
 		return pdp.Decision{}, errors.New(codeUnavailable)
@@ -483,7 +500,7 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 	}
 	readable := d.Result.Decision != evaluator.Deny
 	if action != "read" {
-		readable = snap.Decide(entityID, "read").Result.Decision != evaluator.Deny
+		readable = snap.Decide(entityID, "read", nil).Result.Decision != evaluator.Deny
 	}
 	if d.Result.Decision == evaluator.Ask {
 		if readable && action != "read" && g.cfg.Approvals != nil {
@@ -543,8 +560,8 @@ func (g *Gateway) entry(a agent.Agent, d pdp.Decision, withEvaluation bool, resu
 		Event: audit.EventDecision,
 		Agent: &audit.Agent{ClientID: a.ClientID, DisplayName: a.DisplayName},
 		Request: &audit.Request{Time: d.Time, Timezone: d.TimeZone, Revoked: d.Status == evaluator.StatusRevoked,
-			Resource: audit.Resource{EntityID: d.Resource.EntityID, Category: d.Resource.Category, Area: d.Resource.Area},
-			Action:   d.Action},
+			Resource: audit.Resource{EntityID: d.Resource.EntityID, Category: d.Resource.Category, Area: d.Resource.Area, Critical: d.Resource.Critical},
+			Action:   d.Action, Parameters: d.Parameters},
 		Result: &result,
 	}
 	if withEvaluation {

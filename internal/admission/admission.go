@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mandate-spec/mandate-spec/displaytext"
 	"github.com/mandate-spec/mandate-spec/evaluator"
 
 	"github.com/home-mandate/home-mandate/internal/agent"
@@ -159,6 +160,11 @@ func (s *Store) RemoveTemplate(ctx context.Context, name string) error {
 func (s *Store) Admit(ctx context.Context, req Request) (agent.Agent, agent.TokenPair, error) {
 	if req.By.Kind == "" || req.By.ID == "" {
 		return agent.Agent{}, agent.TokenPair{}, errors.New("admission: no actor")
+	}
+	// The actor becomes created_by of the mandate and actor.id in the audit log, both
+	// text displayed to humans (SPEC-v0 section 3.1 item 8).
+	if err := displaytext.Check(req.By.ID); err != nil {
+		return agent.Agent{}, agent.TokenPair{}, fmt.Errorf("%w: actor: %w", mandate.ErrInvalid, err)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

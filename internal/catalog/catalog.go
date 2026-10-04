@@ -35,9 +35,12 @@ type Area struct {
 
 // Device is an entity as the PEP sees it.
 type Device struct {
-	EntityID   string
-	Category   string
-	Area       string
+	EntityID string
+	Category string
+	Area     string
+	// Critical is true if the household marked the entity as critical: every action on
+	// it except read then needs a confirmation or allow_critical (SPEC-v0 section 4).
+	Critical   bool
 	State      string
 	Attributes map[string]any
 }

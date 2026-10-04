@@ -67,17 +67,31 @@ func serve(ctx context.Context, e env) int {
 	s.cfg = cfg
 	logger := slog.New(slog.NewJSONHandler(e.stderr, &slog.HandlerOptions{Level: s.cfg.LogLevel}))
 
-	if r, err := s.log.Verify(ctx); err != nil || !r.Valid {
+	// A stop signal during start-up cancels ctx and makes the step in progress fail; that
+	// is a clean stop, not a failed start.
+	r, err := s.log.Verify(ctx)
+	if ctx.Err() != nil {
+		return exitOK
+	}
+	if err != nil || !r.Valid {
 		logger.Error("audit log is broken, not starting", "broken_at", r.BrokenAt, "error", err)
 		return exitFailure
 	}
-	if n, err := s.log.IndexSearch(ctx); err != nil {
+	n, err := s.log.IndexSearch(ctx)
+	if ctx.Err() != nil {
+		return exitOK
+	}
+	if err != nil {
 		logger.Error("cannot index the audit log for the search", "error", err)
 		return exitFailure
-	} else if n > 0 {
+	}
+	if n > 0 {
 		logger.Info("audit log indexed for the search", "entries", n)
 	}
 	g, err := newGateway(ctx, s, logger)
+	if ctx.Err() != nil {
+		return exitOK
+	}
 	if err != nil {
 		logger.Error("cannot start", "error", err)
 		return exitFailure
@@ -168,7 +182,8 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		resource, metadata = s.cfg.PublicURL+mcp.Path, s.cfg.PublicURL+"/.well-known/oauth-protected-resource"+mcp.Path
 	}
 	gw := mcp.New(mcp.Config{Resource: resource, ResourceMetadataURL: metadata, Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
-		Limiter: ratelimit.New(nil), Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
+		TemperatureUnit: g.temperatureUnit,
+		Limiter:         ratelimit.New(nil), Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
 	as, handler, err := withOAuth(s, gw.Handler(), resource, logger)
 	if err != nil {
 		return nil, err
@@ -318,6 +333,14 @@ func listen(cfg config.Config, srv *http.Server, logger *slog.Logger) (net.Liste
 
 func (g *gateway) householdTimeZone() string {
 	return g.timeZone.Load().(string)
+}
+
+// temperatureUnit is the unit of temperatures in Home Assistant's service calls; empty
+// until the configuration was read.
+func (g *gateway) temperatureUnit() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.units["temperature"]
 }
 
 // householdLanguage is the language of approval requests for approvers without their

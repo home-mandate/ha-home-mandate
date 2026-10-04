@@ -46,16 +46,18 @@ type conformanceCase struct {
 		EntityID string `json:"entity_id"`
 		Category string `json:"category"`
 		Area     string `json:"area"`
+		Critical bool   `json:"critical"`
 	} `json:"resource"`
-	Action          string  `json:"action"`
-	Time            string  `json:"time"`
-	Timezone        string  `json:"timezone"`
-	Revoked         bool    `json:"revoked"`
-	Expected        string  `json:"expected"`
-	Reason          string  `json:"reason"`
-	RuleID          *string `json:"rule_id"`
-	ApprovalTimeout string  `json:"approval_timeout"`
-	Why             string  `json:"why"`
+	Action          string                 `json:"action"`
+	Parameters      map[string]json.Number `json:"parameters"`
+	Time            string                 `json:"time"`
+	Timezone        string                 `json:"timezone"`
+	Revoked         bool                   `json:"revoked"`
+	Expected        string                 `json:"expected"`
+	Reason          string                 `json:"reason"`
+	RuleID          *string                `json:"rule_id"`
+	ApprovalTimeout string                 `json:"approval_timeout"`
+	Why             string                 `json:"why"`
 }
 
 func loadCases(t *testing.T) []conformanceCase {
@@ -108,11 +110,20 @@ func pdpFor(t *testing.T, c conformanceCase) (*PDP, string) {
 	p := New(Config{
 		Principal: meta.Principal,
 		Mandates:  fakeMandates{loaded: mandate.Loaded{Mandate: m, Status: status}},
-		Catalog:   fakeCatalog{r.EntityID: {EntityID: r.EntityID, Category: r.Category, Area: r.Area}},
+		Catalog:   catalogFor(r.EntityID, r.Category, r.Area, r.Critical),
 		TimeZone:  func() string { return c.Timezone },
 		Now:       func() time.Time { return at },
 	})
 	return p, meta.Agent.ClientID
+}
+
+// catalogFor knows the resource of a case; a case without category stands for a
+// resource the directory does not contain (SPEC-v0 section 4).
+func catalogFor(entityID, category, area string, critical bool) fakeCatalog {
+	if category == "" {
+		return fakeCatalog{}
+	}
+	return fakeCatalog{entityID: {EntityID: entityID, Category: category, Area: area, Critical: critical}}
 }
 
 func post(t *testing.T, url string, body any) (*http.Response, Response) {
@@ -137,7 +148,7 @@ func TestConformanceCasesOverHTTP(t *testing.T) {
 			defer srv.Close()
 			resp, got := post(t, srv.URL, Request{
 				Subject:  Subject{Type: "agent", ID: clientID, Properties: SubjectProperties{Principal: p.cfg.Principal}},
-				Action:   Action{Name: c.Action},
+				Action:   Action{Name: c.Action, Properties: c.Parameters},
 				Resource: Resource{Type: c.RawResource.Category, ID: c.RawResource.EntityID, Properties: ResourceProperties{Area: c.RawResource.Area}},
 				Context:  RequestContext{Time: c.Time},
 			})
@@ -199,7 +210,7 @@ func TestInputsComeFromThePEPNotTheRequest(t *testing.T) {
 
 func TestDecideReportsTheResolvedInputs(t *testing.T) {
 	cfg, clientID := voice(t)
-	d, err := New(cfg).Decide(context.Background(), clientID, "lock.front", "unlock")
+	d, err := New(cfg).Decide(context.Background(), clientID, "lock.front", "unlock", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,21 +223,26 @@ func TestDecideReportsTheResolvedInputs(t *testing.T) {
 
 func TestUnknownEntityIsDenied(t *testing.T) {
 	cfg, clientID := voice(t)
-	d, err := New(cfg).Decide(context.Background(), clientID, "light.unknown", "turn_on")
-	if err != nil || d.Result.Decision != evaluator.Deny || d.Known {
-		t.Errorf("Decide = %+v, %v; want deny for an unknown entity", d, err)
+	d, err := New(cfg).Decide(context.Background(), clientID, "light.unknown", "turn_on", nil)
+	if err != nil || d.Result.Decision != evaluator.Deny || d.Result.Reason != evaluator.ReasonUnknownResource || d.Known {
+		t.Errorf("Decide = %+v, %v; want deny with unknown_resource for an unknown entity", d, err)
+	}
+	// Another spelling of a known entity is another, unknown resource (SPEC-v0 section 3.4).
+	d, _ = New(cfg).Decide(context.Background(), clientID, "Light.kitchen", "turn_on", nil)
+	if d.Result.Decision != evaluator.Deny || d.Result.Reason != evaluator.ReasonUnknownResource {
+		t.Errorf("Decide for another spelling = %+v, want unknown_resource", d.Result)
 	}
 }
 
 func TestMissingMandateIsDenied(t *testing.T) {
 	cfg, clientID := voice(t)
 	cfg.Mandates = fakeMandates{err: mandate.ErrNotFound}
-	d, err := New(cfg).Decide(context.Background(), clientID, "light.kitchen", "turn_on")
-	if err != nil || d.Result.Decision != evaluator.Deny || d.Result.Reason != evaluator.ReasonInvalidMandate {
+	d, err := New(cfg).Decide(context.Background(), clientID, "light.kitchen", "turn_on", nil)
+	if err != nil || d.Result.Decision != evaluator.Deny || d.Result.Reason != evaluator.ReasonNoMandate {
 		t.Errorf("Decide = %+v, %v", d, err)
 	}
 	cfg.Mandates = fakeMandates{err: errors.New("database gone")}
-	d, err = New(cfg).Decide(context.Background(), clientID, "light.kitchen", "turn_on")
+	d, err = New(cfg).Decide(context.Background(), clientID, "light.kitchen", "turn_on", nil)
 	if err == nil || d.Result.Decision != evaluator.Deny {
 		t.Errorf("Decide with a store error = %+v, %v; want deny and the error", d, err)
 	}
@@ -241,13 +257,16 @@ func TestMissingMandateIsDenied(t *testing.T) {
 func TestEvaluateChecksSubject(t *testing.T) {
 	cfg, clientID := voice(t)
 	p := New(cfg)
-	for name, subject := range map[string]Subject{
-		"other household": {Type: "agent", ID: clientID, Properties: SubjectProperties{Principal: "household:other"}},
-		"not an agent":    {Type: "user", ID: clientID, Properties: SubjectProperties{Principal: cfg.Principal}},
-		"no id":           {Type: "agent", Properties: SubjectProperties{Principal: cfg.Principal}},
+	for name, tt := range map[string]struct {
+		subject Subject
+		reason  string
+	}{
+		"other household": {Subject{Type: "agent", ID: clientID, Properties: SubjectProperties{Principal: "household:other"}}, "no_mandate"},
+		"no id":           {Subject{Type: "agent", Properties: SubjectProperties{Principal: cfg.Principal}}, "no_mandate"},
+		"not an agent":    {Subject{Type: "user", ID: clientID, Properties: SubjectProperties{Principal: cfg.Principal}}, "invalid_request"},
 	} {
-		got := p.Evaluate(context.Background(), Request{Subject: subject, Action: Action{Name: "turn_on"}, Resource: Resource{ID: "light.kitchen"}})
-		if got.Decision || got.Context.Outcome != "deny" || got.Context.Reason != "invalid_mandate" || got.Context.MandateDigest != "" {
+		got := p.Evaluate(context.Background(), Request{Subject: tt.subject, Action: Action{Name: "turn_on"}, Resource: Resource{ID: "light.kitchen"}})
+		if got.Decision || got.Context.Outcome != "deny" || got.Context.Reason != tt.reason || got.Context.MandateDigest != "" {
 			t.Errorf("%s: %+v", name, got)
 		}
 	}
@@ -336,8 +355,44 @@ func TestSnapshotDecidesManyOnOneMandate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Decide("light.kitchen", "turn_on").Result.Decision != evaluator.Allow ||
-		s.Decide("lock.front", "unlock").Result.Decision != evaluator.Ask || s.MaxActionsPerHour() != 60 {
+	if s.Decide("light.kitchen", "turn_on", nil).Result.Decision != evaluator.Allow ||
+		s.Decide("lock.front", "unlock", nil).Result.Decision != evaluator.Ask || s.MaxActionsPerHour() != 60 {
 		t.Error("snapshot decisions differ from the mandate")
+	}
+}
+
+func TestEvaluatePassesParametersAndApprovers(t *testing.T) {
+	cfg, clientID := voice(t)
+	p := New(cfg)
+	subject := Subject{Type: "agent", ID: clientID, Properties: SubjectProperties{Principal: cfg.Principal}}
+	got := p.Evaluate(context.Background(), Request{Subject: subject, Action: Action{Name: "unlock"}, Resource: Resource{ID: "lock.front"}})
+	if got.Context.Outcome != "ask" || got.Context.ApprovalTimeout == "" || len(got.Context.Approvers) == 0 {
+		t.Errorf("ask without approval settings: %+v", got)
+	}
+	for name, properties := range map[string]map[string]json.Number{
+		"fraction":  {"brightness": "50.5"},
+		"too large": {"brightness": "9007199254740992"},
+		"no number": {"brightness": "x"},
+	} {
+		got := p.Evaluate(context.Background(), Request{Subject: subject, Action: Action{Name: "turn_on", Properties: properties}, Resource: Resource{ID: "light.kitchen"}})
+		if got.Decision || got.Context.Reason != "invalid_request" {
+			t.Errorf("%s: %+v, want invalid_request", name, got)
+		}
+	}
+	got = p.Evaluate(context.Background(), Request{Subject: subject, Action: Action{Name: "turn_on", Properties: map[string]json.Number{"brightness": "5e1"}}, Resource: Resource{ID: "light.kitchen"}})
+	if !got.Decision {
+		t.Errorf("integer parameter written as 5e1: %+v", got)
+	}
+}
+
+func TestCriticalEntityNeedsConfirmation(t *testing.T) {
+	cfg, clientID := voice(t)
+	catalog := cfg.Catalog.(fakeCatalog)
+	device := catalog["light.kitchen"]
+	device.Critical = true
+	catalog["light.kitchen"] = device
+	d, _ := New(cfg).Decide(context.Background(), clientID, "light.kitchen", "turn_on", nil)
+	if d.Result.Decision != evaluator.Ask || d.Result.Reason != evaluator.ReasonCriticalDemotion || !d.Resource.Critical {
+		t.Errorf("Decide on an entity marked as critical = %+v", d.Result)
 	}
 }
