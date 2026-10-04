@@ -794,7 +794,7 @@ describe('states', () => {
     expect(screen.queryByText('Home Assistant changed')).toBeNull();
     expect(status()).toBe('1 unsaved change');
     // Dismissed: now the rule names a device that no longer exists, and that is a warning.
-    await api.dismissRename('lock.front_door_main');
+    await api.dismissRename('lock.front_door_main', ['lock.front_door']);
     expect(await screen.findByText('Home Assistant changed')).toBeTruthy();
     expect(
       (await card(3)).getByText('“lock.front_door” no longer exists in Home Assistant. If it was renamed, this rule no longer protects it. Choose the device again.'),

@@ -220,6 +220,17 @@ describe('MandateList', () => {
     await waitFor(() => expect(screen.queryByRole('region', { name: 'Renamed in Home Assistant' })).toBeNull());
   });
 
+  it('does not offer to take a rename over when another device has the former ID now', async () => {
+    const { api } = await start();
+    await screen.findByRole('table');
+    api.control.renameDevice('lock.front_door', 'lock.front_door_main');
+    api.control.renameDevice('cover.garage_door', 'lock.front_door');
+    const notice = await screen.findByRole('region', { name: 'Renamed in Home Assistant' });
+    await waitFor(() => expect(within(notice).getByText(/Another device is called .*lock\.front_door/)).toBeTruthy());
+    expect(within(notice).queryByRole('button', { name: 'Take over' })).toBeNull();
+    expect(within(notice).getByRole('button', { name: 'Don’t take over' })).toBeTruthy();
+  });
+
   it('marks it on mobile too', async () => {
     mobile();
     const { api } = await start();

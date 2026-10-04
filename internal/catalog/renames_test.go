@@ -4,6 +4,7 @@ package catalog_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 
@@ -28,21 +29,22 @@ func newRenames(t *testing.T) (*catalog.Renames, func() *catalog.Renames) {
 	return r, reload
 }
 
+func rn(old, new string) catalog.Rename { return catalog.Rename{Old: old, New: new} }
+
 func TestRenamesAreHeldStoredAndResolved(t *testing.T) {
 	r, reload := newRenames(t)
 	ctx := context.Background()
-	if !r.Hold(catalog.Rename{Old: "lock.cellar", New: "lock.cellar_door"}) || r.Hold(catalog.Rename{Old: "lock.cellar", New: "lock.cellar_door"}) {
+	if !r.Hold(rn("lock.cellar", "lock.cellar_door")) || r.Hold(rn("lock.cellar", "lock.cellar_door")) {
 		t.Fatal("Hold: first not new, or second new")
 	}
 	// A chain: cellar → cellar_door → basement_door.
-	r.Hold(catalog.Rename{Old: "lock.cellar_door", New: "lock.basement_door"})
+	r.Hold(rn("lock.cellar_door", "lock.basement_door"))
 	if got := r.Formers("lock.basement_door"); !slices.Equal(got, []string{"lock.cellar_door", "lock.cellar"}) {
 		t.Errorf("Formers = %v", got)
 	}
-	if open := r.Open(); len(open) != 1 || len(open["lock.basement_door"]) != 2 {
-		t.Errorf("Open = %v", open)
+	if got := r.Open()["lock.basement_door"]; len(got) != 2 {
+		t.Errorf("Open = %v", r.Open())
 	}
-	// Held, not stored yet.
 	if got := reload().Formers("lock.basement_door"); len(got) != 0 {
 		t.Errorf("stored before Store: %v", got)
 	}
@@ -52,9 +54,12 @@ func TestRenamesAreHeldStoredAndResolved(t *testing.T) {
 	if got := reload().Formers("lock.basement_door"); len(got) != 2 {
 		t.Errorf("after Store: %v", got)
 	}
-	resolved, err := r.Resolve(ctx, "lock.basement_door", catalog.ResolutionDismissed, "user-1")
-	if err != nil || len(resolved) != 2 {
-		t.Fatalf("Resolve = %v, %v", resolved, err)
+	// What the human saw no longer holds: nothing is resolved.
+	if err := r.Resolve(ctx, "lock.basement_door", []string{"lock.cellar_door"}, catalog.ResolutionDismissed, "user-1"); !errors.Is(err, catalog.ErrRenamesChanged) {
+		t.Fatalf("Resolve with other formers: %v", err)
+	}
+	if err := r.Resolve(ctx, "lock.basement_door", []string{"lock.cellar", "lock.cellar_door"}, catalog.ResolutionDismissed, "user-1"); err != nil {
+		t.Fatal(err)
 	}
 	if got := r.Formers("lock.basement_door"); len(got) != 0 {
 		t.Errorf("after Resolve: %v", got)
@@ -63,7 +68,7 @@ func TestRenamesAreHeldStoredAndResolved(t *testing.T) {
 		t.Errorf("Resolve not stored: %v", got)
 	}
 	for _, bad := range []struct{ resolution, by string }{{"maybe", "user-1"}, {catalog.ResolutionApplied, ""}} {
-		if _, err := r.Resolve(ctx, "x.y", bad.resolution, bad.by); err == nil {
+		if err := r.Resolve(ctx, "x.y", nil, bad.resolution, bad.by); err == nil {
 			t.Errorf("Resolve(%q, %q) accepted", bad.resolution, bad.by)
 		}
 	}
@@ -71,8 +76,8 @@ func TestRenamesAreHeldStoredAndResolved(t *testing.T) {
 
 func TestResolveStoresWhatWasOnlyHeld(t *testing.T) {
 	r, reload := newRenames(t)
-	r.Hold(catalog.Rename{Old: "lock.a", New: "lock.b"})
-	if _, err := r.Resolve(context.Background(), "lock.b", catalog.ResolutionApplied, "user-1"); err != nil {
+	r.Hold(rn("lock.a", "lock.b"))
+	if err := r.Resolve(context.Background(), "lock.b", []string{"lock.a"}, catalog.ResolutionApplied, "user-1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Store(context.Background()); err != nil {
@@ -83,14 +88,15 @@ func TestResolveStoresWhatWasOnlyHeld(t *testing.T) {
 	}
 }
 
+// The same entity (same registry ID) getting its former ID back undoes the rename.
 func TestRenameBackUndoesTheRename(t *testing.T) {
 	r, reload := newRenames(t)
 	ctx := context.Background()
-	r.Hold(catalog.Rename{Old: "lock.a", New: "lock.b"})
+	r.Hold(catalog.Rename{Old: "lock.a", New: "lock.b", Registry: "reg-1"})
 	if err := r.Store(ctx); err != nil {
 		t.Fatal(err)
 	}
-	r.Hold(catalog.Rename{Old: "lock.b", New: "lock.a"})
+	r.Hold(catalog.Rename{Old: "lock.b", New: "lock.a", Registry: "reg-1"})
 	if got := r.Formers("lock.a"); len(got) != 0 {
 		t.Errorf("Formers after renaming back = %v", got)
 	}
@@ -99,6 +105,78 @@ func TestRenameBackUndoesTheRename(t *testing.T) {
 	}
 	if open := reload().Open(); len(open) != 0 {
 		t.Errorf("open after renaming back = %v", open)
+	}
+}
+
+// Two entities that swap their IDs are two renames: each keeps the rules on its former
+// ID, never cancelled against each other.
+func TestSwappedIDsAreTwoRenames(t *testing.T) {
+	r, _ := newRenames(t)
+	r.Observe([]ha.EntityEntry{{ID: "reg-1", EntityID: "lock.front"}, {ID: "reg-2", EntityID: "lock.back"}})
+	found := r.Observe([]ha.EntityEntry{{ID: "reg-1", EntityID: "lock.back"}, {ID: "reg-2", EntityID: "lock.front"}})
+	for _, f := range found {
+		r.Hold(f)
+	}
+	if a, b := r.Formers("lock.back"), r.Formers("lock.front"); !slices.Equal(a, []string{"lock.front"}) || !slices.Equal(b, []string{"lock.back"}) {
+		t.Errorf("formers after a swap: back %v, front %v", a, b)
+	}
+	if open := r.Open(); len(open) != 2 {
+		t.Errorf("Open = %v", open)
+	}
+	// An event-only rename back (no registry ID) is no undo either.
+	r2, _ := newRenames(t)
+	r2.Hold(rn("lock.x", "lock.y"))
+	r2.Hold(rn("lock.y", "lock.x"))
+	if got := r2.Formers("lock.x"); !slices.Equal(got, []string{"lock.y"}) {
+		t.Errorf("event rename back: %v", got)
+	}
+	// Resolving one side leaves the other.
+	if err := r.Resolve(context.Background(), "lock.back", []string{"lock.front"}, catalog.ResolutionDismissed, "user-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Formers("lock.front"); !slices.Equal(got, []string{"lock.back"}) {
+		t.Errorf("the other side after resolving one: %v", got)
+	}
+}
+
+// Every former ID counts: two renames into one ID, and one ID renamed twice.
+func TestEveryFormerIDCounts(t *testing.T) {
+	r, reload := newRenames(t)
+	r.Hold(rn("lock.a", "lock.c"))
+	r.Hold(rn("lock.b", "lock.c"))
+	if got := r.Formers("lock.c"); !slices.Equal(got, []string{"lock.a", "lock.b"}) {
+		t.Errorf("two into one: %v", got)
+	}
+	r.Hold(rn("lock.a", "lock.d"))
+	if got := r.Formers("lock.d"); !slices.Equal(got, []string{"lock.a"}) {
+		t.Errorf("renamed twice, second: %v", got)
+	}
+	if got := r.Formers("lock.c"); !slices.Contains(got, "lock.a") {
+		t.Errorf("renamed twice, first lost: %v", got)
+	}
+	if err := r.Store(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := reload().Formers("lock.c"); !slices.Equal(got, []string{"lock.a", "lock.b"}) {
+		t.Errorf("after a restart: %v", got)
+	}
+}
+
+// A cycle a → b → c → a stays visible and resolvable.
+func TestCyclesStayVisible(t *testing.T) {
+	r, _ := newRenames(t)
+	r.Hold(rn("lock.a", "lock.b"))
+	r.Hold(rn("lock.b", "lock.c"))
+	r.Hold(rn("lock.c", "lock.a"))
+	open := r.Open()
+	if len(open) != 3 || !slices.Equal(open["lock.a"], []string{"lock.c", "lock.b"}) {
+		t.Errorf("Open = %v", open)
+	}
+	if err := r.Resolve(context.Background(), "lock.a", []string{"lock.b", "lock.c"}, catalog.ResolutionDismissed, "user-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Formers("lock.a"); len(got) != 0 {
+		t.Errorf("after resolving: %v", got)
 	}
 }
 
@@ -111,21 +189,24 @@ func TestRegistryIDsFindRenamesAfterAnOutage(t *testing.T) {
 	if err := r.Store(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	// Home-Mandate was not running while cellar became cellar_door.
 	later := reload()
-	entries[0].EntityID = "lock.cellar_door"
+	// reg-2 is missing from one listing; it is not forgotten.
+	if found := later.Observe(entries[:1]); len(found) != 0 {
+		t.Fatalf("a missing entry = %v", found)
+	}
+	entries[0].EntityID, entries[1].EntityID = "lock.cellar_door", "light.kitchen_ceiling"
 	found := later.Observe(entries)
-	if len(found) != 1 || found[0] != (catalog.Rename{Old: "lock.cellar", New: "lock.cellar_door"}) {
+	want := []catalog.Rename{{Old: "lock.cellar", New: "lock.cellar_door", Registry: "reg-1"}, {Old: "light.kitchen", New: "light.kitchen_ceiling", Registry: "reg-2"}}
+	if !slices.Equal(found, want) {
 		t.Errorf("Observe = %v", found)
 	}
 	if again := later.Observe(entries); len(again) != 0 {
 		t.Errorf("the same registry again = %v", again)
 	}
-	// Invalid IDs are never taken over.
 	if found := later.Observe([]ha.EntityEntry{{ID: "reg-1", EntityID: "lock. bad"}}); len(found) != 0 {
 		t.Errorf("invalid ID = %v", found)
 	}
-	if later.Hold(catalog.Rename{Old: "lock.a", New: "lock.a"}) || later.Hold(catalog.Rename{Old: "lock.a", New: "lock. b"}) {
+	if later.Hold(rn("lock.a", "lock.a")) || later.Hold(rn("lock.a", "lock. b")) {
 		t.Error("Hold took an invalid rename")
 	}
 }
@@ -139,7 +220,7 @@ func TestRenamesThatCannotBeStoredStayHeld(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.Observe([]ha.EntityEntry{{ID: "reg-1", EntityID: "lock.a"}})
-	r.Hold(catalog.Rename{Old: "lock.a", New: "lock.b"})
+	r.Hold(rn("lock.a", "lock.b"))
 	_ = s.Close()
 	if err := r.Store(ctx); err == nil {
 		t.Fatal("Store without a database succeeded")
@@ -147,7 +228,7 @@ func TestRenamesThatCannotBeStoredStayHeld(t *testing.T) {
 	if got := r.Formers("lock.b"); len(got) != 1 {
 		t.Errorf("held rename lost: %v", got)
 	}
-	if _, err := r.Resolve(ctx, "lock.b", catalog.ResolutionApplied, "user-1"); err == nil {
+	if err := r.Resolve(ctx, "lock.b", []string{"lock.a"}, catalog.ResolutionApplied, "user-1"); err == nil {
 		t.Error("Resolve without a database succeeded")
 	}
 	if got := r.Formers("lock.b"); len(got) != 1 {

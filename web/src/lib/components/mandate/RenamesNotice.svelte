@@ -62,7 +62,7 @@
     } catch (err) {
       if (err instanceof ApiError && err.code === 'critical_confirmation_required') await ask(entity, CRITICAL);
       else {
-        error = m.renames_failed();
+        error = err instanceof ApiError && err.code === 'conflict' ? m.renames_changed() : m.renames_failed();
         onresolved(null); // resolved elsewhere meanwhile, or gone: show what is true now
       }
     } finally {
@@ -77,7 +77,7 @@
 
   function apply(r: Rename) {
     if (r.mandates.some((md) => md.critical)) void ask(r.entity_id, CRITICAL);
-    else void run(r.entity_id, () => api.applyRename(r.entity_id), m.renames_applied({ device: isolate(nameOf(r)) }));
+    else void run(r.entity_id, () => api.applyRename(r.entity_id, r.formers), m.renames_applied({ device: isolate(nameOf(r)) }));
   }
 </script>
 
@@ -107,19 +107,24 @@
             <div class="actions">
               <Button bind:element={confirmCancel} disabled={busy === r.entity_id} onclick={cancel}>{m.common_cancel()}</Button>
               {#if pending.kind === DISMISS}
-                <Button variant="danger" busy={busy === r.entity_id} onclick={() => void run(r.entity_id, () => api.dismissRename(r.entity_id), m.renames_dismissed({ device: isolate(nameOf(r)) }))}>
+                <Button variant="danger" busy={busy === r.entity_id} onclick={() => void run(r.entity_id, () => api.dismissRename(r.entity_id, r.formers), m.renames_dismissed({ device: isolate(nameOf(r)) }))}>
                   {m.renames_dismiss()}
                 </Button>
               {:else}
-                <Button variant="danger" busy={busy === r.entity_id} onclick={() => void run(r.entity_id, () => api.applyRename(r.entity_id, true), m.renames_applied({ device: isolate(nameOf(r)) }))}>
+                <Button variant="danger" busy={busy === r.entity_id} onclick={() => void run(r.entity_id, () => api.applyRename(r.entity_id, r.formers, true), m.renames_applied({ device: isolate(nameOf(r)) }))}>
                   {m.renames_apply_critical()}
                 </Button>
               {/if}
             </div>
           </div>
         {:else}
+          {#if r.formers_in_use.length > 0}
+            <p class="in-use">{m.renames_in_use({ formers: list(r.formers_in_use.map((f) => isolate(cleanUntrusted(f)))) })}</p>
+          {/if}
           <div class="actions">
-            <Button variant="primary" busy={busy === r.entity_id} onclick={() => apply(r)}>{m.renames_apply()}</Button>
+            {#if r.formers_in_use.length === 0}
+              <Button variant="primary" busy={busy === r.entity_id} onclick={() => apply(r)}>{m.renames_apply()}</Button>
+            {/if}
             <Button variant="text" disabled={busy === r.entity_id} onclick={() => void ask(r.entity_id, DISMISS)}>{m.renames_dismiss()}</Button>
           </div>
         {/if}
@@ -199,6 +204,9 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--hm-space-3);
+  }
+  .in-use {
+    font-size: var(--hm-font-size-sm);
   }
   .error {
     display: flex;

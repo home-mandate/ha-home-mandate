@@ -552,6 +552,8 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     });
   }
 
+  const sameIds = (a: readonly string[], b: readonly string[]) => [...a].sort().join('\n') === [...b].sort().join('\n');
+
   function resolveRename(entityId: string): void {
     const { [entityId]: _resolved, ...renames } = state.renames;
     void _resolved;
@@ -650,13 +652,16 @@ export function createMockClient(options: MockOptions = {}): MockClient {
         }));
         if (mandates.length === 0) continue;
         const name = state.devices.devices.find((d) => d.entity_id === entityId)?.name ?? entityId;
-        out.push({ entity_id: entityId, name, formers, mandates });
+        const inUse = formers.filter((f) => state.devices.devices.some((d) => d.entity_id === f));
+        out.push({ entity_id: entityId, name, formers, formers_in_use: inUse, mandates });
       }
       return copy(out.sort((a, b) => a.entity_id.localeCompare(b.entity_id)));
     },
-    async applyRename(entityId, confirmCritical) {
+    async applyRename(entityId, seen, confirmCritical) {
       const formers = state.renames[entityId] ?? fail('not_found');
+      if (!sameIds(formers, seen)) fail('conflict');
       if (!state.devices.devices.some((d) => d.entity_id === entityId)) fail('not_found');
+      if (formers.some((f) => state.devices.devices.some((d) => d.entity_id === f))) fail('conflict');
       const affected = affectedBy(formers);
       if (!confirmCritical && affected.some(({ rules }) => rules.some((r) => r.allow_critical === true))) fail('critical_confirmation_required');
       for (const { id } of affected) {
@@ -667,8 +672,9 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       }
       resolveRename(entityId);
     },
-    async dismissRename(entityId) {
-      if (!state.renames[entityId]) fail('not_found');
+    async dismissRename(entityId, seen) {
+      const formers = state.renames[entityId] ?? fail('not_found');
+      if (!sameIds(formers, seen)) fail('conflict');
       resolveRename(entityId);
     },
 

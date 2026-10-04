@@ -801,5 +801,7 @@
   "preview_limited": "Within limits",
   "preview_limited_detail": "Allowed only within the limits ({limits}); other values are denied.",
   "renames_applied": "Rename of {device} taken over.",
-  "renames_dismissed": "Rename of {device} not taken over."
+  "renames_dismissed": "Rename of {device} not taken over.",
+  "renames_changed": "Home Assistant renamed something again meanwhile. The list is up to date now; please check it.",
+  "renames_in_use": "Another device is called {formers} now. Its rules may be meant for that device: adjust them in the editor, or don’t take the rename over."
 }

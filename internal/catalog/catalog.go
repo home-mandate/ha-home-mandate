@@ -110,6 +110,9 @@ type Catalog struct {
 type Rename struct {
 	Old string
 	New string
+	// Registry is the registry ID of Home Assistant the rename was found by; empty for
+	// one from the rename event.
+	Registry string
 }
 
 // maxRenames bounds the renames kept between two refreshes.
@@ -374,7 +377,7 @@ func (c *Catalog) holdLocked(rn Rename) {
 	if c.aliases != nil {
 		c.aliases.Hold(rn)
 	}
-	if slices.Contains(c.renames, rn) {
+	if slices.ContainsFunc(c.renames, func(x Rename) bool { return x.Old == rn.Old && x.New == rn.New }) {
 		return
 	}
 	if len(c.renames) >= maxRenames {

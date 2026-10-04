@@ -235,13 +235,16 @@ func (l *Log) ClockBehind(ctx context.Context) (bool, error) {
 	// The latest time, not the last entry: entries written while the clock was behind
 	// must not hide it. timeFormat has a fixed width in UTC, so text order is time order.
 	// Entries up to an accepted position (AcceptClock) do not count.
+	// It runs for every request: the index on recorded_at is walked from the latest time
+	// down to the first entry after the accepted position, mostly the very first one.
 	var newest sql.NullString
-	if err := l.db.QueryRowContext(ctx, `SELECT max(recorded_at) FROM audit_log WHERE seq >
-		coalesce((SELECT CAST(value AS INTEGER) FROM settings WHERE key = ?), 0)`, settingClockAccepted).Scan(&newest); err != nil {
-		return false, fmt.Errorf("audit: read: %w", err)
-	}
-	if !newest.Valid {
+	err := l.db.QueryRowContext(ctx, `SELECT recorded_at FROM audit_log INDEXED BY audit_log_recorded_at WHERE seq >
+		coalesce((SELECT CAST(value AS INTEGER) FROM settings WHERE key = ?), 0) ORDER BY recorded_at DESC LIMIT 1`, settingClockAccepted).Scan(&newest)
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("audit: read: %w", err)
 	}
 	at, err := time.Parse(timeFormat, newest.String)
 	if err != nil {

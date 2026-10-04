@@ -3,6 +3,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,10 +18,13 @@ import (
 // former ID. Until a human resolves it, those rules keep applying to the entity and the
 // stricter evaluation wins.
 type wireRename struct {
-	EntityID string               `json:"entity_id"`
-	Name     string               `json:"name"`
-	Formers  []string             `json:"formers"`
-	Mandates []wireRenamedMandate `json:"mandates"`
+	EntityID string   `json:"entity_id"`
+	Name     string   `json:"name"`
+	Formers  []string `json:"formers"`
+	// FormersInUse are former IDs another entity has now: rules on them may be meant for
+	// that entity, so the rename cannot be taken over, only dismissed or edited by hand.
+	FormersInUse []string             `json:"formers_in_use"`
+	Mandates     []wireRenamedMandate `json:"mandates"`
 }
 
 type wireRenamedMandate struct {
@@ -87,6 +91,11 @@ func (s *Server) getRenames(r *request) (any, error) {
 	out := []wireRename{}
 	open := s.cfg.Renames.Open()
 	for _, id := range slices.Sorted(maps.Keys(open)) {
+		// Only entities that exist now; an ID between two renames is no entity.
+		d, ok := s.cfg.Catalog.Lookup(id)
+		if !ok {
+			continue
+		}
 		list, err := s.affectedMandates(r.Context(), open[id])
 		if err != nil {
 			return nil, err
@@ -95,10 +104,10 @@ func (s *Server) getRenames(r *request) (any, error) {
 			continue
 		}
 		name := id
-		if d, ok := s.cfg.Catalog.Lookup(id); ok && d.Name() != "" {
+		if d.Name() != "" {
 			name = d.Name()
 		}
-		w := wireRename{EntityID: id, Name: name, Formers: open[id], Mandates: []wireRenamedMandate{}}
+		w := wireRename{EntityID: id, Name: name, Formers: open[id], FormersInUse: s.formersInUse(open[id]), Mandates: []wireRenamedMandate{}}
 		for _, a := range list {
 			w.Mandates = append(w.Mandates, wireRenamedMandate{ID: a.info.ID, Name: nameOf(a.info), Rules: a.rules, Critical: a.critical})
 		}
@@ -107,23 +116,55 @@ func (s *Server) getRenames(r *request) (any, error) {
 	return out, nil
 }
 
-// renameInput is the entity a human resolves the rename of.
-func (s *Server) renameInput(r *request) (string, []string, bool, error) {
-	var in struct {
-		EntityID        *string `json:"entity_id"`
-		ConfirmCritical bool    `json:"confirm_critical"`
+// formersInUse returns the former IDs another entity has now.
+func (s *Server) formersInUse(formers []string) []string {
+	out := []string{}
+	for _, f := range formers {
+		if _, ok := s.cfg.Catalog.Lookup(f); ok {
+			out = append(out, f)
+		}
 	}
+	return out
+}
+
+// renameIn is what a human resolves: the entity and the former IDs they saw.
+type renameIn struct {
+	EntityID        *string  `json:"entity_id"`
+	Formers         []string `json:"formers"`
+	ConfirmCritical bool     `json:"confirm_critical"`
+	// Confirm: dismissing lets the rules on the former IDs go, which can lower the
+	// protection; it needs this explicit confirmation.
+	Confirm bool `json:"confirm"`
+}
+
+// renameInput reads the entity a human resolves the rename of. The former IDs must be
+// the ones they saw: a rename that arrived meanwhile is a conflict.
+func (s *Server) renameInput(r *request) (renameIn, []string, error) {
+	var in renameIn
 	if err := r.decode(&in); err != nil {
-		return "", nil, false, err
+		return renameIn{}, nil, err
 	}
 	if in.EntityID == nil {
-		return "", nil, false, failField(codeInvalidInput, "/entity_id")
+		return renameIn{}, nil, failField(codeInvalidInput, "/entity_id")
+	}
+	if in.Formers == nil {
+		return renameIn{}, nil, failField(codeInvalidInput, "/formers")
 	}
 	formers := s.cfg.Renames.Open()[*in.EntityID]
 	if len(formers) == 0 {
-		return "", nil, false, fail(codeNotFound)
+		return renameIn{}, nil, fail(codeNotFound)
 	}
-	return *in.EntityID, formers, in.ConfirmCritical, nil
+	if !sameIDs(formers, in.Formers) {
+		return renameIn{}, nil, fail(codeConflict)
+	}
+	return in, formers, nil
+}
+
+func sameIDs(a, b []string) bool {
+	x, y := slices.Clone(a), slices.Clone(b)
+	slices.Sort(x)
+	slices.Sort(y)
+	return slices.Equal(x, y)
 }
 
 // applyRename takes a rename over into the mandates: every rule that names a former ID
@@ -131,12 +172,17 @@ func (s *Server) renameInput(r *request) (string, []string, bool, error) {
 // actions without approval is a new grant then; without the separate confirmation
 // nothing is changed. Then the rename is resolved.
 func (s *Server) applyRename(r *request) (any, error) {
-	entityID, formers, confirm, err := s.renameInput(r)
+	in, formers, err := s.renameInput(r)
 	if err != nil {
 		return nil, err
 	}
+	entityID, confirm := *in.EntityID, in.ConfirmCritical
 	if _, ok := s.cfg.Catalog.Lookup(entityID); !ok {
 		return nil, fail(codeNotFound)
+	}
+	// A former ID another entity has now: its rules may be meant for that entity.
+	if len(s.formersInUse(formers)) > 0 {
+		return nil, fail(codeConflict)
 	}
 	list, err := s.affectedMandates(r.Context(), formers)
 	if err != nil {
@@ -173,21 +219,27 @@ func (s *Server) applyRename(r *request) (any, error) {
 		}
 		s.publish(event{Type: "mandates.changed", ID: c.a.info.ID})
 	}
-	return s.resolveRename(r, entityID, catalog.ResolutionApplied, len(changes))
+	return s.resolveRename(r, entityID, formers, catalog.ResolutionApplied, len(changes))
 }
 
 // dismissRename resolves a rename without changing a mandate: rules on the former IDs no
 // longer apply to the renamed entity.
 func (s *Server) dismissRename(r *request) (any, error) {
-	entityID, _, _, err := s.renameInput(r)
+	in, formers, err := s.renameInput(r)
 	if err != nil {
 		return nil, err
 	}
-	return s.resolveRename(r, entityID, catalog.ResolutionDismissed, 0)
+	if !in.Confirm {
+		return nil, failField(codeInvalidInput, "/confirm")
+	}
+	return s.resolveRename(r, *in.EntityID, formers, catalog.ResolutionDismissed, 0)
 }
 
-func (s *Server) resolveRename(r *request, entityID, resolution string, mandates int) (any, error) {
-	formers, err := s.cfg.Renames.Resolve(r.Context(), entityID, resolution, r.user)
+func (s *Server) resolveRename(r *request, entityID string, formers []string, resolution string, mandates int) (any, error) {
+	err := s.cfg.Renames.Resolve(r.Context(), entityID, formers, resolution, r.user)
+	if errors.Is(err, catalog.ErrRenamesChanged) {
+		return nil, fail(codeConflict)
+	}
 	if err != nil {
 		s.cfg.Logger.Error("rename not resolved", "entity_id", entityID, "resolution", resolution, "by", r.user, "error", err)
 		return nil, err
@@ -206,8 +258,11 @@ func (s *Server) renamedDocument(r *request, a affected, formers []string, entit
 	if err := json.Unmarshal(a.document, &fields); err != nil {
 		return nil, err
 	}
+	// UseNumber keeps limits beyond 2^53 exact.
+	dec := json.NewDecoder(bytes.NewReader(fields["rules"]))
+	dec.UseNumber()
 	var rules []map[string]any
-	if err := json.Unmarshal(fields["rules"], &rules); err != nil {
+	if err := dec.Decode(&rules); err != nil {
 		return nil, err
 	}
 	for _, rule := range rules {

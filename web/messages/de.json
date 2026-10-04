@@ -801,5 +801,7 @@
   "preview_limited": "Mit Grenzen",
   "preview_limited_detail": "Nur innerhalb der Grenzen erlaubt ({limits}); andere Werte werden abgelehnt.",
   "renames_applied": "Umbenennung von {device} übernommen.",
-  "renames_dismissed": "Umbenennung von {device} nicht übernommen."
+  "renames_dismissed": "Umbenennung von {device} nicht übernommen.",
+  "renames_changed": "Home Assistant hat inzwischen erneut umbenannt. Die Liste ist jetzt aktuell; bitte prüfe sie.",
+  "renames_in_use": "Ein anderes Gerät heißt jetzt {formers}. Die Regeln könnten für dieses Gerät gemeint sein: Passe sie im Editor an oder übernimm die Umbenennung nicht."
 }

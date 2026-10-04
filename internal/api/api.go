@@ -96,7 +96,7 @@ type Config struct {
 	// Renames are the renamed entities a human has not resolved (catalog.Renames).
 	Renames interface {
 		Open() map[string][]string
-		Resolve(ctx context.Context, entityID, resolution, by string) ([]string, error)
+		Resolve(ctx context.Context, entityID string, expected []string, resolution, by string) error
 	}
 	Status func() Status
 	// UI serves everything outside /api/; nil answers 404.
