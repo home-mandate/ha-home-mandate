@@ -13,6 +13,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -182,7 +183,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		g.tlsUntil = certificateExpiry(g.server.TLSConfig)
 	}
 
-	apiCfg := api.Config{Store: s.store, Log: s.log, Agents: s.agents, Mandates: s.mandates, Admission: s.admission,
+	apiCfg := api.Config{Proxy: trustedProxy(ctx, s.cfg, lookupHost, logger), Store: s.store, Log: s.log, Agents: s.agents, Mandates: s.mandates, Admission: s.admission,
 		Approvers: s.approvers, Approvals: approvals, HA: client, Catalog: g.catalog, Status: g.status, UI: webui.Handler(),
 		Principal: s.household, Mode: string(s.cfg.Mode), Version: version, Commit: commit, Retention: retention,
 		TLS: func() (bool, time.Time) { return !g.tlsUntil.IsZero(), g.tlsUntil }, Logger: logger}
@@ -225,6 +226,35 @@ func (g *gateway) listenIngress() error {
 		IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10, ErrorLog: slog.NewLogLogger(g.logger.Handler(), slog.LevelWarn)}
 	g.logger.Info("UI listening for Ingress", "addr", ln.Addr().String())
 	return nil
+}
+
+// lookupHost resolves a host name; replaced in tests.
+var lookupHost = func(ctx context.Context, host string) ([]netip.Addr, error) {
+	return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+}
+
+// supervisorLookup bounds the start-up check of the Supervisor's address.
+const supervisorLookup = 5 * time.Second
+
+// trustedProxy is the one address the UI listener serves (decision U2). In app mode that
+// is the Supervisor's fixed address; the Supervisor also names itself "supervisor" in
+// every app's hosts file, and if that name does not lead to the same address the UI stays
+// locked: a change in Home Assistant OS is noticed, never followed blindly.
+func trustedProxy(ctx context.Context, cfg config.Config, lookup func(context.Context, string) ([]netip.Addr, error), logger *slog.Logger) netip.Addr {
+	if cfg.Mode != config.ModeApp {
+		return cfg.IngressProxy
+	}
+	ctx, cancel := context.WithTimeout(ctx, supervisorLookup)
+	defer cancel()
+	addrs, err := lookup(ctx, "supervisor")
+	for _, a := range addrs {
+		if err == nil && a.Unmap() == cfg.IngressProxy {
+			return cfg.IngressProxy
+		}
+	}
+	logger.Error("the Supervisor is not at the address the UI trusts, the UI stays locked",
+		"expected", cfg.IngressProxy.String(), "found", fmt.Sprint(addrs), "error", err)
+	return netip.Addr{}
 }
 
 // certificateExpiry is the end of validity of the configured certificate.

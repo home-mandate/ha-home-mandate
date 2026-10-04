@@ -169,7 +169,7 @@ checked on every request.
 |---|---|---|
 | Start | App from its own repository | `docker run` / Podman Quadlet with the same image |
 | Access to HA | `SUPERVISOR_TOKEN`, API via `http://supervisor/core/…` | Long-lived token of a dedicated HA user, URL via variable |
-| UI | Ingress on port 8099 (sign-in handled by HA) | v0.1: none; `HM_INGRESS_ADDR` opens the same listener behind an own proxy that acts as the Supervisor (E2E). Own port with HA sign-in follows in v0.2 |
+| UI | Ingress on port 8099 (sign-in handled by HA) | v0.1: none; `HM_INGRESS_ADDR` opens the same listener behind an own proxy that acts as the Supervisor, at the one address `HM_INGRESS_PROXY` (E2E). Own port with HA sign-in follows in v0.2 |
 | Data | `/data` | Mounted volume |
 
 One image, two configuration sources. Architectures: `amd64`, `aarch64`.
@@ -178,7 +178,13 @@ One image, two configuration sources. Architectures: `amd64`, `aarch64`.
 Ingress lets every signed-in Home Assistant user reach the UI; `panel_admin` only hides the
 sidebar entry. Home-Mandate therefore checks itself, on every request:
 1. The peer address is the Supervisor, `172.30.32.2` (IPv4-mapped too). `X-Forwarded-For`
-   and `Forwarded` are never read. Anything else gets an empty 403, the UI included.
+   and `Forwarded` are never read. Anything else gets an empty 403, the UI included. The
+   address is fixed in the Supervisor (hassio network `172.30.32.0/23`, Supervisor at `.2`;
+   only IPv6 and MTU of that network can be configured; Ingress connects over IPv4). At
+   start the gateway also resolves `supervisor`, which the Supervisor puts into every app's
+   hosts file: if it does not lead to `172.30.32.2`, the UI stays locked and an error is
+   logged, so a change is noticed and never followed blindly. In container mode the one
+   address of the own proxy is configured (`HM_INGRESS_PROXY`, decision U2).
 2. Exactly one `X-Remote-User-Id`, in the form of a Home Assistant user ID. The Supervisor
    removes client copies of this header and sets it from the session.
 3. The user is an administrator now: `config/auth/list`, administrator = owner, or active

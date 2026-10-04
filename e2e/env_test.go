@@ -63,7 +63,7 @@ var env struct {
 	public   string // https://localhost:<port>, HM_PUBLIC_URL
 	users    map[string]*haUser
 	ha, hm   string // container names
-	ingress  string // the Ingress stand-in (tools/ingressproxy) at 172.30.32.2
+	ingress  string // the Ingress stand-in (tools/ingressproxy) at ingressIP
 	uiURL    string // http://127.0.0.1:<port> of the stand-in
 	uiPath   string // /api/hassio_ingress/<token>
 	uiDirect string // http://127.0.0.1:<port> of the gateway's UI listener, bypassing Ingress
@@ -185,12 +185,14 @@ func makeCertificates() error {
 	return nil
 }
 
-// supervisorSubnet is the hassio network of Home Assistant OS: the Ingress stand-in gets
-// the Supervisor's address 172.30.32.2 in it. The other containers get addresses from
-// dynamicRange only, so that 172.30.32.2 stays free.
+// supervisorSubnet is the hassio network of Home Assistant OS. The Ingress stand-in gets
+// a fixed address in it that is deliberately not the Supervisor's: container mode trusts
+// the proxy named in HM_INGRESS_PROXY (decision U2). The other containers get addresses
+// from dynamicRange only.
 const (
 	supervisorSubnet = "172.30.32.0/23"
 	dynamicRange     = "172.30.33.0/24"
+	ingressIP        = "172.30.32.50"
 )
 
 func createNetwork() error {
@@ -349,7 +351,7 @@ func startGateway() error {
 	}
 	env.public = "https://localhost:" + port
 	if _, err := run("run", "-d", "--name", env.hm, "--network", env.network, "-p", "127.0.0.1:"+port+":8765", "-p", "127.0.0.1::8099",
-		"-e", "HM_INGRESS_ADDR=:8099",
+		"-e", "HM_INGRESS_ADDR=:8099", "-e", "HM_INGRESS_PROXY="+ingressIP,
 		"-v", env.volume+":/data", "-v", env.certs+":/certs:ro",
 		"-e", "HM_HA_URL=wss://homeassistant:8123/api/websocket",
 		"-e", "HM_HA_TOKEN_FILE=/certs/ha-token",
@@ -374,8 +376,8 @@ func startGateway() error {
 	return nil
 }
 
-// startIngress builds the Ingress stand-in from tools/ingressproxy and runs it with the
-// Supervisor's address, in front of the gateway's UI listener.
+// startIngress builds the Ingress stand-in from tools/ingressproxy and runs it at
+// ingressIP, in front of the gateway's UI listener.
 func startIngress() error {
 	dir, err := os.MkdirTemp("", "hm-e2e-ingress-")
 	if err != nil {
@@ -399,7 +401,7 @@ func startIngress() error {
 	env.ingress = "hm-e2e-ingress-" + env.id
 	token := randomHex(32)
 	env.uiPath = "/api/hassio_ingress/" + token
-	if _, err := run("run", "-d", "--name", env.ingress, "--network", env.network, "--ip", "172.30.32.2", "-p", "127.0.0.1::8080",
+	if _, err := run("run", "-d", "--name", env.ingress, "--network", env.network, "--ip", ingressIP, "-p", "127.0.0.1::8080",
 		"-v", env.certs+":/certs:ro", image, "-listen", ":8080", "-target", "http://"+env.hm+":8099",
 		"-ha", "https://homeassistant:8123", "-ca", "/certs/ca.pem", "-token", token); err != nil {
 		return err

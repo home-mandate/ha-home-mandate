@@ -6,9 +6,11 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -109,6 +111,7 @@ func TestGatewayWithHomeAssistantAndIngress(t *testing.T) {
 	s.cfg = config.Config{Mode: config.ModeContainer, HAURL: "ws" + strings.TrimPrefix(haSrv.URL, "http") + "/api/websocket", HAToken: "t",
 		MCPAddr: "127.0.0.1:0", TLSCert: certFile, TLSKey: keyFile, PublicURL: "https://hm.example.org:8765",
 		HABrowserURL: "https://ha.example.org", HAHTTPURL: "https://ha.example.org", IngressAddr: "127.0.0.1:0",
+		IngressProxy:    config.SupervisorAddr,
 		ApprovalTimeout: 2 * time.Minute}
 	ctx, cancel := context.WithCancel(context.Background())
 	g, err := newGateway(ctx, s, slog.New(slog.DiscardHandler))
@@ -248,5 +251,48 @@ func TestTheHomeAssistantTokenIsNeverStored(t *testing.T) {
 	}
 	if strings.Contains(stderr.String(), token) {
 		t.Error("the log contains the Home Assistant token")
+	}
+}
+
+// Decision U2: in app mode the Supervisor must be at the trusted address, else the UI
+// stays locked; in container mode the configured proxy is taken as it is.
+func TestTrustedProxy(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+	supervisor := config.SupervisorAddr
+	at := func(addrs ...string) func(context.Context, string) ([]netip.Addr, error) {
+		return func(_ context.Context, host string) ([]netip.Addr, error) {
+			if host != "supervisor" {
+				t.Errorf("looked up %q", host)
+			}
+			var out []netip.Addr
+			for _, a := range addrs {
+				out = append(out, netip.MustParseAddr(a))
+			}
+			return out, nil
+		}
+	}
+	app := config.Config{Mode: config.ModeApp, IngressProxy: supervisor}
+	for _, tc := range []struct {
+		name   string
+		lookup func(context.Context, string) ([]netip.Addr, error)
+		want   netip.Addr
+	}{
+		{"as expected", at("172.30.32.2"), supervisor},
+		{"IPv4-mapped, with IPv6 too", at("fd0c:ac1e:2100::2", "::ffff:172.30.32.2"), supervisor},
+		{"moved", at("172.30.40.2"), netip.Addr{}},
+		{"nothing", at(), netip.Addr{}},
+		{"lookup failed", func(context.Context, string) ([]netip.Addr, error) { return nil, errors.New("no such host") }, netip.Addr{}},
+	} {
+		if got := trustedProxy(context.Background(), app, tc.lookup, logger); got != tc.want {
+			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	proxy := netip.MustParseAddr("10.0.0.2")
+	container := config.Config{Mode: config.ModeContainer, IngressProxy: proxy}
+	if got := trustedProxy(context.Background(), container, nil, logger); got != proxy {
+		t.Errorf("container mode = %v", got)
+	}
+	if addrs, err := lookupHost(context.Background(), "localhost"); err != nil || len(addrs) == 0 {
+		t.Errorf("lookupHost(localhost) = %v, %v", addrs, err)
 	}
 }

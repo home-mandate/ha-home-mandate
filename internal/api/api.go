@@ -2,7 +2,8 @@
 
 // Package api is the JSON API of the local UI (contract: web/src/lib/api/types.ts) and
 // serves the UI itself. It is reachable only through Home Assistant Ingress: every
-// request must come from the Supervisor (172.30.32.2), carry the Home Assistant user the
+// request must come from the Supervisor (172.30.32.2; in container mode the configured
+// proxy), carry the Home Assistant user the
 // Supervisor set (X-Remote-User-Id), and that user must be an administrator now. Writes
 // also need the CSRF token of the session, Sec-Fetch-Site: same-origin and a JSON body
 // of at most 64 KiB without unknown fields. Answers carry an error code and never
@@ -15,6 +16,7 @@ import (
 	"crypto/rand"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -28,9 +30,6 @@ import (
 	"github.com/home-mandate/home-mandate/internal/oauth"
 	"github.com/home-mandate/home-mandate/internal/store"
 )
-
-// SupervisorAddr is the only address Ingress requests come from (Home Assistant OS).
-const SupervisorAddr = "172.30.32.2"
 
 // Interfaces to the rest of Home-Mandate, as far as the API uses them.
 type (
@@ -92,6 +91,9 @@ type Config struct {
 	Status  func() Status
 	// UI serves everything outside /api/; nil answers 404.
 	UI http.Handler
+	// Proxy is the one address requests may come from: the Supervisor in app mode, the
+	// configured proxy in container mode (decision U2). The zero value serves nobody.
+	Proxy netip.Addr
 
 	Principal string
 	Mode      string // "app" or "container"
@@ -172,7 +174,7 @@ func New(cfg Config) *Server {
 // Handler serves the API under /api/ and the UI elsewhere, both only to the Supervisor.
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !fromSupervisor(r) {
+		if !fromProxy(r, s.cfg.Proxy) {
 			// Not the Supervisor: nothing, not even the UI (TESTING.md section 4, UI). Logged
 			// at most once a minute, so that nobody can fill the log with it.
 			if ok, _ := s.limits.allow("log:foreign", 1, time.Minute); ok {

@@ -163,7 +163,8 @@ Every line is at least one test. New attack ideas are added here before they are
 - Mandate draft with fields beyond the editable ones (`principal`, `default`, `id`) → refused; the identity of a version always comes from the server; a rename without changed rules stores no version but still needs the current version as its base
 - Database failure on any endpoint → `internal`, without details, nothing half done (revocation in one transaction)
 - The Home Assistant token never in the data directory or the log
-- Ingress request from a source other than 172.30.32.2 → rejected
+- Ingress request from a source other than 172.30.32.2 → rejected; in container mode from any address but `HM_INGRESS_PROXY` (exactly one IP, required with `HM_INGRESS_ADDR`, no range, zone, unspecified or multicast address) → rejected, the Supervisor's address included
+- App mode: `supervisor` does not resolve to 172.30.32.2 (or not at all) → the UI stays locked for everyone and an error is logged
 - Input containing HTML/script → correctly escaped (Playwright checks the rendering)
 - Content Security Policy: Playwright reports every CSP violation as a test failure
 - Build contains no references to external hosts (check of the `dist/` directory)

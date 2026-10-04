@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"net/netip"
 	"slices"
 	"strings"
 	"sync"
@@ -31,12 +32,13 @@ import (
 )
 
 const (
-	household = "household:hm-0123456789ab"
-	adminID   = "8f2b1c0d9e7a4b3c8f2b1c0d9e7a4b3c" // Markus, owner
-	annaID    = "1a2b3c4d5e6f708192a3b4c5d6e7f809" // Anna, administrator
-	guestID   = "0f1e2d3c4b5a69788796a5b4c3d2e1f0" // Gast, no administrator
-	serviceID = "5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b" // Home-Mandate's own user
-	remote    = SupervisorAddr + ":40404"
+	household      = "household:hm-0123456789ab"
+	adminID        = "8f2b1c0d9e7a4b3c8f2b1c0d9e7a4b3c" // Markus, owner
+	annaID         = "1a2b3c4d5e6f708192a3b4c5d6e7f809" // Anna, administrator
+	guestID        = "0f1e2d3c4b5a69788796a5b4c3d2e1f0" // Gast, no administrator
+	serviceID      = "5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b" // Home-Mandate's own user
+	remote         = supervisorAddr + ":40404"
+	supervisorAddr = "172.30.32.2"
 )
 
 // fakeHA is a scriptable Home Assistant.
@@ -266,8 +268,8 @@ func (h *harness) build() {
 		OnOpened:    func(o approval.Open) { srv.ApprovalOpened(o) }})
 	srv = New(Config{Store: h.st, Log: h.log, Agents: h.agents, Mandates: h.mandates, Admission: h.adm, Approvers: h.approvers,
 		Approvals: h.approvals, Pairing: h.pairing, HA: h.ha, Catalog: h.cat, Status: func() Status { return h.status },
-		UI:        http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ui") }),
-		Principal: household, Mode: "app", Version: "0.1.0", Commit: "abc123", MCPURL: "https://hm.example.org:8765/mcp",
+		UI:    http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ui") }),
+		Proxy: netip.MustParseAddr(supervisorAddr), Principal: household, Mode: "app", Version: "0.1.0", Commit: "abc123", MCPURL: "https://hm.example.org:8765/mcp",
 		TLS: func() (bool, time.Time) { return true, testStart.Add(90 * 24 * time.Hour) }, Retention: 30 * 24 * time.Hour,
 		Now: h.now.Now})
 	h.log.OnCommit(srv.AuditCommitted)

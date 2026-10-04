@@ -54,7 +54,8 @@ from Playwright's CDN, for tests only.
 | `HM_HA_BROWSER_URL` | Home Assistant as the human's browser reaches it, for signing in; default: the origin of `HM_HA_URL` |
 | `HM_APPROVAL_TIMEOUT` | Upper limit in seconds for waiting for an approval, 30–600, default 120; a mandate may only shorten it |
 | `HM_LOG_LEVEL` | `debug`, `info`, `warning` or `error` |
-| `HM_INGRESS_ADDR` | Optional listen address of the UI, e.g. `:8099`. It answers only requests from `172.30.32.2` with the `X-Remote-User-Id` of a Home Assistant administrator, as Home Assistant's Supervisor sends them: for a proxy that does what the Supervisor does, and for the E2E tests. Without it, there is no UI in container mode in v0.1 |
+| `HM_INGRESS_ADDR` | Optional listen address of the UI, e.g. `:8099`, for a proxy that does what Home Assistant's Supervisor does (signs people in, sets `X-Remote-User-Id`, removes client copies of it), and for the E2E tests. Without it, there is no UI in container mode in v0.1 |
+| `HM_INGRESS_PROXY` | Required with `HM_INGRESS_ADDR`: the one IP address of that proxy. Requests from any other address get nothing; the user must be a Home Assistant administrator |
 
 Agents connect to `https://<host>:8765/mcp` with an OAuth access token.
 

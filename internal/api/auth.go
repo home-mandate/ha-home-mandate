@@ -24,15 +24,16 @@ import (
 // mandate may hold); anything else in X-Remote-User-Id is no user.
 var userIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-// fromSupervisor tells whether the request comes from the Supervisor. Only the peer
-// address counts: X-Forwarded-For and Forwarded can be set by anyone.
-func fromSupervisor(r *http.Request) bool {
+// fromProxy tells whether the request comes from the Supervisor (or the configured
+// proxy). Only the peer address counts: X-Forwarded-For and Forwarded can be set by
+// anyone. Without a valid proxy address nobody is served.
+func fromProxy(r *http.Request, proxy netip.Addr) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
+	if err != nil || !proxy.IsValid() {
 		return false
 	}
 	ip, err := netip.ParseAddr(host)
-	return err == nil && ip.Unmap().String() == SupervisorAddr
+	return err == nil && ip.Unmap() == proxy
 }
 
 // userOf returns the Home Assistant user the Supervisor set for this request.

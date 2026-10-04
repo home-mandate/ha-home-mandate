@@ -4,6 +4,7 @@ package api
 
 import (
 	"net/http"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ func TestOnlyTheSupervisorIsServed(t *testing.T) {
 	for _, addr := range []string{"172.30.32.1:1234", "172.30.32.3:1", "127.0.0.1:80", "[::1]:80", "192.168.1.10:5000",
 		"172.30.32.2", "garbage", "[fe80::1%eth0]:1"} {
 		for _, path := range []string{"/api/session", "/", "/assets/x.js"} {
-			r := h.do(http.MethodGet, path, nil, from(addr), header("X-Forwarded-For", SupervisorAddr), header("Forwarded", "for="+SupervisorAddr))
+			r := h.do(http.MethodGet, path, nil, from(addr), header("X-Forwarded-For", supervisorAddr), header("Forwarded", "for="+supervisorAddr))
 			if r.code != http.StatusForbidden || len(r.body) != 0 || strings.Contains(string(r.body), "ui") {
 				t.Errorf("%s %s = %d %q", addr, path, r.code, r.body)
 			}
@@ -260,5 +261,28 @@ func TestInternalErrorsShowNoDetails(t *testing.T) {
 	if r.code != http.StatusInternalServerError || r.errCode() != codeInternal || strings.Contains(string(r.body), "sql") ||
 		strings.Contains(string(r.body), "closed") {
 		t.Errorf("database closed = %d %s", r.code, r.body)
+	}
+}
+
+// Decision U2: the trusted address is configured (container mode: the own proxy). Exactly
+// that one is served; without one, nobody.
+func TestConfiguredProxyAddress(t *testing.T) {
+	h := newHarness(t)
+	h.srv.cfg.Proxy = netip.MustParseAddr("10.20.30.40")
+	if r := h.do(http.MethodGet, "/api/session", nil, from("10.20.30.40:5000")); r.code != http.StatusOK {
+		t.Errorf("configured proxy = %d", r.code)
+	}
+	if r := h.do(http.MethodGet, "/api/session", nil); r.code != http.StatusForbidden {
+		t.Errorf("Supervisor address while another proxy is configured = %d", r.code)
+	}
+	h.srv.cfg.Proxy = netip.MustParseAddr("fd00::2")
+	if r := h.do(http.MethodGet, "/api/session", nil, from("[fd00::2]:5000")); r.code != http.StatusOK {
+		t.Errorf("IPv6 proxy = %d", r.code)
+	}
+	h.srv.cfg.Proxy = netip.Addr{}
+	for _, addr := range []string{remote, "10.20.30.40:5000", "[::]:1"} {
+		if r := h.do(http.MethodGet, "/api/session", nil, from(addr)); r.code != http.StatusForbidden {
+			t.Errorf("no proxy configured, %s = %d", addr, r.code)
+		}
 	}
 }
