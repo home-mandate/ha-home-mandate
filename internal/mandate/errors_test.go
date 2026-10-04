@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/home-mandate/home-mandate/internal/agent"
@@ -76,5 +77,38 @@ func TestPutRejectsMalformedJSON(t *testing.T) {
 		if _, err := e.mandates.Put(context.Background(), []byte(doc), admin); !errors.Is(err, mandate.ErrInvalid) {
 			t.Errorf("Put(%q) = %v, want ErrInvalid", doc, err)
 		}
+	}
+}
+
+// Invalid lists the stored mandates that the evaluator no longer accepts, for example
+// after an update of the specification; such a mandate denies every request.
+func TestInvalidListsMandatesTheEvaluatorRejects(t *testing.T) {
+	e, db := newEnvWithDB(t)
+	ctx := context.Background()
+	good := e.agent(t, "Voice assistant")
+	bad := e.agent(t, "Energy agent")
+	for id, a := range map[string]string{"m-good": good.ClientID, "m-bad": bad.ClientID} {
+		if _, err := e.mandates.Put(ctx, voiceAssistant(t, a, func(d map[string]any) { d["id"] = id }), admin); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if invalid, err := e.mandates.Invalid(ctx); err != nil || len(invalid) != 0 {
+		t.Fatalf("Invalid on valid mandates = %v, %v", invalid, err)
+	}
+	// What an older version of the specification accepted: a timestamp with offset -00:00.
+	if _, err := db.Exec(`UPDATE mandate_versions SET document = replace(document, '"default"', '"unknown_member":1,"default"')
+		WHERE mandate_id IN (SELECT id FROM mandates WHERE client_id = ?)`, bad.ClientID); err != nil {
+		t.Fatal(err)
+	}
+	invalid, err := mandate.New(db, e.log, household).Invalid(ctx)
+	if err != nil || len(invalid) != 1 || invalid[0].ClientID != bad.ClientID || invalid[0].Problem == "" {
+		t.Fatalf("Invalid = %+v, %v; want the mandate of %s", invalid, err, bad.ClientID)
+	}
+	if strings.Contains(invalid[0].Problem, "\n") {
+		t.Errorf("problem spans several lines: %q", invalid[0].Problem)
+	}
+	_ = db.Close()
+	if _, err := mandate.New(db, e.log, household).Invalid(ctx); err == nil {
+		t.Error("Invalid on a closed database succeeded")
 	}
 }

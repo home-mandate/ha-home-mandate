@@ -43,7 +43,7 @@ const usage = `Usage:
   home-mandate agent list | revoke CLIENT_ID
   home-mandate emergency-stop on | off | status
   home-mandate approver add USER_ID NOTIFY_SERVICE [de|en] | list | remove USER_ID
-  home-mandate mandate import FILE|- | list | revoke ID
+  home-mandate mandate import FILE|- | list | revoke ID | check
   home-mandate mandate template import NAME FILE|- | list | remove NAME
   home-mandate audit verify | export
 `

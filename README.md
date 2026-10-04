@@ -121,6 +121,7 @@ home-mandate mandate template list | remove NAME
 home-mandate agent list | revoke CLIENT_ID   # revoking takes effect with the next request
 home-mandate mandate import mandate.json     # or - for stdin; validated against mandate-spec
 home-mandate mandate list | revoke ID
+home-mandate mandate check                   # lists stored mandates and templates the evaluator rejects, e.g. after an update
 home-mandate approver add USER_ID NOTIFY_SERVICE[:no-critical][,…] [de|en] | list | remove USER_ID
 home-mandate emergency-stop on | off | status   # on: all tokens revoked, all agents blocked
 home-mandate audit verify | export           # hash chain check, JSON Lines export

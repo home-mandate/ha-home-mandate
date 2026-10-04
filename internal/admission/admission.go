@@ -339,3 +339,39 @@ func (s *Store) instantiate(template []byte, a agent.Agent, createdBy, suffix st
 	delete(doc, "expires")
 	return json.Marshal(doc)
 }
+
+// InvalidTemplate is a stored template whose instance is not a valid mandate.
+type InvalidTemplate struct {
+	Name    string
+	Problem string
+}
+
+// InvalidTemplates lists the templates that no longer yield a valid mandate, for example
+// because the specification became stricter since they were stored. Admission with such
+// a template fails.
+func (s *Store) InvalidTemplates(ctx context.Context) ([]InvalidTemplate, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name, document FROM mandate_templates ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("admission: read templates: %w", err)
+	}
+	defer rows.Close()
+	var out []InvalidTemplate
+	for rows.Next() {
+		var name, document string
+		if err := rows.Scan(&name, &document); err != nil {
+			return nil, fmt.Errorf("admission: read templates: %w", err)
+		}
+		instance, err := s.instantiate([]byte(document), checkAgent, checkAgent.ClientID, "")
+		if err == nil {
+			_, err = evaluator.Parse(instance)
+		}
+		if err != nil {
+			problem, _, _ := strings.Cut(err.Error(), "\n")
+			out = append(out, InvalidTemplate{Name: name, Problem: problem})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("admission: read templates: %w", err)
+	}
+	return out, nil
+}

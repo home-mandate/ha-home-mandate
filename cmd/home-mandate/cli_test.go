@@ -164,7 +164,7 @@ func TestAuditVerifyReportsABrokenChain(t *testing.T) {
 	c := newCLI(t)
 	c.register("A")
 	c.register("B")
-	if err := tamper(filepath.Join(c.envVars["HM_DATA_DIR"], "home-mandate.db")); err != nil {
+	if err := tamper(filepath.Join(c.envVars["HM_DATA_DIR"], databaseFile)); err != nil {
 		t.Fatal(err)
 	}
 	code, out, _ := c.run("", "audit", "verify")
@@ -307,5 +307,32 @@ func TestApproverCommands(t *testing.T) {
 	c.mustRun("", "approver", "remove", "1a2b3c")
 	if out := c.mustRun("", "approver", "list"); strings.Contains(out, "1a2b3c") {
 		t.Errorf("after remove: %q", out)
+	}
+}
+
+// "mandate check" tells before an update of the specification which stored mandates and
+// templates would deny everything afterwards.
+func TestMandateCheck(t *testing.T) {
+	c := newCLI(t)
+	clientID := c.register("Voice assistant")
+	household := strings.TrimSpace(c.mustRun("", "household"))
+	c.mustRun(mandateFor(t, household, clientID), "mandate", "import", "-")
+	if out := c.mustRun("", "mandate", "check"); !strings.Contains(out, "ok") {
+		t.Errorf("check on valid mandates: %q", out)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(c.envVars["HM_DATA_DIR"], databaseFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`UPDATE mandate_versions SET document = replace(document, '"default"', '"unknown_member":1,"default"')`); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := c.run("", "mandate", "check")
+	if code != exitFailure || !strings.Contains(out, "m-voice-assistant") || !strings.Contains(out, clientID) {
+		t.Errorf("check with an invalid mandate: exit %d, %q", code, out)
+	}
+	if code, _, _ := c.run("", "mandate", "check", "extra"); code != exitUsage {
+		t.Errorf("check with an argument: exit %d", code)
 	}
 }

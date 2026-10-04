@@ -398,3 +398,29 @@ func TestUpdateTemplateNeedsConfirmationForNewCriticalRules(t *testing.T) {
 		t.Errorf("invalid template = %v", err)
 	}
 }
+
+func TestInvalidTemplates(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	for _, name := range []string{"voice-assistant", "energy"} {
+		if err := e.adm.PutTemplate(ctx, name, template(t, nil), admin); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if invalid, err := e.adm.InvalidTemplates(ctx); err != nil || len(invalid) != 0 {
+		t.Fatalf("InvalidTemplates on valid templates = %v, %v", invalid, err)
+	}
+	if _, err := e.db.Exec(`UPDATE mandate_templates SET document = replace(document, '"default"', '"unknown_member":1,"default"') WHERE name = 'energy'`); err != nil {
+		t.Fatal(err)
+	}
+	invalid, err := e.adm.InvalidTemplates(ctx)
+	if err != nil || len(invalid) != 1 || invalid[0].Name != "energy" || invalid[0].Problem == "" {
+		t.Fatalf("InvalidTemplates = %+v, %v; want energy", invalid, err)
+	}
+	if _, err := e.db.Exec(`UPDATE mandate_templates SET document = 'nope' WHERE name = 'voice-assistant'`); err != nil {
+		t.Fatal(err)
+	}
+	if invalid, _ := e.adm.InvalidTemplates(ctx); len(invalid) != 2 {
+		t.Errorf("InvalidTemplates with a template that is no JSON = %+v", invalid)
+	}
+}

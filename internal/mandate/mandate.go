@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -413,4 +414,41 @@ func (s *Store) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
 		return fmt.Errorf("mandate: commit: %w", err)
 	}
 	return nil
+}
+
+// Invalid is a stored mandate that the evaluator does not accept.
+type Invalid struct {
+	ID       string
+	ClientID string
+	Status   string
+	// Problem says in one line why the current version is not a valid mandate.
+	Problem string
+}
+
+// Invalid lists the mandates whose current version is not a valid mandate, for example
+// because the specification became stricter since it was stored. Such a mandate denies
+// every request until a human stores a new version.
+func (s *Store) Invalid(ctx context.Context) ([]Invalid, error) {
+	list, err := s.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []Invalid
+	for _, info := range list {
+		_, document, err := s.Current(ctx, info.ID)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := evaluator.Parse(document); err != nil {
+			out = append(out, Invalid{ID: info.ID, ClientID: info.ClientID, Status: info.Status, Problem: firstLine(err)})
+		}
+	}
+	return out, nil
+}
+
+// firstLine keeps the summary of a validation error; the schema validator appends the
+// path of every violated keyword on further lines.
+func firstLine(err error) string {
+	line, _, _ := strings.Cut(err.Error(), "\n")
+	return line
 }

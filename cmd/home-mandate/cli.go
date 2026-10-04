@@ -267,6 +267,11 @@ func mandateCommand(ctx context.Context, e env, args []string) int {
 			return usageError(e, "mandate revoke needs ID")
 		}
 		return withState(ctx, e, func(s *state) error { return s.mandates.Revoke(ctx, args[1], localAdmin) })
+	case "check":
+		if len(args) != 1 {
+			return usageError(e, "mandate check takes no arguments")
+		}
+		return withState(ctx, e, func(s *state) error { return checkMandates(ctx, e, s) })
 	case "template":
 		return templateCommand(ctx, e, args[1:])
 	default:
@@ -339,4 +344,32 @@ func auditCommand(ctx context.Context, e env, args []string) int {
 	default:
 		return usageError(e, fmt.Sprintf("unknown audit subcommand %q", args[0]))
 	}
+}
+
+// errInvalidStored makes "mandate check" end with a failure after it listed the findings.
+var errInvalidStored = errors.New("stored mandates or templates are not valid")
+
+// checkMandates lists the stored mandates and templates that the evaluator of this
+// version does not accept. Run it with the new binary before an update goes live: an
+// invalid mandate denies every request of its agent.
+func checkMandates(ctx context.Context, e env, s *state) error {
+	mandates, err := s.mandates.Invalid(ctx)
+	if err != nil {
+		return err
+	}
+	templates, err := s.admission.InvalidTemplates(ctx)
+	if err != nil {
+		return err
+	}
+	for _, m := range mandates {
+		fmt.Fprintf(e.stdout, "mandate\t%s\t%s\t%s\t%s\n", m.ID, m.Status, m.ClientID, m.Problem)
+	}
+	for _, t := range templates {
+		fmt.Fprintf(e.stdout, "template\t%s\t%s\n", t.Name, t.Problem)
+	}
+	if len(mandates)+len(templates) > 0 {
+		return errInvalidStored
+	}
+	fmt.Fprintln(e.stdout, "ok")
+	return nil
 }
