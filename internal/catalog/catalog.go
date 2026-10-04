@@ -93,8 +93,30 @@ type Catalog struct {
 	// the new snapshot, so that an older snapshot never overwrites a newer event.
 	refreshing bool
 	pending    []stateChange
+	// renames are the entity IDs Home Assistant renamed since the last refresh by Run.
+	renames   []Rename
+	onRefresh func([]Rename)
 
 	refresh chan struct{}
+}
+
+// Rename is an entity ID that Home Assistant changed. Rules and marks name entities by
+// ID, so they no longer apply to the renamed entity (decision H-E1: report, never rewrite).
+type Rename struct {
+	Old string
+	New string
+}
+
+// maxRenames bounds the renames kept between two refreshes.
+const maxRenames = 1000
+
+// OnRefresh sets fn to run after every successful refresh by Run, with the renames that
+// refresh covers (possibly none: the directory may have changed in other ways). fn runs
+// on Run's goroutine and may block it; call OnRefresh before Run.
+func (c *Catalog) OnRefresh(fn func(renames []Rename)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onRefresh = fn
 }
 
 // New returns an empty catalog; call Refresh or Run to load it.
@@ -263,6 +285,9 @@ func device(s ha.State, area string) Device {
 // change. It runs on the Home Assistant read loop and never blocks.
 func (c *Catalog) HandleEvent(e ha.Event) {
 	if strings.HasSuffix(e.EventType, "_registry_updated") {
+		if e.EventType == "entity_registry_updated" {
+			c.noteRename(e.Data)
+		}
 		c.RequestRefresh()
 		return
 	}
@@ -284,6 +309,29 @@ func (c *Catalog) HandleEvent(e ha.Event) {
 		c.pending = append(c.pending, ch)
 	}
 	c.applyLocked(ch)
+}
+
+// noteRename keeps a rename from an entity_registry_updated event; anything else in the
+// event is ignored, the refresh reads the registries anew.
+func (c *Catalog) noteRename(data json.RawMessage) {
+	var d struct {
+		Action      string `json:"action"`
+		EntityID    any    `json:"entity_id"`
+		OldEntityID any    `json:"old_entity_id"`
+	}
+	if json.Unmarshal(data, &d) != nil || d.Action != "update" {
+		return
+	}
+	newID, ok1 := d.EntityID.(string)
+	oldID, ok2 := d.OldEntityID.(string)
+	if !ok1 || !ok2 || !opaque(newID) || !opaque(oldID) || newID == oldID {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.renames) < maxRenames {
+		c.renames = append(c.renames, Rename{Old: oldID, New: newID})
+	}
 }
 
 func (c *Catalog) applyLocked(ch stateChange) {
@@ -323,9 +371,25 @@ func (c *Catalog) Run(ctx context.Context, debounce time.Duration) {
 		case <-c.refresh:
 		default:
 		}
-		if err := c.Refresh(ctx); err != nil && ctx.Err() == nil {
-			c.log.Warn("catalog refresh failed, retrying", "error", err)
-			c.RequestRefresh()
+		c.mu.Lock()
+		renames := c.renames
+		c.renames = nil
+		c.mu.Unlock()
+		if err := c.Refresh(ctx); err != nil {
+			c.mu.Lock() // report them after the refresh that succeeds
+			c.renames = append(renames, c.renames...)[:min(len(renames)+len(c.renames), maxRenames)]
+			c.mu.Unlock()
+			if ctx.Err() == nil {
+				c.log.Warn("catalog refresh failed, retrying", "error", err)
+				c.RequestRefresh()
+			}
+			continue
+		}
+		c.mu.RLock()
+		fn := c.onRefresh
+		c.mu.RUnlock()
+		if fn != nil {
+			fn(renames)
 		}
 	}
 }

@@ -78,3 +78,35 @@ func TestMarksRejectBadInput(t *testing.T) {
 		t.Error("LoadMarks on a closed database succeeded")
 	}
 }
+
+func TestCarryMarksTheNewIDOfARenamedEntity(t *testing.T) {
+	m, s := newMarks(t)
+	ctx := context.Background()
+	if err := m.Set(ctx, "lock.cellar", true, "user-1"); err != nil {
+		t.Fatal(err)
+	}
+	carried, err := m.Carry(ctx, "lock.cellar", "lock.cellar_door")
+	if err != nil || !carried {
+		t.Fatalf("Carry = %v, %v", carried, err)
+	}
+	// The old ID keeps its mark: an entity that takes it later is protected too.
+	if !m.Critical("lock.cellar_door") || !m.Critical("lock.cellar") {
+		t.Errorf("marks after carry: %v", m.All())
+	}
+	reloaded, err := catalog.LoadMarks(ctx, s.DB())
+	if err != nil || !reloaded.Critical("lock.cellar_door") {
+		t.Errorf("carried mark not stored: %v", err)
+	}
+	var by string
+	if err := s.DB().QueryRowContext(ctx, `SELECT marked_by FROM critical_entities WHERE entity_id = 'lock.cellar_door'`).Scan(&by); err != nil || by != "system" {
+		t.Errorf("marked_by = %q, %v", by, err)
+	}
+
+	carried, err = m.Carry(ctx, "light.kitchen", "light.kitchen_ceiling")
+	if err != nil || carried || m.Critical("light.kitchen_ceiling") {
+		t.Errorf("unmarked entity: Carry = %v, %v", carried, err)
+	}
+	if _, err := m.Carry(ctx, "lock.cellar", "lock. bad"); err == nil {
+		t.Error("Carry accepted an invalid entity ID")
+	}
+}

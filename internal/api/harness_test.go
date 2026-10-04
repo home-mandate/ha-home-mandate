@@ -145,10 +145,12 @@ func fakeHousehold() *fakeHA {
 
 // fakeCatalog is the device catalog.
 type fakeCatalog struct {
-	devices []catalog.Device
-	areas   []catalog.Area
+	devices  []catalog.Device
+	areas    []catalog.Area
+	notReady bool
 }
 
+func (c *fakeCatalog) Ready() bool           { return !c.notReady }
 func (c *fakeCatalog) All() []catalog.Device { return c.devices }
 func (c *fakeCatalog) Areas() []catalog.Area { return c.areas }
 func (c *fakeCatalog) Lookup(id string) (catalog.Device, bool) {

@@ -38,7 +38,8 @@ describe('ruleNotes', () => {
     const nightly = { ...deny, conditions: { time_window: '22:00-06:00' } };
     const [note] = notes(draftOf(allow, nightly), 0);
     expect(note?.[1]).toMatch(/^For “turn on”, rule 2 overrides this at times \(10:00\sPM to 06:00\sAM the next day\)\.$/);
-    expect(notes(draftOf(allow, deny), 1)).toEqual([]);
+    // The deny rule on an area only gets the reminder that it follows the area.
+    expect(notes(draftOf(allow, deny), 1).map(([kind]) => kind)).toEqual(['info']);
   });
 
   it('explains why a rule on an extension category cannot be edited', () => {
@@ -82,5 +83,46 @@ describe('critical actions of a rule', () => {
     // A device the household marked counts for every action but read.
     expect(ids(rule({ resource: { entity_id: 'switch.cellar_door' }, actions: ['turn_on'] }))).toEqual(['switch.cellar_door']);
     expect(ids(rule({ resource: { entity_id: 'switch.cellar_door' }, actions: ['read'] }))).toEqual([]);
+  });
+});
+
+describe('rules on devices and areas Home Assistant does not have', () => {
+  const unknown = (draft: MandateDraft, index: number, known = true) =>
+    ruleNotes(draft, index, catalog, null, 'en', known).map((n) => [n.kind, n.text]);
+
+  it('warns that a renamed device is no longer protected by a deny or ask rule', () => {
+    const deny = rule({ resource: { entity_id: 'lock.cellar' }, actions: ['unlock'], decision: 'deny' });
+    expect(unknown(draftOf(deny), 0)).toEqual([
+      ['danger', '“lock.cellar” no longer exists in Home Assistant. If it was renamed, this rule no longer protects it. Choose the device again.'],
+    ]);
+    expect(unknown(draftOf({ ...deny, decision: 'ask' }), 0)[0]?.[0]).toBe('danger');
+  });
+
+  it('says that an allow rule on a missing device applies to nothing', () => {
+    const allow = rule({ resource: { entity_id: 'light.gone' }, actions: ['turn_on'] });
+    expect(unknown(draftOf(allow), 0)).toEqual([['info', '“light.gone” no longer exists in Home Assistant. This rule applies to nothing until you choose the device again.']]);
+  });
+
+  it('reports a removed area the same way', () => {
+    const deny = rule({ resource: { area: 'cellar' }, actions: ['*'], decision: 'deny' });
+    expect(unknown(draftOf(deny), 0)).toEqual([
+      ['danger', 'The area “cellar” no longer exists in Home Assistant. This rule no longer protects anything. Choose the area again.'],
+    ]);
+    const allow = rule({ resource: { area: 'cellar', category: 'light' }, actions: ['turn_on'] });
+    expect(unknown(draftOf(allow), 0)).toEqual([['info', 'The area “cellar” no longer exists in Home Assistant. This rule applies to nothing until you choose the area again.']]);
+  });
+
+  it('says nothing about missing devices while the catalog is not loaded', () => {
+    const deny = rule({ resource: { entity_id: 'lock.cellar' }, actions: ['unlock'], decision: 'deny' });
+    expect(unknown(draftOf(deny), 0, false)).toEqual([]);
+  });
+
+  it('reminds that a deny or ask rule on an area follows the area, not the device', () => {
+    const hint = 'This rule covers the devices that are in this area now. A device moved to another area is no longer covered.';
+    expect(unknown(draftOf(rule({ resource: { area: 'garage' }, actions: ['open'], decision: 'deny' })), 0)).toEqual([['info', hint]]);
+    expect(unknown(draftOf(rule({ resource: { area: 'hallway', category: 'lock' }, actions: ['unlock'], decision: 'ask' })), 0)).toEqual([['info', hint]]);
+    // An allow rule on an area does not protect anything, a rule on a device does not follow the area.
+    expect(unknown(draftOf(rule({ resource: { area: 'kitchen', category: 'light' }, actions: ['turn_on'] })), 0)).toEqual([]);
+    expect(unknown(draftOf(rule({ resource: { entity_id: 'lock.front_door' }, actions: ['unlock'], decision: 'deny' })), 0)).toEqual([]);
   });
 });

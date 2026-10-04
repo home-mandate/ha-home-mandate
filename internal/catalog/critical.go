@@ -92,6 +92,25 @@ func (m *Marks) Set(ctx context.Context, entityID string, critical bool, by stri
 	return nil
 }
 
+// Carry marks the new ID of a renamed entity if its old ID is marked, so that a rename
+// in Home Assistant does not silently lower the protection. The old ID keeps its mark: an
+// entity that takes it later is protected too. It reports whether it marked newID.
+func (m *Marks) Carry(ctx context.Context, oldID, newID string) (bool, error) {
+	if !m.Critical(oldID) {
+		return false, nil
+	}
+	if m.Critical(newID) {
+		return false, nil
+	}
+	if err := m.Set(ctx, newID, true, systemActor); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// systemActor is marked_by for marks Home-Mandate sets itself.
+const systemActor = "system"
+
 // opaque reports whether s is a resource identifier: printable ASCII without space.
 func opaque(s string) bool {
 	if s == "" || len(s) > maxEntityIDLength {

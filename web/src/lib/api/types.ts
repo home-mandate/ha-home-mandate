@@ -326,6 +326,20 @@ export interface MandateSummary {
   expires: string | null;
   max_actions_per_hour: number;
   updated_at: string;
+  /**
+   * Rules on devices or areas Home Assistant does not have (any more), e.g. after a rename
+   * (decision H-E1: reported, never rewritten). Empty for a revoked mandate and while the
+   * catalog is not loaded.
+   */
+  stale_references: StaleReference[];
+}
+
+export interface StaleReference {
+  /** Index of the rule in the mandate. */
+  rule: number;
+  rule_id: string;
+  entity_id?: string;
+  area?: string;
 }
 
 export interface MandateVersion {

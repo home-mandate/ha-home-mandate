@@ -36,7 +36,7 @@
   import { effectiveStatus, type EffectiveStatus } from '../mandate/dates.ts';
   import { appendRule, insertRule, moveRule, removeRule, replaceRule, withDefaults, withoutRevokedConfirmations } from '../mandate/edit.ts';
   import { decisionLabel } from '../mandate/labels.ts';
-  import { ruleNotes } from '../mandate/notes.ts';
+  import { isStale, ruleNotes } from '../mandate/notes.ts';
   import { describeProblems, type FieldProblem, type Part } from '../mandate/problems.ts';
   import { isEditable } from '../mandate/scope.ts';
   import { ruleLine, ruleText } from '../mandate/text.ts';
@@ -148,6 +148,8 @@
   const isDefault = (p: FieldProblem) => p.rule === null && (p.part === 'timeout' || p.part === 'approvers');
   const isBasic = (p: FieldProblem) => p.rule === null && !isDefault(p) && p.part !== 'rules';
   const visible = $derived(problems.filter((p) => attempted || touched.has(fieldOf(p))));
+  /** Rules on devices or areas Home Assistant does not have (any more), e.g. after a rename. */
+  const staleCount = $derived(draft && !catalogMissing && !readonly ? draft.rules.filter((r) => isStale(r, catalog)).length : 0);
   const storedInvalid = $derived(base ? describeProblems(base.name, base.draft).some((p) => p.part !== 'name') : false);
 
   const texts = $derived(draft ? draft.rules.map((r) => ruleText(r, catalog, ctx.locale)) : []);
@@ -244,6 +246,13 @@
     if (newer && changes === 0) adopt(newer);
   });
 
+  /** refreshCatalog reloads only the devices: a rename in Home Assistant must not touch the edit. */
+  async function refreshCatalog() {
+    const fresh = await app.api.devices().catch(() => null);
+    const data = page.data;
+    if (fresh && data) page.set({ ...data, catalog: fresh });
+  }
+
   /** announce puts a message into the live region; emptied first so the same text is read again. */
   async function announce(text: string) {
     live = '';
@@ -257,6 +266,7 @@
         if (event.id === id) void reload();
       }),
       app.on('approvers.changed', () => void reload()),
+      app.on('devices.changed', () => void refreshCatalog()),
       app.on('reconnected', () => void reload()),
     ];
     void reload();
@@ -486,6 +496,9 @@
   {:else if storedInvalid}
     <Banner kind="critical" body={m.code_invalid_mandate()} />
   {/if}
+  {#if staleCount > 0}
+    <Banner kind="warning" quiet title={m.editor_stale_title()} body={m.editor_stale_body({ count: staleCount })} />
+  {/if}
   {#if newer}
     <ConflictNotice version={currentNumber(newer.versions)} onkeep={rebase} ondiscard={() => newer && adopt(newer)} />
   {/if}
@@ -564,7 +577,7 @@
                 count={draft.rules.length}
                 text={texts[index] ?? ruleText(rule, catalog, ctx.locale)}
                 decision={rule.decision}
-                notes={ruleNotes(draft, index, catalog, overridden[index] ?? null, ctx.locale)}
+                notes={ruleNotes(draft, index, catalog, overridden[index] ?? null, ctx.locale, !catalogMissing)}
                 errors={errors.map((p) => p.text)}
                 matches={matchText(index)}
                 editing={editing === rule.id}

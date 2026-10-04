@@ -54,11 +54,47 @@ export function criticalDevices(rule: Rule, devices: readonly Device[]): Device[
   );
 }
 
-/** ruleNotes explains what happens to a rule in the mandate it is part of. */
-export function ruleNotes(draft: MandateDraft, index: number, catalog: DeviceCatalog, override: Override | null, locale: string): RuleNote[] {
+/** The device and area of a rule that Home Assistant does not have (any more). */
+export function staleParts(rule: Rule, catalog: DeviceCatalog): { entity: string | null; area: string | null } {
+  const { entity_id: entity, area } = rule.resource;
+  return {
+    entity: entity !== undefined && !catalog.devices.some((d) => d.entity_id === entity) ? entity : null,
+    area: area !== undefined && !catalog.areas.some((a) => a.id === area) ? area : null,
+  };
+}
+
+/** isStale tells whether a rule names a device or area Home Assistant does not have. */
+export function isStale(rule: Rule, catalog: DeviceCatalog): boolean {
+  const { entity, area } = staleParts(rule, catalog);
+  return entity !== null || area !== null;
+}
+
+/**
+ * A rename in Home Assistant leaves the rule on the old ID (decision H-E1: reported, never
+ * rewritten). A deny or ask rule then no longer protects the renamed device: a danger.
+ */
+function directoryNotes(rule: Rule, catalog: DeviceCatalog): RuleNote[] {
+  const protects = rule.decision !== 'allow';
+  const { entity, area } = staleParts(rule, catalog);
+  const notes: RuleNote[] = [];
+  const kind = protects ? 'danger' : 'info';
+  if (entity !== null) notes.push({ kind, text: protects ? m.rule_stale_entity_protect({ entity }) : m.rule_stale_entity({ entity }) });
+  if (area !== null) notes.push({ kind, text: protects ? m.rule_stale_area_protect({ area }) : m.rule_stale_area({ area }) });
+  // A rule on an area covers whatever is in it now; moving a device out takes it out.
+  if (protects && area === null && rule.resource.area !== undefined && rule.resource.entity_id === undefined) {
+    notes.push({ kind: 'info', text: m.rule_area_follows() });
+  }
+  return notes;
+}
+
+/**
+ * ruleNotes explains what happens to a rule in the mandate it is part of. known is false
+ * while the catalog could not be loaded: then no device can be told missing.
+ */
+export function ruleNotes(draft: MandateDraft, index: number, catalog: DeviceCatalog, override: Override | null, locale: string, known = true): RuleNote[] {
   const rule = draft.rules[index];
   if (!rule) return [];
-  const notes: RuleNote[] = [];
+  const notes: RuleNote[] = known ? directoryNotes(rule, catalog) : [];
   if (!isEditable(rule)) notes.push({ kind: 'info', text: m.rule_readonly_extension() });
   const demoted = demotedIn(scoped(rule, catalog.devices));
   if (demoted.length > 0) notes.push({ kind: 'critical', text: `${m.demoted_hint()} (${names(demoted, locale)})` });

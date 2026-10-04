@@ -760,5 +760,13 @@
   "set_critical_gone": "{device} gibt es in Home Assistant nicht mehr.",
   "set_critical_error_title": "Geräte nicht geladen",
   "set_critical_error_body": "Die Geräteliste aus Home Assistant ist gerade nicht erreichbar.",
-  "critical_device_label": "Als kritisch markiertes Gerät"
+  "critical_device_label": "Als kritisch markiertes Gerät",
+  "rule_stale_entity_protect": "„{entity}“ gibt es in Home Assistant nicht mehr. Wurde das Gerät umbenannt, schützt diese Regel es nicht mehr. Wähle das Gerät neu aus.",
+  "rule_stale_entity": "„{entity}“ gibt es in Home Assistant nicht mehr. Diese Regel gilt für nichts, bis du das Gerät neu auswählst.",
+  "rule_stale_area_protect": "Den Bereich „{area}“ gibt es in Home Assistant nicht mehr. Diese Regel schützt nichts mehr. Wähle den Bereich neu aus.",
+  "rule_stale_area": "Den Bereich „{area}“ gibt es in Home Assistant nicht mehr. Diese Regel gilt für nichts, bis du den Bereich neu auswählst.",
+  "rule_area_follows": "Diese Regel gilt für die Geräte, die jetzt in diesem Bereich sind. Ein Gerät, das in einen anderen Bereich wechselt, ist nicht mehr erfasst.",
+  "mandates_stale": "{count, plural, one {{count, number} Regel nennt ein Gerät oder einen Bereich, den es nicht mehr gibt} other {{count, number} Regeln nennen Geräte oder Bereiche, die es nicht mehr gibt}}",
+  "editor_stale_title": "Home Assistant hat sich geändert",
+  "editor_stale_body": "{count, plural, one {{count, number} Regel nennt ein Gerät oder einen Bereich, den es nicht mehr gibt. Umbenannte Geräte schützt sie nicht mehr.} other {{count, number} Regeln nennen Geräte oder Bereiche, die es nicht mehr gibt. Umbenannte Geräte schützen sie nicht mehr.}}"
 }

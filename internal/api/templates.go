@@ -129,6 +129,9 @@ func (s *Server) putTemplate(r *request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := s.checkResources(doc, "/draft"); err != nil {
+		return nil, err
+	}
 	err = s.cfg.Admission.UpdateTemplate(r.Context(), name, doc, in.ConfirmCritical, s.actor(r))
 	switch {
 	case errors.Is(err, mandate.ErrCriticalConfirmation):

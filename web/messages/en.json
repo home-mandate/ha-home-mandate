@@ -760,5 +760,13 @@
   "set_critical_gone": "{device} no longer exists in Home Assistant.",
   "set_critical_error_title": "Devices not loaded",
   "set_critical_error_body": "The device list from Home Assistant cannot be reached right now.",
-  "critical_device_label": "Device marked as critical"
+  "critical_device_label": "Device marked as critical",
+  "rule_stale_entity_protect": "“{entity}” no longer exists in Home Assistant. If it was renamed, this rule no longer protects it. Choose the device again.",
+  "rule_stale_entity": "“{entity}” no longer exists in Home Assistant. This rule applies to nothing until you choose the device again.",
+  "rule_stale_area_protect": "The area “{area}” no longer exists in Home Assistant. This rule no longer protects anything. Choose the area again.",
+  "rule_stale_area": "The area “{area}” no longer exists in Home Assistant. This rule applies to nothing until you choose the area again.",
+  "rule_area_follows": "This rule covers the devices that are in this area now. A device moved to another area is no longer covered.",
+  "mandates_stale": "{count, plural, one {{count, number} rule names a device or area that no longer exists} other {{count, number} rules name devices or areas that no longer exist}}",
+  "editor_stale_title": "Home Assistant changed",
+  "editor_stale_body": "{count, plural, one {{count, number} rule names a device or area that no longer exists. Renamed devices are no longer protected by it.} other {{count, number} rules name devices or areas that no longer exist. Renamed devices are no longer protected by them.}}"
 }

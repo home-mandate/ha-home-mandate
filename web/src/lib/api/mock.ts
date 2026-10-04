@@ -40,6 +40,8 @@ import type {
   ApproverList,
   ApproverUpdate,
   ReachChannel,
+  Rule,
+  StaleReference,
   AuditEntry,
   AuditEvent,
   AuditQuery,
@@ -121,6 +123,8 @@ export interface MockControls {
   openApproval(request: ApprovalRequest): void;
   closeApproval(id: string, outcome: ApprovalHistoryEntry['outcome'], byName: string | null, via?: 'push' | 'ui'): void;
   setHaConnected(connected: boolean): void;
+  /** As a rename in Home Assistant: the device gets another entity ID, rules keep the old one. */
+  renameDevice(from: string, to: string): void;
   breakChain(seq: number): void;
   setEmergencyStop(active: boolean): Promise<void>;
 }
@@ -234,6 +238,19 @@ function reachOf(update: ApproverUpdate, admin: boolean): Approver['reach'] {
   };
 }
 
+/** As the server: rules that name a device or area the catalog does not have. */
+function staleReferences(rules: readonly Rule[], catalog: DeviceCatalog): StaleReference[] {
+  const out: StaleReference[] = [];
+  rules.forEach((r, i) => {
+    const { entity_id: entity, area } = r.resource;
+    const ref: StaleReference = { rule: i, rule_id: r.id };
+    if (entity !== undefined && !catalog.devices.some((d) => d.entity_id === entity)) ref.entity_id = entity;
+    if (area !== undefined && !catalog.areas.some((a) => a.id === area)) ref.area = area;
+    if (ref.entity_id !== undefined || ref.area !== undefined) out.push(ref);
+  });
+  return out;
+}
+
 /**
  * searchMatcher is the search of the audit log as the server does it: the text, ignoring
  * case, in the entry's entity_id, area_id, agent name or client_id, or in the name of its
@@ -343,6 +360,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
         expires: doc.expires ?? null,
         max_actions_per_hour: doc.limits.max_actions_per_hour,
         updated_at: current.meta.created_at,
+        stale_references: m.status === 'active' ? staleReferences(doc.rules, state.devices) : [],
       },
       document: doc,
       versions: m.versions.map((v) => v.meta),
@@ -492,6 +510,11 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       emit({ type: 'approval.opened', request });
     },
     closeApproval,
+    renameDevice(from, to) {
+      const devices = state.devices.devices.map((d) => (d.entity_id === from ? { ...d, entity_id: to } : d));
+      state = { ...state, devices: { ...state.devices, devices } };
+      emit({ type: 'devices.changed' });
+    },
     setHaConnected(connected) {
       setSystem({ ...state.system, ha: { ...state.system.ha, connected, since: now().toISOString() } });
     },

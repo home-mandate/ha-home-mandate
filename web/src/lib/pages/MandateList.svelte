@@ -73,6 +73,7 @@
       app.on('mandates.changed', reload),
       app.on('templates.changed', reload),
       app.on('agents.changed', reload),
+      app.on('devices.changed', reload),
       app.on('reconnected', reload),
     ];
     reload();
@@ -151,7 +152,12 @@
               <td><AgentName name={mandate.agent_display_name} /></td>
               <td class="muted">{m.mandates_rules_count({ count: mandate.rule_count })}</td>
               <td class="muted">{until(mandate)}</td>
-              <td><MandateStatus status={effectiveStatus(mandate, serverNow)} /></td>
+              <td>
+                <MandateStatus status={effectiveStatus(mandate, serverNow)} />
+                {#if mandate.stale_references.length > 0}
+                  <span class="stale"><Icon name="warning" /><span>{m.mandates_stale({ count: mandate.stale_references.length })}</span></span>
+                {/if}
+              </td>
             </tr>
           {/each}
         </tbody>
@@ -168,6 +174,9 @@
               <MandateStatus status={effectiveStatus(mandate, serverNow)} compact />
               <span>{m.mandates_rules_count({ count: mandate.rule_count })} · {m.mandates_valid_until_date({ date: until(mandate) })}</span>
             </span>
+            {#if mandate.stale_references.length > 0}
+              <span class="stale"><Icon name="warning" /><span>{m.mandates_stale({ count: mandate.stale_references.length })}</span></span>
+            {/if}
           </a>
         </li>
       {/each}
@@ -178,6 +187,14 @@
 {/if}
 
 <style>
+  .stale {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--hm-space-1);
+    margin-block-start: var(--hm-space-1);
+    font-size: var(--hm-font-size-sm);
+    color: var(--hm-color-warning-fg);
+  }
   .head {
     display: flex;
     flex-wrap: wrap;

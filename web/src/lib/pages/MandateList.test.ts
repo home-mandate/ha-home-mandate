@@ -164,6 +164,24 @@ describe('MandateList', () => {
     expect(within(link.closest('tr') as HTMLElement).getByText('2 rules')).toBeTruthy();
   });
 
+  it('marks a mandate whose rules name a device Home Assistant renamed', async () => {
+    const { api } = await start();
+    const table = await screen.findByRole('table');
+    expect(within(table).queryByText(/no longer exist/)).toBeNull();
+    api.control.renameDevice('lock.front_door', 'lock.front_door_main');
+    const row = within(within(table).getByRole('link', { name: 'Sprachassistent Küche' }).closest('tr') as HTMLElement);
+    expect(await row.findByText('1 rule names a device or area that no longer exists')).toBeTruthy();
+  });
+
+  it('marks it on mobile too', async () => {
+    mobile();
+    const { api } = await start();
+    await screen.findByRole('link', { name: /Sprachassistent Küche/ });
+    api.control.renameDevice('lock.front_door', 'lock.front_door_main');
+    const links = await screen.findAllByRole('link', { name: /no longer exists/ });
+    expect(links.map((l) => l.getAttribute('href'))).toContain('#/mandates/mandate-voice');
+  });
+
   it('stops listening when it goes away', async () => {
     const { api } = await start();
     await screen.findByRole('table');

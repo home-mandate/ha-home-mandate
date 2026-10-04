@@ -238,6 +238,9 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		apiCfg.MCPURL = s.cfg.PublicURL + mcp.Path
 	}
 	g.api = api.New(apiCfg)
+	g.catalog.OnRefresh(func(renames []catalog.Rename) {
+		directoryChanged(ctx, logger, g.marks, g.api.DevicesChanged, renames)
+	})
 	if err := g.api.LoadSettings(ctx); err != nil {
 		g.listener.Close()
 		return nil, err

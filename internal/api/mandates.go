@@ -41,6 +41,8 @@ type wireMandateSummary struct {
 	Expires           *string `json:"expires"`
 	MaxActionsPerHour int     `json:"max_actions_per_hour"`
 	UpdatedAt         string  `json:"updated_at"`
+	// StaleReferences are rules on devices or areas Home Assistant does not have.
+	StaleReferences []wireStaleReference `json:"stale_references"`
 }
 
 type wireVersion struct {
@@ -87,7 +89,8 @@ func (s *Server) summary(info mandate.Info, doc []byte) (wireMandateSummary, err
 	}
 	return wireMandateSummary{ID: info.ID, Name: nameOf(info), ClientID: info.ClientID, AgentDisplayName: f.AgentName.DisplayName,
 		Status: info.Status, Digest: info.Digest, RuleCount: len(f.Rules), ValidFrom: f.ValidFrom, Expires: optional(f.Expires),
-		MaxActionsPerHour: info.MaxActionsPerHour, UpdatedAt: *formatTime(info.UpdatedAt)}, nil
+		MaxActionsPerHour: info.MaxActionsPerHour, UpdatedAt: *formatTime(info.UpdatedAt),
+		StaleReferences: s.staleReferences(info, doc)}, nil
 }
 
 func (s *Server) getMandates(r *request) (any, error) {
@@ -299,6 +302,9 @@ func (s *Server) putMandate(r *request) (any, error) {
 	} else {
 		doc, err := s.documentOf(r, id, current, in.Draft)
 		if err != nil {
+			return nil, err
+		}
+		if err := s.checkResources(doc, "/draft"); err != nil {
 			return nil, err
 		}
 		if _, err := s.cfg.Mandates.Update(r.Context(), id, doc, mandate.Change{BaseDigest: in.BaseDigest,

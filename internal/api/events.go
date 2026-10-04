@@ -129,6 +129,12 @@ func (s *Server) SystemChanged() {
 	s.publishSystem(ctx)
 }
 
+// DevicesChanged announces that the device catalog changed, e.g. a device was renamed or
+// an area removed: the UI reloads devices and the references of mandates.
+func (s *Server) DevicesChanged() {
+	s.publish(event{Type: "devices.changed"})
+}
+
 // events serves the WebSocket. The request passed the Supervisor, user, administrator
 // and request limit checks already.
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {

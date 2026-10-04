@@ -44,6 +44,7 @@ type (
 	}
 	// Catalog is the device catalog.
 	Catalog interface {
+		Ready() bool
 		All() []catalog.Device
 		Areas() []catalog.Area
 		Lookup(entityID string) (catalog.Device, bool)
