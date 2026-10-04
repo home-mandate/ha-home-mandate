@@ -87,6 +87,8 @@ type Catalog struct {
 	entityArea map[string]string // entity → area from the registries
 	areas      []Area            // sorted by ID
 	disabled   map[string]bool
+	// marks are the entities the household marked as critical; nil: none.
+	marks interface{ Critical(entityID string) bool }
 	// While a refresh fetches, state changes are also kept here and applied on top of
 	// the new snapshot, so that an older snapshot never overwrites a newer event.
 	refreshing bool
@@ -118,7 +120,21 @@ func (c *Catalog) Lookup(entityID string) (Device, bool) {
 	if !ok {
 		return Device{}, false
 	}
-	return clone(d), true
+	return c.marked(clone(d)), true
+}
+
+// SetMarks tells the catalog which entities the household marked as critical; without
+// it no entity is.
+func (c *Catalog) SetMarks(marks interface{ Critical(entityID string) bool }) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.marks = marks
+}
+
+// marked sets Critical from the marks of the household; the caller holds the lock.
+func (c *Catalog) marked(d Device) Device {
+	d.Critical = c.marks != nil && c.marks.Critical(d.EntityID)
+	return d
 }
 
 // All returns copies of all devices, sorted by entity ID.
@@ -127,7 +143,7 @@ func (c *Catalog) All() []Device {
 	defer c.mu.RUnlock()
 	out := make([]Device, 0, len(c.devices))
 	for _, id := range slices.Sorted(maps.Keys(c.devices)) {
-		out = append(out, clone(c.devices[id]))
+		out = append(out, c.marked(clone(c.devices[id])))
 	}
 	return out
 }

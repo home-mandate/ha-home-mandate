@@ -150,6 +150,12 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	g.client = client
 	g.catalog = catalog.New(client, logger)
+	// The entities the household marked as critical are part of the resource directory.
+	marks, err := catalog.LoadMarks(ctx, s.store.DB())
+	if err != nil {
+		return nil, err
+	}
+	g.catalog.SetMarks(marks)
 	for _, event := range append([]string{ha.EventStateChanged}, registryEvents...) {
 		if _, err := client.SubscribeEvents(ctx, event, g.catalog.HandleEvent); err != nil {
 			return nil, fmt.Errorf("subscribe %s: %w", event, err)
