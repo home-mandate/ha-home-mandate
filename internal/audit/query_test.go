@@ -498,3 +498,41 @@ func TestUnreadableRowsAreErrors(t *testing.T) {
 		t.Error("IndexSearch succeeded")
 	}
 }
+
+// RequestsSince feeds the rate limiter after a restart (SPEC-v0 section 11.2): every
+// request that reached the evaluation counts, refusals by the rate limit or the
+// emergency stop do not.
+func TestRequestsSince(t *testing.T) {
+	l, now := clocked(t, start)
+	appendAll(t, l, []audit.Entry{
+		decision("hm-client:voice-1", "Voice", "light.kitchen", "kitchen", "allow", "rule"),
+		decision("hm-client:n8n-2", "n8n", "light.garden", "garden", "deny", "no_match"),
+		{Event: audit.EventEmergencyStopActivated, Actor: &audit.Actor{Kind: audit.ActorUser, ID: "u1"}},
+		{Event: audit.EventDecision, Agent: &audit.Agent{ClientID: "hm-client:voice-1"},
+			Request: &audit.Request{Time: start, Resource: audit.Resource{EntityID: "light.kitchen"}, Action: "turn_on"},
+			Result:  &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByRateLimit}},
+		{Event: audit.EventDecision, Agent: &audit.Agent{ClientID: "hm-client:voice-1"},
+			Request: &audit.Request{Time: start, Resource: audit.Resource{EntityID: "light.kitchen"}, Action: "turn_on"},
+			Result:  &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop}},
+		decision("hm-client:voice-1", "Voice", "lock.front_door", "hall", "ask", "rule"),
+	})
+	got, err := l.RequestsSince(context.Background(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || len(got["hm-client:voice-1"]) != 2 || len(got["hm-client:n8n-2"]) != 1 {
+		t.Fatalf("RequestsSince = %v", got)
+	}
+	if first := got["hm-client:voice-1"][0]; first.Before(start) || first.After(now()) {
+		t.Errorf("time %v outside the log", first)
+	}
+	later, err := l.RequestsSince(context.Background(), now().Add(time.Hour))
+	if err != nil || len(later) != 0 {
+		t.Errorf("RequestsSince after the last entry = %v, %v", later, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := l.RequestsSince(ctx, start); err == nil {
+		t.Error("RequestsSince with a cancelled context succeeded")
+	}
+}

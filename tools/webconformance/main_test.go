@@ -45,12 +45,19 @@ func TestFilesReferencesEveryMandateOnce(t *testing.T) {
 }
 
 func TestFilesErrors(t *testing.T) {
+	normative := func(cases string) fstest.MapFS {
+		return fstest.MapFS{
+			"conformance/cases-v0.json":         {Data: []byte(cases)},
+			"vocabulary/v0.json":                {Data: []byte(`{}`)},
+			"data/forbidden-codepoints-v0.json": {Data: []byte(`{}`)},
+		}
+	}
 	for name, spec := range map[string]fstest.MapFS{
 		"no cases":      {},
 		"no vocabulary": {"conformance/cases-v0.json": {Data: []byte(`{"cases":[]}`)}},
-		"broken json":   {"conformance/cases-v0.json": {Data: []byte(`{`)}},
-		"missing file":  {"conformance/cases-v0.json": {Data: []byte(`{"cases":[{"mandate":"nope.json"}]}`)}},
-		"bad path":      {"conformance/cases-v0.json": {Data: []byte(`{"cases":[{"mandate":"../x.json"}]}`)}},
+		"broken json":   normative(`{`),
+		"missing file":  normative(`{"cases":[{"mandate":"nope.json"}]}`),
+		"bad path":      normative(`{"cases":[{"mandate":"../x.json"}]}`),
 	} {
 		if _, err := files(spec); err == nil {
 			t.Errorf("%s: no error", name)

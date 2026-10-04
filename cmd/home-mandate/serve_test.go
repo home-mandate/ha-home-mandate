@@ -11,6 +11,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"io"
 	"log/slog"
 	"math/big"
 	"net"
@@ -21,7 +22,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-mandate/home-mandate/internal/audit"
 	"github.com/home-mandate/home-mandate/internal/config"
+	"github.com/home-mandate/home-mandate/internal/store"
 )
 
 // selfSigned writes a certificate for 127.0.0.1 and its key into dir.
@@ -185,5 +188,42 @@ func TestNewGatewayServesOAuth(t *testing.T) {
 	}
 	if g.server.WriteTimeout != 150*time.Second {
 		t.Errorf("write timeout %v", g.server.WriteTimeout)
+	}
+}
+
+// A restart must not hand an agent a fresh rate limit (SPEC-v0 section 11.2).
+func TestRestoredLimiterCountsTheLastHour(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "hm.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	log := audit.New(st.DB(), "household:t")
+	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	log.SetClock(func() time.Time { return now.Add(-10 * time.Minute) })
+	for range 2 {
+		if _, err := log.Append(ctx, audit.Entry{Event: audit.EventDecision, Agent: &audit.Agent{ClientID: "hm-client:a"},
+			Request:    &audit.Request{Time: now, Resource: audit.Resource{EntityID: "light.x"}, Action: "turn_on"},
+			Evaluation: &audit.Evaluation{Decision: "deny", Reason: "no_match"},
+			Result:     &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	limiter := restoredLimiter(ctx, log, func() time.Time { return now }, logger)
+	if !limiter.Allow("hm-client:a", 3) {
+		t.Error("third request within the hour denied")
+	}
+	if limiter.Allow("hm-client:a", 3) {
+		t.Error("fourth request within the hour allowed after a restart")
+	}
+	if !limiter.Allow("hm-client:b", 1) {
+		t.Error("another agent is affected")
+	}
+	// A log that cannot be read leaves the limiter empty instead of failing the start.
+	_ = st.Close()
+	if !restoredLimiter(ctx, log, func() time.Time { return now }, logger).Allow("hm-client:a", 1) {
+		t.Error("limiter unusable after a failed restore")
 	}
 }

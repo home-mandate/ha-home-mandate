@@ -27,8 +27,8 @@ import (
 	"github.com/home-mandate/home-mandate/internal/ha"
 	"github.com/home-mandate/home-mandate/internal/mandate"
 	"github.com/home-mandate/home-mandate/internal/pdp"
-	"github.com/home-mandate/home-mandate/internal/ratelimit"
 	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/mandate-spec/mandate-spec/ratelimit"
 )
 
 const (

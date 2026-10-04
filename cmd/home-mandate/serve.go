@@ -28,8 +28,8 @@ import (
 	"github.com/home-mandate/home-mandate/internal/mcp"
 	"github.com/home-mandate/home-mandate/internal/oauth"
 	"github.com/home-mandate/home-mandate/internal/pdp"
-	"github.com/home-mandate/home-mandate/internal/ratelimit"
 	"github.com/home-mandate/home-mandate/internal/webui"
+	"github.com/mandate-spec/mandate-spec/ratelimit"
 )
 
 const (
@@ -44,6 +44,22 @@ const (
 
 // registryEvents keep the catalog current (ARCHITECTURE section 11.2).
 var registryEvents = []string{"entity_registry_updated", "device_registry_updated", "area_registry_updated"}
+
+// restoredLimiter returns the rate limiter filled with the requests of the last hour
+// from the audit log, so that a restart does not hand every agent a fresh limit
+// (SPEC-v0 section 11.2). If the log cannot be read, the limiter starts empty.
+func restoredLimiter(ctx context.Context, log *audit.Log, now func() time.Time, logger *slog.Logger) *ratelimit.Limiter {
+	limiter := ratelimit.New(now)
+	requests, err := log.RequestsSince(ctx, now().Add(-ratelimit.Window))
+	if err != nil {
+		logger.Warn("cannot restore the rate limits from the audit log", "error", err)
+		return limiter
+	}
+	for clientID, times := range requests {
+		limiter.Restore(clientID, times)
+	}
+	return limiter
+}
 
 // serve runs the gateway until ctx ends. It refuses to start with a broken audit log
 // and ends with exitFailure when Home Assistant rejects the access token.
@@ -183,7 +199,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	gw := mcp.New(mcp.Config{Resource: resource, ResourceMetadataURL: metadata, Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
 		TemperatureUnit: g.temperatureUnit,
-		Limiter:         ratelimit.New(nil), Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
+		Limiter:         restoredLimiter(ctx, s.log, time.Now, logger), Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
 	as, handler, err := withOAuth(s, gw.Handler(), resource, logger)
 	if err != nil {
 		return nil, err
