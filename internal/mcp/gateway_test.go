@@ -153,7 +153,7 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 	t.Cleanup(func() { _ = st.Close() })
 	log := audit.New(st.DB(), household)
 	agents := agent.New(st.DB(), log)
-	mandates := mandate.New(st.DB(), log, household)
+	mandates := mandate.New(st.DB(), log, household, "urn:uuid:5b0c9f4e-8f1a-4c2e-9d3b-7a6e5f4d3c2b")
 
 	a, err := agents.Register(ctx, "Voice assistant", admin)
 	if err != nil {

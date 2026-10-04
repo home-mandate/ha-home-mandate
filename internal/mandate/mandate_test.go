@@ -21,7 +21,10 @@ import (
 	"github.com/home-mandate/home-mandate/internal/store"
 )
 
-const household = "household:hm-0123456789ab"
+const (
+	household = "household:hm-0123456789ab"
+	issuer    = "urn:uuid:5b0c9f4e-8f1a-4c2e-9d3b-7a6e5f4d3c2b"
+)
 
 var admin = audit.Actor{Kind: audit.ActorUser, ID: "user-1"}
 
@@ -39,7 +42,7 @@ func newEnv(t *testing.T) env {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	log := audit.New(s.DB(), household)
-	return env{mandates: mandate.New(s.DB(), log, household), agents: agent.New(s.DB(), log), log: log}
+	return env{mandates: mandate.New(s.DB(), log, household, issuer), agents: agent.New(s.DB(), log), log: log}
 }
 
 func (e env) agent(t *testing.T, name string) agent.Agent {
@@ -423,7 +426,7 @@ func TestUpdateNeedsTheConfirmationForCriticalActions(t *testing.T) {
 	}
 }
 
-func TestVersionsAreNumberedAndCanRepeatADigest(t *testing.T) {
+func TestVersionsAreNumberedAndARestoreIsTheNextVersion(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	a := e.agent(t, "Voice assistant")
@@ -437,9 +440,10 @@ func TestVersionsAreNumberedAndCanRepeatADigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Restoring the first version stores a third one with the content, and so the digest, of the first.
+	// Restoring the first version stores a third one with its content but the next
+	// version number (SPEC-v0 section 3.5), so its digest differs from the first.
 	third, err := e.mandates.Update(ctx, first.ID, original, mandate.Change{BaseDigest: second.Digest}, admin)
-	if err != nil || third.Digest != first.Digest {
+	if err != nil || third.Digest == first.Digest || third.Digest == second.Digest {
 		t.Fatalf("restore = %+v, %v", third, err)
 	}
 
@@ -447,7 +451,7 @@ func TestVersionsAreNumberedAndCanRepeatADigest(t *testing.T) {
 	if err != nil || len(versions) != 3 {
 		t.Fatalf("Versions = %+v, %v", versions, err)
 	}
-	for i, want := range []string{first.Digest, second.Digest, first.Digest} {
+	for i, want := range []string{first.Digest, second.Digest, third.Digest} {
 		if versions[i].Number != i+1 || versions[i].Digest != want {
 			t.Errorf("version %d = %+v, want number %d and digest %s", i, versions[i], i+1, want)
 		}
@@ -457,8 +461,8 @@ func TestVersionsAreNumberedAndCanRepeatADigest(t *testing.T) {
 	if err != nil || v.Number != 2 || v.Digest != second.Digest || !strings.Contains(string(doc), `"max_actions_per_hour":10`) {
 		t.Errorf("VersionDocument(2) = %s, %+v, %v", doc, v, err)
 	}
-	if _, v, err := e.mandates.VersionDocument(ctx, first.ID, 3); err != nil || v.Number != 3 || v.Digest != first.Digest {
-		t.Errorf("VersionDocument(3) = %+v, %v", v, err)
+	if doc, v, err := e.mandates.VersionDocument(ctx, first.ID, 3); err != nil || v.Number != 3 || issued(t, doc) != 3 {
+		t.Errorf("VersionDocument(3) = %s, %+v, %v", doc, v, err)
 	}
 	for _, number := range []int{0, -1, 4} {
 		if _, _, err := e.mandates.VersionDocument(ctx, first.ID, number); !errors.Is(err, mandate.ErrNotFound) {
@@ -468,8 +472,117 @@ func TestVersionsAreNumberedAndCanRepeatADigest(t *testing.T) {
 	if _, _, err := e.mandates.VersionDocument(ctx, "m-unknown", 1); !errors.Is(err, mandate.ErrNotFound) {
 		t.Errorf("unknown mandate: err = %v, want ErrNotFound", err)
 	}
-	if loaded, err := e.mandates.ForAgent(ctx, a.ClientID); err != nil || loaded.Info.Digest != first.Digest {
+	if loaded, err := e.mandates.ForAgent(ctx, a.ClientID); err != nil || loaded.Info.Digest != third.Digest || loaded.Mandate.Version() != 3 {
 		t.Errorf("ForAgent = %+v, %v", loaded.Info, err)
+	}
+}
+
+// issued returns the version of a stored document and checks that this installation issued it.
+func issued(t *testing.T, document []byte) int64 {
+	t.Helper()
+	m, err := evaluator.Parse(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Issuer() != issuer {
+		t.Errorf("issuer = %q", m.Issuer())
+	}
+	return m.Version()
+}
+
+// SPEC-v0 section 3.5: Home-Mandate issues every version it stores, with its own issuer
+// and a version higher than every earlier one of the mandate.
+func TestEveryStoredVersionIsIssuedWithTheNextVersion(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a := e.agent(t, "Voice assistant")
+	first, err := e.mandates.Put(ctx, voiceAssistant(t, a.ClientID, nil), admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := func() []byte {
+		_, doc, err := e.mandates.Current(ctx, first.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return doc
+	}
+	if v := issued(t, current()); v != 1 {
+		t.Errorf("first version = %d", v)
+	}
+	// The same content again is no new version, whatever version it is offered with.
+	if again, err := e.mandates.Put(ctx, voiceAssistant(t, a.ClientID, nil), admin); err != nil || again.Digest != first.Digest {
+		t.Errorf("unchanged Put = %+v, %v", again, err)
+	}
+	second, err := e.mandates.Put(ctx, voiceAssistant(t, a.ClientID, func(d map[string]any) {
+		d["limits"] = map[string]any{"max_actions_per_hour": 10}
+	}), admin)
+	if err != nil || issued(t, current()) != 2 {
+		t.Fatalf("second = %+v, %v", second, err)
+	}
+
+	// Rollback: an older version offered with its own version number is refused.
+	old, _, err := e.mandates.VersionDocument(ctx, first.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.mandates.Put(ctx, old, admin); !errors.Is(err, mandate.ErrConflict) {
+		t.Errorf("rollback to version 1: err = %v, want ErrConflict", err)
+	}
+	// A later version of our own issuer is taken as it is.
+	next := voiceAssistant(t, a.ClientID, func(d map[string]any) { d["issuer"], d["version"] = issuer, 7 })
+	if _, err := e.mandates.Put(ctx, next, admin); err != nil || issued(t, current()) != 7 {
+		t.Errorf("version 7: %v", err)
+	}
+	// Mandates of another issuer cannot be imported (yet).
+	foreign := voiceAssistant(t, a.ClientID, func(d map[string]any) { d["issuer"], d["version"] = "https://issuer.example/", 99 })
+	if _, err := e.mandates.Put(ctx, foreign, admin); !errors.Is(err, mandate.ErrInvalid) {
+		t.Errorf("foreign issuer: err = %v, want ErrInvalid", err)
+	}
+	// The highest version is kept after a revocation: a new mandate with the same id
+	// for another agent continues after it (and is refused as a move anyway).
+	if err := e.mandates.Revoke(ctx, first.ID, admin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.mandates.Put(ctx, next, admin); !errors.Is(err, mandate.ErrConflict) {
+		t.Errorf("revoked: err = %v, want ErrConflict", err)
+	}
+}
+
+// A mandate stored before versions existed stays valid; its next change gets version 1.
+func TestAMandateWithoutVersionGetsOneWithItsNextChange(t *testing.T) {
+	e, db := newEnvWithDB(t)
+	ctx := context.Background()
+	a := e.agent(t, "Voice assistant")
+	info, err := e.mandates.Put(ctx, voiceAssistant(t, a.ClientID, nil), admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Turn the stored version into one of an earlier Home-Mandate: no issuer, no version.
+	legacy := voiceAssistant(t, a.ClientID, nil)
+	m, err := evaluator.Parse(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`UPDATE mandate_versions SET document = ?, digest = ? WHERE mandate_id = ?`,
+		`UPDATE mandates SET current_digest = ?2, highest_version = 0 WHERE id = ?3 AND ?1 IS NOT NULL`,
+	} {
+		if _, err := db.ExecContext(ctx, q, string(legacy), m.Digest(), info.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fresh := mandate.New(db, e.log, household, issuer)
+	if loaded, err := fresh.ForAgent(ctx, a.ClientID); err != nil || loaded.Mandate.Version() != 0 {
+		t.Fatalf("legacy mandate = %+v, %v", loaded, err)
+	}
+	limited := voiceAssistant(t, a.ClientID, func(d map[string]any) { d["limits"] = map[string]any{"max_actions_per_hour": 10} })
+	if _, err := fresh.Update(ctx, info.ID, limited, mandate.Change{BaseDigest: m.Digest()}, admin); err != nil {
+		t.Fatal(err)
+	}
+	_, doc, err := fresh.Current(ctx, info.ID)
+	if err != nil || issued(t, doc) != 1 {
+		t.Errorf("next change: %s, %v", doc, err)
 	}
 }
 

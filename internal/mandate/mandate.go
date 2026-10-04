@@ -57,11 +57,15 @@ type Info struct {
 	Digest            string
 	MaxActionsPerHour int
 	UpdatedAt         time.Time
+	// version is the version the document carries (SPEC-v0 section 3.5); 0 without.
+	version int64
 }
 
 // Version is one stored version of a mandate. Versions are told apart by Number, which
-// counts from 1 for the oldest: the digest is a hash of the content, and a version that
-// restores an earlier one repeats its digest.
+// counts from 1 for the oldest: the digest is a hash of the content, and before mandates
+// carried a version (SPEC-v0 section 3.5) a version that restored an earlier one repeated
+// its digest. Number counts the stored rows; the version inside the document can be
+// higher (a document offered with its own, later version).
 type Version struct {
 	Number    int
 	Digest    string
@@ -81,14 +85,17 @@ type Store struct {
 	db        *sql.DB
 	log       *audit.Log
 	principal string
+	// issuer is this installation (SPEC-v0 section 3.5): every version it stores carries
+	// it, with a version higher than every earlier one of the mandate.
+	issuer string
 
 	mu     sync.Mutex
 	parsed map[string]*evaluator.Mandate // by digest; versions never change
 }
 
-// New returns the Store for principal.
-func New(db *sql.DB, log *audit.Log, principal string) *Store {
-	return &Store{db: db, log: log, principal: principal, parsed: map[string]*evaluator.Mandate{}}
+// New returns the Store for principal; issuer is the URI of this installation.
+func New(db *sql.DB, log *audit.Log, principal, issuer string) *Store {
+	return &Store{db: db, log: log, principal: principal, issuer: issuer, parsed: map[string]*evaluator.Mandate{}}
 }
 
 // meta holds the fields the evaluator does not expose.
@@ -144,8 +151,80 @@ func (s *Store) check(document []byte) (Info, error) {
 	if md.Principal != s.principal {
 		return Info{}, fmt.Errorf("%w: principal is not this household", ErrInvalid)
 	}
+	// Mandates issued elsewhere (signed ones, SPEC-v0 section 7) cannot be imported yet.
+	if m.Issuer() != "" && m.Issuer() != s.issuer {
+		return Info{}, fmt.Errorf("%w: issued by %q, not by this installation", ErrInvalid, m.Issuer())
+	}
 	return Info{ID: m.ID(), ClientID: md.Agent.ClientID, Status: StatusActive, Digest: m.Digest(),
-		MaxActionsPerHour: md.Limits.MaxActionsPerHour, UpdatedAt: time.Now().UTC()}, nil
+		MaxActionsPerHour: md.Limits.MaxActionsPerHour, UpdatedAt: time.Now().UTC(), version: m.Version()}, nil
+}
+
+// issue makes document the next version of a mandate (SPEC-v0 section 3.5): current is
+// its current version (nil for a new mandate) with digest currentDigest, highest the
+// highest version issued for it so far, also before a revocation. A document without
+// version gets this installation as issuer and the version after highest, unless it has
+// the content of the current version: then it is that version, unchanged. A document
+// with a version (check accepts only this issuer) must come after highest: an older
+// version is never accepted again.
+func (s *Store) issue(document []byte, current *evaluator.Mandate, currentDigest string, highest int64) ([]byte, Info, error) {
+	offered, err := evaluator.Parse(document)
+	if err != nil {
+		return nil, Info{}, fmt.Errorf("%w: %w", ErrInvalid, err)
+	}
+	if offered.Version() != 0 {
+		if offered.Version() <= highest {
+			return nil, Info{}, fmt.Errorf("%w: version %d does not follow version %d", ErrConflict, offered.Version(), highest)
+		}
+	} else {
+		if current != nil {
+			// The content of the current version, offered again without its version.
+			same, err := withVersion(document, s.issuer, current.Version())
+			if err != nil {
+				return nil, Info{}, err
+			}
+			if m, err := evaluator.Parse(same); err == nil && m.Digest() == currentDigest {
+				info, err := s.check(same)
+				return same, info, err
+			}
+		}
+		if document, err = withVersion(document, s.issuer, highest+1); err != nil {
+			return nil, Info{}, err
+		}
+	}
+	info, err := s.check(document)
+	if err != nil {
+		return nil, Info{}, err
+	}
+	if current != nil {
+		next, err := evaluator.Parse(document)
+		if err != nil {
+			return nil, Info{}, fmt.Errorf("%w: %w", ErrInvalid, err)
+		}
+		if err := evaluator.CheckSuccessor(current, next); err != nil {
+			return nil, Info{}, fmt.Errorf("%w: %w", ErrConflict, err)
+		}
+	}
+	return document, info, nil
+}
+
+// withVersion returns document with issuer and version set; version 0 removes both
+// (a mandate stored before versions existed).
+func withVersion(document []byte, issuer string, version int64) ([]byte, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(document, &fields); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalid, err)
+	}
+	delete(fields, "issuer")
+	delete(fields, "version")
+	if version > 0 {
+		fields["issuer"], _ = json.Marshal(issuer)
+		fields["version"], _ = json.Marshal(version)
+	}
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return nil, fmt.Errorf("mandate: issue: %w", err)
+	}
+	return out, nil
 }
 
 func (s *Store) put(ctx context.Context, tx *sql.Tx, info Info, document []byte, by audit.Actor) error {
@@ -168,30 +247,48 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, info Info, document []byte,
 	case !errors.Is(err, sql.ErrNoRows):
 		return fmt.Errorf("mandate: read: %w", err)
 	}
-	var existing struct{ clientID, status, digest string }
-	err = tx.QueryRowContext(ctx, `SELECT client_id, status, current_digest FROM mandates WHERE id = ?`, info.ID).
-		Scan(&existing.clientID, &existing.status, &existing.digest)
+	var existing struct {
+		clientID, status, digest, document string
+		highest                            int64
+	}
+	err = tx.QueryRowContext(ctx, `SELECT m.client_id, m.status, m.current_digest, m.highest_version, v.document FROM mandates m
+		JOIN mandate_versions v ON v.mandate_id = m.id AND v.digest = m.current_digest
+		WHERE m.id = ? ORDER BY v.version DESC LIMIT 1`, info.ID).
+		Scan(&existing.clientID, &existing.status, &existing.digest, &existing.highest, &existing.document)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
+		document, info, err = s.issue(document, nil, "", 0)
+		if err != nil {
+			return err
+		}
 		return s.create(ctx, tx, info, document, by)
 	case err != nil:
 		return fmt.Errorf("mandate: read: %w", err)
 	case existing.clientID != info.ClientID || existing.status != StatusActive:
 		return fmt.Errorf("%w: mandate %s belongs to another agent or is revoked", ErrConflict, info.ID)
-	case existing.digest == info.Digest:
-		return nil
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE mandates SET current_digest = ?, max_actions_per_hour = ?, updated_at = ? WHERE id = ?`,
-		info.Digest, info.MaxActionsPerHour, info.UpdatedAt.Format(timeFormat), info.ID); err != nil {
+	// A current version that no longer parses (the specification became stricter) is
+	// replaced like a new one; the highest version still rules out older ones.
+	current, err := s.parse(existing.digest, existing.document)
+	if err != nil {
+		current = nil
+	}
+	document, info, err = s.issue(document, current, existing.digest, existing.highest)
+	if err != nil || info.Digest == existing.digest {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE mandates SET current_digest = ?, max_actions_per_hour = ?, updated_at = ?,
+		highest_version = max(highest_version, ?) WHERE id = ?`,
+		info.Digest, info.MaxActionsPerHour, info.UpdatedAt.Format(timeFormat), info.version, info.ID); err != nil {
 		return fmt.Errorf("mandate: update: %w", err)
 	}
 	return s.addVersion(ctx, tx, info, document, by, audit.EventMandateUpdated, existing.digest)
 }
 
 func (s *Store) create(ctx context.Context, tx *sql.Tx, info Info, document []byte, by audit.Actor) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO mandates (id, client_id, status, current_digest, max_actions_per_hour, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`, info.ID, info.ClientID, StatusActive, info.Digest, info.MaxActionsPerHour,
-		info.UpdatedAt.Format(timeFormat), info.UpdatedAt.Format(timeFormat)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO mandates (id, client_id, status, current_digest, max_actions_per_hour, created_at, updated_at, highest_version)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, info.ID, info.ClientID, StatusActive, info.Digest, info.MaxActionsPerHour,
+		info.UpdatedAt.Format(timeFormat), info.UpdatedAt.Format(timeFormat), info.version); err != nil {
 		return fmt.Errorf("mandate: insert: %w", err)
 	}
 	return s.addVersion(ctx, tx, info, document, by, audit.EventMandateCreated, "")

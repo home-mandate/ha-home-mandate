@@ -24,7 +24,7 @@ func newEnvWithDB(t *testing.T) (env, *sql.DB) {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	log := audit.New(s.DB(), household)
-	return env{mandates: mandate.New(s.DB(), log, household), agents: agent.New(s.DB(), log), log: log}, s.DB()
+	return env{mandates: mandate.New(s.DB(), log, household, issuer), agents: agent.New(s.DB(), log), log: log}, s.DB()
 }
 
 func TestTamperedStoredVersionIsNotEvaluated(t *testing.T) {
@@ -38,7 +38,7 @@ func TestTamperedStoredVersionIsNotEvaluated(t *testing.T) {
 	if _, err := db.Exec(`UPDATE mandate_versions SET document = replace(document, '"camera"', '"sensor"')`); err != nil {
 		t.Fatal(err)
 	}
-	fresh := mandate.New(db, e.log, household) // no cached parse
+	fresh := mandate.New(db, e.log, household, issuer) // no cached parse
 	if _, err := fresh.ForAgent(ctx, a.ClientID); !errors.Is(err, mandate.ErrInvalid) {
 		t.Errorf("ForAgent on a tampered version = %v, want ErrInvalid", err)
 	}
@@ -100,7 +100,7 @@ func TestInvalidListsMandatesTheEvaluatorRejects(t *testing.T) {
 		WHERE mandate_id IN (SELECT id FROM mandates WHERE client_id = ?)`, bad.ClientID); err != nil {
 		t.Fatal(err)
 	}
-	invalid, err := mandate.New(db, e.log, household).Invalid(ctx)
+	invalid, err := mandate.New(db, e.log, household, issuer).Invalid(ctx)
 	if err != nil || len(invalid) != 1 || invalid[0].ClientID != bad.ClientID || invalid[0].Problem == "" {
 		t.Fatalf("Invalid = %+v, %v; want the mandate of %s", invalid, err, bad.ClientID)
 	}
@@ -108,7 +108,7 @@ func TestInvalidListsMandatesTheEvaluatorRejects(t *testing.T) {
 		t.Errorf("problem spans several lines: %q", invalid[0].Problem)
 	}
 	_ = db.Close()
-	if _, err := mandate.New(db, e.log, household).Invalid(ctx); err == nil {
+	if _, err := mandate.New(db, e.log, household, issuer).Invalid(ctx); err == nil {
 		t.Error("Invalid on a closed database succeeded")
 	}
 }

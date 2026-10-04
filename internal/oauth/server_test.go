@@ -104,7 +104,7 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(func() { _ = st.Close() })
 	log := audit.New(st.DB(), testHousehold)
 	agents := agent.New(st.DB(), log)
-	mandates := mandate.New(st.DB(), log, testHousehold)
+	mandates := mandate.New(st.DB(), log, testHousehold, "urn:uuid:5b0c9f4e-8f1a-4c2e-9d3b-7a6e5f4d3c2b")
 	adm := admission.New(st.DB(), agents, mandates, testHousehold)
 	data, err := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
 	if err != nil {

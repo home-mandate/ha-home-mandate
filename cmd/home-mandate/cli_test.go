@@ -359,3 +359,25 @@ func TestAuditKeyAndAnchoredVerify(t *testing.T) {
 		t.Errorf("key file that cannot be created: exit %d, %q", code, errOut)
 	}
 }
+
+// The issuer of the mandates (SPEC-v0 section 3.5) is created once and never changes:
+// a mandate with a version only follows one of the same issuer.
+func TestTheMandateIssuerStaysTheSame(t *testing.T) {
+	dir := t.TempDir()
+	issuers := make([]string, 2)
+	for i := range issuers {
+		s, err := openStore(context.Background(), dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		issuers[i], err = mandateIssuer(context.Background(), s.store)
+		_ = s.store.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !regexp.MustCompile(`^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(issuers[0]) ||
+		issuers[0] != issuers[1] {
+		t.Errorf("issuers = %v", issuers)
+	}
+}

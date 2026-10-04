@@ -288,7 +288,7 @@ export interface Rule {
 
 /**
  * The part of a mandate a human edits. The server adds type, id, principal, agent,
- * default ("deny"), created_by and created_at when it stores a version.
+ * default ("deny"), created_by, created_at, issuer and version when it stores a version.
  */
 export interface MandateDraft {
   rules: Rule[];
@@ -307,6 +307,10 @@ export interface MandateDocument extends MandateDraft {
   default: 'deny';
   created_by: string;
   created_at: string;
+  /** This installation, with version (SPEC-v0 section 3.5); absent in mandates stored before versions existed. */
+  issuer?: string;
+  /** Counts up with every stored version of the mandate, also when one restores an earlier one. */
+  version?: number;
 }
 
 export interface MandateSummary {
@@ -345,8 +349,8 @@ export interface StaleReference {
 export interface MandateVersion {
   /**
    * Number of the version within its mandate, counted from 1 for the oldest. It tells
-   * versions apart: the digest is a hash of the content, and a version that restores an
-   * earlier one repeats its digest.
+   * versions apart: the digest is a hash of the content, and in mandates stored before
+   * versions existed a version that restores an earlier one repeats its digest.
    */
   number: number;
   digest: string;

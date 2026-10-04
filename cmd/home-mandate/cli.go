@@ -87,10 +87,33 @@ func openStore(ctx context.Context, dataDir string) (*state, error) {
 		_ = st.Close()
 		return nil, err
 	}
+	issuer, err := mandateIssuer(ctx, st)
+	if err != nil {
+		_ = st.Close()
+		return nil, err
+	}
 	log := audit.New(st.DB(), household)
-	agents, mandates := agent.New(st.DB(), log), mandate.New(st.DB(), log, household)
+	agents, mandates := agent.New(st.DB(), log), mandate.New(st.DB(), log, household, issuer)
 	return &state{store: st, household: household, log: log, agents: agents, mandates: mandates,
 		admission: admission.New(st.DB(), agents, mandates, household), approvers: approval.NewApprovers(st.DB())}, nil
+}
+
+// settingMandateIssuer holds the issuer of the mandates this installation stores.
+const settingMandateIssuer = "mandate_issuer"
+
+// mandateIssuer returns the URI this installation issues mandates as (SPEC-v0 section
+// 3.5), created once. It must never change: a mandate with a version only follows one
+// of the same issuer.
+func mandateIssuer(ctx context.Context, st *store.Store) (string, error) {
+	issuer, found, err := st.Setting(ctx, settingMandateIssuer)
+	if err != nil || found {
+		return issuer, err
+	}
+	issuer = "urn:uuid:" + newUUID()
+	if err := st.SetSetting(ctx, settingMandateIssuer, issuer); err != nil {
+		return "", err
+	}
+	return issuer, nil
 }
 
 // withState opens the state, runs fn and reports its error.
