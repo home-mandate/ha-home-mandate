@@ -38,6 +38,8 @@ export interface Cell extends CellOutcome {
   invalid: boolean;
   /** Outcome while time-conditioned rules apply; null if the cell does not depend on time. */
   timed: CellOutcome | null;
+  /** Allowed only within the limits of the deciding rule (SPEC-v0 section 4.5); outside it is denied. */
+  limited: boolean;
 }
 
 export interface Change {
@@ -108,14 +110,16 @@ export function criticalOn(device: Device, action: string): boolean {
 
 function computeCell(draft: MandateDraft, device: Device, action: string): Cell {
   const critical = criticalOn(device, action);
-  const base = { critical, matching: 0, invalid: false, timed: null };
+  const base = { critical, matching: 0, invalid: false, timed: null, limited: false };
   if (!isValid(draft)) return { ...base, decision: 'default', rule: null, demoted: false, invalid: true };
   const resource = { entity_id: device.entity_id, category: device.category, area: device.area ?? undefined };
   const matched = draft.rules.filter((r) => resourceMatches(r, resource) && coversAction(r, action));
   const always = outcome(draft, matched.filter((r) => !conditional(r)), critical);
   const atTimes = outcome(draft, matched, critical);
   const timed = atTimes.decision === always.decision ? null : atTimes;
-  return { ...base, ...always, matching: matched.length, timed };
+  const decider = always.rule === null ? undefined : draft.rules[always.rule];
+  const limited = always.decision === 'allow' && decider?.constraints !== undefined;
+  return { ...base, ...always, matching: matched.length, timed, limited };
 }
 
 export interface ValidityChange {

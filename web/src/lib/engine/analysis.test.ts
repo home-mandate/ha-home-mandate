@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, expect, it } from 'vitest';
+import { devicesFixture, voiceAssistantDraft } from '../api/fixtures.ts';
 import type { Device, MandateDraft, Rule } from '../api/types.ts';
 import { cell, criticalIncluded, demotedIn, diff, isWidening, overrides, ruleMatches, validityChange } from './analysis.ts';
 
@@ -181,3 +182,20 @@ describe('rule hints', () => {
     expect(cell(draft([lights]), garage, 'open').decision).toBe('default');
   });
 });
+
+describe('limits in the preview', () => {
+  it('marks a cell allowed only within the limits of its rule', () => {
+    const climate = devicesFixture.devices.find((d) => d.entity_id === 'climate.hvac');
+    if (!climate) throw new Error('fixture');
+    const limited: MandateDraft = {
+      ...voiceAssistantDraft,
+      rules: [{ id: 'heat', resource: { category: 'climate' }, actions: ['set_temperature'], decision: 'allow', constraints: { temperature: { min: 1600, max: 2300 } } }],
+    };
+    expect(cell(limited, climate, 'set_temperature')).toMatchObject({ decision: 'allow', limited: true });
+    const { constraints: _limits, ...unlimited } = limited.rules[0] as Rule;
+    void _limits;
+    const free = { ...limited, rules: [unlimited] };
+    expect(cell(free, climate, 'set_temperature').limited).toBe(false);
+  });
+});
+

@@ -49,7 +49,14 @@
   const KINDS: readonly CellDecision[] = ['allow', 'ask', 'deny', 'default'];
   const GROUPINGS: readonly GroupBy[] = ['area', 'category'];
   const GROUPING_LABELS: Record<GroupBy, () => string> = { area: () => m.matrix_group_area(), category: () => m.matrix_group_category() };
-  const LINE_ICONS: Record<DetailLine['kind'], IconName> = { rule: 'list', critical: 'critical', danger: 'warning', timed: 'history', changed: 'info' };
+  const LINE_ICONS: Record<DetailLine['kind'], IconName> = {
+    rule: 'list',
+    critical: 'critical',
+    danger: 'warning',
+    timed: 'history',
+    limits: 'limits',
+    changed: 'info',
+  };
 
   let by = $state<GroupBy>('category');
   let query = $state('');
@@ -267,6 +274,7 @@
       <span class="heading">{m.matrix_legend()}</span>
       <span><span class="critical"><Icon name="critical" size={16} /></span>{m.demoted_label()}</span>
       <span><Icon name="history" size={16} />{m.preview_timed()}</span>
+      <span><Icon name="limits" size={16} />{m.preview_limited()}</span>
       <span><span class="dot"></span>{m.preview_change_dot()}</span>
     </div>
   {/if}

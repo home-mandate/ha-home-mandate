@@ -797,5 +797,7 @@
   "renames_critical_text": "A rule among them allows critical actions without approval. Taking it over allows this for the renamed device too.",
   "renames_apply_critical": "Take over, allow without approval",
   "renames_failed": "The rename could not be resolved. Please try again.",
-  "rule_renamed": "“{entity}” is now called “{to}” in Home Assistant. Until the rename is taken over or dismissed in the mandate list, this rule keeps applying to the device."
+  "rule_renamed": "“{entity}” is now called “{to}” in Home Assistant. Until the rename is taken over or dismissed in the mandate list, this rule keeps applying to the device.",
+  "preview_limited": "Within limits",
+  "preview_limited_detail": "Allowed only within the limits ({limits}); other values are denied."
 }

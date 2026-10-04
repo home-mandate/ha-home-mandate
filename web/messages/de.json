@@ -797,5 +797,7 @@
   "renames_critical_text": "Eine Regel darunter erlaubt kritische Aktionen ohne Rückfrage. Wenn du sie übernimmst, gilt das auch für das umbenannte Gerät.",
   "renames_apply_critical": "Übernehmen, ohne Rückfrage erlauben",
   "renames_failed": "Die Umbenennung konnte nicht abgeschlossen werden. Bitte erneut versuchen.",
-  "rule_renamed": "„{entity}“ heißt in Home Assistant jetzt „{to}“. Bis die Umbenennung in der Mandatsliste übernommen oder verworfen ist, gilt diese Regel weiter für das Gerät."
+  "rule_renamed": "„{entity}“ heißt in Home Assistant jetzt „{to}“. Bis die Umbenennung in der Mandatsliste übernommen oder verworfen ist, gilt diese Regel weiter für das Gerät.",
+  "preview_limited": "Mit Grenzen",
+  "preview_limited_detail": "Nur innerhalb der Grenzen erlaubt ({limits}); andere Werte werden abgelehnt."
 }
