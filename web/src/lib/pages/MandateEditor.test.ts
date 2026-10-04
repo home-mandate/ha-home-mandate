@@ -137,14 +137,25 @@ describe('MandateEditor', () => {
     expect(climate.queryByRole('group', { name: 'Temperature' })).toBeNull();
     await fireEvent.click(climate.getByRole('button', { name: 'read' }));
     const temperature = within((await card(2)).getByRole('group', { name: 'Temperature' }));
-    await fireEvent.input(temperature.getByLabelText('From'), { target: { value: '16' } });
-    await fireEvent.input(temperature.getByLabelText('To'), { target: { value: '23,5' } });
+    await fireEvent.input(temperature.getByLabelText('From (°C)'), { target: { value: '16' } });
+    await fireEvent.input(temperature.getByLabelText('To (°C)'), { target: { value: '23,5' } });
     expect((await cards())[1]?.textContent).toMatch(/set temperature \(Temperature 16\s?(°C)?\s?–\s?23\.5\s?°C\)/);
-    // Something that is no number in range keeps the last limit and says so.
-    await fireEvent.input(temperature.getByLabelText('To'), { target: { value: 'warm' } });
+    // The field keeps what is typed on the way to a value ("20." and "20.0" before "20.05").
+    const to = temperature.getByLabelText('To (°C)') as HTMLInputElement;
+    for (const text of ['20.', '20.0', '20.05']) {
+      await fireEvent.input(to, { target: { value: text } });
+      expect(to.value).toBe(text);
+    }
+    await fireEvent.blur(to);
+    expect((await cards())[1]?.textContent).toMatch(/20\.05\s?°C/);
+    // Something that is no number in range is reported and blocks saving; the old limit is not kept in its place.
+    await fireEvent.input(to, { target: { value: 'warm' } });
     expect((await card(2)).getByText('Enter a number in the allowed range.')).toBeTruthy();
-    expect((await cards())[1]?.textContent).toMatch(/23\.5\s?°C/);
-    await fireEvent.input(temperature.getByLabelText('To'), { target: { value: '23' } });
+    await fireEvent.blur(to);
+    expect(to.value).toBe('warm');
+    await fireEvent.click(saveButton());
+    expect(screen.queryByRole('dialog', { name: 'Save changes?' })).toBeNull();
+    await fireEvent.input(to, { target: { value: '23' } });
 
     // Adding "read" again makes the limits invalid; they are never dropped silently.
     await fireEvent.click((await card(2)).getByRole('button', { name: 'read' }));
@@ -156,7 +167,7 @@ describe('MandateEditor', () => {
     // Stored as hundredths of a degree.
     await fireEvent.click((await card(2)).getByRole('button', { name: 'read' }));
     const again = within((await card(2)).getByRole('group', { name: 'Temperature' }));
-    await fireEvent.input(again.getByLabelText('To'), { target: { value: '22.5' } });
+    await fireEvent.input(again.getByLabelText('To (°C)'), { target: { value: '22.5' } });
     const put = vi.spyOn(api, 'putMandate');
     await fireEvent.click(saveButton());
     await fireEvent.click(within(await screen.findByRole('dialog', { name: 'Save changes?' })).getByRole('button', { name: 'Save as version 2' }));

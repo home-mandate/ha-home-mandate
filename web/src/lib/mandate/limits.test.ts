@@ -43,7 +43,10 @@ describe('units', () => {
     expect(toInput('brightness', 80)).toBe('80');
     expect(fromInput('brightness', ' 80 ')).toBe(80);
     expect(fromInput('brightness', '')).toBeNull();
-    for (const bad of ['101', '-1', '50.5', 'abc', '1e2', 'Infinity']) expect(fromInput('brightness', bad), bad).toBe('invalid');
+    for (const bad of ['101', '-1', '50.5', 'abc', '1e2', 'Infinity', ',5', '5,']) expect(fromInput('brightness', bad), bad).toBe('invalid');
+    expect(Object.is(fromInput('temperature', '-0'), 0)).toBe(true);
+    expect(fromInput('temperature', '99999999999999999999')).toBe('invalid');
+    expect(toInput('brightness', Number.NaN)).toBe('');
   });
 });
 
@@ -72,6 +75,8 @@ describe('limits as text', () => {
     expect(limitsText(rule({ constraints: { brightness: { min: 10, max: 80 } } }), 'en')).toMatch(/^Brightness 10\s?%?\s?–\s?80\s?%$/);
     expect(limitsText(rule({ constraints: { temperature: { min: 1600 } } }), 'en')).toBe('Temperature from 16°C');
     expect(limitsText(rule(), 'en')).toBe('');
+    expect(limitsText(rule({ constraints: { brightness: { min: Number.NaN, max: 80 } } }), 'en')).toMatch(/^Brightness up to 80\s?%$/);
+    expect(limitsText(rule({ constraints: { temperature: { min: -500 } } }), 'en')).toMatch(/^Temperature from -5\s?°C$/);
     setLocale('de', { reload: false });
     expect(limitsText(rule({ constraints: { temperature: { max: 2350 } } }), 'de')).toBe('Temperatur bis 23,5 °C');
   });

@@ -5,6 +5,7 @@
 // and their units; the form shows temperatures in degrees and stores hundredths.
 
 import type { Device, Rule } from '../api/types.ts';
+import { MAX_LIMIT } from '../engine/check.ts';
 import { parametersOf } from '../engine/vocabulary.ts';
 import { m } from '../i18n.ts';
 import { categoryOf } from './scope.ts';
@@ -57,9 +58,9 @@ export function limitableParameters(rule: Rule, devices: readonly Device[]): str
   return (first ?? []).filter((name) => rest.every((names) => names.includes(name)) && name in UNITS);
 }
 
-/** toInput shows a stored limit in the unit of the form. */
+/** toInput shows a stored limit in the unit of the form; nothing for an invalid one. */
 export function toInput(name: string, value: number | undefined): string {
-  return value === undefined ? '' : String(value / unitOf(name).scale);
+  return value === undefined || !Number.isFinite(value) ? '' : String(value / unitOf(name).scale);
 }
 
 /** fromInput turns what was typed into a stored limit: null for empty, 'invalid' if it is none. */
@@ -73,7 +74,8 @@ export function fromInput(name: string, text: string): number | null | 'invalid'
   const stored = shown * unit.scale;
   // Exactly what was typed is stored, never a rounded value (SPEC-v0 section 4.5).
   const rounded = Math.round(stored);
-  return Math.abs(stored - rounded) < 1e-9 ? rounded : 'invalid';
+  if (Math.abs(stored - rounded) >= 1e-9 || Math.abs(rounded) > MAX_LIMIT) return 'invalid';
+  return rounded + 0; // no -0
 }
 
 /**
@@ -100,7 +102,10 @@ export function withoutConstraints(rule: Rule): Rule {
 /** limitsText describes the limits of a rule, e.g. "Brightness 10–80%"; empty without. */
 export function limitsText(rule: Rule, locale: string): string {
   return Object.entries(rule.constraints ?? {})
-    .map(([name, { min, max }]) => {
+    .map(([name, limit]) => {
+      // An invalid limit (typed, not yet a number) is reported by the form, not described.
+      const min = Number.isFinite(limit.min) ? limit.min : undefined;
+      const max = Number.isFinite(limit.max) ? limit.max : undefined;
       const unit = unitOf(name);
       const format = new Intl.NumberFormat(locale, { style: 'unit', unit: unit.unit, maximumFractionDigits: 2 });
       const value = (v: number) => v / unit.scale;

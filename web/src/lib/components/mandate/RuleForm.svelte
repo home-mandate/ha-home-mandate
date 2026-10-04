@@ -89,23 +89,36 @@
   /** Values the rule can be limited by, and those it is limited by already (perhaps no longer fitting). */
   const limitable = $derived(limitableParameters(rule, devices));
   const limited = $derived([...new Set([...limitable, ...Object.keys(rule.constraints ?? {})])]);
-  /** What was typed into a limit field and is no number in range; the rule keeps its last valid limit. */
+  /**
+   * The text of a limit field while it is edited, so that "20." or "20.0" on the way to
+   * "20.05" stays as typed. Text that is no number in range goes into the rule as an
+   * invalid limit: the check of the draft then reports it and blocks saving, so an old
+   * limit is never stored in its place.
+   */
   const typed: Record<string, string> = $state({});
+  const invalidTyped = $derived(Object.entries(typed).some(([key, text]) => fromInput(key.split('.')[0] ?? '', text) === 'invalid'));
+  // Fields that are gone (other actions, another decision) forget what was typed into them.
+  $effect(() => {
+    for (const key of Object.keys(typed)) {
+      if (!limited.includes(key.split('.')[0] ?? '')) delete typed[key];
+    }
+  });
   const UNIT_SIGNS = { percent: '%', celsius: '°C' } as const;
   const BOUNDS = ['min', 'max'] as const;
   const BOUND_LABELS = { min: () => m.limits_min(), max: () => m.limits_max() };
 
   function setLimit(name: string, bound: 'min' | 'max', text: string) {
-    const key = `${name}.${bound}`;
+    typed[`${name}.${bound}`] = text;
     const value = fromInput(name, text);
-    if (value === 'invalid') {
-      typed[key] = text;
-      return;
-    }
-    delete typed[key];
     const current = rule.constraints?.[name] ?? {};
-    const next = { ...current, [bound]: value ?? undefined };
+    const next = { ...current, [bound]: value === 'invalid' ? Number.NaN : (value ?? undefined) };
     change(withConstraint(rule, name, next.min, next.max), false);
+  }
+
+  /** Leaving a field shows a valid limit as stored; invalid text stays for correction. */
+  function leaveLimit(name: string, bound: 'min' | 'max') {
+    const key = `${name}.${bound}`;
+    if (typed[key] !== undefined && fromInput(name, typed[key]) !== 'invalid') delete typed[key];
   }
 
   function removeLimits() {
@@ -237,7 +250,7 @@
           {#each BOUNDS as bound (bound)}
             {@const key = `${name}.${bound}`}
             <span class="time">
-              <label for="{id}-{key}">{BOUND_LABELS[bound]()}</label>
+              <label for="{id}-{key}">{BOUND_LABELS[bound]()}<span class="hm-visually-hidden">{` (${UNIT_SIGNS[unit.unit]})`}</span></label>
               <span class="unit">
                 <input
                   id="{id}-{key}"
@@ -245,9 +258,10 @@
                   inputmode="decimal"
                   autocomplete="off"
                   value={typed[key] ?? toInput(name, rule.constraints?.[name]?.[bound])}
-                  aria-invalid={typed[key] !== undefined || limitsError ? 'true' : undefined}
+                  aria-invalid={(typed[key] !== undefined && fromInput(name, typed[key]) === 'invalid') || limitsError ? 'true' : undefined}
                   aria-describedby="{id}-limits"
                   oninput={(e) => setLimit(name, bound, e.currentTarget.value)}
+                  onblur={() => leaveLimit(name, bound)}
                 />
                 <span aria-hidden="true">{UNIT_SIGNS[unit.unit]}</span>
               </span>
@@ -255,11 +269,11 @@
           {/each}
         </div>
       {/each}
-      <span id="{id}-limits" class="note" class:danger={limitsError || Object.keys(typed).length > 0}>
-        {#if limitsError}
-          <Icon name="warning" size={16} /><span>{limitsError}</span>
-        {:else if Object.keys(typed).length > 0}
+      <span id="{id}-limits" class="note" class:danger={limitsError || invalidTyped} aria-live="polite">
+        {#if invalidTyped}
           <Icon name="warning" size={16} /><span>{m.validation_limits_format()}</span>
+        {:else if limitsError}
+          <Icon name="warning" size={16} /><span>{limitsError}</span>
         {:else}
           <Icon name="info" size={16} /><span>{m.limits_note()}</span>
         {/if}
