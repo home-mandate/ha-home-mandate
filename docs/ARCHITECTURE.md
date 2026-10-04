@@ -79,7 +79,8 @@ existence in lists or error messages).
 
 1. The agent calls `perform_action(entity_id="lock.front_door", action="unlock")`.
 2. `mcp` checks the token (valid, not revoked, issued for this resource).
-3. The rate limit checks the agent's quota. Exceeded → refusal, logged.
+3. The clock is checked against the audit log, then the rate limit, counted per mandate
+   (SPEC-v0 section 11.2). Exceeded → refusal, logged.
 4. `catalog` resolves the entity exactly as Home Assistant spells it: category `lock`, area
    `hallway`, and whether the household marked it as critical. An entity it does not know
    is denied with `unknown_resource`.
@@ -114,16 +115,22 @@ next one, it is empty and every request is denied.
   category. Home-Mandate proposes candidates (names with door, gate, garage; covers of the
   classes door, window, garage, gate) but marks nothing by itself. Changes are logged in
   the server log; the audit log of the specification has no event for directory changes.
-- **Renames.** Rules and marks name entities by their ID. When Home Assistant renames an
-  entity (`entity_registry_updated` with `old_entity_id`), rules on the old ID apply to
-  nothing any more – a `deny` or `ask` rule then no longer protects the device. Rules are
-  never rewritten (decision H-E1): the server logs the rename, the API lists the rules on
-  devices and areas that no longer exist as `stale_references` of the mandate, and the
-  mandate list and the editor warn until a human chooses the device again. The critical
-  mark moves to the new ID in memory as soon as the event arrives, before the new ID can
-  be decided on, and is stored after the next refresh; the old ID keeps it. A rename while
-  Home-Mandate is not connected is not seen: the settings then show the mark on an entity
-  that no longer exists, and the new ID is unmarked until a human marks it.
+- **Renames.** Rules and marks name entities by their ID. Home-Mandate finds a rename by
+  the event (`entity_registry_updated` with `old_entity_id`) and, also after an outage or
+  a restart, by comparing the registry IDs of Home Assistant with the entity IDs it last
+  saw for them (`entity_registry_ids`). A rename takes effect in memory before the new ID
+  can be decided on and is stored after the refresh (`entity_renames`). Until a human
+  resolves it, a rule on the former ID keeps applying to the renamed entity: for a
+  mandate that names the former ID, a request is evaluated with both IDs and the stricter
+  decision wins (deny over ask over allow), so a `deny` or `ask` rule keeps protecting the
+  device (fail closed). The mandate list shows the open renames: **take over** stores a
+  new version of every affected mandate with the current ID (a rule that allows critical
+  actions without approval needs the separate confirmation, checked for all mandates
+  before any is changed); **don't take over** keeps the mandates and lets the rules on
+  the former ID go, after an inline confirmation. A rename back undoes the rename. The
+  critical mark moves along (the old ID keeps it), and `stale_references` of a mandate
+  name the entity a device was renamed to. Resolutions are in the server log; the audit
+  log of the specification has no event for directory changes yet.
 - **Areas.** A rule on an area covers the devices that are in it now. A removed area is
   reported like a renamed device; a device moved out of an area leaves the area's rules,
   which the editor points out at every `deny` or `ask` rule that names only an area.
@@ -275,9 +282,11 @@ Further tables: `critical_entities` (the household's critical marks), the settin
   shows that a stored version was altered (it then denies), but a new, consistent version
   can be written. The audit log shows such changes only up to its last checkpoint that left
   the device. Mandates signed with a key outside the device (planned) remove this trust.
-- **The clock.** Validity periods, time windows and the audit log follow the host clock;
-  Home-Mandate does not yet deny while the clock is behind the newest audit entry
-  (SPEC-v0 section 11.4 recommends it).
+- **The clock.** Validity periods, time windows and the audit log follow the host clock.
+  While it lies more than a minute behind the latest time in the audit log, nothing is
+  decided (SPEC-v0 section 11.4): requests fail with `clock_behind`, the UI shows a banner.
+  If the clock ran ahead by mistake and was corrected, `home-mandate audit accept-clock`
+  sets the entries with the future times aside for this check.
 - **Nothing from the agent** except the requested resource, action, parameters and its
   reason, which is shown as the agent's claim.
 
