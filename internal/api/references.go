@@ -17,7 +17,10 @@ type wireStaleReference struct {
 	Rule     int     `json:"rule"`
 	RuleID   string  `json:"rule_id"`
 	EntityID *string `json:"entity_id,omitempty"`
-	Area     *string `json:"area,omitempty"`
+	// RenamedTo is the entity the device was renamed to, while nobody resolved the rename:
+	// the rule keeps applying to it until then.
+	RenamedTo *string `json:"renamed_to,omitempty"`
+	Area      *string `json:"area,omitempty"`
 }
 
 // ruleResources are the resources of a document's rules.
@@ -43,6 +46,12 @@ func (s *Server) staleReferences(info mandate.Info, document []byte) []wireStale
 	if json.Unmarshal(document, &doc) != nil {
 		return out
 	}
+	renamedTo := map[string]string{}
+	for current, formers := range s.cfg.Renames.Open() {
+		for _, f := range formers {
+			renamedTo[f] = current
+		}
+	}
 	areas := map[string]bool{}
 	for _, a := range s.cfg.Catalog.Areas() {
 		areas[a.ID] = true
@@ -52,6 +61,9 @@ func (s *Server) staleReferences(info mandate.Info, document []byte) []wireStale
 		if id := r.Resource.EntityID; id != "" {
 			if _, ok := s.cfg.Catalog.Lookup(id); !ok {
 				ref.EntityID = &id
+				if to, renamed := renamedTo[id]; renamed {
+					ref.RenamedTo = &to
+				}
 			}
 		}
 		if area := r.Resource.Area; area != "" && !areas[area] {

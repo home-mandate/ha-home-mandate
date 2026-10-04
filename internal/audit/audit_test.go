@@ -300,3 +300,25 @@ func TestClockBehindTheNewestEntry(t *testing.T) {
 		t.Errorf("entries after accepting: behind = %v, %v", behind, err)
 	}
 }
+
+func TestClockChecksReportDatabaseErrors(t *testing.T) {
+	l, db := newLog(t)
+	ctx := context.Background()
+	if _, err := l.Append(ctx, audit.Entry{Event: audit.EventEmergencyStopActivated, Actor: &audit.Actor{Kind: audit.ActorUser, ID: "u1"}}); err != nil {
+		t.Fatal(err)
+	}
+	// A time that cannot be read is an error, never "the clock is fine".
+	if _, err := db.Exec(`UPDATE audit_log SET recorded_at = 'yesterday'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.ClockBehind(ctx); err == nil {
+		t.Error("ClockBehind read an unreadable time")
+	}
+	_ = db.Close()
+	if _, err := l.ClockBehind(ctx); err == nil {
+		t.Error("ClockBehind without a database")
+	}
+	if _, _, err := l.AcceptClock(ctx); err == nil {
+		t.Error("AcceptClock without a database")
+	}
+}

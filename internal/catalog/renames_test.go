@@ -129,3 +129,31 @@ func TestRegistryIDsFindRenamesAfterAnOutage(t *testing.T) {
 		t.Error("Hold took an invalid rename")
 	}
 }
+
+// A rename that cannot be stored stays in force in memory and is stored later.
+func TestRenamesThatCannotBeStoredStayHeld(t *testing.T) {
+	_, s := newMarks(t)
+	ctx := context.Background()
+	r, err := catalog.LoadRenames(ctx, s.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Observe([]ha.EntityEntry{{ID: "reg-1", EntityID: "lock.a"}})
+	r.Hold(catalog.Rename{Old: "lock.a", New: "lock.b"})
+	_ = s.Close()
+	if err := r.Store(ctx); err == nil {
+		t.Fatal("Store without a database succeeded")
+	}
+	if got := r.Formers("lock.b"); len(got) != 1 {
+		t.Errorf("held rename lost: %v", got)
+	}
+	if _, err := r.Resolve(ctx, "lock.b", catalog.ResolutionApplied, "user-1"); err == nil {
+		t.Error("Resolve without a database succeeded")
+	}
+	if got := r.Formers("lock.b"); len(got) != 1 {
+		t.Errorf("a failed Resolve resolved: %v", got)
+	}
+	if _, err := catalog.LoadRenames(ctx, s.DB()); err == nil {
+		t.Error("LoadRenames without a database succeeded")
+	}
+}
