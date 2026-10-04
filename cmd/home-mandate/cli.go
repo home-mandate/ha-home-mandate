@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mandate-spec/mandate-spec/jws"
 	"io"
 	"os"
 	"path/filepath"
@@ -34,6 +35,8 @@ var errBrokenLog = errors.New("audit log is broken")
 
 // state is the opened database with everything built on it.
 type state struct {
+	// signer signs the checkpoints of the audit log.
+	signer    *audit.Signer
 	cfg       config.Config
 	store     *store.Store
 	household string
@@ -51,7 +54,27 @@ func openState(ctx context.Context, e env) (*state, error) {
 	if err != nil {
 		return nil, err
 	}
-	return openStore(ctx, dir)
+	s, err := openStore(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := attachSigner(ctx, s, dir, e.getenv); err != nil {
+		_ = s.store.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// attachSigner gives the audit log the key for its checkpoints, so that it writes them
+// and verifies how far the log is anchored.
+func attachSigner(ctx context.Context, s *state, dataDir string, getenv func(string) string) error {
+	signer, err := loadSigner(ctx, s.store, dataDir, getenv)
+	if err != nil {
+		return err
+	}
+	s.signer = signer
+	s.log.SetSigner(signer)
+	return nil
 }
 
 func openStore(ctx context.Context, dataDir string) (*state, error) {
@@ -323,7 +346,7 @@ func readDocument(e env, name string) ([]byte, error) {
 
 func auditCommand(ctx context.Context, e env, args []string) int {
 	if len(args) != 1 {
-		return usageError(e, "audit needs verify or export")
+		return usageError(e, "audit needs verify, export or key")
 	}
 	switch args[0] {
 	case "verify":
@@ -337,6 +360,19 @@ func auditCommand(ctx context.Context, e env, args []string) int {
 				return errBrokenLog
 			}
 			fmt.Fprintln(e.stdout, "audit log valid")
+			// Entries after the last checkpoint are consistent but not anchored.
+			fmt.Fprintf(e.stdout, "entries=%d\nanchored_up_to=%d\nlog_id=%s\n", r.Entries, r.AnchoredSeq, s.signer.LogID)
+			return nil
+		})
+	case "key":
+		// The public key and the log ID belong outside the device: with them, anyone can
+		// verify an exported log and its checkpoints (SPEC-v0 section 9.5).
+		return withState(ctx, e, func(s *state) error {
+			set, err := jws.MarshalJWKS(jws.Keys{s.signer.KeyID: s.signer.Key.Public()})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(e.stdout, "log_id=%s\n%s\n", s.signer.LogID, set)
 			return nil
 		})
 	case "export":

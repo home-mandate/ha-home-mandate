@@ -472,6 +472,7 @@
   "event_estop_off": "Not-Aus aufgehoben",
   "event_estop_on": "Not-Aus ausgelöst",
   "event_log_pruned": "Protokoll gekürzt",
+  "event_log_checkpoint": "Protokollstand signiert",
   "event_login_rejected": "Anmeldung abgelehnt",
   "event_mandate_changed": "Mandat geändert",
   "event_mandate_created": "Mandat angelegt",

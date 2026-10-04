@@ -58,5 +58,7 @@
   "page_pair_submit": "Continue",
   "page_pair_invalid": "The code is wrong, expired or already used.",
   "page_pair_locked": "Too many failed attempts. Please wait ten minutes.",
-  "approval_params": "Parameters: {params}"
+  "approval_params": "Parameters: {params}",
+  "checkpoint_title": "Home-Mandate: state of the audit log",
+  "checkpoint_message": "Audit log up to entry {seq}, digest {digest}. This message is evidence of the state of the log; please keep it. Log {log}."
 }

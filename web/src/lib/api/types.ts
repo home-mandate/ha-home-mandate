@@ -518,7 +518,8 @@ export type AuditEvent =
   | 'emergency_stop.activated'
   | 'emergency_stop.released'
   | 'auth.rejected'
-  | 'log.truncated';
+  | 'log.truncated'
+  | 'log.checkpoint';
 
 export type ResultStatus = 'executed' | 'denied' | 'failed';
 export type DeniedBy = 'mandate' | 'approval' | 'rate_limit' | 'emergency_stop' | 'authentication';

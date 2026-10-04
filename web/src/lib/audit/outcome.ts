@@ -29,6 +29,7 @@ const EVENTS: Record<AuditEvent, () => string> = {
   'emergency_stop.released': () => m.event_estop_off(),
   'auth.rejected': () => m.event_login_rejected(),
   'log.truncated': () => m.event_log_pruned(),
+  'log.checkpoint': () => m.event_log_checkpoint(),
 };
 
 const REASONS: Record<Reason, () => string> = {

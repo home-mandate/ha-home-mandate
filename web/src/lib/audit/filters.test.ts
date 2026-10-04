@@ -62,7 +62,7 @@ describe('parseFilters', () => {
 
   it('accepts every administrative event type', () => {
     for (const type of ['agent.registered', 'agent.revoked', 'mandate.created', 'mandate.updated', 'mandate.revoked',
-      'emergency_stop.activated', 'emergency_stop.released', 'auth.rejected', 'log.truncated']) {
+      'emergency_stop.activated', 'emergency_stop.released', 'auth.rejected', 'log.truncated', 'log.checkpoint']) {
       expect(parseFilters({ type: [type] }).type).toBe(type);
     }
     expect(parseFilters({ type: ['decision'] }).type).toBe('decision');

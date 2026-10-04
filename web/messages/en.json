@@ -472,6 +472,7 @@
   "event_estop_off": "Emergency stop lifted",
   "event_estop_on": "Emergency stop triggered",
   "event_log_pruned": "Log pruned",
+  "event_log_checkpoint": "Log checkpoint signed",
   "event_login_rejected": "Sign-in rejected",
   "event_mandate_changed": "Mandate changed",
   "event_mandate_created": "Mandate created",

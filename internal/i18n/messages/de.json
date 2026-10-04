@@ -58,5 +58,7 @@
   "page_pair_submit": "Weiter",
   "page_pair_invalid": "Der Code ist falsch, abgelaufen oder schon benutzt.",
   "page_pair_locked": "Zu viele Fehlversuche. Bitte warte zehn Minuten.",
-  "approval_params": "Parameter: {params}"
+  "approval_params": "Parameter: {params}",
+  "checkpoint_title": "Home-Mandate: Stand des Protokolls",
+  "checkpoint_message": "Protokoll bis Eintrag {seq}, Prüfwert {digest}. Diese Nachricht belegt den Stand des Protokolls; bitte aufbewahren. Protokoll {log}."
 }

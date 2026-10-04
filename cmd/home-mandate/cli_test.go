@@ -336,3 +336,26 @@ func TestMandateCheck(t *testing.T) {
 		t.Errorf("check with an argument: exit %d", code)
 	}
 }
+
+// "audit key" prints what a verifier outside this device needs; "audit verify" says how
+// far the log is anchored by checkpoints.
+func TestAuditKeyAndAnchoredVerify(t *testing.T) {
+	c := newCLI(t)
+	c.register("Voice assistant")
+	key := c.mustRun("", "audit", "key")
+	logID := field(t, key, "log_id")
+	if len(logID) != 36 || !strings.Contains(key, `"kty": "OKP"`) || strings.Contains(key, `"d"`) {
+		t.Fatalf("audit key: %q", key)
+	}
+	out := c.mustRun("", "audit", "verify")
+	if field(t, out, "log_id") != logID || field(t, out, "anchored_up_to") != "0" || field(t, out, "entries") == "0" {
+		t.Errorf("audit verify: %q", out)
+	}
+	if again := c.mustRun("", "audit", "key"); again != key {
+		t.Error("the key or the log ID changed between two calls")
+	}
+	c.envVars[envAuditKeyFile] = filepath.Join(c.envVars["HM_DATA_DIR"], "no-such-directory", "key")
+	if code, _, errOut := c.run("", "audit", "verify"); code != exitFailure || !strings.Contains(errOut, "audit checkpoint key") {
+		t.Errorf("key file that cannot be created: exit %d, %q", code, errOut)
+	}
+}

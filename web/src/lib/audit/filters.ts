@@ -41,6 +41,7 @@ export const EVENTS: readonly AuditEvent[] = [
   'emergency_stop.released',
   'auth.rejected',
   'log.truncated',
+  'log.checkpoint',
 ];
 
 const HOUR_MS = 3_600_000;

@@ -24,7 +24,7 @@ const (
 var (
 	auditEvents = []string{audit.EventDecision, audit.EventMandateCreated, audit.EventMandateUpdated, audit.EventMandateRevoked,
 		audit.EventAgentRegistered, audit.EventAgentRevoked, audit.EventEmergencyStopActivated, audit.EventEmergencyStopReleased,
-		audit.EventAuthRejected, audit.EventLogTruncated}
+		audit.EventAuthRejected, audit.EventLogTruncated, audit.EventLogCheckpoint}
 	auditDecisions = []string{"allow", "ask", "deny", "default"}
 	// queryKeys are the parameters of GET api/audit; every one but decision at most once.
 	queryKeys = []string{"before", "limit", "since", "until", "agent", "device", "q", "group", "event", "decision"}

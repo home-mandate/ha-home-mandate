@@ -81,6 +81,10 @@ func serve(ctx context.Context, e env) int {
 	}
 	defer s.store.Close()
 	s.cfg = cfg
+	if err := attachSigner(ctx, s, cfg.DataDir, e.getenv); err != nil {
+		fmt.Fprintln(e.stderr, "home-mandate:", err)
+		return exitFailure
+	}
 	logger := slog.New(slog.NewJSONHandler(e.stderr, &slog.HandlerOptions{Level: s.cfg.LogLevel}))
 
 	// A stop signal during start-up cancels ctx and makes the step in progress fail; that
@@ -458,6 +462,11 @@ func (g *gateway) run(ctx context.Context) int {
 	var serveFailed atomic.Bool
 	wg.Go(func() { g.catalog.Run(ctx, catalogDebounce) })
 	wg.Go(func() { g.retention(ctx) })
+	// Checkpoints anchor the audit log; once a day their position goes to the approvers.
+	wg.Go(func() {
+		checkpointer{log: g.state.log, settings: g.state.store, now: time.Now, logger: g.logger,
+			anchor: approverAnchor{approvers: g.state.approvers, notify: g.client.Notify, language: g.householdLanguage}}.run(ctx)
+	})
 	wg.Go(func() { g.api.RunTail(ctx) })
 	wg.Go(func() { g.api.RunVerifier(ctx) })
 	serveOn := func(name string, srv *http.Server, ln net.Listener) {
