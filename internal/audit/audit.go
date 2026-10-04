@@ -23,6 +23,7 @@ import (
 
 	specaudit "github.com/mandate-spec/mandate-spec/audit"
 	"github.com/mandate-spec/mandate-spec/jcs"
+	"github.com/mandate-spec/mandate-spec/jws"
 
 	"github.com/home-mandate/home-mandate/internal/untrusted"
 )
@@ -42,6 +43,7 @@ const (
 	EventEmergencyStopReleased  = "emergency_stop.released"
 	EventAuthRejected           = "auth.rejected"
 	EventLogTruncated           = "log.truncated"
+	EventLogCheckpoint          = "log.checkpoint"
 )
 
 const (
@@ -81,6 +83,9 @@ type Entry struct {
 	Approval   *Approval
 	Result     *Result
 	Truncated  *Truncated
+	// checkpoint marks an entry of Checkpoint; its signature is made when the entry
+	// gets its place in the chain.
+	checkpoint bool
 	// ApprovalID is the ID of the approval request (internal/approval) that this decision
 	// entry ends. It is not part of the entry: it only tells the OnCommit hook which open
 	// request in the UI the entry closes.
@@ -196,6 +201,7 @@ type wire struct {
 	Approval   *Approval   `json:"approval,omitempty"`
 	Result     *Result     `json:"result,omitempty"`
 	Truncated  *Truncated  `json:"truncated,omitempty"`
+	Checkpoint *checkpoint `json:"checkpoint,omitempty"`
 	Prev       *string     `json:"prev"`
 }
 
@@ -207,6 +213,10 @@ type Log struct {
 	mu       sync.Mutex
 	now      func() time.Time
 	onCommit func(seq int64, e Entry)
+
+	// checkpointSigner signs checkpoints; nil: the log writes none.
+	signerMu         sync.Mutex
+	checkpointSigner *Signer
 }
 
 // New returns the log for principal on db (opened by internal/store).
@@ -321,6 +331,11 @@ func (l *Log) AppendTx(ctx context.Context, tx *sql.Tx, e Entry) (int64, error) 
 	if lastSeq > 0 {
 		w.Prev = &lastDigest
 	}
+	if e.checkpoint {
+		if w.Checkpoint, err = l.sign(lastSeq, lastDigest); err != nil {
+			return 0, err
+		}
+	}
 	canonical, digest, err := encode(w)
 	if err != nil {
 		return 0, err
@@ -385,12 +400,25 @@ func canonicalJSON(v any) ([]byte, error) {
 // validate checks the schema with the reference verifier: a copy of the entry as the
 // first entry of a log (seq 1, prev null) must be a valid log on its own.
 func validate(w wire) error {
+	entries := [][]byte{}
 	w.Seq, w.Prev = 1, nil
+	if w.Checkpoint != nil {
+		// A checkpoint is never the first entry: check it behind a placeholder.
+		first := wire{Type: entryType, ID: w.ID, Seq: 1, RecordedAt: w.RecordedAt, Event: EventEmergencyStopActivated,
+			Principal: w.Principal, Actor: &Actor{Kind: ActorSystem, ID: "placeholder"}}
+		data, err := canonicalJSON(first)
+		digest, digestErr := specaudit.Digest(data)
+		if err := errors.Join(err, digestErr); err != nil {
+			return err
+		}
+		entries = append(entries, data)
+		w.Seq, w.Prev = 2, &digest
+	}
 	data, err := canonicalJSON(w)
 	if err != nil {
 		return err
 	}
-	if r, err := specaudit.Verify([][]byte{data}); err != nil || !r.Valid {
+	if r, err := specaudit.Verify(append(entries, data)); err != nil || !r.Valid {
 		return fmt.Errorf("%w: event %q", ErrInvalidEntry, w.Event)
 	}
 	return nil
@@ -411,6 +439,11 @@ func (l *Log) Check(ctx context.Context) (specaudit.Result, int, error) {
 	})
 	if err != nil {
 		return specaudit.Result{}, 0, err
+	}
+	if signer := l.signer(); signer != nil {
+		r, err := specaudit.VerifyAnchored(entries, specaudit.Anchor{
+			Keys: jws.Keys{signer.KeyID: signer.Key.Public()}, LogID: signer.LogID})
+		return r, len(entries), err
 	}
 	r, err := specaudit.Verify(entries)
 	return r, len(entries), err
@@ -472,6 +505,12 @@ func (l *Log) Truncate(ctx context.Context, cutoff time.Time, actor Actor) (int6
 			return fmt.Errorf("audit: delete: %w", err)
 		}
 		removed, _ = res.RowsAffected()
+		// The entry that accounts for the removed beginning must itself be anchored.
+		if l.signer() != nil {
+			if _, err := l.AppendTx(ctx, tx, Entry{Event: EventLogCheckpoint, checkpoint: true}); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	return removed, err
