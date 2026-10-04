@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mandate-spec/mandate-spec/evaluator"
+
 	"github.com/home-mandate/home-mandate/internal/approval"
 	"github.com/home-mandate/home-mandate/internal/audit"
 	"github.com/home-mandate/home-mandate/internal/ha"
@@ -207,13 +209,58 @@ func TestAskWithoutApprovals(t *testing.T) {
 	}
 }
 
-func TestApprovalTimeout(t *testing.T) {
-	for in, want := range map[string]time.Duration{
-		"PT2M": 2 * time.Minute, "PT30S": 30 * time.Second, "PT1M30S": 90 * time.Second, "PT10S": 10 * time.Second,
-		"": 0, "P1D": 0, "PTxM": 0, "PT5X": 0, "PT1MxS": 0, "PT1M3": 0,
+// SPEC-v0 section 11.1 item 5: a confirmation older than its timeout when the action
+// would be executed has expired; nothing reaches Home Assistant.
+func TestExpiredConfirmationIsNotExecuted(t *testing.T) {
+	old := approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: time.Now().Add(-10 * time.Minute)}
+	h := approvalHarness(t, &fakeApprover{result: old})
+	if errText := unlock(h, nil); errText != "denied: approval_expired" {
+		t.Errorf("expired confirmation = %q", errText)
+	}
+	if calls := h.ha.recorded(); len(calls) != 0 {
+		t.Errorf("Home Assistant called with an expired confirmation: %v", calls)
+	}
+	if e := h.lastEntry(); path(e, "approval", "outcome") != "approved" || path(e, "result", "denied_by") != "approval" {
+		t.Errorf("audit entry = %v", e)
+	}
+}
+
+func TestApprovalValidity(t *testing.T) {
+	g := &Gateway{cfg: Config{ApprovalLimit: 2 * time.Minute}}
+	for timeout, want := range map[time.Duration]time.Duration{
+		30 * time.Second: 30 * time.Second, 0: 2 * time.Minute, time.Hour: 2 * time.Minute, -time.Second: 2 * time.Minute,
 	} {
-		if got := approvalTimeout(in); got != want {
-			t.Errorf("approvalTimeout(%q) = %v, want %v", in, got, want)
+		if got := g.approvalValidity(timeout); got != want {
+			t.Errorf("approvalValidity(%v) = %v, want %v", timeout, got, want)
+		}
+	}
+}
+
+// A request about a device the household marked as critical is a critical request: it
+// only reaches devices where critical requests are on.
+func TestRequestOnAMarkedDeviceIsCritical(t *testing.T) {
+	f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeRejected, By: approverID, At: answeredAt}}
+	h := approvalHarness(t, f)
+	h.catalog.mu.Lock()
+	light := h.catalog.devices["light.kitchen"]
+	light.Critical = true
+	h.catalog.devices["light.kitchen"] = light
+	h.catalog.mu.Unlock()
+	_, _ = h.call(h.session(), "perform_action", map[string]any{"entity_id": "light.kitchen", "action": "turn_on"})
+	if asked := f.requests(); len(asked) != 1 || !asked[0].Critical {
+		t.Errorf("requests = %+v, want one critical request", asked)
+	}
+	for _, tc := range []struct {
+		d    pdp.Decision
+		want bool
+	}{
+		{pdp.Decision{Resource: evaluator.Resource{Category: "lock"}, Action: "unlock"}, true},
+		{pdp.Decision{Resource: evaluator.Resource{Category: "light", Critical: true}, Action: "turn_on"}, true},
+		{pdp.Decision{Resource: evaluator.Resource{Category: "light", Critical: true}, Action: "read"}, false},
+		{pdp.Decision{Resource: evaluator.Resource{Category: "light"}, Action: "turn_on"}, false},
+	} {
+		if got := criticalRequest(tc.d); got != tc.want {
+			t.Errorf("criticalRequest(%+v) = %v", tc.d, got)
 		}
 	}
 }

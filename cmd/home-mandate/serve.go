@@ -211,7 +211,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	gw := mcp.New(mcp.Config{Resource: resource, ResourceMetadataURL: metadata, Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
 		TemperatureUnit: g.temperatureUnit,
-		Limiter:         restoredLimiter(ctx, s.log, time.Now, logger), Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
+		Limiter:         restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
 	as, handler, err := withOAuth(s, gw.Handler(), resource, logger)
 	if err != nil {
 		return nil, err

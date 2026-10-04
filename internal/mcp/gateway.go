@@ -37,6 +37,8 @@ const Path = "/mcp"
 const (
 	maxRequestBytes    = 64 << 10
 	defaultCallTimeout = 10 * time.Second
+	// defaultApprovalLimit is the upper limit of an approval wait without configuration.
+	defaultApprovalLimit = 2 * time.Minute
 	// noMandateLimit bounds requests of agents without a usable mandate, which would
 	// otherwise fill the audit log with denials.
 	noMandateLimit = 60
@@ -119,6 +121,9 @@ type Config struct {
 	TemperatureUnit func() string
 	Now             func() time.Time
 	CallTimeout     time.Duration
+	// ApprovalLimit is the upper limit of a wait for an approval (HM_APPROVAL_TIMEOUT); a
+	// confirmation is valid for the request's timeout, at most this long.
+	ApprovalLimit time.Duration
 }
 
 // Gateway serves the MCP tools.
@@ -139,6 +144,9 @@ func New(cfg Config) *Gateway {
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.ApprovalLimit <= 0 {
+		cfg.ApprovalLimit = defaultApprovalLimit
 	}
 	if cfg.CallTimeout <= 0 {
 		cfg.CallTimeout = defaultCallTimeout
@@ -427,13 +435,15 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 	if ask {
 		return g.askHuman(ctx, a, tokenOf(req), d, call, in.Reason)
 	}
-	return g.execute(ctx, a, d, call, approvalRef{})
+	return g.execute(ctx, a, d, call, approvalRef{}, time.Time{})
 }
 
 // execute calls Home Assistant only while its "executed" entry is being written in the
 // same transaction: no entry, no execution. A failed call rolls the entry back and is
 // logged as failed.
-func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, call ha.ServiceCall, appr approvalRef) (*sdk.CallToolResult, actionOut, error) {
+// execute calls the service; a confirmed action ends at expires at the latest (zero: no
+// confirmation).
+func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, call ha.ServiceCall, appr approvalRef, expires time.Time) (*sdk.CallToolResult, actionOut, error) {
 	start := g.cfg.Now()
 	executed := false
 	e := g.entry(a, d, true, audit.Result{Status: audit.StatusExecuted})
@@ -441,6 +451,11 @@ func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, ca
 	err := g.cfg.Audit.WithEntry(context.WithoutCancel(ctx), e, func() error {
 		cctx, cancel := context.WithTimeout(ctx, g.cfg.CallTimeout)
 		defer cancel()
+		if !expires.IsZero() {
+			var cancelExpiry context.CancelFunc
+			cctx, cancelExpiry = context.WithDeadline(cctx, expires)
+			defer cancelExpiry()
+		}
 		if err := g.cfg.HA.CallService(cctx, call); err != nil {
 			return err
 		}
