@@ -38,7 +38,7 @@ describe('words in and about a cell', () => {
     expect(cellWhy({ rule: 2, demoted: false, timed: null, limited: false })).toBe('From Rule 3');
     expect(cellWhy({ rule: 2, demoted: true, timed: null, limited: false })).toBe('From Rule 3 · Downgraded');
     expect(cellWhy({ rule: 2, demoted: false, timed: null, limited: true })).toBe('From Rule 3 · Within limits');
-    expect(cellWhy({ rule: null, demoted: false, timed: { decision: 'allow', rule: 3, demoted: false } })).toBe('No rule applies · Time-dependent: Allowed');
+    expect(cellWhy({ rule: null, demoted: false, limited: false, timed: { decision: 'allow', rule: 3, demoted: false } })).toBe('No rule applies · Time-dependent: Allowed');
   });
 
   it('gives a cell its accessible name', () => {
