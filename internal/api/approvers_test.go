@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -223,5 +224,54 @@ func TestUnavailableOr(t *testing.T) {
 	}
 	if err := unavailableOr(errHA); err != errHA {
 		t.Errorf("other error = %v", err)
+	}
+}
+
+// The first change wins (decision of 2026-10-04): a change based on an older version of
+// the approvers is a conflict and stores nothing; the answer carries the new version.
+func TestApproverConflicts(t *testing.T) {
+	h := newHarness(t)
+	var list wireApproverList
+	h.ok(http.MethodGet, "/api/approvers", nil, &list)
+	old := list.Version
+	if len(old) != 32 {
+		t.Fatalf("version = %q", old)
+	}
+	// Markus saves first.
+	body := putBody([]map[string]any{dev("mobile_app_iphone_von_markus", true)}, false, false, nil)
+	body["base_version"] = old
+	h.ok(http.MethodPut, "/api/approvers/"+adminID, body, &list)
+	if list.Version == old {
+		t.Fatal("version unchanged after a change")
+	}
+	// Anna's change started from the same, now old version: conflict, nothing stored.
+	late := putBody(nil, true, false, nil)
+	late["base_version"] = old
+	if r := h.do(http.MethodPut, "/api/approvers/"+annaID, late, as(annaID)); r.errCode() != codeConflict || r.code != http.StatusConflict {
+		t.Errorf("late change = %d %s", r.code, r.body)
+	}
+	if r := h.do(http.MethodDelete, "/api/approvers/"+adminID+"?base_version="+old, nil); r.errCode() != codeConflict {
+		t.Errorf("late removal = %d %s", r.code, r.body)
+	}
+	if got, _ := h.approvers.List(context.Background()); len(got) != 1 || got[0].UserID != adminID {
+		t.Errorf("approvers = %+v", got)
+	}
+	// With the new version both work.
+	late["base_version"] = list.Version
+	h.ok(http.MethodPut, "/api/approvers/"+annaID, late, &list, as(annaID))
+	h.ok(http.MethodDelete, "/api/approvers/"+annaID+"?base_version="+list.Version, nil, nil)
+	for _, tc := range []struct {
+		method, path string
+		body         any
+	}{
+		{http.MethodPut, "/api/approvers/" + annaID, map[string]any{"devices": []any{}, "ui": true, "ui_critical": false, "language": nil, "base_version": "x"}},
+		{http.MethodPut, "/api/approvers/" + annaID, map[string]any{"devices": []any{}, "ui": true, "ui_critical": false, "language": nil, "base_version": ""}},
+		{http.MethodDelete, "/api/approvers/" + adminID + "?base_version=x", nil},
+		{http.MethodDelete, "/api/approvers/" + adminID + "?base_version=" + list.Version + "&base_version=" + list.Version, nil},
+		{http.MethodDelete, "/api/approvers/" + adminID + "?other=1", nil},
+	} {
+		if r := h.do(tc.method, tc.path, tc.body); r.errCode() != codeInvalidInput || r.field() != "/base_version" {
+			t.Errorf("%s %s = %d %s", tc.method, tc.path, r.code, r.body)
+		}
 	}
 }

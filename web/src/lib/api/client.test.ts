@@ -303,9 +303,9 @@ describe('createHttpClient', () => {
     await c.audit({});
     await c.verifyAudit();
     await c.approvers();
-    await c.putApprover('u1', { devices: [{ service: 'mobile_app_a', critical: true }], ui: false, ui_critical: false, language: null });
+    await c.putApprover('u1', { devices: [{ service: 'mobile_app_a', critical: true }], ui: false, ui_critical: false, language: null }, 'v/1');
     await c.testApprover('u1');
-    await c.deleteApprover('u1');
+    await c.deleteApprover('u1', 'v/1');
     await c.setEmergencyStop(false);
     expect(calls().map((x) => `${x.init.method} ${x.url.slice(BASE.length)} ${x.init.body ?? ''}`.trim())).toEqual([
       'PUT api/session/language {"language":"de"}',
@@ -334,9 +334,9 @@ describe('createHttpClient', () => {
       'GET api/audit',
       'POST api/audit/verify',
       'GET api/approvers',
-      'PUT api/approvers/u1 {"devices":[{"service":"mobile_app_a","critical":true}],"ui":false,"ui_critical":false,"language":null}',
+      'PUT api/approvers/u1 {"devices":[{"service":"mobile_app_a","critical":true}],"ui":false,"ui_critical":false,"language":null,"base_version":"v/1"}',
       'POST api/approvers/u1/test',
-      'DELETE api/approvers/u1',
+      'DELETE api/approvers/u1?base_version=v%2F1',
       'PUT api/emergency-stop {"active":false}',
     ]);
   });

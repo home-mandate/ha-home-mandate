@@ -109,7 +109,9 @@ interface State {
   templates: Template[];
   audit: AuditEntry[];
   approvals: Approvals;
-  approvers: ApproverList;
+  approvers: Omit<ApproverList, 'version'>;
+  /** Counts the changes of the approvers; its hex form is the version. */
+  approversVersion: number;
   pairing: { codes: Record<string, 'open' | 'expired'>; wrong: number; lockedUntil: number };
 }
 
@@ -137,6 +139,9 @@ export interface MockOptions {
 }
 
 const HOUR_MS = 3_600_000;
+
+/** Version of the approvers of a new mock household (ApproverList.version). */
+export const MOCK_APPROVERS_VERSION = '1'.padStart(32, '0');
 
 /** householdDay is the calendar day of a moment in the household's time zone, e.g. "2026-10-02". */
 function householdDay(at: Date, timeZone: string): string {
@@ -283,6 +288,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     audit: options.empty ? [] : auditFixture,
     approvals: options.empty ? { open: [], history: [] } : { open: approvalsOpenFixture, history: approvalsHistoryFixture },
     approvers: approversFixture,
+    approversVersion: 1,
     pairing: { codes: { [normalizeCode(MOCK_PAIRING_CODE)]: 'open', [normalizeCode(MOCK_EXPIRED_CODE)]: 'expired' }, wrong: 0, lockedUntil: 0 },
   };
   let state = options.hostile ? hostileState(initial) : initial;
@@ -442,6 +448,17 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     }
     state = { ...state, pairing: { ...pairing, wrong: 0 } };
     return key;
+  }
+
+  /** approverList is the list with its version, as the server answers it. */
+  function approverList(): ApproverList {
+    return { ...state.approvers, version: state.approversVersion.toString(16).padStart(32, '0') };
+  }
+
+  /** The first change wins: one based on an older version is a conflict. */
+  function checkVersion(base: string): void {
+    if (!/^[0-9a-f]{32}$/.test(base)) fail('invalid_input', '/base_version');
+    if (base !== approverList().version) fail('conflict');
   }
 
   function closeApproval(id: string, outcome: ApprovalHistoryEntry['outcome'], byName: string | null, via?: 'push' | 'ui'): ApprovalHistoryEntry | null {
@@ -655,26 +672,29 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     },
 
     async approvers() {
-      return copy(state.approvers);
+      return copy(approverList());
     },
-    async putApprover(userId, update) {
+    async putApprover(userId, update, baseVersion) {
+      checkVersion(baseVersion);
       const { candidates, approvers } = state.approvers;
       const person = candidates.people.find((p) => p.user_id === userId) ?? fail('invalid_input', '/user_id');
       checkApprover(update, person.is_admin, candidates.devices.map((d) => d.service));
       const approver: Approver = { user_id: userId, name: person.name, ...update, reach: reachOf(update, person.is_admin) };
       const index = approvers.findIndex((a) => a.user_id === userId);
       const next = index < 0 ? [...approvers, approver] : approvers.map((a, i) => (i === index ? approver : a));
-      state = { ...state, approvers: { candidates, approvers: next } };
+      state = { ...state, approvers: { candidates, approvers: next }, approversVersion: state.approversVersion + 1 };
       emit({ type: 'approvers.changed' });
       setSystem({ ...state.system, approvers_configured: state.approvers.approvers.length });
-      return copy(state.approvers);
+      return copy(approverList());
     },
     async testApprover(userId) {
       if (!state.approvers.approvers.some((a) => a.user_id === userId)) fail('not_found');
     },
-    async deleteApprover(userId) {
+    async deleteApprover(userId, baseVersion) {
+      checkVersion(baseVersion);
+      if (!state.approvers.approvers.some((a) => a.user_id === userId)) fail('not_found');
       const approvers = state.approvers.approvers.filter((a) => a.user_id !== userId);
-      state = { ...state, approvers: { ...state.approvers, approvers } };
+      state = { ...state, approvers: { ...state.approvers, approvers }, approversVersion: state.approversVersion + 1 };
       emit({ type: 'approvers.changed' });
       setSystem({ ...state.system, approvers_configured: approvers.length });
     },

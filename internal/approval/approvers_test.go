@@ -5,9 +5,11 @@ package approval
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -408,5 +410,99 @@ func TestDefaultsAndUndeliverableWarnings(t *testing.T) {
 	e.svc.HandleEvent(event("HM_APPROVE_"+nonce, "not a user id!"))
 	if a := wait(t, ch); a.res.Outcome != OutcomeInvalidResponse || a.res.By != "unknown" {
 		t.Errorf("result = %+v", a.res)
+	}
+}
+
+// The first change wins: a change based on an older version is refused and stores
+// nothing; every change, also of a detail, makes a new version.
+func TestApproverVersions(t *testing.T) {
+	a, _ := newApprovers(t)
+	ctx := context.Background()
+	v0, err := a.Version(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anna := Approver{UserID: "anna", Devices: phones("mobile_app_anna")}
+	if err := a.PutIf(ctx, anna, v0); err != nil {
+		t.Fatal(err)
+	}
+	v1, _ := a.Version(ctx)
+	if v1 == v0 || len(v1) != 32 {
+		t.Fatalf("versions %q → %q", v0, v1)
+	}
+	// Someone else still on v0: refused, nothing stored.
+	if err := a.PutIf(ctx, Approver{UserID: "bob", UI: true}, v0); !errors.Is(err, ErrApproversChanged) {
+		t.Errorf("PutIf on an old version = %v", err)
+	}
+	if err := a.RemoveIf(ctx, "anna", v0); !errors.Is(err, ErrApproversChanged) {
+		t.Errorf("RemoveIf on an old version = %v", err)
+	}
+	if list, _ := a.List(ctx); len(list) != 1 || list[0].UserID != "anna" {
+		t.Errorf("list = %+v", list)
+	}
+	// Details count: only the critical switch of a device changes.
+	anna.Devices[0].Critical = false
+	if err := a.PutIf(ctx, anna, v1); err != nil {
+		t.Fatal(err)
+	}
+	v2, _ := a.Version(ctx)
+	if v2 == v1 {
+		t.Error("a changed device switch kept the version")
+	}
+	// The same approvers have the same version.
+	if again, _ := a.Version(ctx); again != v2 {
+		t.Error("version not stable")
+	}
+	if err := a.RemoveIf(ctx, "nobody", v2); !errors.Is(err, ErrApproverNotFound) {
+		t.Errorf("RemoveIf(unknown) = %v", err)
+	}
+	if err := a.RemoveIf(ctx, "anna", v2); err != nil {
+		t.Fatal(err)
+	}
+	if v3, _ := a.Version(ctx); v3 != v0 {
+		t.Errorf("empty again: %q, want %q", v3, v0)
+	}
+}
+
+// Two changes based on the same version at the same time: exactly one is stored.
+func TestApproverVersionRace(t *testing.T) {
+	a, _ := newApprovers(t)
+	ctx := context.Background()
+	v, _ := a.Version(ctx)
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for i := range 8 {
+		wg.Go(func() {
+			errs <- a.PutIf(ctx, Approver{UserID: fmt.Sprintf("user%d", i), UI: true}, v)
+		})
+	}
+	wg.Wait()
+	close(errs)
+	ok := 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case !errors.Is(err, ErrApproversChanged):
+			t.Errorf("unexpected %v", err)
+		}
+	}
+	if list, _ := a.List(ctx); ok != 1 || len(list) != 1 {
+		t.Errorf("%d stored, list %d", ok, len(list))
+	}
+}
+
+func TestApproverVersionsReportDatabaseErrors(t *testing.T) {
+	a, closeDB := newApprovers(t)
+	_ = closeDB()
+	ctx := context.Background()
+	if _, err := a.Version(ctx); err == nil {
+		t.Error("Version succeeded")
+	}
+	if err := a.PutIf(ctx, Approver{UserID: "anna", UI: true}, "x"); err == nil {
+		t.Error("PutIf succeeded")
+	}
+	if err := a.RemoveIf(ctx, "anna", "x"); err == nil {
+		t.Error("RemoveIf succeeded")
 	}
 }

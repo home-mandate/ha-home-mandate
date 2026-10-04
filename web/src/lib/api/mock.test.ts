@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from './client.ts';
 import { approvalsOpenFixture, voiceAssistantDraft, WORST_NAME, WORST_REASON } from './fixtures.ts';
-import { createMockClient, MOCK_EXPIRED_CODE, MOCK_PAIRING_CODE } from './mock.ts';
+import { createMockClient, MOCK_EXPIRED_CODE, MOCK_PAIRING_CODE, MOCK_APPROVERS_VERSION } from './mock.ts';
 import type { ApprovalRequest, Rule, ServerEvent } from './types.ts';
 
 const criticalRule: Rule = {
@@ -420,16 +420,29 @@ describe('createMockClient: approvals, settings, audit, approvers, emergency sto
 
   it('manages approvers only from the candidates and updates the system count', async () => {
     const api = createMockClient();
-    const list = await api.putApprover('u-partner', { devices: [{ service: 'mobile_app_iphone', critical: true }], ui: false, ui_critical: false, language: 'en' });
+    const list = await api.putApprover('u-partner', { devices: [{ service: 'mobile_app_iphone', critical: true }], ui: false, ui_critical: false, language: 'en' }, MOCK_APPROVERS_VERSION);
     expect(list.approvers.map((a) => a.user_id)).toEqual(['u-admin', 'u-partner']);
     expect((await api.system()).approvers_configured).toBe(2);
-    await expect(api.putApprover('u-stranger', { devices: [{ service: 'mobile_app_iphone', critical: true }], ui: false, ui_critical: false, language: null })).rejects.toMatchObject({
+    await expect(api.putApprover('u-stranger', { devices: [{ service: 'mobile_app_iphone', critical: true }], ui: false, ui_critical: false, language: null }, list.version)).rejects.toMatchObject({
       field: '/user_id',
     });
     await expect(api.testApprover('u-partner')).resolves.toBeUndefined();
-    await api.deleteApprover('u-partner');
+    await api.deleteApprover('u-partner', list.version);
     await expect(api.testApprover('u-partner')).rejects.toMatchObject({ code: 'not_found' });
     expect((await api.system()).approvers_configured).toBe(1);
+  });
+
+  it('lets the first change of the approvers win', async () => {
+    const api = createMockClient();
+    const base = (await api.approvers()).version;
+    const update = { devices: [{ service: 'mobile_app_iphone', critical: true }], ui: false, ui_critical: false, language: null };
+    const first = await api.putApprover('u-partner', update, base);
+    expect(first.version).not.toBe(base);
+    await expect(api.putApprover('u-partner', { ...update, language: 'de' }, base)).rejects.toMatchObject({ code: 'conflict' });
+    await expect(api.deleteApprover('u-partner', base)).rejects.toMatchObject({ code: 'conflict' });
+    await expect(api.deleteApprover('u-partner', 'x')).rejects.toMatchObject({ code: 'invalid_input', field: '/base_version' });
+    await expect(api.deleteApprover('u-nobody', first.version)).rejects.toMatchObject({ code: 'not_found' });
+    expect((await api.approvers()).approvers.find((a) => a.user_id === 'u-partner')?.language).toBe(null);
   });
 
   const dev = (service: string, critical = true) => ({ service, critical });
@@ -451,7 +464,7 @@ describe('createMockClient: approvals, settings, audit, approvers, emergency sto
     ['the UI for someone who is no admin', 'u-partner', { devices: [dev('mobile_app_iphone')], ui: true, ui_critical: false }, '/ui'],
   ] as const)('saves an approver with %s, or names the field', async (_, user, update, field) => {
     const api = createMockClient();
-    const put = api.putApprover(user, { ...update, devices: [...update.devices], language: null });
+    const put = api.putApprover(user, { ...update, devices: [...update.devices], language: null }, MOCK_APPROVERS_VERSION);
     if (field === null) await expect(put).resolves.toBeDefined();
     else await expect(put).rejects.toMatchObject({ code: 'invalid_input', field });
   });
@@ -468,7 +481,7 @@ describe('createMockClient: approvals, settings, audit, approvers, emergency sto
     [[], true, true, { normal: 'ui', critical: 'ui' }],
   ] as const)('reports how %j (ui %s, critical %s) reaches the admin', async (devices, ui, uiCritical, reach) => {
     const api = createMockClient();
-    const list = await api.putApprover('u-admin', { devices: [...devices], ui, ui_critical: uiCritical, language: null });
+    const list = await api.putApprover('u-admin', { devices: [...devices], ui, ui_critical: uiCritical, language: null }, MOCK_APPROVERS_VERSION);
     expect(list.approvers.find((a) => a.user_id === 'u-admin')?.reach).toEqual(reach);
   });
 

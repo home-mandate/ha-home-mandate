@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { NOW } from '../api/fixtures.ts';
 import { ApiError } from '../api/client.ts';
-import { createMockClient, type MockClient } from '../api/mock.ts';
+import { createMockClient, type MockClient, MOCK_APPROVERS_VERSION } from '../api/mock.ts';
 import { BrowserNotifier, type NotifyEnv } from '../app/notifier.svelte.ts';
 import { AppState } from '../app/state.svelte.ts';
 import type { SettingsSection } from '../router.ts';
@@ -131,7 +131,7 @@ describe('Settings: approvers', () => {
     expect(document.activeElement).toBe(within(confirm).getByRole('button', { name: 'Cancel' }));
     expect(put).not.toHaveBeenCalled();
     await fireEvent.click(within(confirm).getByRole('button', { name: 'Change anyway' }));
-    await waitFor(() => expect(put).toHaveBeenCalledWith('u-admin', expect.objectContaining({ devices: [{ service: 'mobile_app_pixel_9', critical: false }] })));
+    await waitFor(() => expect(put).toHaveBeenCalledWith('u-admin', expect.objectContaining({ devices: [{ service: 'mobile_app_pixel_9', critical: false }] }), MOCK_APPROVERS_VERSION));
     await waitFor(() => expect(within(markus).getByText('Gets normal requests only')).toBeTruthy());
     expect(screen.getByText('Critical requests reach nobody and are declined.')).toBeTruthy();
     expect(screen.getByText(/^.?Markus.?: saved\.$/)).toBeTruthy();
@@ -175,6 +175,22 @@ describe('Settings: approvers', () => {
     expect(ui.getAttribute('aria-checked')).toBe('true');
   });
 
+  it('says when another administrator changed the approvers first and shows their state', async () => {
+    const { api } = await start();
+    const markus = await card('Markus');
+    // Another administrator saves just before this page's change arrives.
+    const put = api.putApprover.bind(api);
+    api.putApprover = async (userId, update, baseVersion) => {
+      await put('u-admin', { devices: [{ service: 'mobile_app_pixel_9', critical: true }], ui: true, ui_critical: true, language: 'de' }, baseVersion);
+      api.putApprover = put;
+      return put(userId, update, baseVersion);
+    };
+    await fireEvent.click(within(markus).getByRole('switch', { name: 'Answer in Home-Mandate' }));
+    await waitFor(() => expect(within(markus).getByRole('alert').textContent).toContain('changed'));
+    await waitFor(() => expect((within(markus).getByLabelText('Notification language') as HTMLSelectElement).value).toBe('de'));
+    expect((await api.approvers()).approvers[0]).toMatchObject({ ui: true, language: 'de' });
+  });
+
   it('runs quick changes one after another, each on the latest state', async () => {
     const { api } = await start();
     const markus = await card('Markus');
@@ -206,7 +222,7 @@ describe('Settings: approvers', () => {
   });
 
   it('says why a save was refused and shows the server state again', async () => {
-    await start({ prepare: (api) => void api.putApprover('u-admin', { devices: [{ service: 'mobile_app_pixel_9', critical: true }], ui: false, ui_critical: false, language: null }) });
+    await start({ prepare: (api) => void api.putApprover('u-admin', { devices: [{ service: 'mobile_app_pixel_9', critical: true }], ui: false, ui_critical: false, language: null }, MOCK_APPROVERS_VERSION) });
     const markus = await card('Markus');
     await fireEvent.click(within(markus).getByRole('button', { name: /Remove .Pixel 9./ }));
     // Markus is the only one for critical requests: removing the device asks first (decision S10).
@@ -216,7 +232,7 @@ describe('Settings: approvers', () => {
   });
 
   it('shows reach only in an open Home-Mandate as such', async () => {
-    await start({ prepare: (api) => void api.putApprover('u-admin', { devices: [], ui: true, ui_critical: true, language: null }) });
+    await start({ prepare: (api) => void api.putApprover('u-admin', { devices: [], ui: true, ui_critical: true, language: null }, MOCK_APPROVERS_VERSION) });
     const markus = await card('Markus');
     expect(within(markus).getByText('Gets requests only while Home-Mandate is open')).toBeTruthy();
     expect(screen.getByText(/Requests reach nobody by push/)).toBeTruthy();
@@ -241,7 +257,7 @@ describe('Settings: approvers', () => {
     expect(document.activeElement).toBe(within(group).getByRole('button', { name: 'Cancel' }));
     const remove = vi.spyOn(api, 'deleteApprover');
     await fireEvent.click(within(group).getByRole('button', { name: 'Remove anyway' }));
-    await waitFor(() => expect(remove).toHaveBeenCalledWith('u-admin'));
+    await waitFor(() => expect(remove).toHaveBeenCalledWith('u-admin', MOCK_APPROVERS_VERSION));
     expect(await screen.findByText('At least one person must receive approvals.')).toBeTruthy();
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Person from Home Assistant')));
   });

@@ -244,7 +244,16 @@ func TestUIApprovalAnswer(t *testing.T) {
 		t.Fatalf("person: %v", err)
 	}
 	ui := uiLogin(t, adminOther)
-	ui.ok(http.MethodPut, "api/approvers/"+other.id, map[string]any{"devices": []any{}, "ui": true, "ui_critical": true, "language": nil}, nil)
+	var approvers struct {
+		Version string `json:"version"`
+	}
+	ui.ok(http.MethodGet, "api/approvers", nil, &approvers)
+	answer := map[string]any{"devices": []any{}, "ui": true, "ui_critical": true, "language": nil, "base_version": approvers.Version}
+	ui.ok(http.MethodPut, "api/approvers/"+other.id, answer, nil)
+	// The first change wins: one on the old version is refused.
+	if status, body := ui.do(http.MethodPut, "api/approvers/"+other.id, answer); status != http.StatusConflict {
+		t.Fatalf("stale approvers version: %d %s", status, body)
+	}
 	token := agentWithApprover(t, "UI approval", other.id)
 	s := session(t, token)
 	ready(t, s)

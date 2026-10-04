@@ -4,7 +4,10 @@ package approval
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -20,6 +23,9 @@ var (
 	ErrInvalidApprover = errors.New("approval: invalid approver")
 	// ErrApproverNotFound means there is no such approver.
 	ErrApproverNotFound = errors.New("approval: approver not found")
+	// ErrApproversChanged means the approvers changed since the version a change was based
+	// on: the first change wins, the later one is refused and nothing is stored.
+	ErrApproversChanged = errors.New("approval: approvers changed meanwhile")
 	// ErrUINeedsAdmin means the UI channel was chosen for someone who is no Home
 	// Assistant administrator; only administrators can open the UI.
 	ErrUINeedsAdmin = errors.New("approval: answering in the UI needs an administrator")
@@ -162,6 +168,12 @@ func NewApprovers(db *sql.DB) *Approvers {
 
 // Put adds or replaces an approver with all their channels.
 func (a *Approvers) Put(ctx context.Context, ap Approver) error {
+	return a.PutIf(ctx, ap, "")
+}
+
+// PutIf is Put based on the version of the approvers the change started from; "" skips
+// the check (the command line). Another version means ErrApproversChanged.
+func (a *Approvers) PutIf(ctx context.Context, ap Approver, version string) error {
 	if err := ap.validate(); err != nil {
 		return err
 	}
@@ -170,6 +182,9 @@ func (a *Approvers) Put(ctx context.Context, ap Approver) error {
 		return fmt.Errorf("approval: store approver: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := checkVersion(ctx, tx, version); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO approvers (user_id, language, ui, ui_critical, created_at) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT (user_id) DO UPDATE SET language = excluded.language, ui = excluded.ui, ui_critical = excluded.ui_critical`,
 		ap.UserID, ap.Language, ap.UI, ap.UICritical, a.now().UTC().Format(time.RFC3339Nano)); err != nil {
@@ -190,9 +205,56 @@ func (a *Approvers) Put(ctx context.Context, ap Approver) error {
 	return nil
 }
 
+// querier is a database or a transaction.
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
 // List returns the approvers by user ID, each with their devices in name order.
 func (a *Approvers) List(ctx context.Context) ([]Approver, error) {
-	rows, err := a.db.QueryContext(ctx, `SELECT a.user_id, a.language, a.ui, a.ui_critical, a.created_at, d.notify_service, d.critical
+	return list(ctx, a.db)
+}
+
+// Version identifies the current approvers (decision: the first change wins): it changes
+// with every stored change, also of the order-free details, and is the same for the same
+// approvers.
+func (a *Approvers) Version(ctx context.Context) (string, error) {
+	l, err := list(ctx, a.db)
+	if err != nil {
+		return "", err
+	}
+	return versionOf(l), nil
+}
+
+func versionOf(list []Approver) string {
+	h := sha256.New()
+	for _, ap := range list {
+		fmt.Fprintf(h, "%q %q %t %t", ap.UserID, ap.Language, ap.UI, ap.UICritical)
+		for _, d := range ap.Devices {
+			fmt.Fprintf(h, " %q %t", d.Service, d.Critical)
+		}
+		h.Write([]byte{'\n'})
+	}
+	return hex.EncodeToString(h.Sum(nil))[:32]
+}
+
+// checkVersion refuses a change based on another version; "" means no check.
+func checkVersion(ctx context.Context, tx *sql.Tx, version string) error {
+	if version == "" {
+		return nil
+	}
+	current, err := list(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if subtle.ConstantTimeCompare([]byte(versionOf(current)), []byte(version)) != 1 {
+		return ErrApproversChanged
+	}
+	return nil
+}
+
+func list(ctx context.Context, q querier) ([]Approver, error) {
+	rows, err := q.QueryContext(ctx, `SELECT a.user_id, a.language, a.ui, a.ui_critical, a.created_at, d.notify_service, d.critical
 		FROM approvers a LEFT JOIN approver_devices d USING (user_id) ORDER BY a.user_id, d.notify_service`)
 	if err != nil {
 		return nil, fmt.Errorf("approval: list approvers: %w", err)
@@ -227,12 +289,28 @@ func (a *Approvers) List(ctx context.Context) ([]Approver, error) {
 // Remove deletes an approver with their devices; open requests to them stay open until
 // their timeout, but the UI no longer accepts their answer.
 func (a *Approvers) Remove(ctx context.Context, userID string) error {
-	res, err := a.db.ExecContext(ctx, `DELETE FROM approvers WHERE user_id = ?`, userID)
+	return a.RemoveIf(ctx, userID, "")
+}
+
+// RemoveIf is Remove based on a version of the approvers, as PutIf.
+func (a *Approvers) RemoveIf(ctx context.Context, userID, version string) error {
+	tx, err := a.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("approval: remove approver: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := checkVersion(ctx, tx, version); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM approvers WHERE user_id = ?`, userID)
 	if err != nil {
 		return fmt.Errorf("approval: remove approver: %w", err)
 	}
 	if n, err := res.RowsAffected(); err != nil || n == 0 {
 		return ErrApproverNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("approval: remove approver: %w", err)
 	}
 	return nil
 }

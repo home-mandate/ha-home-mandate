@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"errors"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -65,7 +66,13 @@ type wireCandidates struct {
 type wireApproverList struct {
 	Approvers  []wireApprover `json:"approvers"`
 	Candidates wireCandidates `json:"candidates"`
+	// Version of the approvers; a change names the version it is based on (the first
+	// change wins, a later one on an older version is a conflict).
+	Version string `json:"version"`
 }
+
+// approversVersionPattern is the form of an approvers version.
+var approversVersionPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 // candidates are the people (person.* with a Home Assistant user, not Home-Mandate's own)
 // and the devices with the Companion App. A device's notify service is
@@ -194,7 +201,11 @@ func (s *Server) approverList(ctx context.Context) (wireApproverList, error) {
 	if err != nil {
 		return wireApproverList{}, err
 	}
-	out := wireApproverList{Approvers: make([]wireApprover, 0, len(list)), Candidates: cand}
+	version, err := s.cfg.Approvers.Version(ctx)
+	if err != nil {
+		return wireApproverList{}, err
+	}
+	out := wireApproverList{Approvers: make([]wireApprover, 0, len(list)), Candidates: cand, Version: version}
 	for _, ap := range list {
 		admin, err := s.users.IsAdmin(ctx, ap.UserID)
 		if err != nil {
@@ -254,13 +265,17 @@ func (s *Server) putApprover(r *request) (any, error) {
 		return nil, failField(codeInvalidInput, "/user_id")
 	}
 	var in struct {
-		Devices    []wireApproverDevice `json:"devices"`
-		UI         bool                 `json:"ui"`
-		UICritical bool                 `json:"ui_critical"`
-		Language   *string              `json:"language"`
+		Devices     []wireApproverDevice `json:"devices"`
+		UI          bool                 `json:"ui"`
+		UICritical  bool                 `json:"ui_critical"`
+		Language    *string              `json:"language"`
+		BaseVersion string               `json:"base_version"`
 	}
 	if err := r.decode(&in); err != nil {
 		return nil, err
+	}
+	if !approversVersionPattern.MatchString(in.BaseVersion) {
+		return nil, failField(codeInvalidInput, "/base_version")
 	}
 	cand, err := s.candidates(r.Context())
 	if err != nil {
@@ -281,8 +296,11 @@ func (s *Server) putApprover(r *request) (any, error) {
 	if err := approval.CheckUI(ap, admin); err != nil {
 		return nil, failField(codeInvalidInput, "/ui")
 	}
-	if err := s.cfg.Approvers.Put(r.Context(), ap); err != nil {
-		if errors.Is(err, approval.ErrInvalidApprover) {
+	if err := s.cfg.Approvers.PutIf(r.Context(), ap, in.BaseVersion); err != nil {
+		switch {
+		case errors.Is(err, approval.ErrApproversChanged):
+			return nil, fail(codeConflict)
+		case errors.Is(err, approval.ErrInvalidApprover):
 			return nil, failField(codeInvalidInput, "/devices")
 		}
 		return nil, err
@@ -328,9 +346,16 @@ func (s *Server) deleteApprover(r *request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := s.cfg.Approvers.Remove(r.Context(), id); errors.Is(err, approval.ErrApproverNotFound) {
+	base := r.URL.Query()["base_version"]
+	if len(base) != 1 || !approversVersionPattern.MatchString(base[0]) {
+		return nil, failField(codeInvalidInput, "/base_version")
+	}
+	switch err := s.cfg.Approvers.RemoveIf(r.Context(), id, base[0]); {
+	case errors.Is(err, approval.ErrApproverNotFound):
 		return nil, fail(codeNotFound)
-	} else if err != nil {
+	case errors.Is(err, approval.ErrApproversChanged):
+		return nil, fail(codeConflict)
+	case err != nil:
 		return nil, err
 	}
 	s.cfg.Approvals.Withdraw(id)

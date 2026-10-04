@@ -577,6 +577,7 @@
   "set_approver_add_label": "Person aus Home Assistant",
   "set_approver_add_none": "Alle Personen aus Home Assistant sind schon eingetragen.",
   "set_approver_save_failed": "Die Änderung wurde nicht gespeichert. Bitte erneut versuchen.",
+  "set_approver_conflict": "{person}: Inzwischen hat jemand anderes die Freigebenden geändert. Der aktuelle Stand ist geladen, bitte prüfe ihn und ändere erneut.",
   "set_approver_error_devices": "Prüfe die Geräte: höchstens fünf, jedes nur einmal. Ohne Gerät braucht die Person „In Home-Mandate beantworten“.",
   "set_approver_error_ui": "Nur Personen mit Adminrechten in Home Assistant können hier beantworten.",
   "set_bell": "Zusätzlich in der Home-Assistant-Glocke",

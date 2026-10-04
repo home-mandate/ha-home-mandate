@@ -9,8 +9,10 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"path/filepath"
 	"net/netip"
 	"slices"
@@ -317,9 +319,35 @@ func (r result) field() string {
 
 const autoCSRF = "auto"
 
+// withApproversVersion adds the current approvers version to changes of approvers that
+// do not name one (the tests of conflicts name theirs).
+func (h *harness) withApproversVersion(method, path string, body any) (any, string) {
+	if !strings.HasPrefix(path, "/api/approvers/") || strings.HasSuffix(path, "/test") {
+		return body, path
+	}
+	version, err := h.approvers.Version(context.Background())
+	if err != nil {
+		version = strings.Repeat("0", 32)
+	}
+	switch {
+	case method == http.MethodPut:
+		if m, ok := body.(map[string]any); ok {
+			if _, has := m["base_version"]; !has {
+				copied := maps.Clone(m)
+				copied["base_version"] = version
+				return copied, path
+			}
+		}
+	case method == http.MethodDelete && !strings.Contains(path, "?"):
+		return body, path + "?base_version=" + version
+	}
+	return body, path
+}
+
 // do sends a request as the Supervisor would, for the owner, with what a write needs.
 func (h *harness) do(method, path string, body any, opts ...reqOpt) result {
 	h.t.Helper()
+	body, path = h.withApproversVersion(method, path, body)
 	var rd io.Reader
 	switch b := body.(type) {
 	case nil:

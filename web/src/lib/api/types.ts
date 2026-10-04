@@ -582,7 +582,10 @@ export interface AuditVerification extends ChainStatus {
 
 // ---------------------------------------------------------------------------
 // Approvers: GET api/approvers, PUT|DELETE api/approvers/{user_id},
-// POST api/approvers/{user_id}/test (sends a test notification, no actions in it)
+// POST api/approvers/{user_id}/test (sends a test notification, no actions in it).
+// A change names the version of the approvers it is based on (PUT: base_version in the
+// body, DELETE: ?base_version=); the first change wins, a later one based on an older
+// version is answered with "conflict" and stores nothing.
 
 /** A phone or computer with the Home Assistant app, as one approver uses it. */
 export interface ApproverDevice {
@@ -631,9 +634,11 @@ export interface ApproverCandidates {
 export interface ApproverList {
   approvers: Approver[];
   candidates: ApproverCandidates;
+  /** Version of the approvers, the base of the next change. */
+  version: string;
 }
 
-/** PUT api/approvers/{user_id}; invalid_input names /devices, /ui or /ui_critical. */
+/** PUT api/approvers/{user_id} (with base_version); invalid_input names /devices, /ui, /ui_critical or /base_version. */
 export interface ApproverUpdate {
   devices: ApproverDevice[];
   ui: boolean;

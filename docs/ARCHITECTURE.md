@@ -381,6 +381,10 @@ code and at most a JSON pointer, never internal details or the value sent. There
   with unchanged rules only renames (no version). A new mandate from a template, an applied
   template and a pairing approval need the separate confirmation too when the template
   allows critical actions without approval.
+- **Approvers:** the list carries a version (a hash over all approvers and their channels);
+  every change and removal names the version it is based on and is checked in the same
+  transaction. The first change wins; one on an older version is refused (conflict), the UI
+  reloads and says so. Nobody overwrites a list they have not seen.
 - **Revocation** of an agent revokes it, its tokens and its active mandate in one
   transaction, then ends its open approval requests (F1). The emergency stop ends all of them.
 - **Pairing in the UI** uses the same pending grants as `/pair` (`internal/oauth`): an

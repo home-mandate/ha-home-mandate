@@ -209,7 +209,7 @@ export const templatesFixture: Template[] = [
   { name: 'empty', draft: { ...voiceAssistantDraft, rules: [] } },
 ];
 
-export const approversFixture: ApproverList = {
+export const approversFixture: Omit<ApproverList, 'version'> = {
   approvers: [
     {
       user_id: 'u-admin',

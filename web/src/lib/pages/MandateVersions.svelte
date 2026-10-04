@@ -49,7 +49,7 @@
 
   const uid = $props.id();
   const NO_CATALOG: DeviceCatalog = { areas: [], devices: [] };
-  const NO_APPROVERS: ApproverList = { approvers: [], candidates: { people: [], devices: [] } };
+  const NO_APPROVERS: ApproverList = { approvers: [], candidates: { people: [], devices: [] }, version: '' };
   const TAGS: Record<RuleChangeKind, () => string> = {
     added: () => m.version_rule_added(),
     changed: () => m.version_rule_changed(),

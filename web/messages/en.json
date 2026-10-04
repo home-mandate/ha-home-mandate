@@ -577,6 +577,7 @@
   "set_approver_add_label": "Person from Home Assistant",
   "set_approver_add_none": "Everyone from Home Assistant is already listed.",
   "set_approver_save_failed": "The change wasn’t saved. Please try again.",
+  "set_approver_conflict": "{person}: Someone else changed the approvers meanwhile. The current state is loaded; check it and make your change again.",
   "set_approver_error_devices": "Check the devices: at most five, each only once. Without a device, the person needs “Answer in Home-Mandate”.",
   "set_approver_error_ui": "Only people with admin rights in Home Assistant can answer here.",
   "set_bell": "Also in Home Assistant’s notification bell",

@@ -87,7 +87,9 @@
   const chosenDevice = $derived(deviceOptions.some((o) => o.value === device) ? (device as string) : (deviceOptions[0]?.value ?? NONE));
   const me = $derived(data?.approvers.find((a) => a.user_id === app.session?.user.id));
 
-  function errorText(err: unknown): string {
+  function errorText(err: unknown, name: string): string {
+    // The first change wins: someone else's came first; the list is reloaded after this.
+    if (err instanceof ApiError && err.code === 'conflict') return m.set_approver_conflict({ person: isolate(name) });
     if (err instanceof ApiError && err.code === 'invalid_input') {
       if (err.field === '/ui' || err.field === '/ui_critical') return m.set_approver_error_ui();
       if (err.field === '/devices') return m.set_approver_error_devices();
@@ -96,12 +98,12 @@
   }
 
   /** enqueue runs an action after the ones before it; the list is reloaded before the next starts. */
-  function enqueue(action: () => Promise<string>, onerror: (text: string) => void): Promise<void> {
+  function enqueue(name: string, action: () => Promise<string>, onerror: (text: string) => void): Promise<void> {
     queue = queue.then(async () => {
       try {
         announcement = await action();
       } catch (err) {
-        onerror(errorText(err));
+        onerror(errorText(err, name));
       }
       await list.run();
     });
@@ -111,11 +113,12 @@
   function change(userId: string, name: string, edit: (u: ApproverUpdate) => ApproverUpdate) {
     errors = { ...errors, [userId]: '' };
     void enqueue(
+      name,
       async () => {
-        // The latest state the server gave, not the one the click saw.
+        // The latest state the server gave, not the one the click saw; its version is the base.
         const current = list.data?.approvers.find((a) => a.user_id === userId);
-        if (!current) throw new Error('gone');
-        await app.api.putApprover(userId, edit(updateOf(current)));
+        if (!current || !list.data) throw new Error('gone');
+        await app.api.putApprover(userId, edit(updateOf(current)), list.data.version);
         return m.set_approver_saved({ person: isolate(name) });
       },
       (text) => (errors = { ...errors, [userId]: text }),
@@ -124,8 +127,10 @@
 
   async function remove(userId: string, name: string) {
     await enqueue(
+      name,
       async () => {
-        await app.api.deleteApprover(userId);
+        if (!list.data) throw new Error('gone');
+        await app.api.deleteApprover(userId, list.data.version);
         return m.set_approver_removed({ person: isolate(name) });
       },
       (text) => (errors = { ...errors, [userId]: text }),
@@ -153,8 +158,10 @@
     addError = '';
     let ok = false;
     await enqueue(
+      cleanUntrusted(p.name),
       async () => {
-        await app.api.putApprover(p.user_id, update);
+        if (!list.data) throw new Error('gone');
+        await app.api.putApprover(p.user_id, update, list.data.version);
         ok = true;
         return m.set_approver_added({ person: isolate(cleanUntrusted(p.name)) });
       },

@@ -82,9 +82,10 @@ export interface ApiClient {
   verifyAudit(): Promise<AuditVerification>;
 
   approvers(): Promise<ApproverList>;
-  putApprover(userId: string, update: ApproverUpdate): Promise<ApproverList>;
+  /** baseVersion: the version of the approvers the change is based on (ApproverList.version). */
+  putApprover(userId: string, update: ApproverUpdate, baseVersion: string): Promise<ApproverList>;
   testApprover(userId: string): Promise<void>;
-  deleteApprover(userId: string): Promise<void>;
+  deleteApprover(userId: string, baseVersion: string): Promise<void>;
 
   setEmergencyStop(active: boolean): Promise<EmergencyStop>;
 
@@ -324,9 +325,9 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
     verifyAudit: () => request('POST', 'audit/verify'),
 
     approvers: () => get('approvers'),
-    putApprover: async (id, update) => request('PUT', `approvers/${segment(id)}`, update),
+    putApprover: async (id, update, baseVersion) => request('PUT', `approvers/${segment(id)}`, { ...update, base_version: baseVersion }),
     testApprover: async (id) => request('POST', `approvers/${segment(id)}/test`),
-    deleteApprover: async (id) => request('DELETE', `approvers/${segment(id)}`),
+    deleteApprover: async (id, baseVersion) => request('DELETE', `approvers/${segment(id)}?base_version=${encodeURIComponent(baseVersion)}`),
 
     setEmergencyStop: (active) => request('PUT', 'emergency-stop', { active }),
 
