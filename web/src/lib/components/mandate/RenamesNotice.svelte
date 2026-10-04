@@ -20,9 +20,11 @@
     renames: Rename[];
     api: ApiClient;
     locale: string;
+    /** After every attempt, done or not: the list reloads; text says what was done. */
+    onresolved: (text: string | null) => void;
   }
 
-  let { renames, api, locale }: Props = $props();
+  let { renames, api, locale, onresolved }: Props = $props();
 
   const id = $props.id();
   const DISMISS = 'dismiss';
@@ -50,23 +52,32 @@
     confirmCancel?.focus();
   }
 
-  async function run(entity: string, action: () => Promise<void>) {
+  async function run(entity: string, action: () => Promise<void>, done: string) {
     error = '';
     busy = entity;
     try {
       await action();
       pending = null;
+      onresolved(done);
     } catch (err) {
       if (err instanceof ApiError && err.code === 'critical_confirmation_required') await ask(entity, CRITICAL);
-      else error = m.renames_failed();
+      else {
+        error = m.renames_failed();
+        onresolved(null); // resolved elsewhere meanwhile, or gone: show what is true now
+      }
     } finally {
       busy = null;
     }
   }
 
+  function cancel() {
+    pending = null;
+    error = '';
+  }
+
   function apply(r: Rename) {
     if (r.mandates.some((md) => md.critical)) void ask(r.entity_id, CRITICAL);
-    else void run(r.entity_id, () => api.applyRename(r.entity_id));
+    else void run(r.entity_id, () => api.applyRename(r.entity_id), m.renames_applied({ device: isolate(nameOf(r)) }));
   }
 </script>
 
@@ -74,30 +85,33 @@
   <h2 id="{id}-title"><Icon name="warning" />{m.renames_title()}</h2>
   <p class="intro">{m.renames_intro()}</p>
   <ul role="list">
-    {#each renames as r (r.entity_id)}
+    {#each renames as r, i (r.entity_id)}
       <li>
         <p class="what">
           <strong><bdi>{nameOf(r)}</bdi></strong>
           <span>{m.renames_was({ formers: formersOf(r), entity: isolate(cleanUntrusted(r.entity_id)) })}</span>
         </p>
-        <p class="where">
-          {m.renames_mandates({ count: r.mandates.length })}
-          {#each r.mandates as md, i (md.id)}{#if i > 0},{/if}
-            <a href={href({ name: 'mandate', id: md.id })}><bdi>{cleanUntrusted(md.name) || md.id}</bdi></a>{/each}
-        </p>
+        <div class="where">
+          <span id="{id}-{i}-where">{m.renames_mandates({ count: r.mandates.length })}</span>
+          <ul role="list" aria-labelledby="{id}-{i}-where">
+            {#each r.mandates as md (md.id)}
+              <li><a href={href({ name: 'mandate', id: md.id })}><bdi>{cleanUntrusted(md.name) || cleanUntrusted(md.id)}</bdi></a></li>
+            {/each}
+          </ul>
+        </div>
         {#if pending?.entity === r.entity_id}
-          <div class="confirm" role="group" aria-labelledby="{id}-{r.entity_id}-confirm">
-            <p id="{id}-{r.entity_id}-confirm">
+          <div class="confirm" role="group" aria-labelledby="{id}-{i}-confirm">
+            <p id="{id}-{i}-confirm">
               {pending.kind === DISMISS ? m.renames_dismiss_text({ formers: formersOf(r) }) : m.renames_critical_text()}
             </p>
             <div class="actions">
-              <Button bind:element={confirmCancel} onclick={() => (pending = null)}>{m.common_cancel()}</Button>
+              <Button bind:element={confirmCancel} disabled={busy === r.entity_id} onclick={cancel}>{m.common_cancel()}</Button>
               {#if pending.kind === DISMISS}
-                <Button variant="danger" busy={busy === r.entity_id} onclick={() => void run(r.entity_id, () => api.dismissRename(r.entity_id))}>
+                <Button variant="danger" busy={busy === r.entity_id} onclick={() => void run(r.entity_id, () => api.dismissRename(r.entity_id), m.renames_dismissed({ device: isolate(nameOf(r)) }))}>
                   {m.renames_dismiss()}
                 </Button>
               {:else}
-                <Button variant="danger" busy={busy === r.entity_id} onclick={() => void run(r.entity_id, () => api.applyRename(r.entity_id, true))}>
+                <Button variant="danger" busy={busy === r.entity_id} onclick={() => void run(r.entity_id, () => api.applyRename(r.entity_id, true), m.renames_applied({ device: isolate(nameOf(r)) }))}>
                   {m.renames_apply_critical()}
                 </Button>
               {/if}
@@ -106,7 +120,7 @@
         {:else}
           <div class="actions">
             <Button variant="primary" busy={busy === r.entity_id} onclick={() => apply(r)}>{m.renames_apply()}</Button>
-            <Button variant="text" onclick={() => void ask(r.entity_id, DISMISS)}>{m.renames_dismiss()}</Button>
+            <Button variant="text" disabled={busy === r.entity_id} onclick={() => void ask(r.entity_id, DISMISS)}>{m.renames_dismiss()}</Button>
           </div>
         {/if}
       </li>
@@ -137,6 +151,14 @@
   p {
     margin: 0;
   }
+  .where ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--hm-space-1) var(--hm-space-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
   .intro,
   .where {
     font-size: var(--hm-font-size-sm);
@@ -150,7 +172,7 @@
     padding: 0;
     list-style: none;
   }
-  li {
+  .renames > ul > li {
     display: flex;
     flex-direction: column;
     gap: var(--hm-space-2);

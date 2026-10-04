@@ -5,7 +5,7 @@
   it must never look as if protection were off.
 -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { Loader } from '../app/loader.svelte.ts';
   import type { AppState } from '../app/state.svelte.ts';
   import type { Agent, DeviceCatalog, MandateSummary, Rename, Template } from '../api/types.ts';
@@ -25,6 +25,7 @@
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
   import { DESKTOP, Media } from '../ui/media.svelte.ts';
+  import { toasts } from '../ui/toasts.ts';
   import { cleanUntrusted } from '../untrusted.ts';
 
   interface Props {
@@ -94,6 +95,17 @@
     return Number.isNaN(expires) ? m.mandates_valid_open() : formatDate(new Date(expires - 1), ctx);
   }
 
+  let heading: HTMLElement | undefined = $state();
+
+  /** A rename was resolved (text) or the attempt failed (null): reload, say so and keep the focus on the page. */
+  async function resolved(text: string | null) {
+    await list.run();
+    if (text === null) return;
+    toasts.show({ kind: 'success', text });
+    await tick();
+    heading?.focus();
+  }
+
   function start(name: string | null) {
     template = name;
     dialog = true;
@@ -106,7 +118,7 @@
 </script>
 
 <div class="head">
-  <h1>{m.mandates_title()}</h1>
+  <h1 bind:this={heading} tabindex="-1">{m.mandates_title()}</h1>
   {#if data}<Button variant="primary" size="lg" icon="plus" onclick={() => start(null)}>{m.mandates_new()}</Button>{/if}
 </div>
 
@@ -118,7 +130,7 @@
   </div>
 {:else}
   {#if data.renames.length > 0}
-    <RenamesNotice renames={data.renames} api={app.api} locale={ctx.locale} />
+    <RenamesNotice renames={data.renames} api={app.api} locale={ctx.locale} onresolved={resolved} />
   {/if}
 
   {#if data.mandates.length === 0}

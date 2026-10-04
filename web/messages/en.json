@@ -790,7 +790,7 @@
   "renames_title": "Renamed in Home Assistant",
   "renames_intro": "Rules still name these devices by their former ID. Until you decide, they keep applying to the renamed device, and the stricter decision wins.",
   "renames_was": "{entity}, formerly {formers}",
-  "renames_mandates": "{count, plural, one {Named in the mandate} other {Named in the mandates}}",
+  "renames_mandates": "{count, plural, one {Named in the mandate:} other {Named in the mandates:}}",
   "renames_apply": "Take over",
   "renames_dismiss": "Don’t take over",
   "renames_dismiss_text": "The rules on {formers} will no longer apply to this device. A deny or ask rule among them then no longer protects it.",
@@ -799,5 +799,7 @@
   "renames_failed": "The rename could not be resolved. Please try again.",
   "rule_renamed": "“{entity}” is now called “{to}” in Home Assistant. Until the rename is taken over or dismissed in the mandate list, this rule keeps applying to the device.",
   "preview_limited": "Within limits",
-  "preview_limited_detail": "Allowed only within the limits ({limits}); other values are denied."
+  "preview_limited_detail": "Allowed only within the limits ({limits}); other values are denied.",
+  "renames_applied": "Rename of {device} taken over.",
+  "renames_dismissed": "Rename of {device} not taken over."
 }

@@ -150,9 +150,9 @@
   const isDefault = (p: FieldProblem) => p.rule === null && (p.part === 'timeout' || p.part === 'approvers');
   const isBasic = (p: FieldProblem) => p.rule === null && !isDefault(p) && p.part !== 'rules';
   const visible = $derived(problems.filter((p) => attempted || touched.has(fieldOf(p))));
-  /** Rules on devices or areas Home Assistant does not have (any more), e.g. after a rename. */
   /** Former IDs of renamed devices nobody resolved yet → current IDs (rules on them keep applying). */
   const renamed = $derived(new Map((page.data?.renames ?? []).flatMap((r) => r.formers.map((f) => [f, r.entity_id] as const))));
+  /** Rules on devices or areas Home Assistant does not have (any more) and no open rename covers. */
   const staleCount = $derived(
     draft && !catalogMissing && !readonly
       ? draft.rules.filter((r) => isStale(r, catalog) && !(r.resource.entity_id !== undefined && renamed.has(r.resource.entity_id))).length
