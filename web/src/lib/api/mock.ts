@@ -104,6 +104,7 @@ interface State {
   session: Session;
   system: SystemStatus;
   defaults: Defaults;
+  devices: DeviceCatalog;
   agents: Agent[];
   mandates: Record<string, StoredMandate>;
   templates: Template[];
@@ -282,6 +283,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     session: sessionFixture,
     system: systemFixture,
     defaults: defaultsFixture,
+    devices: devicesFixture,
     agents: options.empty ? [] : agentsFixture,
     mandates: options.empty ? {} : initialMandates(),
     templates: templatesFixture,
@@ -568,7 +570,17 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     },
 
     async devices() {
-      return copy(devicesFixture);
+      return copy(state.devices);
+    },
+    async putDeviceCritical(entityId, critical) {
+      if (typeof entityId !== 'string' || entityId === '') fail('invalid_input', '/entity_id');
+      if (typeof critical !== 'boolean') fail('invalid_input', '/critical');
+      if (!state.devices.devices.some((d) => d.entity_id === entityId)) fail('not_found');
+      // As the server: a marked device is not proposed; without the mark the proposal of the catalog applies again.
+      const proposed = (id: string) => devicesFixture.devices.find((d) => d.entity_id === id)?.suggest_critical === true;
+      const devices = state.devices.devices.map((d) => (d.entity_id === entityId ? { ...d, critical, suggest_critical: !critical && proposed(d.entity_id) } : d));
+      state = { ...state, devices: { ...state.devices, devices } };
+      emit({ type: 'devices.changed' });
     },
 
     async mandates() {
@@ -658,7 +670,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     async audit(query) {
       const limit = query.limit ?? 50;
       if (!Number.isInteger(limit) || limit < 1 || limit > 100) fail('invalid_input', '/limit');
-      const search = searchMatcher(query.q, devicesFixture);
+      const search = searchMatcher(query.q, state.devices);
       const matching = state.audit.filter((e) => matchesQuery(e, query) && (search?.(e) ?? true)).toReversed();
       const page = matching.filter((e) => query.before === undefined || e.seq < query.before);
       const entries = page.slice(0, limit);

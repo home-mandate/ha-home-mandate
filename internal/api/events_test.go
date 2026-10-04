@@ -122,6 +122,8 @@ func TestEventStream(t *testing.T) {
 	if sys["system"].(map[string]any)["approvers_configured"].(float64) != 1 {
 		t.Errorf("system = %v", sys)
 	}
+	h.ok(http.MethodPut, "/api/devices/critical", map[string]any{"entity_id": "light.kitchen", "critical": true}, nil)
+	s.until("devices.changed")
 	// New audit entries, also those of the command line (another process): the tail.
 	voice := h.admit("Voice")
 	h.srv.tail(context.Background())

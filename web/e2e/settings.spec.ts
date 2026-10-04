@@ -8,10 +8,14 @@ import { expect, pageScroll, test } from './support.ts';
 const text = {
   de: { sections: 'Abschnitte der Einstellungen', mcp: 'MCP-Endpunkt', approvers: 'Freigebende', critical: 'Auch kritische Rückfragen', normalOnly: 'Bekommt nur normale Rückfragen',
     defaults: 'Standards', rate: 'Tempolimit-Standard', saved: 'Gespeichert', estop: 'Not-Aus', trigger: 'Not-Aus auslösen …', confirm: 'Not-Aus auslösen', lift: 'Not-Aus aufheben …', liftYes: 'Aufheben', cancel: 'Abbrechen',
-    about: 'Über', licenses: 'Lizenzen der enthaltenen Pakete' },
+    about: 'Über', licenses: 'Lizenzen der enthaltenen Pakete',
+    criticalDevices: 'Kritische Geräte', marked: 'Kellertür-Summer', suggested: 'Gartentor-Öffner', search: 'Weiteres Gerät suchen', removeMark: 'Markierung entfernen',
+    noneMarked: 'Noch kein Gerät markiert.' },
   en: { sections: 'Settings sections', mcp: 'MCP endpoint', approvers: 'Approvers', critical: 'Critical requests too', normalOnly: 'Gets normal requests only',
     defaults: 'Defaults', rate: 'Default rate limit', saved: 'Saved', estop: 'Emergency stop', trigger: 'Trigger emergency stop …', confirm: 'Trigger emergency stop', lift: 'Lift emergency stop …', liftYes: 'Lift', cancel: 'Cancel',
-    about: 'About', licenses: 'Licenses of the included packages' },
+    about: 'About', licenses: 'Licenses of the included packages',
+    criticalDevices: 'Critical devices', marked: 'Kellertür-Summer', suggested: 'Gartentor-Öffner', search: 'Find another device', removeMark: 'Remove mark',
+    noneMarked: 'No device marked yet.' },
 } as const;
 
 type Lang = keyof typeof text;
@@ -37,6 +41,24 @@ test('switches critical requests for a device with the keyboard, after the confi
   await page.keyboard.press('Enter');
   await expect(toggle).toHaveAttribute('aria-checked', 'false');
   await expect(approvers.getByText(t.normalOnly)).toBeVisible();
+});
+
+test('marks a suggested device as critical with the keyboard and removes a mark after the confirmation', async ({ page }, info) => {
+  const t = text[info.project.name as Lang];
+  await page.goto('./#/settings/critical');
+  const section = page.getByRole('region', { name: t.criticalDevices });
+  const gate = section.getByRole('switch', { name: t.suggested });
+  await gate.focus();
+  await page.keyboard.press('Space');
+  await expect(gate).toHaveAttribute('aria-checked', 'true');
+  await expect(gate).toBeFocused();
+  // Removing a mark lowers the protection: it asks first, the focus on Cancel.
+  await section.getByRole('switch', { name: t.marked }).click();
+  await expect(section.getByRole('button', { name: t.cancel })).toBeFocused();
+  await section.getByRole('button', { name: t.removeMark }).click();
+  await expect(section.getByRole('switch', { name: t.marked })).toHaveCount(0);
+  await section.getByRole('searchbox', { name: t.search }).fill('keller');
+  await expect(section.getByRole('switch', { name: t.marked })).toHaveAttribute('aria-checked', 'false');
 });
 
 test('saves a default after a pause', async ({ page }, info) => {

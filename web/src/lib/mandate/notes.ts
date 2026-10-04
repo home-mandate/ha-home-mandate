@@ -5,9 +5,8 @@
 // edited here. They explain the effect; the evaluation itself is engine/analysis.ts.
 
 import type { Device, DeviceCatalog, MandateDraft, Rule } from '../api/types.ts';
-import { criticalIncluded, demotedIn, type Override } from '../engine/analysis.ts';
+import { criticalIncluded, criticalOn, demotedIn, type Override } from '../engine/analysis.ts';
 import { coversAction, resourceMatches } from '../engine/evaluate.ts';
-import { lookupAction } from '../engine/vocabulary.ts';
 import { m } from '../i18n.ts';
 import { actionLabel } from './labels.ts';
 import { categoryOf, isEditable } from './scope.ts';
@@ -51,7 +50,7 @@ export function criticalDevices(rule: Rule, devices: readonly Device[]): Device[
   return devices.filter(
     (d) =>
       resourceMatches(rule, { entity_id: d.entity_id, category: d.category, area: d.area ?? undefined }) &&
-      d.actions.some((a) => coversAction(rule, a) && lookupAction(d.category, a).critical),
+      d.actions.some((a) => coversAction(rule, a) && criticalOn(d, a)),
   );
 }
 

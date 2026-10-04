@@ -27,7 +27,7 @@ describe('buildRows', () => {
   });
 
   it('leaves out actions the device does not have or the vocabulary does not know', () => {
-    const odd: Device = { entity_id: 'light.odd', name: 'Odd', category: 'light', area: null, actions: ['read', 'dance'] };
+    const odd: Device = { entity_id: 'light.odd', name: 'Odd', category: 'light', area: null, actions: ['read', 'dance'], critical: false, suggest_critical: false };
     expect(buildRows(base, base, [odd])[0]?.cells.map((c) => c.action)).toEqual(['read']);
   });
 
@@ -83,7 +83,7 @@ describe('filterRows', () => {
 describe('groupRows', () => {
   it('groups by category in vocabulary order, one block each', () => {
     const groups = groupRows(rows, 'category', catalog);
-    expect(groups.map((g) => g.key)).toEqual(['light', 'climate', 'gate', 'lock', 'alarm', 'camera', 'media', 'sensor', 'script']);
+    expect(groups.map((g) => g.key)).toEqual(['light', 'switch', 'climate', 'gate', 'lock', 'alarm', 'camera', 'media', 'sensor', 'script']);
     expect(groups[0]).toMatchObject({ devices: 2, tally: { allow: 8, ask: 0, deny: 0, default: 0 } });
     expect(groups[0]?.blocks).toHaveLength(1);
     expect(groups[0]?.blocks[0]?.actions).toEqual(['read', 'turn_on', 'turn_off', 'set']);
@@ -93,11 +93,11 @@ describe('groupRows', () => {
     const groups = groupRows(rows, 'area', catalog);
     expect(groups.map((g) => g.key)).toEqual(['kitchen', 'living_room', 'hallway', 'garage', '']);
     expect(groups[1]?.blocks.map((b) => b.category)).toEqual(['light', 'climate', 'media']);
-    expect(groups[4]?.blocks.map((b) => b.rows.map((r) => r.device.entity_id))).toEqual([['alarm_control_panel.security'], ['sensor.outside_temperature'], ['script.demo']]);
+    expect(groups[4]?.blocks.map((b) => b.rows.map((r) => r.device.entity_id))).toEqual([['switch.garden_gate'], ['alarm_control_panel.security'], ['sensor.outside_temperature'], ['script.demo']]);
   });
 
   it('puts devices of an area the catalog does not list with those without an area', () => {
-    const stray: Device = { entity_id: 'light.attic', name: 'Attic', category: 'light', area: 'attic', actions: ['read'] };
+    const stray: Device = { entity_id: 'light.attic', name: 'Attic', category: 'light', area: 'attic', actions: ['read'], critical: false, suggest_critical: false };
     const groups = groupRows(buildRows(base, base, [stray]), 'area', catalog);
     expect(groups.map((g) => g.key)).toEqual(['']);
     expect(groups[0]?.blocks[0]?.actions).toEqual(['read']);

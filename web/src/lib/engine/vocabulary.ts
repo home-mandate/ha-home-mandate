@@ -5,7 +5,8 @@
 // (./evaluate.ts) and the editor; the server stays the authority for every decision.
 
 import type { Category, ExtensionCategory, MandateDraft, Rule } from '../api/types.ts';
-import v0 from './conformance/vocabulary/v0.json';
+// Only the categories: the file's $schema and id are URLs that must not end up in the bundle.
+import { categories } from './conformance/vocabulary/v0.json';
 
 interface CategorySpec {
   actions: readonly string[];
@@ -21,7 +22,7 @@ interface VocabularyFile {
 // The normative vocabulary of the pinned mandate-spec version, copied by
 // tools/webconformance; nothing about categories and actions is kept in code.
 const VOCABULARY = Object.fromEntries(
-  Object.entries((v0 as VocabularyFile).categories).map(([category, { actions }]) => [
+  Object.entries(categories as VocabularyFile['categories']).map(([category, { actions }]) => [
     category,
     {
       actions: Object.keys(actions),

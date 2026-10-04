@@ -275,7 +275,7 @@ describe('createHttpClient', () => {
   });
 
   it('calls every endpoint with the method, path and body of the contract', async () => {
-    const answers = Array.from({ length: 30 }, () => json({ ...sessionFixture }));
+    const answers = Array.from({ length: 31 }, () => json({ ...sessionFixture }));
     const { api: c, calls } = await signedIn(...answers);
     await c.setLanguage('de');
     await c.system();
@@ -285,6 +285,7 @@ describe('createHttpClient', () => {
     await c.pairingApprove({ code: 'BCDFGHJK', pairing_id: 'pg-1', display_name: 'Küche', template: 'voice' });
     await c.pairingDeny({ code: 'BCDFGHJK', pairing_id: 'pg-1' });
     await c.devices();
+    await c.putDeviceCritical('switch.garden_gate', true);
     await c.mandates();
     await c.createMandate({ client_id: 'pair:kitchen', template: 'voice' });
     await c.mandate('m1');
@@ -316,6 +317,7 @@ describe('createHttpClient', () => {
       'POST api/pairing/approve {"code":"BCDFGHJK","pairing_id":"pg-1","display_name":"Küche","template":"voice"}',
       'POST api/pairing/deny {"code":"BCDFGHJK","pairing_id":"pg-1"}',
       'GET api/devices',
+      'PUT api/devices/critical {"entity_id":"switch.garden_gate","critical":true}',
       'GET api/mandates',
       'POST api/mandates {"client_id":"pair:kitchen","template":"voice"}',
       'GET api/mandates/m1',

@@ -342,11 +342,18 @@ func TestMarkDeviceCritical(t *testing.T) {
 		t.Fatalf("marks = %v", h.marks.set)
 	}
 	h.cat.devices[slices.IndexFunc(h.cat.devices, func(d catalog.Device) bool { return d.EntityID == "light.kitchen" })].Critical = true
+	h.cat.devices = append(h.cat.devices,
+		catalog.Device{EntityID: "switch.garage", Category: "switch", Attributes: map[string]any{"friendly_name": "Garage"}},
+		catalog.Device{EntityID: "switch.door", Category: "switch", Critical: true, Attributes: map[string]any{"friendly_name": "Tür"}})
 	var c wireDeviceCatalog
 	h.ok(http.MethodGet, "/api/devices", nil, &c)
 	for _, d := range c.Devices {
-		if d.Critical != (d.EntityID == "light.kitchen") {
+		if d.Critical != (d.EntityID == "light.kitchen" || d.EntityID == "switch.door") {
 			t.Errorf("%s: critical = %v", d.EntityID, d.Critical)
+		}
+		// Only for devices not yet marked.
+		if d.SuggestCritical != (d.EntityID == "switch.garage") {
+			t.Errorf("%s: suggest_critical = %v", d.EntityID, d.SuggestCritical)
 		}
 	}
 	h.ok(http.MethodPut, "/api/devices/critical", map[string]any{"entity_id": "light.kitchen", "critical": false}, nil)

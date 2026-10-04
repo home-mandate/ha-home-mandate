@@ -57,6 +57,8 @@ export interface ApiClient {
   pairingDeny(decision: PairingDecision): Promise<void>;
 
   devices(): Promise<DeviceCatalog>;
+  /** Marks a device as critical or removes the mark. */
+  putDeviceCritical(entityId: string, critical: boolean): Promise<void>;
 
   mandates(): Promise<MandateSummary[]>;
   createMandate(create: MandateCreate): Promise<MandateDetail>;
@@ -301,6 +303,7 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
     pairingDeny: (decision) => request('POST', 'pairing/deny', decision),
 
     devices: () => get('devices'),
+    putDeviceCritical: (entityId, critical) => request('PUT', 'devices/critical', { entity_id: entityId, critical }),
 
     mandates: () => get('mandates'),
     createMandate: (create) => request('POST', 'mandates', create),

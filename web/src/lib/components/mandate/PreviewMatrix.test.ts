@@ -28,15 +28,15 @@ describe('PreviewMatrix on desktop', () => {
   it('counts the outcomes and shows the groups with their counts, the first two open', () => {
     show();
     const region = screen.getByRole('region', { name: 'Preview: what it may do' });
-    expect(within(region).getByText('10 devices:')).toBeTruthy();
-    expect(region.querySelector('.tally')?.textContent?.replace(/\s+/g, ' ')).toContain('10 devices: 10 Allowed2 Ask first2 Denied18 Default: denied');
+    expect(within(region).getByText('12 devices:')).toBeTruthy();
+    expect(region.querySelector('.tally')?.textContent?.replace(/\s+/g, ' ')).toContain('12 devices: 10 Allowed2 Ask first2 Denied24 Default: denied');
     const lights = group(/^Lights/);
     expect(lights.getAttribute('aria-expanded')).toBe('true');
     expect(lights.textContent).toContain('2 devices');
     expect(within(lights).getByRole('img', { name: 'Allowed' })).toBeTruthy();
-    expect(group(/^Climate/).getAttribute('aria-expanded')).toBe('true');
-    expect(group(/^Lock/).getAttribute('aria-expanded')).toBe('false');
-    expect(screen.getAllByRole('grid').map((g) => g.getAttribute('aria-label'))).toEqual(['Lights', 'Climate']);
+    expect(group(/^Switch/).getAttribute('aria-expanded')).toBe('true');
+    expect(group(/^Climate/).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getAllByRole('grid').map((g) => g.getAttribute('aria-label'))).toEqual(['Lights', 'Switch']);
   });
 
   it('has a grid per block with column and row headers; critical actions carry the shield', async () => {
@@ -141,7 +141,7 @@ describe('PreviewMatrix on desktop', () => {
     expect(radios[0]?.getAttribute('aria-checked')).toBe('true');
     expect(document.activeElement).toBe(radios[0]);
     expect(group(/^Küche/).getAttribute('aria-expanded')).toBe('true');
-    expect(group(/^No area/).textContent).toContain('3 devices');
+    expect(group(/^No area/).textContent).toContain('4 devices');
     expect(screen.getAllByRole('grid').map((g) => g.getAttribute('aria-label'))).toEqual(['Küche · Lights', 'Wohnzimmer · Lights', 'Wohnzimmer · Climate', 'Wohnzimmer · Media']);
     await fireEvent.click(radios[1] as HTMLElement);
     expect(group(/^Lights/)).toBeTruthy();
@@ -166,17 +166,25 @@ describe('PreviewMatrix on desktop', () => {
     expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain('Changed since the previous version · v4: Denied');
   });
 
+  it('asks first for every action but read on a device the household marked as critical', () => {
+    const switches: Rule = { id: 'switches', resource: { category: 'switch' }, actions: ['*'], decision: 'allow' };
+    show({ ...base, rules: [...base.rules, switches] });
+    const grid = screen.getByRole('grid', { name: 'Switch' });
+    expect(within(grid).getAllByRole('rowheader').map((h) => h.textContent)).toEqual([expect.stringContaining('Gartentor-Öffner'), expect.stringContaining('Kellertür-Summer')]);
+    expect(within(grid).getAllByRole('gridcell').map((c) => c.textContent?.trim())).toEqual(['Allowed', 'Allowed', 'Allowed', 'Allowed', 'Ask first', 'Ask first']);
+  });
+
   it('closes and opens groups by hand', async () => {
     show();
     await fireEvent.click(group(/^Lights/));
     expect(group(/^Lights/).getAttribute('aria-expanded')).toBe('false');
-    expect(screen.getAllByRole('grid').map((g) => g.getAttribute('aria-label'))).toEqual(['Climate']);
+    expect(screen.getAllByRole('grid').map((g) => g.getAttribute('aria-label'))).toEqual(['Switch']);
     await fireEvent.click(group(/^Sensor/));
-    expect(screen.getAllByRole('grid').map((g) => g.getAttribute('aria-label'))).toEqual(['Climate', 'Sensor']);
+    expect(screen.getAllByRole('grid').map((g) => g.getAttribute('aria-label'))).toEqual(['Switch', 'Sensor']);
   });
 
   it('shows five rows of a block and the rest on request', async () => {
-    const lights = Array.from({ length: 8 }, (_, i): Device => ({ entity_id: `light.l${i}`, name: `Light ${i}`, category: 'light', area: null, actions: ['read'] }));
+    const lights = Array.from({ length: 8 }, (_, i): Device => ({ entity_id: `light.l${i}`, name: `Light ${i}`, category: 'light', area: null, actions: ['read'], critical: false, suggest_critical: false }));
     show(base, { catalog: { areas: [], devices: lights } });
     const grid = () => screen.getByRole('grid', { name: 'Lights' });
     expect(within(grid()).getAllByRole('rowheader')).toHaveLength(5);
@@ -187,8 +195,8 @@ describe('PreviewMatrix on desktop', () => {
 
   it('leaves a hole where a device lacks an action of its block', () => {
     const devices: Device[] = [
-      { entity_id: 'light.a', name: 'A', category: 'light', area: null, actions: ['read', 'turn_on'] },
-      { entity_id: 'light.b', name: 'B', category: 'light', area: null, actions: ['read'] },
+      { entity_id: 'light.a', name: 'A', category: 'light', area: null, actions: ['read', 'turn_on'], critical: false, suggest_critical: false },
+      { entity_id: 'light.b', name: 'B', category: 'light', area: null, actions: ['read'], critical: false, suggest_critical: false },
     ];
     show(base, { catalog: { areas: [], devices } });
     const cells = within(screen.getByRole('grid', { name: 'Lights' })).getAllByRole('gridcell');
@@ -202,8 +210,8 @@ describe('PreviewMatrix on desktop', () => {
   });
 
   it('steps over a hole with the arrows and stops before it with End', () => {
-    const devices: Device[] = [{ entity_id: 'light.a', name: 'A', category: 'light', area: null, actions: ['read', 'turn_off', 'set'] }];
-    const full: Device = { entity_id: 'light.b', name: 'B', category: 'light', area: null, actions: ['read', 'turn_on', 'turn_off'] };
+    const devices: Device[] = [{ entity_id: 'light.a', name: 'A', category: 'light', area: null, actions: ['read', 'turn_off', 'set'], critical: false, suggest_critical: false }];
+    const full: Device = { entity_id: 'light.b', name: 'B', category: 'light', area: null, actions: ['read', 'turn_on', 'turn_off'], critical: false, suggest_critical: false };
     show(base, { catalog: { areas: [], devices: [...devices, full] } });
     const row = (n: number) => within(screen.getAllByRole('row')[n] as HTMLElement).getAllByRole('gridcell');
     const a = row(1);
@@ -247,7 +255,7 @@ describe('PreviewMatrix on desktop', () => {
   it('names the grouping choice and makes the groups headings', () => {
     show();
     expect(screen.getByRole('radiogroup', { name: 'Group by' })).toBeTruthy();
-    expect(screen.getAllByRole('heading', { level: 3 }).length).toBe(9);
+    expect(screen.getAllByRole('heading', { level: 3 }).length).toBe(10);
   });
 });
 

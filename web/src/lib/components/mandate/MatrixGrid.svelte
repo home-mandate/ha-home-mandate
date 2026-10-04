@@ -89,6 +89,7 @@
     <div role="row">
       <div role="rowheader" class="device">
         <bdi>{cleanUntrusted(row.device.name) || cleanUntrusted(row.device.entity_id)}</bdi>
+        {#if row.device.critical}<span class="shield"><Icon name="critical" size={16} label={m.critical_device_label()} /></span>{/if}
         <code title={cleanUntrusted(row.device.entity_id)}>{cleanUntrusted(row.device.entity_id)}</code>
       </div>
       {#each block.actions as action, c (action)}

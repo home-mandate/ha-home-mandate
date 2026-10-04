@@ -78,6 +78,9 @@ describe('critical actions of a rule', () => {
     expect(ids(rule({}))).toEqual(['lock.front_door']);
     expect(ids(rule({ actions: ['read'] }))).toEqual([]);
     expect(ids(rule({ resource: { area: 'garage' } }))).toEqual(['cover.garage_door', 'camera.demo_camera']);
-    expect(ids(rule({ resource: { any: true } }))).toHaveLength(5);
+    expect(ids(rule({ resource: { any: true } }))).toHaveLength(6);
+    // A device the household marked counts for every action but read.
+    expect(ids(rule({ resource: { entity_id: 'switch.cellar_door' }, actions: ['turn_on'] }))).toEqual(['switch.cellar_door']);
+    expect(ids(rule({ resource: { entity_id: 'switch.cellar_door' }, actions: ['read'] }))).toEqual([]);
   });
 });

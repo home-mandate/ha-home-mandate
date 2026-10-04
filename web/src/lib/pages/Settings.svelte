@@ -18,6 +18,7 @@
   import Skeleton from '../components/Skeleton.svelte';
   import AboutSection from '../components/settings/AboutSection.svelte';
   import ApproversSection from '../components/settings/ApproversSection.svelte';
+  import CriticalSection from '../components/settings/CriticalSection.svelte';
   import DefaultsSection from '../components/settings/DefaultsSection.svelte';
   import EstopSection from '../components/settings/EstopSection.svelte';
   import HaSection from '../components/settings/HaSection.svelte';
@@ -46,6 +47,7 @@
   const uid = $props.id();
   const SECTIONS: { key: SettingsSection; title: () => string }[] = [
     { key: 'approvers', title: () => m.set_approvers() },
+    { key: 'critical', title: () => m.set_critical() },
     { key: 'defaults', title: () => m.set_defaults() },
     { key: 'ha', title: () => m.set_ha() },
     { key: 'mcp', title: () => m.set_mcp() },
@@ -158,6 +160,8 @@
         <h2 id="{uid}-{s.key}" tabindex="-1">{s.title()}</h2>
         {#if s.key === 'approvers'}
           <ApproversSection {app} {notifier} bell={defaults.data?.bell ?? null} onbell={(on) => void bell(on)} />
+        {:else if s.key === 'critical'}
+          <CriticalSection {app} />
         {:else if s.key === 'defaults'}
           {#if defaults.status === 'error'}
             <ErrorState title={m.settings_error_title()} body={m.settings_error_body()} onretry={() => void defaults.run()} />

@@ -50,6 +50,15 @@ describe('isCriticalRequest', () => {
     expect(isCriticalRequest({ ...base, request: { ...req, resource: { entity_id: 'x.y', category: 'vendor:robot' } } })).toBe(true);
     expect(isCriticalRequest(bySeq(1))).toBe(false); // no request at all
   });
+
+  it('counts every action but read on a device marked as critical (resource.critical)', () => {
+    const base = bySeq(3);
+    const req = base.request;
+    if (!req) throw new Error('fixture without request');
+    const marked = { ...req.resource, critical: true };
+    expect(isCriticalRequest({ ...base, request: { ...req, resource: marked } })).toBe(true);
+    expect(isCriticalRequest({ ...base, request: { ...req, resource: marked, action: 'read' } })).toBe(false);
+  });
 });
 
 describe('deviceName', () => {
@@ -64,7 +73,7 @@ describe('deviceName', () => {
   });
 
   it('never shows hidden characters or line breaks of a device name', () => {
-    const hostile: DeviceCatalog = { areas: [], devices: [{ entity_id: 'light.x', name: 'Lamp\u202E\nkcab', category: 'light', area: null, actions: [] }] };
+    const hostile: DeviceCatalog = { areas: [], devices: [{ entity_id: 'light.x', name: 'Lamp\u202E\nkcab', category: 'light', area: null, actions: [], critical: false, suggest_critical: false }] };
     expect(deviceName('light.x', hostile)).toBe('Lamp kcab');
   });
 });

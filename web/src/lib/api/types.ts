@@ -189,7 +189,9 @@ export interface PairingApprove extends PairingDecision {
 }
 
 // ---------------------------------------------------------------------------
-// Devices: GET api/devices – the catalog, for the mandate editor
+// Devices: GET api/devices – the catalog, for the mandate editor and the critical devices.
+// PUT api/devices/critical {entity_id, critical} → 204; not_found for a device the catalog
+// does not know, invalid_input names /entity_id or /critical.
 
 /** Categories of SPEC-v0 section 5. */
 export type Category =
@@ -227,6 +229,10 @@ export interface Device {
   area: string | null;
   /** Actions of the category's vocabulary, sorted. */
   actions: string[];
+  /** The household marked the device: every action except read is critical (SPEC-v0 section 4, step 5). */
+  critical: boolean;
+  /** Not marked, but its device class or name points to a door, a gate or a garage: the UI proposes marking it. */
+  suggest_critical: boolean;
 }
 
 export interface DeviceCatalog {
@@ -534,7 +540,8 @@ export interface AuditEntry {
   request?: {
     time: string;
     timezone?: string;
-    resource: { entity_id: string; category?: string; area?: string };
+    /** critical: the household marked the device (SPEC-v0 section 4, step 5). */
+    resource: { entity_id: string; category?: string; area?: string; critical?: boolean };
     action: string;
   };
   /** version: number of the mandate version with this digest (added by the API, not part of the chain; F4). */
@@ -671,6 +678,7 @@ export type ServerEvent =
   | { type: 'mandates.changed'; id: string }
   | { type: 'templates.changed' }
   | { type: 'approvers.changed' }
+  | { type: 'devices.changed' }
   | { type: 'settings.changed' };
 
 // ---------------------------------------------------------------------------

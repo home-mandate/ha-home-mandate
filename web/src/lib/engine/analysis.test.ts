@@ -5,10 +5,10 @@ import type { Device, MandateDraft, Rule } from '../api/types.ts';
 import { cell, criticalIncluded, demotedIn, diff, isWidening, overrides, ruleMatches, validityChange } from './analysis.ts';
 
 const devices: Device[] = [
-  { entity_id: 'light.kitchen', name: 'Küchenlicht', category: 'light', area: 'kitchen', actions: ['read', 'set', 'turn_off', 'turn_on'] },
-  { entity_id: 'light.bedroom', name: 'Schlafzimmer', category: 'light', area: 'bedroom', actions: ['read', 'set', 'turn_off', 'turn_on'] },
-  { entity_id: 'lock.front_door', name: 'Haustür', category: 'lock', area: 'hallway', actions: ['lock', 'open', 'read', 'unlock'] },
-  { entity_id: 'cover.garage', name: 'Garagentor', category: 'gate', area: 'garage', actions: ['close', 'open', 'read'] },
+  { entity_id: 'light.kitchen', name: 'Küchenlicht', category: 'light', area: 'kitchen', actions: ['read', 'set', 'turn_off', 'turn_on'], critical: false, suggest_critical: false },
+  { entity_id: 'light.bedroom', name: 'Schlafzimmer', category: 'light', area: 'bedroom', actions: ['read', 'set', 'turn_off', 'turn_on'], critical: false, suggest_critical: false },
+  { entity_id: 'lock.front_door', name: 'Haustür', category: 'lock', area: 'hallway', actions: ['lock', 'open', 'read', 'unlock'], critical: false, suggest_critical: false },
+  { entity_id: 'cover.garage', name: 'Garagentor', category: 'gate', area: 'garage', actions: ['close', 'open', 'read'], critical: false, suggest_critical: false },
 ];
 const [kitchen, bedroom, door, garage] = devices as [Device, Device, Device, Device];
 
@@ -47,6 +47,20 @@ describe('cell', () => {
     const m = draft([{ id: 'all-locks', resource: { category: 'lock' }, actions: ['*'], decision: 'allow' }]);
     expect(cell(m, door, 'unlock')).toMatchObject({ decision: 'ask', demoted: true, critical: true, rule: 0 });
     expect(cell(m, door, 'lock')).toMatchObject({ decision: 'allow', demoted: false, critical: false });
+  });
+
+  it('treats every action but read on a device the household marked as critical', () => {
+    const marked: Device = { ...kitchen, critical: true };
+    const m = draft([lights]);
+    expect(cell(m, marked, 'turn_on')).toMatchObject({ decision: 'ask', demoted: true, critical: true });
+    expect(cell(m, marked, 'read')).toMatchObject({ decision: 'allow', demoted: false, critical: false });
+    // The same draft and device ID without the mark: no cached result of the marked one.
+    expect(cell(m, kitchen, 'turn_on')).toMatchObject({ decision: 'allow', critical: false });
+    expect(cell(draft([{ ...lights, allow_critical: true }]), marked, 'turn_on')).toMatchObject({ decision: 'allow', demoted: false });
+  });
+
+  it('does not report a rule as overridden by the demotion of a marked device', () => {
+    expect(overrides(draft([lights]), [{ ...kitchen, critical: true }])).toEqual([null]);
   });
 
   it('counts the matching rules', () => {

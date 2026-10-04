@@ -309,6 +309,21 @@ describe('createMockClient: approvals, settings, audit, approvers, emergency sto
     expect(types(events)).toEqual(['approval.opened', 'approval.closed']);
   });
 
+  it('marks devices as critical, no longer proposes them and tells listeners', async () => {
+    const api = createMockClient();
+    const { events } = listen(api);
+    await api.putDeviceCritical('switch.garden_gate', true);
+    await api.putDeviceCritical('switch.cellar_door', false);
+    const devices = (await api.devices()).devices;
+    expect(devices.find((d) => d.entity_id === 'switch.garden_gate')).toMatchObject({ critical: true, suggest_critical: false });
+    expect(devices.find((d) => d.entity_id === 'switch.cellar_door')).toMatchObject({ critical: false });
+    expect(types(events)).toEqual(['devices.changed', 'devices.changed']);
+    await api.putDeviceCritical('switch.garden_gate', false);
+    expect((await api.devices()).devices.find((d) => d.entity_id === 'switch.garden_gate')).toMatchObject({ critical: false, suggest_critical: true });
+    await expect(api.putDeviceCritical('light.nowhere', true)).rejects.toMatchObject({ code: 'not_found' });
+    await expect(api.putDeviceCritical('', true)).rejects.toMatchObject({ field: '/entity_id' });
+  });
+
   it('validates and stores the defaults', async () => {
     const api = createMockClient();
     await expect(api.putSettings({ approval_timeout: 'PT5S', max_actions_per_hour: 60, bell: false })).rejects.toMatchObject({ field: '/approval_timeout' });

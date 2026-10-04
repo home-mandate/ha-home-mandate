@@ -22,12 +22,14 @@ export function isAdminEvent(entry: AuditEntry): boolean {
 }
 
 /**
- * isCriticalRequest tells whether the requested action is critical. Without a category or
+ * isCriticalRequest tells whether the requested action is critical: on a device the
+ * household marked, every action but read; otherwise by the vocabulary. Without a category or
  * with one the UI does not know, it cannot tell and says yes: never harmless by mistake.
  */
 export function isCriticalRequest(entry: AuditEntry): boolean {
   const request = entry.request;
   if (!request) return false;
+  if (request.resource.critical === true && request.action !== 'read') return true;
   return isCritical(request.resource.category as Category | undefined, request.action);
 }
 

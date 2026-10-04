@@ -48,6 +48,7 @@ describe('Settings: frame', () => {
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
     expect(within(nav).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual([
       '#/settings/approvers',
+      '#/settings/critical',
       '#/settings/defaults',
       '#/settings/ha',
       '#/settings/mcp',
@@ -292,6 +293,90 @@ describe('Settings: approvers', () => {
     await waitFor(() => expect(notifier.state).toBe('on'));
     expect(requestPermission).toHaveBeenCalled();
     expect(screen.getByText('Switched on in this browser.')).toBeTruthy();
+  });
+});
+
+describe('Settings: critical devices', () => {
+  const critical = () => region('Critical devices');
+  const toggle = (name: string) => within(critical()).getByRole('switch', { name });
+
+  it('lists the marked devices and the suggestions; marking one keeps the focus on its switch', async () => {
+    const { api } = await start({ section: 'critical' });
+    await waitFor(() => expect(toggle('Kellertür-Summer').getAttribute('aria-checked')).toBe('true'));
+    expect(within(critical()).getByText('switch.cellar_door · Flur')).toBeTruthy();
+    const gate = toggle('Gartentor-Öffner');
+    expect(gate.getAttribute('aria-checked')).toBe('false');
+    const put = vi.spyOn(api, 'putDeviceCritical');
+    gate.focus();
+    await fireEvent.click(gate);
+    expect(put).toHaveBeenCalledWith('switch.garden_gate', true);
+    await waitFor(() => expect(toggle('Gartentor-Öffner').getAttribute('aria-checked')).toBe('true'));
+    // Now in the marked list, no longer a suggestion; the focus moved with it.
+    expect(within(critical()).queryByRole('heading', { name: 'Suggestions' })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(toggle('Gartentor-Öffner')));
+    expect(within(critical()).getByRole('status').textContent).toMatch(/Gartentor-Öffner.? is now critical\./);
+  });
+
+  it('asks before removing a mark; cancelling keeps it and returns the focus', async () => {
+    const { api } = await start({ section: 'critical' });
+    const put = vi.spyOn(api, 'putDeviceCritical');
+    await waitFor(() => expect(toggle('Kellertür-Summer').getAttribute('aria-checked')).toBe('true'));
+    const cellar = toggle('Kellertür-Summer');
+    cellar.focus();
+    await fireEvent.click(cellar);
+    const confirm = within(critical()).getByRole('group', { name: /Remove the mark from .?Kellertür-Summer/ });
+    expect(document.activeElement).toBe(within(confirm).getByRole('button', { name: 'Cancel' }));
+    await fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(document.activeElement).toBe(cellar));
+    expect(put).not.toHaveBeenCalled();
+    await fireEvent.click(cellar);
+    await fireEvent.click(within(critical()).getByRole('button', { name: 'Remove mark' }));
+    await waitFor(() => expect(put).toHaveBeenCalledWith('switch.cellar_door', false));
+    await waitFor(() => expect(within(critical()).getByText('No device marked yet.')).toBeTruthy());
+    // The device left every list: the focus goes to the heading of the marked devices.
+    await waitFor(() => expect(document.activeElement).toBe(within(critical()).getByRole('heading', { name: 'Marked' })));
+  });
+
+  it('drops the confirmation when the mark is removed elsewhere meanwhile', async () => {
+    const { api } = await start({ section: 'critical' });
+    await waitFor(() => expect(toggle('Kellertür-Summer')).toBeTruthy());
+    await fireEvent.click(toggle('Kellertür-Summer'));
+    expect(within(critical()).getByRole('button', { name: 'Remove mark' })).toBeTruthy();
+    await api.putDeviceCritical('switch.cellar_door', false);
+    await waitFor(() => expect(within(critical()).queryByRole('button', { name: 'Remove mark' })).toBeNull());
+  });
+
+  it('finds any other device that can do more than read, by name, entity ID or area', async () => {
+    await start({ section: 'critical' });
+    const search = await within(critical()).findByRole('searchbox', { name: 'Find another device' });
+    await fireEvent.input(search, { target: { value: 'wohnzimmer' } });
+    expect(within(critical()).getAllByRole('switch')).toHaveLength(5); // marked, suggested, three in the living room
+    for (const name of ['Heizung', 'Lautsprecher', 'Wohnzimmerlicht']) expect(toggle(name).getAttribute('aria-checked')).toBe('false');
+    await fireEvent.input(search, { target: { value: 'außentemperatur' } });
+    expect(within(critical()).getByText('No matching device that can be marked.')).toBeTruthy();
+  });
+
+  it('says when the device no longer exists and shows the server state', async () => {
+    const { api } = await start({ section: 'critical' });
+    vi.spyOn(api, 'putDeviceCritical').mockRejectedValueOnce(new ApiError('not_found', 404));
+    await waitFor(() => expect(toggle('Gartentor-Öffner')).toBeTruthy());
+    await fireEvent.click(toggle('Gartentor-Öffner'));
+    await waitFor(() => expect(within(critical()).getByRole('alert').textContent).toMatch(/Gartentor-Öffner.? no longer exists in Home Assistant\./));
+    expect(toggle('Gartentor-Öffner').getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('follows a change made elsewhere', async () => {
+    const { api } = await start({ section: 'critical' });
+    await waitFor(() => expect(toggle('Gartentor-Öffner').getAttribute('aria-checked')).toBe('false'));
+    await api.putDeviceCritical('switch.garden_gate', true);
+    await waitFor(() => expect(toggle('Gartentor-Öffner').getAttribute('aria-checked')).toBe('true'));
+  });
+
+  it('offers a retry when the devices cannot be loaded', async () => {
+    await start({ section: 'critical', prepare: (api) => void vi.spyOn(api, 'devices').mockRejectedValueOnce(new ApiError('unavailable', 0)) });
+    expect(await within(critical()).findByText('Devices not loaded')).toBeTruthy();
+    await fireEvent.click(within(critical()).getByRole('button', { name: /retry|try again/i }));
+    await waitFor(() => expect(toggle('Kellertür-Summer')).toBeTruthy());
   });
 });
 

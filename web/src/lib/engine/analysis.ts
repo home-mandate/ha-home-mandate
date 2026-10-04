@@ -90,7 +90,7 @@ export function cell(draft: MandateDraft, device: Device, action: string): Cell 
     cache = new Map();
     cells.set(draft, cache);
   }
-  const key = `${device.entity_id}\u0000${device.category}\u0000${device.area ?? ''}\u0000${action}`;
+  const key = `${device.entity_id}\u0000${device.category}\u0000${device.area ?? ''}\u0000${device.critical}\u0000${action}`;
   const cached = cache.get(key);
   if (cached) return cached;
   const result = computeCell(draft, device, action);
@@ -98,8 +98,16 @@ export function cell(draft: MandateDraft, device: Device, action: string): Cell 
   return result;
 }
 
+/**
+ * criticalOn tells whether an action on a device is critical: by the vocabulary, or on a
+ * device the household marked, every action except read (SPEC-v0 section 4, step 5).
+ */
+export function criticalOn(device: Device, action: string): boolean {
+  return lookupAction(device.category, action).critical || (device.critical && action !== 'read');
+}
+
 function computeCell(draft: MandateDraft, device: Device, action: string): Cell {
-  const critical = lookupAction(device.category, action).critical;
+  const critical = criticalOn(device, action);
   const base = { critical, matching: 0, invalid: false, timed: null };
   if (!isValid(draft)) return { ...base, decision: 'default', rule: null, demoted: false, invalid: true };
   const resource = { entity_id: device.entity_id, category: device.category, area: device.area ?? undefined };
@@ -167,7 +175,7 @@ export function overrides(draft: MandateDraft, devices: readonly Device[]): (Ove
       if (!resourceMatches(rule, resource)) continue;
       for (const action of device.actions) {
         if (!coversAction(rule, action)) continue;
-        const critical = lookupAction(device.category, action).critical;
+        const critical = criticalOn(device, action);
         const mine: Decision = rule.decision === 'allow' && critical && rule.allow_critical !== true ? 'ask' : rule.decision;
         const c = cell(draft, device, action);
         const winner = c.timed ?? c;

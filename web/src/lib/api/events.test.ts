@@ -82,13 +82,14 @@ describe('connectEvents', () => {
     latest().open();
     latest().message('{"type":"agents.changed"}');
     latest().message('{"type":"mandates.changed","id":"m1"}');
+    latest().message('{"type":"devices.changed"}');
     latest().message('not json');
     latest().message('{"type":"unknown.thing"}');
     latest().message('{"no":"type"}');
     latest().message('[1,2]');
     latest().message(new ArrayBuffer(4));
     latest().message('x'.repeat(300_000));
-    expect(events).toEqual([{ type: 'agents.changed' }, { type: 'mandates.changed', id: 'm1' }]);
+    expect(events).toEqual([{ type: 'agents.changed' }, { type: 'mandates.changed', id: 'm1' }, { type: 'devices.changed' }]);
   });
 
   it('drops events whose payload has the wrong shape', () => {

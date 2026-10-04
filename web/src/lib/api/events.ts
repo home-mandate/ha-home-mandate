@@ -54,6 +54,7 @@ const EVENT_TYPES: ReadonlySet<string> = new Set<ServerEvent['type']>([
   'mandates.changed',
   'templates.changed',
   'approvers.changed',
+  'devices.changed',
   'settings.changed',
 ]);
 const MAX_MESSAGE = 256 * 1024;
@@ -128,6 +129,7 @@ const PAYLOAD: Readonly<Record<ServerEvent['type'], (e: Json) => boolean>> = {
   'mandates.changed': (e) => isString(e.id),
   'templates.changed': () => true,
   'approvers.changed': () => true,
+  'devices.changed': () => true,
   'settings.changed': () => true,
 };
 

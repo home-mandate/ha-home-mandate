@@ -5,7 +5,7 @@
 // design handoff (README section 1); anything else is not_found. Identifiers in the hash
 // are encoded path segments; client IDs are often URLs.
 
-export type SettingsSection = 'approvers' | 'defaults' | 'ha' | 'mcp' | 'retention' | 'estop' | 'about';
+export type SettingsSection = 'approvers' | 'critical' | 'defaults' | 'ha' | 'mcp' | 'retention' | 'estop' | 'about';
 
 export type Route =
   | { name: 'overview' }
@@ -24,7 +24,7 @@ export type Route =
 
 export type Section = 'overview' | 'agents' | 'mandates' | 'audit' | 'settings';
 
-const SECTIONS: readonly SettingsSection[] = ['approvers', 'defaults', 'ha', 'mcp', 'retention', 'estop', 'about'];
+const SECTIONS: readonly SettingsSection[] = ['approvers', 'critical', 'defaults', 'ha', 'mcp', 'retention', 'estop', 'about'];
 const MANDATE_ID = /^[A-Za-z0-9_-]{4,64}$/;
 const SEQ = /^[1-9]\d{0,14}$/;
 const NOT_FOUND: Route = { name: 'not_found' };
