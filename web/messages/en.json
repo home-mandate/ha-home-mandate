@@ -786,5 +786,16 @@
   "validation_limits_order": "“From” is greater than “To”.",
   "validation_limits_format": "Enter a number in the allowed range.",
   "banner_clock_title": "Clock of the host is wrong",
-  "banner_clock_body": "The clock shows an earlier time than the newest entry of the audit log. All requests are declined until it is right; check the time synchronization of the host."
+  "banner_clock_body": "The clock shows an earlier time than the newest entry of the audit log. All requests are declined until it is right; check the time synchronization of the host.",
+  "renames_title": "Renamed in Home Assistant",
+  "renames_intro": "Rules still name these devices by their former ID. Until you decide, they keep applying to the renamed device, and the stricter decision wins.",
+  "renames_was": "{entity}, formerly {formers}",
+  "renames_mandates": "{count, plural, one {Named in the mandate} other {Named in the mandates}}",
+  "renames_apply": "Take over",
+  "renames_dismiss": "Don’t take over",
+  "renames_dismiss_text": "The rules on {formers} will no longer apply to this device. A deny or ask rule among them then no longer protects it.",
+  "renames_critical_text": "A rule among them allows critical actions without approval. Taking it over allows this for the renamed device too.",
+  "renames_apply_critical": "Take over, allow without approval",
+  "renames_failed": "The rename could not be resolved. Please try again.",
+  "rule_renamed": "“{entity}” is now called “{to}” in Home Assistant. Until the rename is taken over or dismissed in the mandate list, this rule keeps applying to the device."
 }

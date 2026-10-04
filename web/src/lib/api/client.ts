@@ -9,6 +9,7 @@ import type {
   Agent,
   ApiErrorBody,
   ApiErrorCode,
+  Rename,
   ApplyTemplate,
   ApprovalAnswer,
   ApprovalHistoryEntry,
@@ -59,6 +60,12 @@ export interface ApiClient {
   devices(): Promise<DeviceCatalog>;
   /** Marks a device as critical or removes the mark. */
   putDeviceCritical(entityId: string, critical: boolean): Promise<void>;
+  /** Renamed entities that active mandates still name by a former ID. */
+  renames(): Promise<Rename[]>;
+  /** Takes a rename over into the mandates; confirmCritical for rules that allow critical actions without approval. */
+  applyRename(entityId: string, confirmCritical?: boolean): Promise<void>;
+  /** Resolves a rename without changing a mandate. */
+  dismissRename(entityId: string): Promise<void>;
 
   mandates(): Promise<MandateSummary[]>;
   createMandate(create: MandateCreate): Promise<MandateDetail>;
@@ -304,6 +311,10 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
 
     devices: () => get('devices'),
     putDeviceCritical: (entityId, critical) => request('PUT', 'devices/critical', { entity_id: entityId, critical }),
+    renames: () => request('GET', 'renames'),
+    applyRename: (entityId, confirmCritical) =>
+      request('POST', 'renames/apply', { entity_id: entityId, ...(confirmCritical ? { confirm_critical: true } : {}) }),
+    dismissRename: (entityId) => request('POST', 'renames/dismiss', { entity_id: entityId }),
 
     mandates: () => get('mandates'),
     createMandate: (create) => request('POST', 'mandates', create),

@@ -345,7 +345,26 @@ export interface StaleReference {
   rule: number;
   rule_id: string;
   entity_id?: string;
+  /** The entity the device was renamed to; the rule keeps applying to it until the rename is resolved. */
+  renamed_to?: string;
   area?: string;
+}
+
+/**
+ * GET api/renames: an entity Home Assistant renamed while active mandates still name a
+ * former ID. Until a human takes it over (POST api/renames/apply {entity_id,
+ * confirm_critical?}) or dismisses it (POST api/renames/dismiss {entity_id}), those rules
+ * keep applying to the entity and the stricter evaluation wins. Taking over a rule that
+ * allows critical actions without approval needs the separate confirmation
+ * ("critical_confirmation_required" otherwise).
+ */
+export interface Rename {
+  entity_id: string;
+  /** Name from Home Assistant, untrusted. */
+  name: string;
+  /** Former IDs, nearest first. */
+  formers: string[];
+  mandates: { id: string; name: string; rules: string[]; critical: boolean }[];
 }
 
 export interface MandateVersion {

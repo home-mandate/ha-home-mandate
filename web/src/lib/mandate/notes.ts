@@ -73,12 +73,15 @@ export function isStale(rule: Rule, catalog: DeviceCatalog): boolean {
  * A rename in Home Assistant leaves the rule on the old ID (decision H-E1: reported, never
  * rewritten). A deny or ask rule then no longer protects the renamed device: a danger.
  */
-function directoryNotes(rule: Rule, catalog: DeviceCatalog): RuleNote[] {
+function directoryNotes(rule: Rule, catalog: DeviceCatalog, renamed: ReadonlyMap<string, string>): RuleNote[] {
   const protects = rule.decision !== 'allow';
   const { entity, area } = staleParts(rule, catalog);
   const notes: RuleNote[] = [];
   const kind = protects ? 'danger' : 'info';
-  if (entity !== null) notes.push({ kind, text: protects ? m.rule_stale_entity_protect({ entity }) : m.rule_stale_entity({ entity }) });
+  const to = entity === null ? undefined : renamed.get(entity);
+  // A rename nobody resolved yet: the rule keeps applying to the renamed device.
+  if (entity !== null && to !== undefined) notes.push({ kind: 'info', text: m.rule_renamed({ entity, to }) });
+  else if (entity !== null) notes.push({ kind, text: protects ? m.rule_stale_entity_protect({ entity }) : m.rule_stale_entity({ entity }) });
   if (area !== null) notes.push({ kind, text: protects ? m.rule_stale_area_protect({ area }) : m.rule_stale_area({ area }) });
   // A rule on an area covers whatever is in it now; moving a device out takes it out.
   if (protects && area === null && rule.resource.area !== undefined && rule.resource.entity_id === undefined) {
@@ -89,12 +92,21 @@ function directoryNotes(rule: Rule, catalog: DeviceCatalog): RuleNote[] {
 
 /**
  * ruleNotes explains what happens to a rule in the mandate it is part of. known is false
- * while the catalog could not be loaded: then no device can be told missing.
+ * while the catalog could not be loaded: then no device can be told missing. renamed maps
+ * former IDs of renamed devices, whose rename nobody resolved yet, to the current ones.
  */
-export function ruleNotes(draft: MandateDraft, index: number, catalog: DeviceCatalog, override: Override | null, locale: string, known = true): RuleNote[] {
+export function ruleNotes(
+  draft: MandateDraft,
+  index: number,
+  catalog: DeviceCatalog,
+  override: Override | null,
+  locale: string,
+  known = true,
+  renamed: ReadonlyMap<string, string> = new Map(),
+): RuleNote[] {
   const rule = draft.rules[index];
   if (!rule) return [];
-  const notes: RuleNote[] = known ? directoryNotes(rule, catalog) : [];
+  const notes: RuleNote[] = known ? directoryNotes(rule, catalog, renamed) : [];
   if (!isEditable(rule)) notes.push({ kind: 'info', text: m.rule_readonly_extension() });
   const demoted = demotedIn(scoped(rule, catalog.devices));
   if (demoted.length > 0) notes.push({ kind: 'critical', text: `${m.demoted_hint()} (${names(demoted, locale)})` });
