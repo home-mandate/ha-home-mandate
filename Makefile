@@ -25,7 +25,7 @@ VERSION ?= dev
 COMMIT  ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
 GOARCHES := amd64 arm64
 
-.PHONY: check test cover vet staticcheck vulncheck actionlint conformance fuzz build webui web-install web-check web-conformance web-e2e e2e e2e-ui
+.PHONY: check test cover vet staticcheck vulncheck actionlint conformance fuzz build image webui web-install web-check web-conformance web-e2e e2e e2e-ui
 
 ## check: everything that must be green before a commit
 check: vet staticcheck cover vulncheck actionlint conformance
@@ -68,6 +68,11 @@ build:
 			-ldflags="-s -w -buildid= -X main.version=$(VERSION) -X main.commit=$(COMMIT)" \
 			-o bin/home-mandate-linux-$$arch ./cmd/home-mandate || exit 1; \
 	done
+
+## image: the container image for this machine's architecture, tagged home-mandate:$(VERSION)
+## (podman, or docker with E2E_RUNTIME=docker)
+image:
+	$(or $(E2E_RUNTIME),podman) build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t home-mandate:$(VERSION) .
 
 ## webui: build the UI and put it where the binary embeds it, with the licenses of the
 ## Go code appended to licenses.txt (run before build for a binary with the UI)

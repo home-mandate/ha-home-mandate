@@ -59,6 +59,11 @@ from Playwright's CDN, for tests only.
 
 Agents connect to `https://<host>:8765/mcp` with an OAuth access token.
 
+`docs/deploy/compose.yaml` is an example next to Home Assistant Container on the same host
+(`make image` builds the image). The certificate must be valid for the host of
+`HM_PUBLIC_URL`; Home-Mandate looks at the files once a minute and takes a renewed pair over
+without a restart.
+
 ## The local UI
 
 In app mode (Home Assistant OS) the UI is in Home Assistant's sidebar through Ingress. Every
@@ -87,6 +92,29 @@ name and picks a mandate template.
   shows a code like `BCDF-GHJK`, the human opens `https://<host>:8765/pair`, signs in and
   enters it. Five wrong codes lock the session, thirty within ten minutes lock pairing for
   everyone for ten minutes.
+
+- **Local MCP clients without OAuth of their own** (Claude Desktop with a local server
+  entry, other stdio clients) connect through [`mcp-remote`](https://github.com/geelen/mcp-remote),
+  which runs on the same computer and signs in with Authorization Code and PKCE. Home-Mandate
+  publishes a Client ID Metadata Document for it at
+  `https://home-mandate.com/clients/mcp-remote.json` (redirect to
+  `http://localhost:33418/oauth/callback`). Example for Claude Desktop
+  (`claude_desktop_config.json`, Node.js 18 or later):
+
+  ```json
+  {
+    "mcpServers": {
+      "home-mandate": {
+        "command": "npx",
+        "args": ["-y", "mcp-remote@0.14.3", "https://hm.example.org:8765/mcp", "33418",
+                 "--client-metadata-url", "https://home-mandate.com/clients/mcp-remote.json"]
+      }
+    }
+  }
+  ```
+
+  The browser opens Home-Mandate's sign-in; an administrator admits the agent as with any
+  other. The tokens stay on that computer, with `mcp-remote`.
 
 Access tokens are valid for 10 minutes, refresh tokens for 30 days; every refresh token can
 be used once, and presenting a used one again revokes all tokens of that admission.
@@ -149,8 +177,8 @@ A template is a mandate whose `id`, `principal`, `agent`, `created_by`, `created
 - In app mode (Home Assistant OS), admitting agents is not available yet.
 - Changes to mandate templates and approvers are local settings: the specification has no
   audit event for them, so they do not appear in the audit log.
-- In container mode, the UI needs a proxy that acts as the Supervisor (`HM_INGRESS_ADDR`);
-  an own port with sign-in through Home Assistant follows in v0.2.
+- In container mode, the UI needs a certificate and an `https://` public URL (direct mode);
+  without them, only the command line manages Home-Mandate.
 - There is no test clock: time windows are tested against the real household time (E2E
   scenario 9) and at their boundaries by unit tests.
 
