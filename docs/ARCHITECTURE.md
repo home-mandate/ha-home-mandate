@@ -245,7 +245,7 @@ checked on every request.
 |---|---|---|
 | Start | App from its own repository | `docker run` / Podman Quadlet with the same image |
 | Access to HA | `SUPERVISOR_TOKEN`, API via `http://supervisor/core/…` | Long-lived token of a dedicated HA user, URL via variable |
-| UI | Ingress on port 8099 (sign-in handled by HA) | v0.1: none; `HM_INGRESS_ADDR` opens the same listener behind an own proxy that acts as the Supervisor, at the one address `HM_INGRESS_PROXY` (E2E). Own port with HA sign-in follows in v0.2 |
+| UI | Ingress on port 8099 (sign-in handled by HA) | On the MCP listener under `/ui/`, signed in through Home Assistant, when a certificate and `HM_PUBLIC_URL` are configured (direct mode, section 12); otherwise none, only the command line. `HM_INGRESS_ADDR` additionally opens the Ingress listener behind an own proxy that acts as the Supervisor, at the one address `HM_INGRESS_PROXY` (E2E) |
 | Data | `/data` | Mounted volume |
 
 One image, two configuration sources. Architectures: `amd64`, `aarch64`.
@@ -321,6 +321,14 @@ Decided by Markus on 2026-10-01.
    **Decision: as proposed.** Use an existing certificate from `/ssl` (common on HA OS
    installations with Let's Encrypt/DuckDNS); otherwise only `localhost` without TLS. No
    plaintext on the LAN.
+
+   **Addition: certificates are renewed without a restart.** The listener takes the
+   certificate for each handshake from memory and looks at the files at most once a
+   minute. A new pair is used only if certificate and key belong together and the
+   certificate covers the host of the public URL; otherwise the previous pair stays and
+   the error is logged and shown in the UI. If the certificate does not cover that host
+   at start, Home-Mandate does not start. From 14 days before the end of validity, the
+   log and the UI warn.
 2. **Permissions of the HA user in container mode.** **Decision: need-to-know.** A dedicated
    HA user without admin rights; admin rights only where demonstrably required, and then
    documented here.
@@ -427,6 +435,27 @@ as generated code.
   the base path at build time.
 - The UI talks only to its own JSON API (`internal/api`) on the same origin.
 - Ingress requests are accepted only from 172.30.32.2.
+
+**Direct mode (container mode without Ingress):** Without a Supervisor, nobody signs the
+human in for Home-Mandate, so it does so itself.
+- The UI is served on the MCP listener under `/ui/` (its API under `/ui/api/`): one port,
+  one certificate. It exists only with a certificate and a public URL (`HM_PUBLIC_URL`,
+  `https://`), because secure cookies and `Sec-Fetch-Site` need a secure origin; without
+  them there is no UI, only the command line.
+- Sign-in through Home Assistant, as for admitting agents (IndieAuth, the tokens from the
+  exchange are used once and revoked at once); the `state` is bound to a cookie of the
+  sign-in. Only administrators get a session, and the administrator check of section 8
+  still runs on every request.
+- Session cookie `__Host-hm_ui`: `Secure`, `HttpOnly`, `SameSite=Strict`, path `/`, 256
+  random bits kept only as a hash in memory; a new ID at every sign-in. A session ends
+  after 30 minutes without a request, after 12 hours in any case, on sign-out (`POST`
+  with the CSRF token) and with every restart. At most 5 sessions per user.
+- Headers that only the Supervisor or Home Assistant may set (`X-Remote-User-Id`,
+  `X-Forwarded-Host`) are never read in direct mode. The event stream's `Origin` must be
+  the public URL exactly. The page may not be framed (`frame-ancestors 'none'`; behind
+  Ingress `'self'`).
+- The UI shares its origin with the sign-in and consent pages of the authorization
+  server; both are Home-Mandate's own pages under the same CSP, with different cookies.
 
 **Frontend security:**
 - Content Security Policy without `unsafe-inline` and without `unsafe-eval`; all scripts and

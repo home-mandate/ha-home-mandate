@@ -247,9 +247,26 @@ Every line is at least one test. New attack ideas are added here before they are
 - The release binary depends on `tools/conformance` or the harness of mandate-spec → a test fails (`go list -deps ./cmd/home-mandate`)
 - HTTP binding without or with a wrong bearer token → 401; a token shorter than 32 characters or an address other than loopback → refused at start
 
+**UI in direct mode (container mode without Ingress)**
+- No certificate or no `https://` public URL → no UI, `/ui/` answers 404
+- Request without session cookie, with an unknown, guessed, expired (12 hours) or idle (30 minutes) session, or after a restart → API `unauthenticated`, page sends to the sign-in
+- Sign-in callback without the sign-in cookie, with another `state`, a reused or malformed code, or a code Home Assistant refuses → refused, no session; the Home Assistant tokens of a sign-in are revoked in every case
+- Signed-in user who is no administrator, or not active → no session; administrator rights withdrawn later → refused within 30 s, an open event stream closed with 4403
+- Session ID unchanged by the sign-in (fixation) → impossible: every sign-in issues a new ID and the sign-in cookie is cleared
+- Cookie without `__Host-` prefix, `Secure`, `HttpOnly`, `SameSite=Strict` or with a domain → test fails
+- Sign-out without CSRF token or from another site → refused; after sign-out the old cookie is worthless
+- Sixth session of a user → the oldest ends; sign-in starts beyond the limit per address → `rate_limited`
+- `X-Remote-User-Id` or `X-Forwarded-Host` sent by the client in direct mode → ignored, never a user or an origin
+- Event stream with an `Origin` other than the public URL, or none → refused
+- Page framed by another page → refused by CSP (`frame-ancestors 'none'`)
+
 **Transport**
 - TLS 1.2 or older → connection rejected
 - Handshake with `X25519MLKEM768` is negotiated when the client offers it
+- Plaintext HTTP to the TLS port → no answer in plaintext
+- Certificate that does not cover the host of the public URL → start aborted; as a renewal → not taken over, the previous one stays and the error is logged and shown
+- Renewed certificate and key → the next handshake uses them, without a restart; a key that does not belong to the certificate, a half-written or unreadable file → previous pair stays, retried at the next look (at most once a minute)
+- Certificate valid for less than 14 days → warning in the log and in the UI
 
 ## 5. Checking internationalization
 

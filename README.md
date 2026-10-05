@@ -16,7 +16,7 @@ logged.
 | `app/config.yaml` | Draft of the Home Assistant app configuration |
 | `Dockerfile` | Multi-stage build: UI (Vite) → Go binary with embedded UI |
 
-Planned code structure: `cmd/home-mandate` (gateway), `cmd/relay` (cloud relay, from 2027),
+Planned code structure: `cmd/home-mandate` (gateway), `cmd/relay` (cloud relay),
 `internal/…` (see architecture), `web/` (local UI, Svelte + Vite), `e2e/`.
 
 ## Development
@@ -47,14 +47,14 @@ from Playwright's CDN, for tests only.
 | `HM_HA_TOKEN` or `HM_HA_TOKEN_FILE` | Long-lived token of Home-Mandate's own Home Assistant user |
 | `HM_HA_CA_FILE` | Optional PEM file with a CA to trust for `wss://` (self-signed Home Assistant certificate) |
 | `HM_DATA_DIR` | Data directory, default `/data` |
-| `HM_TLS_CERT`, `HM_TLS_KEY` | Certificate for the MCP endpoint (TLS 1.3); without it, MCP listens on localhost only |
+| `HM_TLS_CERT`, `HM_TLS_KEY` | Certificate for the MCP endpoint and the UI (TLS 1.3); without it, MCP listens on localhost only. Renewed files are taken over without a restart; the certificate must cover the host of `HM_PUBLIC_URL` |
 | `HM_MCP_ADDR` | Listen address of the MCP endpoint, default `:8765` with TLS, `127.0.0.1:8765` without |
 | `HM_PDP_ADDR` | Optional loopback address for the AuthZEN evaluation endpoint, for other gateways on the same host |
 | `HM_PUBLIC_URL` | Origin agents and browsers reach Home-Mandate at, e.g. `https://hm.example.org:8765` (`http://` only for `localhost`). Without it, OAuth is off and no agent can be admitted |
 | `HM_HA_BROWSER_URL` | Home Assistant as the human's browser reaches it, for signing in; default: the origin of `HM_HA_URL` |
 | `HM_APPROVAL_TIMEOUT` | Upper limit in seconds for waiting for an approval, 30–600, default 120; a mandate may only shorten it |
 | `HM_LOG_LEVEL` | `debug`, `info`, `warning` or `error` |
-| `HM_INGRESS_ADDR` | Optional listen address of the UI, e.g. `:8099`, for a proxy that does what Home Assistant's Supervisor does (signs people in, sets `X-Remote-User-Id`, removes client copies of it), and for the E2E tests. Without it, there is no UI in container mode in v0.1 |
+| `HM_INGRESS_ADDR` | Optional listen address of the UI, e.g. `:8099`, for a proxy that does what Home Assistant's Supervisor does (signs people in, sets `X-Remote-User-Id`, removes client copies of it), and for the E2E tests. Not needed for the UI in direct mode (below) |
 | `HM_INGRESS_PROXY` | Required with `HM_INGRESS_ADDR`: the one IP address of that proxy. Requests from any other address get nothing; the user must be a Home Assistant administrator |
 
 Agents connect to `https://<host>:8765/mcp` with an OAuth access token.
@@ -66,6 +66,12 @@ Home Assistant user can open Ingress panels, so Home-Mandate checks each request
 must come from the Supervisor, and the user must be a Home Assistant administrator at that
 moment (asked every 30 seconds; if Home Assistant cannot answer, nobody is let in). See
 `docs/ARCHITECTURE.md`, sections 8 and 12.
+
+In container mode with a certificate and `HM_PUBLIC_URL`, the UI is at
+`https://<host>:8765/ui/` (direct mode). You sign in with your Home Assistant account;
+only administrators get in, and the check is repeated on every request. A session ends
+after 30 minutes without use, after 12 hours, on sign-out and with every restart. Without
+a certificate there is no UI in container mode, only the command line.
 
 ## Admitting agents
 
