@@ -7,17 +7,24 @@ a negative test, no release without green end-to-end tests.**
 
 | Level | Tool | Runs | Purpose |
 |---|---|---|---|
-| Unit | `go test`, table-driven | every commit | Every function, every branch |
-| Conformance | Cases from `mandate-spec` (embedded in the Go module) against our own PDP; `mandate-conformance` against `tools/conformance` (process binding: classes evaluator, selection, audit, audit-anchored; HTTP binding: class pdp), `make conformance` | every commit | Evaluation and selection exactly per specification, through Home-Mandate's own decision path |
-| Negative | Own test cases per package, catalog in section 4 | every commit | Attacks and invalid input are rejected |
-| Fuzzing | `go test -fuzz` | nightly, 10 min per target | No panic, unknown input becomes `deny` |
-| Integration | Real HA instance in a container | every push | HA client, catalog, service calls |
-| End to end | MCP client + OAuth + HA container, UI with Playwright | every push, before every release | Complete flows from the perspective of agent and human |
-| UI unit | Vitest + Svelte Testing Library | every commit | Components, form logic, formatting |
-| i18n | Own checks in CI (section 5) | every commit | No missing, orphaned or broken translations |
+| Unit | `go test`, table-driven | every push to a branch | Every function, every branch |
+| Conformance | Cases from `mandate-spec` (embedded in the Go module) against our own PDP; `mandate-conformance` against `tools/conformance` (process binding: classes evaluator, selection, audit, audit-anchored; HTTP binding: class pdp), `make conformance` | every pull request (Go cases: every push) | Evaluation and selection exactly per specification, through Home-Mandate's own decision path |
+| Negative | Own test cases per package, catalog in section 4 | every push to a branch | Attacks and invalid input are rejected |
+| Fuzzing | `go test -fuzz`, `make fuzz` | every pull request 60 s per target; 1st and 15th of every month 60 min | No panic, unknown input becomes `deny` |
+| Integration | Real HA instance in a container | every pull request | HA client, catalog, service calls |
+| End to end | MCP client + OAuth + HA container, UI with Playwright | every pull request | Complete flows from the perspective of agent and human |
+| UI unit | Vitest + Svelte Testing Library | every push to a branch | Components, form logic, formatting |
+| i18n | Own checks in CI (section 5) | every push to a branch | No missing, orphaned or broken translations |
 | Mutation | Mutation tests on `mandate-spec/evaluator` | before every release | Tests detect deliberately injected faults |
 
 All Go tests run with `-race`.
+
+Everything is checked before the merge: a push to a branch runs the unit stage, a pull
+request against main additionally the conformance run, short fuzzing, the image, E2E and
+Playwright. main takes squash-merged pull requests only, up to date and with every required
+check green, so nothing runs after the merge; every merge is tagged. Independent of changes,
+`govulncheck` and `pnpm audit` run every night and long fuzzing twice a month; a failure opens
+an issue.
 
 ## 2. Coverage thresholds (CI fails if not met)
 
