@@ -238,3 +238,16 @@ func TestRenamesThatCannotBeStoredStayHeld(t *testing.T) {
 		t.Error("LoadRenames without a database succeeded")
 	}
 }
+
+func TestEdgesListTheUnresolvedRenames(t *testing.T) {
+	r, reload := newRenames(t)
+	r.Hold(rn("lock.b", "lock.c"))
+	r.Hold(rn("lock.a", "lock.b"))
+	if err := r.Store(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []catalog.Rename{rn("lock.a", "lock.b"), rn("lock.b", "lock.c")}
+	if got := reload().Edges(); !slices.Equal(got, want) {
+		t.Errorf("Edges after a restart = %v", got)
+	}
+}

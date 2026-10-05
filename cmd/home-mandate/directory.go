@@ -18,9 +18,10 @@ type carrier interface {
 	Carry(ctx context.Context, oldID, newID string) (bool, error)
 }
 
-// storer stores the renames held in memory (catalog.Renames).
+// storer stores the renames held in memory and lists the unresolved ones (catalog.Renames).
 type storer interface {
 	Store(ctx context.Context) error
+	Edges() []catalog.Rename
 }
 
 // directoryChanged runs after every catalog refresh. A rename is never rewritten in a
@@ -37,13 +38,31 @@ func directoryChanged(ctx context.Context, logger *slog.Logger, marks carrier, a
 	}
 	for _, r := range renames {
 		logger.Warn("entity renamed in Home Assistant; rules naming the old ID keep applying until the rename is resolved", "old", r.Old, "new", r.New)
-		carried, err := marks.Carry(ctx, r.Old, r.New)
-		switch {
-		case err != nil:
-			logger.Error("critical mark not carried to the renamed entity", "old", r.Old, "new", r.New, "error", err)
-		case carried:
-			logger.Warn("critical mark carried to the renamed entity", "old", r.Old, "new", r.New)
+	}
+	carryMarks(ctx, logger, marks, aliases.Edges())
+	notify()
+}
+
+// carryMarks stores the critical mark of every renamed entity whose former ID is marked.
+// It runs after every refresh, the first one after a start included, over all unresolved
+// renames: a mark that could not be stored once is stored with the next refresh, and a
+// restart does not lose it. Storing a mark that is stored already changes nothing and
+// records nothing. A chain a → b → c is followed until nothing changes.
+func carryMarks(ctx context.Context, logger *slog.Logger, marks carrier, edges []catalog.Rename) {
+	for range len(edges) {
+		changed := false
+		for _, r := range edges {
+			carried, err := marks.Carry(ctx, r.Old, r.New)
+			switch {
+			case err != nil:
+				logger.Error("critical mark not carried to the renamed entity, trying again with the next refresh", "old", r.Old, "new", r.New, "error", err)
+			case carried:
+				changed = true
+				logger.Warn("critical mark carried to the renamed entity", "old", r.Old, "new", r.New)
+			}
+		}
+		if !changed {
+			return
 		}
 	}
-	notify()
 }

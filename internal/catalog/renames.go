@@ -151,6 +151,24 @@ func (r *Renames) Hold(rn Rename) bool {
 	return true
 }
 
+// Edges returns every unresolved rename, sorted by old and new ID; after a restart as
+// well, since they are stored.
+func (r *Renames) Edges() []Rename {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]Rename, 0, len(r.open))
+	for e := range r.open {
+		out = append(out, Rename{Old: e.old, New: e.new})
+	}
+	slices.SortFunc(out, func(a, b Rename) int {
+		if c := strings.Compare(a.Old, b.Old); c != 0 {
+			return c
+		}
+		return strings.Compare(a.New, b.New)
+	})
+	return out
+}
+
 // Formers returns the former IDs of an entity whose renames are not resolved: every ID
 // from which an unresolved rename leads to it, nearest first.
 func (r *Renames) Formers(entityID string) []string {
