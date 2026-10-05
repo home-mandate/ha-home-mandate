@@ -452,3 +452,24 @@ func TestApprovalEntriesNameTheirRequest(t *testing.T) {
 		})
 	}
 }
+
+// SPEC-v0 section 11.1 item 7: requests that lead to ask count towards the rate limit,
+// whatever the human answers, so that repeated asking cannot wear the approvers down.
+func TestAskRequestsCountTowardsTheRateLimit(t *testing.T) {
+	f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeRejected, By: approverID, At: answeredAt}}
+	h := newHarness(t, func(d map[string]any) { d["limits"] = map[string]any{"max_actions_per_hour": 2} })
+	h.approver = f
+	h.url = h.serve(h.log)
+	s := h.session()
+	for i := range 2 {
+		if _, errText := h.call(s, "perform_action", map[string]any{"entity_id": "lock.front_door", "action": "unlock"}); errText != "denied: approval_rejected" {
+			t.Fatalf("ask %d: %q", i+1, errText)
+		}
+	}
+	if _, errText := h.call(s, "perform_action", map[string]any{"entity_id": "lock.front_door", "action": "unlock"}); errText != "rate_limited" {
+		t.Errorf("third ask = %q, want rate_limited", errText)
+	}
+	if asked := f.requests(); len(asked) != 2 {
+		t.Errorf("approvers asked %d times, want 2", len(asked))
+	}
+}

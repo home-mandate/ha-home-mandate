@@ -526,6 +526,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       // As the server: rules on the former ID keep applying until a human resolves the rename.
       const { [from]: earlier = [], ...renames } = state.renames;
       state = { ...state, devices: { ...state.devices, devices }, renames: { ...renames, [to]: [from, ...earlier] } };
+      log('directory.changed', { actor: { kind: 'system', id: 'directory' }, directory: { change: 'renamed', entity_id: to, previous_entity_id: from } });
       emit({ type: 'devices.changed' });
     },
     setClockBehind(behind) {
@@ -638,6 +639,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       const proposed = (id: string) => devicesFixture.devices.find((d) => d.entity_id === id)?.suggest_critical === true;
       const devices = state.devices.devices.map((d) => (d.entity_id === entityId ? { ...d, critical, suggest_critical: !critical && proposed(d.entity_id) } : d));
       state = { ...state, devices: { ...state.devices, devices } };
+      log('directory.changed', { directory: { change: critical ? 'critical_marked' : 'critical_unmarked', entity_id: entityId } });
       emit({ type: 'devices.changed' });
     },
 
@@ -670,11 +672,13 @@ export function createMockClient(options: MockOptions = {}): MockClient {
           r.resource.entity_id !== undefined && formers.includes(r.resource.entity_id) ? { ...r, resource: { ...r.resource, entity_id: entityId } } : r;
         storeVersion(id, summary.digest, { ...draftOf(doc), rules: doc.rules.map(rename) }, confirmCritical);
       }
+      for (const former of formers) log('directory.changed', { directory: { change: 'rename_applied', entity_id: entityId, previous_entity_id: former } });
       resolveRename(entityId);
     },
     async dismissRename(entityId, seen) {
       const formers = state.renames[entityId] ?? fail('not_found');
       if (!sameIds(formers, seen)) fail('conflict');
+      for (const former of formers) log('directory.changed', { directory: { change: 'rename_dismissed', entity_id: entityId, previous_entity_id: former } });
       resolveRename(entityId);
     },
 

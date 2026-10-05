@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AuditEntry, DeviceCatalog } from '../api/types.ts';
 import { auditFixture, devicesFixture } from '../api/fixtures.ts';
-import { decisionOf, deviceName, isAdminEvent, isCriticalRequest } from './describe.ts';
+import { decisionOf, deviceName, isAdminEvent, isCriticalRequest, directoryText } from './describe.ts';
 
 const bySeq = (seq: number): AuditEntry => {
   const entry = auditFixture.find((e) => e.seq === seq);
@@ -75,5 +75,21 @@ describe('deviceName', () => {
   it('never shows hidden characters or line breaks of a device name', () => {
     const hostile: DeviceCatalog = { areas: [], devices: [{ entity_id: 'light.x', name: 'Lamp\u202E\nkcab', category: 'light', area: null, actions: [], critical: false, suggest_critical: false }] };
     expect(deviceName('light.x', hostile)).toBe('Lamp kcab');
+  });
+});
+
+describe('directoryText', () => {
+  const entry = (directory: AuditEntry['directory']): AuditEntry => ({
+    id: 'x', seq: 1, recorded_at: '2026-10-05T08:00:00.000Z', event: 'directory.changed',
+    actor: { kind: 'system', id: 'directory' }, directory, digest: 'sha256:x', prev: null,
+  });
+  it('says what changed in the directory, with the device name and the former ID', () => {
+    const catalog = devicesFixture;
+    expect(directoryText(entry({ change: 'critical_marked', entity_id: 'lock.front_door' }), catalog)).toMatch(/^.Haustür. \(.lock\.front_door.\) marked as critical$/);
+    expect(directoryText(entry({ change: 'renamed', entity_id: 'lock.front_door', previous_entity_id: 'lock.old_door' }), catalog)).toMatch(
+      /^.lock\.old_door. renamed to .Haustür. \(.lock\.front_door.\) in Home Assistant$/,
+    );
+    expect(directoryText(entry({ change: 'rename_dismissed', entity_id: 'lock.gone', previous_entity_id: 'lock.old' }), null)).toMatch(/not taken over$/);
+    expect(directoryText({ ...entry(undefined), event: 'decision' }, catalog)).toBe('');
   });
 });

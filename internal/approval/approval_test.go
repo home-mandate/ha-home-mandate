@@ -336,7 +336,7 @@ func TestCancelledRequestEndsLikeATimeout(t *testing.T) {
 
 // TESTING section 5: approval notifications in both languages against stored references.
 func TestReferenceNotifications(t *testing.T) {
-	req := Request{Agent: "Voice assistant", Device: "Front door", Action: "unlock",
+	req := Request{ClientID: "https://agent.example.org/voice", EntityID: "lock.front_door", Agent: "Voice assistant", Device: "Front door", Action: "unlock",
 		Reason: "**URGENT** open now: https://evil.example.org/x\u202e", Approvers: []string{u1}}
 	for _, lang := range i18n.Supported {
 		got, _ := json.MarshalIndent(buildRequest(lang, req, "00112233445566778899aabbccddeeff"), "", "  ")

@@ -113,8 +113,8 @@ next one, it is empty and every request is denied.
 - **Critical marks.** The household marks entities as critical in the settings
   (`critical_entities`): every action on them except `read` is critical, whatever their
   category. Home-Mandate proposes candidates (names with door, gate, garage; covers of the
-  classes door, window, garage, gate) but marks nothing by itself. Changes are logged in
-  the server log; the audit log of the specification has no event for directory changes.
+  classes door, window, garage, gate) but marks nothing by itself. Every change is an
+  audit entry (`directory.changed`), written in the same transaction as the change.
 - **Renames.** Rules and marks name entities by their ID. Home-Mandate finds a rename by
   the event (`entity_registry_updated` with `old_entity_id`) and, also after an outage or
   a restart, by comparing the registry IDs of Home Assistant with the entity IDs it last
@@ -129,8 +129,9 @@ next one, it is empty and every request is denied.
   before any is changed); **don't take over** keeps the mandates and lets the rules on
   the former ID go, after an inline confirmation. A rename back undoes the rename. The
   critical mark moves along (the old ID keeps it), and `stale_references` of a mandate
-  name the entity a device was renamed to. Resolutions are in the server log; the audit
-  log of the specification has no event for directory changes yet.
+  name the entity a device was renamed to. Every rename found, taken over or dismissed and every
+  carried mark is a `directory.changed` audit entry, written with the change; the filter by
+  device of the audit log finds them by the current and the former ID.
 - **Areas.** A rule on an area covers the devices that are in it now. A removed area is
   reported like a renamed device; a device moved out of an area leaves the area's rules,
   which the editor points out at every `deny` or `ask` rule that names only an area.

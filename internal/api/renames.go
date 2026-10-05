@@ -212,14 +212,39 @@ func (s *Server) applyRename(r *request) (any, error) {
 		}
 		changes = append(changes, change{a, doc})
 	}
+	// Every affected mandate and the rename change in one transaction: all or nothing.
+	// Renames only held in memory are stored first, outside it.
+	if err := s.cfg.Renames.Store(r.Context()); err != nil {
+		return nil, err
+	}
+	tx, err := s.cfg.Store.DB().BeginTx(r.Context(), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	for _, c := range changes {
-		if _, err := s.cfg.Mandates.Update(r.Context(), c.a.info.ID, c.doc, mandate.Change{BaseDigest: c.a.info.Digest,
+		if err := s.cfg.Mandates.UpdateTx(r.Context(), tx, c.a.info.ID, c.doc, mandate.Change{BaseDigest: c.a.info.Digest,
 			ConfirmCritical: confirm}, s.actor(r)); err != nil {
 			return nil, mandateError(err, "/entity_id", nil)
 		}
+	}
+	done, err := s.cfg.Renames.ResolveTx(r.Context(), tx, entityID, formers, catalog.ResolutionApplied, r.user)
+	if errors.Is(err, catalog.ErrRenamesChanged) {
+		return nil, fail(codeConflict)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	done()
+	for _, c := range changes {
 		s.publish(event{Type: "mandates.changed", ID: c.a.info.ID})
 	}
-	return s.resolveRename(r, entityID, formers, catalog.ResolutionApplied, len(changes))
+	s.cfg.Logger.Warn("rename taken over", "entity_id", entityID, "formers", formers, "mandates", len(changes), "by", r.user)
+	s.publish(event{Type: "devices.changed"})
+	return nil, nil
 }
 
 // dismissRename resolves a rename without changing a mandate: rules on the former IDs no
@@ -244,7 +269,7 @@ func (s *Server) resolveRename(r *request, entityID string, formers []string, re
 		s.cfg.Logger.Error("rename not resolved", "entity_id", entityID, "resolution", resolution, "by", r.user, "error", err)
 		return nil, err
 	}
-	// The audit log of the specification has no event for directory changes yet.
+	// Resolve wrote a directory.changed audit entry per former ID.
 	s.cfg.Logger.Warn("rename resolved", "entity_id", entityID, "formers", formers, "resolution", resolution,
 		"mandates", mandates, "by", r.user)
 	s.publish(event{Type: "devices.changed"})

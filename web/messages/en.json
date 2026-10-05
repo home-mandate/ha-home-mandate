@@ -803,5 +803,12 @@
   "renames_applied": "Rename of {device} taken over.",
   "renames_dismissed": "Rename of {device} not taken over.",
   "renames_changed": "Home Assistant renamed something again meanwhile. The list is up to date now; please check it.",
-  "renames_in_use": "Another device is called {formers} now. Its rules may be meant for that device: adjust them in the editor, or don’t take the rename over."
+  "renames_in_use": "Another device is called {formers} now. Its rules may be meant for that device: adjust them in the editor, or don’t take the rename over.",
+  "event_directory_changed": "Device directory changed",
+  "directory_critical_marked": "{device} marked as critical",
+  "directory_critical_unmarked": "Critical mark of {device} removed",
+  "directory_renamed": "{former} renamed to {device} in Home Assistant",
+  "directory_rename_applied": "Rename {former} → {device} taken over into the mandates",
+  "directory_rename_dismissed": "Rename {former} → {device} not taken over",
+  "audit_field_directory": "Change"
 }

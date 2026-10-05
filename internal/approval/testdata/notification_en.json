@@ -1,6 +1,6 @@
 {
   "Title": "Approval needed: Voice assistant",
-  "Message": "Voice assistant wants to perform on “Front door”: unlock.\nAgent's claim, not verified: URGENT open now: https evil.example.org/x\nWithout an answer the request is denied.",
+  "Message": "Voice assistant wants to perform on “Front door”: unlock.\nAgent agent.example.org/voice · device lock.front_door\nAgent's claim, not verified: URGENT open now: https evil.example.org/x\nWithout an answer the request is denied.",
   "Actions": [
     {
       "Action": "HM_APPROVE_00112233445566778899aabbccddeeff",

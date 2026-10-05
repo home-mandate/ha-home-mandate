@@ -14,6 +14,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -97,6 +98,8 @@ type Config struct {
 	Renames interface {
 		Open() map[string][]string
 		Resolve(ctx context.Context, entityID string, expected []string, resolution, by string) error
+		ResolveTx(ctx context.Context, tx *sql.Tx, entityID string, expected []string, resolution, by string) (func(), error)
+		Store(ctx context.Context) error
 	}
 	Status func() Status
 	// UI serves everything outside /api/; nil answers 404.

@@ -72,8 +72,8 @@ func (s *Server) putDeviceCritical(r *request) (any, error) {
 	if !ok {
 		return nil, fail(codeNotFound)
 	}
-	// The audit log of the specification has no event for directory changes yet, so the
-	// server log keeps who changed which mark, from what, and failed attempts too.
+	// Marks.Set writes the change with its directory.changed audit entry; the server log
+	// keeps failed attempts too.
 	if err := s.cfg.Marks.Set(r.Context(), *in.EntityID, *in.Critical, r.user); err != nil {
 		s.cfg.Logger.Error("device critical mark not changed", "entity_id", *in.EntityID, "critical", *in.Critical, "by", r.user, "error", err)
 		return nil, err

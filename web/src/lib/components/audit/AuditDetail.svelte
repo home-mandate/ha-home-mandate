@@ -6,7 +6,7 @@
 -->
 <script lang="ts">
   import type { AuditEntry, DeviceCatalog } from '../../api/types.ts';
-  import { decisionOf, deviceName } from '../../audit/describe.ts';
+  import { decisionOf, deviceName, directoryText } from '../../audit/describe.ts';
   import { answeredAfter, approvalText, eventLabel, outcomeOf, reasonText } from '../../audit/outcome.ts';
   import { formatDateTime, formatNumber, type FormatContext } from '../../format.ts';
   import { m } from '../../i18n.ts';
@@ -71,6 +71,12 @@
   {#if entry.agent}
     <dt>{m.audit_field_agent()}</dt>
     <dd><AgentName name={entry.agent.display_name ?? entry.agent.client_id} client={entry.agent.client_id} /></dd>
+  {/if}
+  {#if entry.directory}
+    <dt>{m.audit_field_directory()}</dt>
+    <dd><bdi>{directoryText(entry, catalog)}</bdi></dd>
+    <dt>{m.audit_field_device()}</dt>
+    <dd><bdi>{deviceName(entry.directory.entity_id, catalog)}</bdi><code>{cleanUntrusted(entry.directory.entity_id)}</code></dd>
   {/if}
   {#if entry.request}
     <dt>{m.audit_field_device()}</dt>

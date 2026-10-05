@@ -77,6 +77,7 @@ const (
 
 	maxReason = 200 // runes of the agent's reason shown to the human
 	maxName   = 80  // runes of agent and device names
+	maxID     = 120 // characters of the agent's client_id and the entity ID
 
 	warnTimeout = 10 * time.Second
 	unknownUser = "unknown"
@@ -599,6 +600,9 @@ func buildRequest(lang i18n.Lang, req Request, nonce string) ha.Notification {
 	agentName, device := sanitize(req.Agent, maxName), sanitize(req.Device, maxName)
 	lines := []string{i18n.T(lang, i18n.ApprovalMessage, i18n.Args{"agent": agentName, "device": device,
 		"action": i18n.ActionName(lang, req.Action)})}
+	// What is confirmed (SPEC-v0 section 11.1 item 2): the agent by its identifier next
+	// to the name it claims, and the device by its ID; names can look alike, IDs cannot.
+	lines = append(lines, i18n.T(lang, i18n.ApprovalIdentity, i18n.Args{"client_id": shownID(req.ClientID), "entity_id": shownID(req.EntityID)}))
 	if params := formatParams(req.Params); params != "" {
 		lines = append(lines, i18n.T(lang, i18n.ApprovalParams, i18n.Args{"params": params}))
 	}
@@ -614,6 +618,33 @@ func buildRequest(lang i18n.Lang, req Request, nonce string) ha.Notification {
 			{Action: denyPrefix + nonce, Title: i18n.T(lang, i18n.ApprovalDeny, nil), Destructive: true},
 		},
 	}
+}
+
+// maxSchemeLength is the longest URI scheme shownID removes (SPEC-v0 section 3.3: 32).
+const maxSchemeLength = 32
+
+// shownID shows an identifier: the characters identifiers have (SPEC-v0 sections 3.3 and
+// 3.4) and nothing else, without a scheme so that it reads as a name, not a link, and
+// at most maxID characters.
+func shownID(id string) string {
+	// Any scheme, in any case and repeated ("HTTPS://https://…"), goes.
+	for {
+		i := strings.Index(id, "://")
+		if i < 0 || i > maxSchemeLength {
+			break
+		}
+		id = id[i+3:]
+	}
+	var b strings.Builder
+	for _, r := range id {
+		if b.Len() >= maxID {
+			break
+		}
+		if r < 0x80 && (unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("._~:/-", r)) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // Shown limits of untrusted text, as in the push: the agent's reason and names.

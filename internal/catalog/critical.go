@@ -10,6 +10,8 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/home-mandate/home-mandate/internal/audit"
 )
 
 // maxEntityIDLength is the limit of a resource identifier (SPEC-v0 section 3.4).
@@ -20,9 +22,14 @@ const maxEntityIDLength = 255
 // of the resource directory and are kept in the database and in memory.
 type Marks struct {
 	db *sql.DB
+	// rec records every change in the audit log, in the same transaction; nil: none.
+	rec Recorder
 
-	mu  sync.RWMutex
-	set map[string]struct{}
+	// writeMu orders the writers; the transaction runs without mu, so that reading the
+	// marks (every decision) never waits for the database.
+	writeMu sync.Mutex
+	mu      sync.RWMutex
+	set     map[string]struct{}
 }
 
 // LoadMarks reads the marks from the database.
@@ -44,6 +51,53 @@ func LoadMarks(ctx context.Context, db *sql.DB) (*Marks, error) {
 		return nil, fmt.Errorf("catalog: read critical entities: %w", err)
 	}
 	return m, nil
+}
+
+// Recorder writes audit entries within a transaction (audit.Log).
+type Recorder interface {
+	AppendTx(ctx context.Context, tx *sql.Tx, e audit.Entry) (int64, error)
+}
+
+// SetRecorder makes every change of a mark an audit entry (SPEC-v0 section 11.4).
+func (m *Marks) SetRecorder(rec Recorder) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rec = rec
+}
+
+// change runs query in a transaction and records entry with it if it changed a row; the
+// caller holds writeMu, not mu. It reports whether a row changed.
+func (m *Marks) change(ctx context.Context, entry audit.Entry, query string, args ...any) (bool, error) {
+	m.mu.RLock()
+	rec := m.rec
+	m.mu.RUnlock()
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("catalog: store critical entity: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return false, fmt.Errorf("catalog: store critical entity: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("catalog: store critical entity: %w", err)
+	}
+	if n > 0 && rec != nil {
+		if _, err := rec.AppendTx(ctx, tx, entry); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("catalog: store critical entity: %w", err)
+	}
+	return n > 0, nil
+}
+
+// markEntry is the audit entry of a change of the mark of entityID.
+func markEntry(actor audit.Actor, change, entityID string) audit.Entry {
+	return audit.Entry{Event: audit.EventDirectoryChanged, Actor: &actor, Directory: &audit.Directory{Change: change, EntityID: entityID}}
 }
 
 // Critical reports whether the entity is marked.
@@ -75,20 +129,27 @@ func (m *Marks) Set(ctx context.Context, entityID string, critical bool, by stri
 	if by == "" {
 		return errors.New("catalog: no user")
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	user := audit.Actor{Kind: audit.ActorUser, ID: by}
 	if !critical {
-		if _, err := m.db.ExecContext(ctx, `DELETE FROM critical_entities WHERE entity_id = ?`, entityID); err != nil {
-			return fmt.Errorf("catalog: store critical entity: %w", err)
+		if _, err := m.change(ctx, markEntry(user, audit.DirectoryCriticalUnmarked, entityID),
+			`DELETE FROM critical_entities WHERE entity_id = ?`, entityID); err != nil {
+			return err
 		}
+		m.mu.Lock()
 		delete(m.set, entityID)
+		m.mu.Unlock()
 		return nil
 	}
-	if _, err := m.db.ExecContext(ctx, `INSERT INTO critical_entities (entity_id, marked_at, marked_by) VALUES (?, ?, ?)
-		ON CONFLICT (entity_id) DO NOTHING`, entityID, time.Now().UTC().Format(time.RFC3339), by); err != nil {
-		return fmt.Errorf("catalog: store critical entity: %w", err)
+	if _, err := m.change(ctx, markEntry(user, audit.DirectoryCriticalMarked, entityID), `INSERT INTO critical_entities
+		(entity_id, marked_at, marked_by) VALUES (?, ?, ?) ON CONFLICT (entity_id) DO NOTHING`,
+		entityID, time.Now().UTC().Format(time.RFC3339), by); err != nil {
+		return err
 	}
+	m.mu.Lock()
 	m.set[entityID] = struct{}{}
+	m.mu.Unlock()
 	return nil
 }
 
@@ -121,16 +182,18 @@ func (m *Marks) Carry(ctx context.Context, oldID, newID string) (bool, error) {
 	if !m.Critical(oldID) {
 		return false, nil
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	res, err := m.db.ExecContext(ctx, `INSERT INTO critical_entities (entity_id, marked_at, marked_by) VALUES (?, ?, ?)
-		ON CONFLICT (entity_id) DO NOTHING`, newID, time.Now().UTC().Format(time.RFC3339), systemActor)
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	changed, err := m.change(ctx, markEntry(audit.Actor{Kind: audit.ActorSystem, ID: systemActor}, audit.DirectoryCriticalMarked, newID),
+		`INSERT INTO critical_entities (entity_id, marked_at, marked_by) VALUES (?, ?, ?) ON CONFLICT (entity_id) DO NOTHING`,
+		newID, time.Now().UTC().Format(time.RFC3339), systemActor)
 	if err != nil {
-		return false, fmt.Errorf("catalog: store critical entity: %w", err)
+		return false, err
 	}
+	m.mu.Lock()
 	m.set[newID] = struct{}{}
-	n, err := res.RowsAffected()
-	return err == nil && n > 0, nil
+	m.mu.Unlock()
+	return changed, nil
 }
 
 // systemActor is marked_by for marks Home-Mandate sets itself.
