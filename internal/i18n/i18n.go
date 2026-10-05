@@ -38,6 +38,7 @@ const (
 	ApprovalMessage        Key = "approval_message"
 	ApprovalReason         Key = "approval_reason"
 	ApprovalParams         Key = "approval_params"
+	ApprovalIdentity       Key = "approval_identity"
 	ApprovalNoAnswer       Key = "approval_no_answer"
 	ApprovalApprove        Key = "approval_approve"
 	ApprovalDeny           Key = "approval_deny"
@@ -86,7 +87,7 @@ var actions = []string{"read", "turn_on", "turn_off", "set", "set_temperature", 
 
 // Keys lists every message key.
 var Keys = append([]Key{
-	ApprovalTitle, ApprovalMessage, ApprovalReason, ApprovalParams, ApprovalNoAnswer, ApprovalApprove, ApprovalDeny,
+	ApprovalTitle, ApprovalMessage, ApprovalReason, ApprovalParams, ApprovalIdentity, ApprovalNoAnswer, ApprovalApprove, ApprovalDeny,
 	ApprovalInvalidTitle, ApprovalInvalidMessage, ApprovalBellTitle, ApprovalBellMessage, ApprovalTestTitle, ApprovalTestMessage,
 	CheckpointTitle, CheckpointMessage,
 	PageErrorTitle, PageInvalidRequest, PageInvalidClient, PageSessionExpired, PageSignInFailed, PageNotAdmin, PageBusy, PageSignedInAs, PageConsentTitle, PageConsentClaimed, PageConsentVerified, PageConsentUnverified, PageConsentReturn, PageConsentName, PageConsentTemplate, PageConsentApprove, PageConsentDeny, PageConsentNoTemplates, PageConsentInvalid, PageDenied, PageAdmitted, PagePairTitle, PagePairIntro, PagePairCode, PagePairSubmit, PagePairInvalid, PagePairLocked,

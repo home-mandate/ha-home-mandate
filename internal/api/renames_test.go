@@ -146,3 +146,25 @@ func TestRenameOntoAnIDInUseIsNotTakenOver(t *testing.T) {
 		t.Errorf("apply onto an ID in use = %d %s", r.code, r.body)
 	}
 }
+
+// Taking a rename over changes every affected mandate in one transaction.
+func TestApplyChangesAllAffectedMandates(t *testing.T) {
+	h := newHarness(t)
+	for _, name := range []string{"Voice", "Other"} {
+		a := h.admit(name)
+		m := h.mandateOf(a.ClientID)
+		d := rulesDraft(t, rule("r-door", map[string]any{"entity_id": "lock.old_door"}, "deny", "unlock"))
+		h.ok(http.MethodPut, "/api/mandates/"+m.ID, update(name, d, m.Digest, false), nil)
+	}
+	h.renames.Hold(catalog.Rename{Old: "lock.old_door", New: "lock.front_door"})
+	h.ok(http.MethodPost, "/api/renames/apply", map[string]any{"entity_id": "lock.front_door", "formers": []string{"lock.old_door"}}, nil)
+	var list []wireMandateSummary
+	h.ok(http.MethodGet, "/api/mandates", nil, &list)
+	for _, m := range list {
+		var d wireMandateDetail
+		h.ok(http.MethodGet, "/api/mandates/"+m.ID, nil, &d)
+		if !strings.Contains(string(d.Document), `"entity_id":"lock.front_door"`) || len(d.Versions) != 3 {
+			t.Errorf("%s: %d versions, %s", m.ID, len(d.Versions), d.Document)
+		}
+	}
+}

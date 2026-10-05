@@ -33,52 +33,55 @@ type Change struct {
 // current version does not have in exactly this form (a changed or renamed rule is a new
 // grant) and change.ConfirmCritical is not set. Unchanged content creates no version.
 func (s *Store) Update(ctx context.Context, id string, document []byte, change Change, by audit.Actor) (Info, error) {
-	err := s.inTx(ctx, func(tx *sql.Tx) error {
-		var status, digest, current string
-		// A digest can repeat among the versions (a restored version); the newest row is the current one.
-		err := tx.QueryRowContext(ctx, `SELECT m.status, m.current_digest, v.document FROM mandates m
-			JOIN mandate_versions v ON v.mandate_id = m.id AND v.digest = m.current_digest
-			WHERE m.id = ? ORDER BY v.version DESC LIMIT 1`, id).Scan(&status, &digest, &current)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("mandate: read: %w", err)
-		}
-		info, err := s.check(document)
-		if err != nil {
-			return err
-		}
-		if info.ID != id {
-			return fmt.Errorf("%w: the document belongs to mandate %s", ErrInvalid, info.ID)
-		}
-		if status != StatusActive {
-			return fmt.Errorf("%w: the mandate is revoked", ErrConflict)
-		}
-		if change.BaseDigest != digest {
-			return fmt.Errorf("%w: another version was stored meanwhile", ErrConflict)
-		}
-		if !change.ConfirmCritical {
-			granted, err := newCriticalGrant([]byte(current), document)
-			if err != nil {
-				return err
-			}
-			if granted {
-				return ErrCriticalConfirmation
-			}
-		}
-		if err := s.put(ctx, tx, info, document, by); err != nil {
-			return err
-		}
-		if change.Name != "" {
-			return s.SetNameTx(ctx, tx, id, change.Name)
-		}
-		return nil
-	})
+	err := s.inTx(ctx, func(tx *sql.Tx) error { return s.UpdateTx(ctx, tx, id, document, change, by) })
 	if err != nil {
 		return Info{}, err
 	}
 	return s.Get(ctx, id)
+}
+
+// UpdateTx is Update inside tx, so that several mandates change together or not at all.
+func (s *Store) UpdateTx(ctx context.Context, tx *sql.Tx, id string, document []byte, change Change, by audit.Actor) error {
+	var status, digest, current string
+	// A digest can repeat among the versions (a restored version); the newest row is the current one.
+	err := tx.QueryRowContext(ctx, `SELECT m.status, m.current_digest, v.document FROM mandates m
+		JOIN mandate_versions v ON v.mandate_id = m.id AND v.digest = m.current_digest
+		WHERE m.id = ? ORDER BY v.version DESC LIMIT 1`, id).Scan(&status, &digest, &current)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("mandate: read: %w", err)
+	}
+	info, err := s.check(document)
+	if err != nil {
+		return err
+	}
+	if info.ID != id {
+		return fmt.Errorf("%w: the document belongs to mandate %s", ErrInvalid, info.ID)
+	}
+	if status != StatusActive {
+		return fmt.Errorf("%w: the mandate is revoked", ErrConflict)
+	}
+	if change.BaseDigest != digest {
+		return fmt.Errorf("%w: another version was stored meanwhile", ErrConflict)
+	}
+	if !change.ConfirmCritical {
+		granted, err := newCriticalGrant([]byte(current), document)
+		if err != nil {
+			return err
+		}
+		if granted {
+			return ErrCriticalConfirmation
+		}
+	}
+	if err := s.put(ctx, tx, info, document, by); err != nil {
+		return err
+	}
+	if change.Name != "" {
+		return s.SetNameTx(ctx, tx, id, change.Name)
+	}
+	return nil
 }
 
 // NewCriticalGrant tells whether the document next has a rule with allow_critical that

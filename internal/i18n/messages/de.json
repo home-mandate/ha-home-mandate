@@ -60,5 +60,6 @@
   "page_pair_locked": "Zu viele Fehlversuche. Bitte warte zehn Minuten.",
   "approval_params": "Parameter: {params}",
   "checkpoint_title": "Home-Mandate: Stand des Protokolls",
-  "checkpoint_message": "Protokoll bis Eintrag {seq}, Prüfwert {digest}. Diese Nachricht belegt den Stand des Protokolls; bitte aufbewahren. Protokoll {log}."
+  "checkpoint_message": "Protokoll bis Eintrag {seq}, Prüfwert {digest}. Diese Nachricht belegt den Stand des Protokolls; bitte aufbewahren. Protokoll {log}.",
+  "approval_identity": "Agent {client_id} · Gerät {entity_id}"
 }

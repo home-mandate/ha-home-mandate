@@ -212,11 +212,22 @@ func (s *Server) applyRename(r *request) (any, error) {
 		}
 		changes = append(changes, change{a, doc})
 	}
+	// Every affected mandate changes in one transaction: all of them or none.
+	tx, err := s.cfg.Store.DB().BeginTx(r.Context(), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	for _, c := range changes {
-		if _, err := s.cfg.Mandates.Update(r.Context(), c.a.info.ID, c.doc, mandate.Change{BaseDigest: c.a.info.Digest,
+		if err := s.cfg.Mandates.UpdateTx(r.Context(), tx, c.a.info.ID, c.doc, mandate.Change{BaseDigest: c.a.info.Digest,
 			ConfirmCritical: confirm}, s.actor(r)); err != nil {
 			return nil, mandateError(err, "/entity_id", nil)
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	for _, c := range changes {
 		s.publish(event{Type: "mandates.changed", ID: c.a.info.ID})
 	}
 	return s.resolveRename(r, entityID, formers, catalog.ResolutionApplied, len(changes))
