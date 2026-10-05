@@ -231,10 +231,11 @@ func TestWithOAuth(t *testing.T) {
 	}
 	defer s.store.Close()
 	mcpHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	ui := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) })
 	logger := slog.New(slog.DiscardHandler)
 
 	// Without a public URL, only the MCP endpoint is served.
-	as, h, err := withOAuth(s, mcpHandler, "", logger)
+	as, h, err := withOAuth(s, mcpHandler, ui, "", logger)
 	if err != nil || as != nil {
 		t.Fatal(as, err)
 	}
@@ -246,11 +247,12 @@ func TestWithOAuth(t *testing.T) {
 
 	s.cfg = config.Config{PublicURL: "https://hm.example.org", HABrowserURL: "https://ha.example.org",
 		HAHTTPURL: "https://ha.example.org", HAURL: "wss://ha.example.org/api/websocket"}
-	as, h, err = withOAuth(s, mcpHandler, "https://hm.example.org/mcp", logger)
+	as, h, err = withOAuth(s, mcpHandler, ui, "https://hm.example.org/mcp", logger)
 	if err != nil || as == nil {
 		t.Fatal(as, err)
 	}
-	for path, want := range map[string]int{"/.well-known/oauth-authorization-server": http.StatusOK, "/mcp": http.StatusTeapot} {
+	for path, want := range map[string]int{"/.well-known/oauth-authorization-server": http.StatusOK, "/mcp": http.StatusTeapot,
+		"/ui": http.StatusAccepted, "/ui/": http.StatusAccepted, "/ui/api/session": http.StatusAccepted, "/uix": http.StatusNotFound} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != want {
@@ -259,8 +261,45 @@ func TestWithOAuth(t *testing.T) {
 	}
 
 	s.cfg.HAHTTPURL = "http://ha.example.org" // plaintext on the LAN
-	if _, _, err := withOAuth(s, mcpHandler, "https://hm.example.org/mcp", logger); err == nil {
+	if _, _, err := withOAuth(s, mcpHandler, ui, "https://hm.example.org/mcp", logger); err == nil {
 		t.Error("plaintext Home Assistant accepted")
+	}
+}
+
+func TestDirectModeNeedsContainerModeACertificateAndHTTPS(t *testing.T) {
+	certFile, keyFile := selfSigned(t, t.TempDir())
+	certs, err := tlscert.New(tlscert.Config{CertFile: certFile, KeyFile: keyFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name  string
+		cfg   config.Config
+		certs *tlscert.Loader
+		want  bool
+	}{
+		{"container, certificate, https", config.Config{Mode: config.ModeContainer, PublicURL: "https://hm.example.org:8765"}, certs, true},
+		{"no certificate", config.Config{Mode: config.ModeContainer, PublicURL: "https://hm.example.org:8765"}, nil, false},
+		{"plaintext public URL", config.Config{Mode: config.ModeContainer, PublicURL: "http://localhost:8765"}, certs, false},
+		{"no public URL", config.Config{Mode: config.ModeContainer}, certs, false},
+		{"app mode: Ingress", config.Config{Mode: config.ModeApp, PublicURL: "https://hm.example.org:8765"}, certs, false},
+	} {
+		if got := directMode(tc.cfg, tc.certs); got != tc.want {
+			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	g := &gateway{}
+	rec := httptest.NewRecorder()
+	g.serveDirect(rec, httptest.NewRequest(http.MethodGet, "/ui/", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("direct mode off: %d", rec.Code)
+	}
+	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) })
+	g.direct.Store(&h)
+	rec = httptest.NewRecorder()
+	g.serveDirect(rec, httptest.NewRequest(http.MethodGet, "/ui/", nil))
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("direct mode on: %d", rec.Code)
 	}
 }
 

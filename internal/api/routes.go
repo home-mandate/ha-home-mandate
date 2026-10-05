@@ -106,11 +106,12 @@ func (s *Server) routes() *http.ServeMux {
 
 type userKey struct{}
 
-// authenticated lets through only an administrator signed in through Ingress, within
-// the request limit. The user is in the context afterwards.
+// authenticated lets through only an administrator, signed in through Ingress or, in
+// direct mode, through Home-Mandate's own sign-in, within the request limit. The user is
+// in the context afterwards.
 func (s *Server) authenticated(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, ok := userOf(r)
+		user, ok := identify(r)
 		if !ok {
 			writeError(w, fail(codeUnauthenticated))
 			return

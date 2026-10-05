@@ -115,6 +115,14 @@ type Config struct {
 	Mode      string // "app" or "container"
 	Version   string
 	Commit    string
+	// Direct switches direct mode on (ARCHITECTURE section 12): the UI under /ui/ of the
+	// MCP listener with Home-Mandate's own sign-in. Nil: only Ingress.
+	Direct SignIn
+	// DirectUI serves the UI's files in direct mode (no framing).
+	DirectUI http.Handler
+	// PublicURL is the origin of direct mode, the only one its event stream accepts.
+	PublicURL string
+
 	// MCPURL is the URL agents connect to, from the configuration only; empty without TLS.
 	MCPURL string
 	// TLS reports whether the MCP endpoint has a certificate and until when it is valid.
@@ -134,6 +142,7 @@ type Server struct {
 	hub     *hub
 	chain   *chainStatus
 	answers *waiters
+	ui      *uiSessions
 	bell    bellSetting
 	mux     *http.ServeMux
 
@@ -181,7 +190,7 @@ func New(cfg Config) *Server {
 	key := make([]byte, 32)
 	_, _ = rand.Read(key) // crypto/rand.Read never fails (Go ≥ 1.24)
 	s := &Server{cfg: cfg, users: newUsers(cfg.HA, cfg.Now), csrfKey: key, limits: newLimits(cfg.Now), hub: newHub(),
-		chain: &chainStatus{}, answers: newWaiters(), hooks: make(chan func(), hookQueue)}
+		chain: &chainStatus{}, answers: newWaiters(), ui: newUISessions(cfg.Now), hooks: make(chan func(), hookQueue)}
 	s.mux = s.routes()
 	go s.runHooks() // lives as long as the process
 	return s

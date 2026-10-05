@@ -266,7 +266,7 @@ func TestEventStreamChecksTheAdministratorAgain(t *testing.T) {
 // A client that does not read is closed instead of holding up the others.
 func TestSlowClientIsClosed(t *testing.T) {
 	h := newHarness(t)
-	c, ok := h.srv.hub.add(adminID)
+	c, ok := h.srv.hub.add(adminID, "")
 	if !ok {
 		t.Fatal("no client")
 	}
@@ -282,7 +282,7 @@ func TestSlowClientIsClosed(t *testing.T) {
 	h.srv.hub.remove(c)
 	// Too many connections.
 	for range maxClients {
-		if _, ok := h.srv.hub.add(adminID); !ok {
+		if _, ok := h.srv.hub.add(adminID, ""); !ok {
 			t.Fatal("refused below the limit")
 		}
 	}
@@ -294,7 +294,7 @@ func TestSlowClientIsClosed(t *testing.T) {
 
 func TestPublishSkipsWhatCannotBeSent(t *testing.T) {
 	h := newHarness(t)
-	c, _ := h.srv.hub.add(adminID)
+	c, _ := h.srv.hub.add(adminID, "")
 	h.srv.hub.publishFor(func(string) any { return map[string]any{"x": make(chan int)} }) // not JSON
 	h.srv.hub.publishFor(func(string) any { return strings.Repeat("x", maxEventBytes+1) })
 	select {

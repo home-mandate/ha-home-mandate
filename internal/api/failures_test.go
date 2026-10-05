@@ -184,7 +184,7 @@ func TestReviewHardening(t *testing.T) {
 		t.Error("foreign requests not rate limited in the log")
 	}
 	// An event too large for the stream closes the connection (the UI reloads).
-	c, _ := h.srv.hub.add(adminID)
+	c, _ := h.srv.hub.add(adminID, "")
 	h.srv.publish(event{Type: "approval.closed", ID: strings.Repeat("x", maxEventBytes)})
 	select {
 	case <-c.overflow:
@@ -208,7 +208,7 @@ func TestTailStartsAtTheEnd(t *testing.T) {
 	old := tailEvery
 	tailEvery = 5 * time.Millisecond
 	defer func() { tailEvery = old }()
-	c, _ := h.srv.hub.add(adminID)
+	c, _ := h.srv.hub.add(adminID, "")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { h.srv.RunTail(ctx); close(done) }()

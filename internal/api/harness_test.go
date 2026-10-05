@@ -192,6 +192,8 @@ type harness struct {
 	now       *clock
 	status    Status
 	pairing   Pairing
+	direct    SignIn // direct mode on when set
+	publicURL string
 }
 
 type clock struct {
@@ -280,7 +282,9 @@ func (h *harness) build() {
 		UI:    http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ui") }),
 		Proxy: netip.MustParseAddr(supervisorAddr), Principal: household, Mode: "app", Version: "0.1.0", Commit: "abc123", MCPURL: "https://hm.example.org:8765/mcp",
 		TLS: func() (bool, time.Time) { return true, testStart.Add(90 * 24 * time.Hour) }, Retention: 30 * 24 * time.Hour,
-		Now: h.now.Now})
+		Direct: h.direct, PublicURL: h.publicURL,
+		DirectUI: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "direct ui") }),
+		Now:      h.now.Now})
 	h.log.OnCommit(srv.AuditCommitted)
 	h.srv, h.h = srv, srv.Handler()
 }

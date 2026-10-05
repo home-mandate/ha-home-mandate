@@ -24,6 +24,11 @@ import (
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; " +
 	"connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
 
+// CSPDirect is the policy in direct mode (container mode without Ingress, ARCHITECTURE
+// section 12): nobody frames the UI there.
+const CSPDirect = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; " +
+	"connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
 //go:embed all:dist
 var dist embed.FS
 
@@ -50,27 +55,40 @@ const (
 	cacheNever      = "no-store"
 )
 
-// Handler serves the UI from the embedded build.
+// Handler serves the UI from the embedded build, for Ingress.
 func Handler() http.Handler {
+	return NewHandler(embedded(), CSP)
+}
+
+// DirectHandler serves the UI from the embedded build in direct mode, never framed.
+func DirectHandler() http.Handler {
+	return NewHandler(embedded(), CSPDirect)
+}
+
+func embedded() fs.FS {
 	sub, err := fs.Sub(dist, "dist")
 	if err != nil {
 		panic(err) // the embedded directory always exists
 	}
-	return NewHandler(sub)
+	return sub
 }
 
-// NewHandler serves the UI from files, for tests.
-func NewHandler(files fs.FS) http.Handler {
-	return &handler{files: files}
+// NewHandler serves the UI from files under the policy csp.
+func NewHandler(files fs.FS, csp string) http.Handler {
+	return &handler{files: files, csp: csp}
 }
 
 type handler struct {
 	files fs.FS
+	csp   string
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	header := w.Header()
-	header.Set("Content-Security-Policy", CSP)
+	header.Set("Content-Security-Policy", h.csp)
+	if h.csp == CSPDirect {
+		header.Set("X-Frame-Options", "DENY")
+	}
 	header.Set("X-Content-Type-Options", "nosniff")
 	header.Set("Referrer-Policy", "no-referrer")
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {

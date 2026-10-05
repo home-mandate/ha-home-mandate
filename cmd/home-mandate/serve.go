@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -143,6 +144,8 @@ type gateway struct {
 	ingress  *http.Server // the UI behind Ingress; nil without HM_INGRESS_ADDR in container mode
 	ingressL net.Listener
 	certs    *tlscert.Loader // the MCP certificate; nil without TLS
+	// direct is the UI of direct mode on the MCP listener; nil while it is off.
+	direct atomic.Pointer[http.Handler]
 }
 
 func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, error) {
@@ -225,7 +228,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	gw := mcp.New(mcp.Config{Resource: resource, ResourceMetadataURL: metadata, Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
 		TemperatureUnit: g.temperatureUnit,
 		Limiter:         restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, Clock: s.log, Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
-	as, handler, err := withOAuth(s, gw.Handler(), resource, logger)
+	as, handler, err := withOAuth(s, gw.Handler(), http.HandlerFunc(g.serveDirect), resource, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -243,11 +246,23 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	if as != nil {
 		apiCfg.Pairing = as
 	}
+	if directMode(s.cfg, g.certs) {
+		signIn, err := oauth.NewHASignIn(oauth.HASignInConfig{PublicURL: s.cfg.PublicURL, BrowserURL: s.cfg.HABrowserURL,
+			HTTPURL: s.cfg.HAHTTPURL, WebSocketURL: s.cfg.HAURL, Roots: s.cfg.HARootCAs, Callback: api.DirectCallbackPath})
+		if err != nil {
+			return nil, err
+		}
+		apiCfg.Direct, apiCfg.DirectUI, apiCfg.PublicURL = signIn, webui.DirectHandler(), s.cfg.PublicURL
+	}
 	// The MCP address is taken from the configuration only, never from a request header.
 	if g.server.TLSConfig != nil && s.cfg.PublicURL != "" {
 		apiCfg.MCPURL = s.cfg.PublicURL + mcp.Path
 	}
 	g.api = api.New(apiCfg)
+	if h := g.api.DirectHandler(); h != nil {
+		g.direct.Store(&h)
+		logger.Info("UI in direct mode", "url", s.cfg.PublicURL+api.DirectPrefix+"/")
+	}
 	// Many renames in an hour hint at a broken integration: the approvers are told.
 	approvers := approverAnchor{approvers: s.approvers, notify: client.Notify, language: g.householdLanguage}
 	flood := &floodNotice{now: time.Now, tell: func(ctx context.Context, count int) error {
@@ -331,9 +346,26 @@ func (g *gateway) tlsStatus() (bool, time.Time) {
 	return true, until
 }
 
+// directMode tells whether the UI is served on the MCP listener with Home-Mandate's own
+// sign-in (ARCHITECTURE section 12): in container mode with a certificate and an https
+// public URL, which secure cookies and Sec-Fetch-Site need.
+func directMode(cfg config.Config, certs *tlscert.Loader) bool {
+	return cfg.Mode == config.ModeContainer && certs != nil && strings.HasPrefix(cfg.PublicURL, "https://")
+}
+
+// serveDirect serves direct mode once the API exists; 404 while it is off.
+func (g *gateway) serveDirect(w http.ResponseWriter, r *http.Request) {
+	if h := g.direct.Load(); h != nil {
+		(*h).ServeHTTP(w, r)
+		return
+	}
+	http.NotFound(w, r)
+}
+
 // withOAuth adds the authorization server next to the MCP endpoint when a public URL is
-// configured; without one, OAuth is off, every token is refused and nobody can pair.
-func withOAuth(s *state, mcpHandler http.Handler, resource string, logger *slog.Logger) (*oauth.Server, http.Handler, error) {
+// configured; without one, OAuth is off, every token is refused and nobody can pair. The
+// UI of direct mode is served under /ui/ next to them.
+func withOAuth(s *state, mcpHandler, ui http.Handler, resource string, logger *slog.Logger) (*oauth.Server, http.Handler, error) {
 	if s.cfg.PublicURL == "" {
 		logger.Warn("no public URL configured: OAuth is off, agents cannot be admitted")
 		return nil, mcpHandler, nil
@@ -347,6 +379,8 @@ func withOAuth(s *state, mcpHandler http.Handler, resource string, logger *slog.
 		Clients: oauth.NewCIMDResolver(nil), Admission: s.admission, Tokens: s.agents, Audit: s.log, Logger: logger})
 	mux := http.NewServeMux()
 	mux.Handle(mcp.Path, mcpHandler)
+	mux.Handle(api.DirectPrefix, ui)
+	mux.Handle(api.DirectPrefix+"/", ui)
 	mux.Handle("/", as.Handler())
 	return as, mux, nil
 }

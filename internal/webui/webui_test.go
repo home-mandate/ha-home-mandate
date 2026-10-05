@@ -34,7 +34,7 @@ func get(t *testing.T, h http.Handler, method, target string) *httptest.Response
 }
 
 func TestServesTheBuildWithHeaders(t *testing.T) {
-	h := NewHandler(build)
+	h := NewHandler(build, CSP)
 	tests := []struct {
 		target, contentType, cache, body string
 	}{
@@ -69,7 +69,7 @@ func checkSecurityHeaders(t *testing.T, target string, hdr http.Header) {
 }
 
 func TestRefusesEverythingElse(t *testing.T) {
-	h := NewHandler(build)
+	h := NewHandler(build, CSP)
 	for _, target := range []string{
 		"/missing.js", "/assets/", "/assets", "/assets//index-abc.js", "/assets/../index.html", "/./index.html",
 		"/.keep", "/assets/.hidden.js", "/%2e%2e/etc/passwd", "/assets/%2e%2e/index.html", "//index.html",
@@ -91,14 +91,14 @@ func TestRefusesEverythingElse(t *testing.T) {
 }
 
 func TestHead(t *testing.T) {
-	rec := get(t, NewHandler(build), http.MethodHead, "/assets/index-abc.js")
+	rec := get(t, NewHandler(build, CSP), http.MethodHead, "/assets/index-abc.js")
 	if rec.Code != http.StatusOK || rec.Body.Len() != 0 || rec.Header().Get("Content-Length") != "14" {
 		t.Errorf("HEAD = %d %v %q", rec.Code, rec.Header(), rec.Body.String())
 	}
 }
 
 func TestPlaceholderWithoutBuild(t *testing.T) {
-	h := NewHandler(fstest.MapFS{".keep": {}})
+	h := NewHandler(fstest.MapFS{".keep": {}}, CSP)
 	rec := get(t, h, http.MethodGet, "/")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "make webui") || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Errorf("placeholder = %d %q", rec.Code, rec.Body.String())
@@ -142,5 +142,22 @@ func TestCSPMatchesTheUIDevServer(t *testing.T) {
 		if strings.Contains(CSP, forbidden) {
 			t.Errorf("CSP contains %q", forbidden)
 		}
+	}
+}
+
+func TestDirectModeIsNeverFramed(t *testing.T) {
+	rec := get(t, DirectHandler(), http.MethodGet, "/")
+	if got := rec.Header().Get("Content-Security-Policy"); got != CSPDirect || !strings.Contains(got, "frame-ancestors 'none'") {
+		t.Errorf("CSP = %q", got)
+	}
+	if rec.Header().Get("X-Frame-Options") != "DENY" {
+		t.Errorf("X-Frame-Options = %q", rec.Header().Get("X-Frame-Options"))
+	}
+	if strings.Replace(CSPDirect, "frame-ancestors 'none'", "frame-ancestors 'self'", 1) != CSP {
+		t.Error("the policies differ in more than framing")
+	}
+	ingress := get(t, Handler(), http.MethodGet, "/")
+	if ingress.Header().Get("Content-Security-Policy") != CSP || ingress.Header().Get("X-Frame-Options") != "" {
+		t.Error("the Ingress policy changed")
 	}
 }

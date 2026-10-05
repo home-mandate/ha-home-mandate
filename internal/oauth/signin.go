@@ -55,6 +55,9 @@ type HASignInConfig struct {
 	HTTPURL      string
 	WebSocketURL string
 	Roots        *x509.CertPool
+	// Callback is the path Home Assistant sends the browser back to; CallbackPath when
+	// empty. The UI's sign-in in direct mode uses its own.
+	Callback string
 }
 
 // HASignIn implements HomeAssistant. It keeps no Home Assistant token of the human: the
@@ -75,7 +78,14 @@ func NewHASignIn(cfg HASignInConfig) (*HASignIn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("oauth: Home Assistant HTTP URL: %w", err)
 	}
-	return &HASignIn{clientID: cfg.PublicURL + "/", redirectURI: cfg.PublicURL + CallbackPath,
+	callback := cfg.Callback
+	if callback == "" {
+		callback = CallbackPath
+	}
+	if !strings.HasPrefix(callback, "/") || strings.ContainsAny(callback, "?#") {
+		return nil, errors.New("oauth: callback must be a path")
+	}
+	return &HASignIn{clientID: cfg.PublicURL + "/", redirectURI: cfg.PublicURL + callback,
 		browserURL: cfg.BrowserURL, httpURL: cfg.HTTPURL, wsURL: cfg.WebSocketURL, roots: cfg.Roots,
 		client: client, currentUser: ha.CurrentUser}, nil
 }
