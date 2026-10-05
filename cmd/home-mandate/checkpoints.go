@@ -132,6 +132,12 @@ type approverAnchor struct {
 var errNoApprover = errors.New("no approver device reached")
 
 func (a approverAnchor) Publish(ctx context.Context, pos audit.Position) error {
+	return a.tell(ctx, i18n.CheckpointTitle, i18n.CheckpointMessage, i18n.Args{
+		"seq": fmt.Sprint(pos.Seq), "digest": shortDigest(pos.Digest), "log": pos.LogID})
+}
+
+// tell sends a notification to every device of every approver, each in its language.
+func (a approverAnchor) tell(ctx context.Context, title, message i18n.Key, args i18n.Args) error {
 	approvers, err := a.approvers.List(ctx)
 	if err != nil {
 		return err
@@ -142,11 +148,7 @@ func (a approverAnchor) Publish(ctx context.Context, pos audit.Position) error {
 		if l, ok := i18n.Parse(ap.Language); ok {
 			lang = l
 		}
-		n := ha.Notification{
-			Title: i18n.T(lang, i18n.CheckpointTitle, nil),
-			Message: i18n.T(lang, i18n.CheckpointMessage, i18n.Args{
-				"seq": fmt.Sprint(pos.Seq), "digest": shortDigest(pos.Digest), "log": pos.LogID}),
-		}
+		n := ha.Notification{Title: i18n.T(lang, title, nil), Message: i18n.T(lang, message, args)}
 		for _, d := range ap.Devices {
 			if a.notify(ctx, d.Service, n) == nil {
 				reached++

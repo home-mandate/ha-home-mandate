@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -120,5 +121,46 @@ func TestAChangeThatCannotBeRecordedIsNotMade(t *testing.T) {
 	}
 	if got := renames.Formers("lock.b"); len(got) != 1 {
 		t.Errorf("the held rename was lost: %v", got)
+	}
+}
+
+// Only renames that affect a mandate are audit entries: one whose old ID, or an ID before
+// it, a mandate names. All of them are stored and counted all the same.
+func TestOnlyRenamesThatAffectAMandateAreAudited(t *testing.T) {
+	_, s := newMarks(t)
+	ctx := context.Background()
+	log := audit.New(s.DB(), "household:t")
+	renames, err := catalog.LoadRenames(ctx, s.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	renames.SetRecorder(log)
+	renames.SetRelevance(func(context.Context) (func(string) bool, error) {
+		return func(id string) bool { return id == "lock.cellar" }, nil
+	})
+	renames.Hold(catalog.Rename{Old: "lock.cellar", New: "lock.cellar_door"})
+	renames.Hold(catalog.Rename{Old: "lock.cellar_door", New: "lock.basement"}) // its former ID is named
+	renames.Hold(catalog.Rename{Old: "sensor.x", New: "sensor.y"})              // no mandate names it
+	if err := renames.Store(ctx); err != nil {
+		t.Fatal(err)
+	}
+	want := "system renamed lock.cellar_door<-lock.cellar\nsystem renamed lock.basement<-lock.cellar_door"
+	if got := strings.Join(directoryEntries(t, log), "\n"); got != want {
+		t.Errorf("entries:\n%s\nwant:\n%s", got, want)
+	}
+	if got := renames.Formers("sensor.y"); len(got) != 1 {
+		t.Errorf("an unaudited rename was not kept: %v", got)
+	}
+	if n := renames.RenamesLastHour(); n != 3 {
+		t.Errorf("renames in the last hour = %d", n)
+	}
+	// If it cannot be told which IDs mandates name, every rename is recorded.
+	renames.SetRelevance(func(context.Context) (func(string) bool, error) { return nil, errors.New("database gone") })
+	renames.Hold(catalog.Rename{Old: "sensor.p", New: "sensor.q"})
+	if err := renames.Store(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := directoryEntries(t, log); len(got) != 3 {
+		t.Errorf("entries after a failed relevance check: %v", got)
 	}
 }

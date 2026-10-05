@@ -102,6 +102,7 @@ type Config struct {
 		Store(ctx context.Context) error
 		FailingSince() time.Time
 		Overflowing() bool
+		RenamesLastHour() int
 	}
 	Status func() Status
 	// UI serves everything outside /api/; nil answers 404.

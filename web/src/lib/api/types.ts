@@ -90,7 +90,7 @@ export interface SystemStatus {
   /** The server clock lies behind the newest audit entry: no request is decided (SPEC-v0 section 11.4). */
   clock_behind: boolean;
   /** Storing renames of Home Assistant fails since then (after a grace period); with overflow nothing is decided. */
-  directory: { store_failing_since: string | null; overflow: boolean };
+  directory: { store_failing_since: string | null; overflow: boolean; renames_last_hour: number; rename_flood_threshold: number };
   chain: ChainStatus;
   /** Approvers set up; 0 means every approval request is denied at once. */
   approvers_configured: number;

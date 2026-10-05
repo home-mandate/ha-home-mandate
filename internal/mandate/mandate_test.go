@@ -762,3 +762,25 @@ func TestCandidatesAreTheActiveMandatesOfAnActiveAgent(t *testing.T) {
 		t.Errorf("revoked agent: %+v, %v", list, err)
 	}
 }
+
+// Named tells which entity IDs rules of active mandates name; revoked mandates name none.
+func TestNamedEntitiesOfActiveMandates(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a := e.agent(t, "Voice assistant")
+	info, err := e.mandates.Put(ctx, voiceAssistant(t, a.ClientID, withRule(map[string]any{"id": "r-cellar",
+		"resource": map[string]any{"entity_id": "lock.cellar"}, "actions": []any{"unlock"}, "decision": "deny"})), admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	named, err := e.mandates.Named(ctx)
+	if err != nil || !named("lock.cellar") || named("light.kitchen") {
+		t.Fatalf("Named: %v", err)
+	}
+	if err := e.mandates.Revoke(ctx, info.ID, admin); err != nil {
+		t.Fatal(err)
+	}
+	if named, err := e.mandates.Named(ctx); err != nil || named("lock.cellar") {
+		t.Errorf("a revoked mandate still names lock.cellar: %v", err)
+	}
+}

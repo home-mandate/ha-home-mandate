@@ -129,9 +129,17 @@ next one, it is empty and every request is denied.
   before any is changed); **don't take over** keeps the mandates and lets the rules on
   the former ID go, after an inline confirmation. A rename back undoes the rename. The
   critical mark moves along (the old ID keeps it), and `stale_references` of a mandate
-  name the entity a device was renamed to. Every rename found, taken over or dismissed and every
-  carried mark is a `directory.changed` audit entry, written with the change; the filter by
-  device of the audit log finds them by the current and the former ID.
+  name the entity a device was renamed to. A rename that affects a mandate (one
+  names its old ID or an ID before it), every rename taken over or dismissed and every
+  carried mark is a `directory.changed` audit entry, written with the change; renames of
+  entities no mandate names are kept but not recorded. The filter by device of the audit
+  log finds the entries by the current and the former ID.
+- **Robustness.** After every refresh, the first one after a start included, the critical
+  mark is carried along every unresolved rename, so a mark that could not be stored once
+  is made up for. At most 1000 renames wait in memory while they cannot be stored; beyond,
+  the catalog is not ready and every request is denied. When storing has failed for two
+  minutes, the UI says so. More than 50 renames in an hour hint at a broken integration:
+  the UI shows a notice and the approvers get a notification, at most once an hour.
 - **Areas.** A rule on an area covers the devices that are in it now. A removed area is
   reported like a renamed device; a device moved out of an area leaves the area's rules,
   which the editor points out at every `deny` or `ask` rule that names only an area.

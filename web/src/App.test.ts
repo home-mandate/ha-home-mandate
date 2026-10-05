@@ -185,6 +185,17 @@ describe('App frame', () => {
     expect(screen.queryByText('Device directory changes cannot be stored')).toBeNull();
   });
 
+  it('says when Home Assistant renamed many devices in the last hour', async () => {
+    const { api } = await start();
+    api.control.setRenamesLastHour(50);
+    await tick();
+    expect(screen.queryByText('Many renames in Home Assistant')).toBeNull();
+    api.control.setRenamesLastHour(51);
+    await tick();
+    expect(screen.getByText('Many renames in Home Assistant')).toBeTruthy();
+    expect(screen.getByText(/renamed 51 devices in the last hour.*broken integration/)).toBeTruthy();
+  });
+
   it('opens the broken entry from the chain banner', async () => {
     const { api } = await start();
     api.control.breakChain(7);

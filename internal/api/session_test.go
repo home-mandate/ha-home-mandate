@@ -170,6 +170,7 @@ type failingRenames struct {
 
 func (f failingRenames) FailingSince() time.Time { return f.since }
 func (f failingRenames) Overflowing() bool       { return f.overflow }
+func (f failingRenames) RenamesLastHour() int    { return 77 }
 
 // Storing renames that fails for a while, and renames that cannot be held, are reported.
 func TestSystemReportsRenamesThatCannotBeStored(t *testing.T) {
@@ -187,7 +188,8 @@ func TestSystemReportsRenamesThatCannotBeStored(t *testing.T) {
 	}
 	h.srv.cfg.Renames = failingRenames{Renames: h.renames, since: testStart.Add(-10 * time.Minute), overflow: true}
 	h.ok(http.MethodGet, "/api/system", nil, &sys)
-	if sys.Directory.StoreFailingSince == nil || *sys.Directory.StoreFailingSince != "2026-10-03T09:50:00.000Z" || !sys.Directory.Overflow {
+	if sys.Directory.StoreFailingSince == nil || *sys.Directory.StoreFailingSince != "2026-10-03T09:50:00.000Z" || !sys.Directory.Overflow ||
+		sys.Directory.RenamesLastHour != 77 || sys.Directory.RenameFloodThreshold != 50 {
 		t.Errorf("directory = %+v", sys.Directory)
 	}
 }

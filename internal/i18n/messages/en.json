@@ -61,5 +61,7 @@
   "approval_params": "Parameters: {params}",
   "checkpoint_title": "Home-Mandate: state of the audit log",
   "checkpoint_message": "Audit log up to entry {seq}, digest {digest}. This message is evidence of the state of the log; please keep it. Log {log}.",
-  "approval_identity": "Agent {client_id} · device {entity_id}"
+  "approval_identity": "Agent {client_id} · device {entity_id}",
+  "rename_flood_title": "Many renames in Home Assistant",
+  "rename_flood_message": "Home Assistant renamed {count} devices in the last hour. That hints at a broken integration. Home-Mandate processes all of them; rules on the former names keep applying until you decide."
 }

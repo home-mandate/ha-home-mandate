@@ -171,6 +171,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		return nil, err
 	}
 	renames.SetRecorder(s.log)
+	renames.SetRelevance(s.mandates.Named)
 	g.catalog.SetAliases(renames)
 	g.renames = renames
 	for _, event := range append([]string{ha.EventStateChanged}, registryEvents...) {
@@ -249,8 +250,13 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		apiCfg.MCPURL = s.cfg.PublicURL + mcp.Path
 	}
 	g.api = api.New(apiCfg)
+	// Many renames in an hour hint at a broken integration: the approvers are told.
+	approvers := approverAnchor{approvers: s.approvers, notify: client.Notify, language: g.householdLanguage}
+	flood := &floodNotice{now: time.Now, tell: func(ctx context.Context, count int) error {
+		return approvers.tell(ctx, i18n.RenameFloodTitle, i18n.RenameFloodMessage, i18n.Args{"count": fmt.Sprint(count)})
+	}}
 	g.catalog.OnRefresh(func(renames []catalog.Rename) {
-		directoryChanged(ctx, logger, g.marks, g.renames, func() {
+		directoryChanged(ctx, logger, g.marks, g.renames, flood, func() {
 			g.api.DevicesChanged()
 			// Whether storing renames fails is part of the system status.
 			g.api.SystemChanged()

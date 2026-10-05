@@ -74,6 +74,43 @@ type Renames struct {
 	// overflow: more renames waited to be stored than MaxUnsaved; the catalog is not
 	// ready then and every request is denied, rather than forgetting a rename.
 	overflow bool
+	// relevant tells which entity IDs active mandates name; nil: all.
+	relevant Relevance
+	// recent are the times of the renames held in the last hour.
+	recent []time.Time
+}
+
+// Relevance returns which entity IDs active mandates name. A rename is an audit entry only
+// if a mandate names its old ID or one before it: an entity no mandate names does not
+// affect any decision (SPEC-v0 section 11.4: changes that affect the evaluation).
+type Relevance func(ctx context.Context) (func(entityID string) bool, error)
+
+// RenameFloodThreshold is the number of renames in one hour above which Home-Mandate
+// tells the administrators: so many hint at a broken integration.
+const RenameFloodThreshold = 50
+
+// SetRelevance sets which renames are audit entries; without it, every one is.
+func (r *Renames) SetRelevance(relevant Relevance) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.relevant = relevant
+}
+
+// RenamesLastHour is the number of renames held in the last hour.
+func (r *Renames) RenamesLastHour() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pruneLocked(time.Now())
+	return len(r.recent)
+}
+
+// pruneLocked drops times older than an hour; the caller holds mu.
+func (r *Renames) pruneLocked(now time.Time) {
+	i := 0
+	for i < len(r.recent) && now.Sub(r.recent[i]) >= time.Hour {
+		i++
+	}
+	r.recent = r.recent[i:]
 }
 
 // MaxUnsaved bounds the renames held in memory while they cannot be stored.
@@ -164,6 +201,9 @@ func (r *Renames) Hold(rn Rename) bool {
 		r.overflow = true
 		return false
 	}
+	now := time.Now()
+	r.pruneLocked(now)
+	r.recent = append(r.recent, now)
 	// The same entity (same registry ID) gets its former ID back: the rename is undone.
 	// Two entities that swap their IDs are two renames, never an undo.
 	back := edge{rn.New, rn.Old}
@@ -281,13 +321,28 @@ func (r *Renames) Store(ctx context.Context) error {
 // flush writes what is held; the caller holds storeMu.
 func (r *Renames) flush(ctx context.Context) error {
 	r.mu.Lock()
-	unsaved, registry, dirty, rec := r.unsaved, maps.Clone(r.registry), r.registryDirty, r.rec
+	unsaved, registry, dirty, rec, relevant := r.unsaved, maps.Clone(r.registry), r.registryDirty, r.rec, r.relevant
+	open := maps.Clone(r.open)
 	r.unsaved, r.registryDirty = nil, false
 	r.mu.Unlock()
+	// Which renames are audit entries; if that cannot be told, every one is.
+	recorded := func(Rename) bool { return true }
+	if rec != nil && relevant != nil {
+		if named, err := relevant(ctx); err == nil {
+			recorded = func(rn Rename) bool {
+				for _, id := range append([]string{rn.Old}, formersOf(open, rn.Old)...) {
+					if named(id) {
+						return true
+					}
+				}
+				return false
+			}
+		}
+	}
 	if len(unsaved) == 0 && !dirty {
 		return nil
 	}
-	if err := r.store(ctx, rec, unsaved, registry, dirty); err != nil {
+	if err := r.store(ctx, rec, recorded, unsaved, registry, dirty); err != nil {
 		r.mu.Lock()
 		r.unsaved = append(unsaved, r.unsaved...)
 		r.registryDirty = r.registryDirty || dirty
@@ -304,7 +359,7 @@ func (r *Renames) flush(ctx context.Context) error {
 	return nil
 }
 
-func (r *Renames) store(ctx context.Context, rec Recorder, unsaved []held, registry map[string]string, dirty bool) error {
+func (r *Renames) store(ctx context.Context, rec Recorder, recorded func(Rename) bool, unsaved []held, registry map[string]string, dirty bool) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("catalog: store renames: %w", err)
@@ -312,8 +367,8 @@ func (r *Renames) store(ctx context.Context, rec Recorder, unsaved []held, regis
 	defer func() { _ = tx.Rollback() }()
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, h := range unsaved {
-		// Every rename Home Assistant made is recorded, a rename back as well.
-		if rec != nil {
+		// A rename that affects a mandate is recorded, a rename back as well.
+		if rec != nil && recorded(h.Rename) {
 			if _, err := rec.AppendTx(ctx, tx, renameEntry(audit.Actor{Kind: audit.ActorSystem, ID: systemActor}, audit.DirectoryRenamed, h.New, h.Old)); err != nil {
 				return err
 			}
