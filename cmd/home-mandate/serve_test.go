@@ -11,6 +11,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"io"
 	"log/slog"
 	"math/big"
@@ -19,6 +20,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,9 +28,10 @@ import (
 	"github.com/home-mandate/home-mandate/internal/config"
 	"github.com/home-mandate/home-mandate/internal/pdp"
 	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/home-mandate/internal/tlscert"
 )
 
-// selfSigned writes a certificate for 127.0.0.1 and its key into dir.
+// selfSigned writes a certificate for 127.0.0.1 and hm.example.org and its key into dir.
 func selfSigned(t *testing.T, dir string) (certFile, keyFile string) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -37,7 +40,7 @@ func selfSigned(t *testing.T, dir string) (certFile, keyFile string) {
 	}
 	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "home-mandate test"},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
-		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}}
+		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}, DNSNames: []string{"hm.example.org"}}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +62,7 @@ func selfSigned(t *testing.T, dir string) (certFile, keyFile string) {
 func TestListenWithTLSAcceptsOnlyTLS13(t *testing.T) {
 	certFile, keyFile := selfSigned(t, t.TempDir())
 	srv := &http.Server{Handler: http.NotFoundHandler()}
-	ln, err := listen(config.Config{Mode: config.ModeContainer, MCPAddr: "127.0.0.1:0", TLSCert: certFile, TLSKey: keyFile}, srv, slog.New(slog.DiscardHandler))
+	ln, _, err := listen(config.Config{Mode: config.ModeContainer, MCPAddr: "127.0.0.1:0", TLSCert: certFile, TLSKey: keyFile}, srv, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,12 +91,12 @@ func TestListenWithTLSAcceptsOnlyTLS13(t *testing.T) {
 func TestListenRefusesABrokenCertificate(t *testing.T) {
 	dir := t.TempDir()
 	missing := config.Config{Mode: config.ModeContainer, MCPAddr: "127.0.0.1:0", TLSCert: filepath.Join(dir, "none.pem"), TLSKey: filepath.Join(dir, "none.key")}
-	if _, err := listen(missing, &http.Server{}, slog.New(slog.DiscardHandler)); err == nil {
+	if _, _, err := listen(missing, &http.Server{}, slog.New(slog.DiscardHandler)); err == nil {
 		t.Error("listen with a missing certificate succeeded in container mode")
 	}
 	broken := filepath.Join(dir, "broken.pem")
 	_ = os.WriteFile(broken, []byte("not a certificate"), 0o600)
-	if _, err := listen(config.Config{Mode: config.ModeApp, MCPAddr: "127.0.0.1:0", TLSCert: broken, TLSKey: broken}, &http.Server{}, slog.New(slog.DiscardHandler)); err == nil {
+	if _, _, err := listen(config.Config{Mode: config.ModeApp, MCPAddr: "127.0.0.1:0", TLSCert: broken, TLSKey: broken}, &http.Server{}, slog.New(slog.DiscardHandler)); err == nil {
 		t.Error("listen with a broken certificate succeeded")
 	}
 }
@@ -101,13 +104,122 @@ func TestListenRefusesABrokenCertificate(t *testing.T) {
 func TestListenWithoutCertificateInAppModeFallsBackToLoopback(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.Config{Mode: config.ModeApp, MCPAddr: ":0", TLSCert: filepath.Join(dir, "fullchain.pem"), TLSKey: filepath.Join(dir, "privkey.pem")}
-	ln, err := listen(cfg, &http.Server{}, slog.New(slog.DiscardHandler))
+	ln, certs, err := listen(cfg, &http.Server{}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Skipf("port 8765 not available: %v", err)
 	}
 	defer ln.Close()
+	if certs != nil {
+		t.Error("a certificate loader without a certificate")
+	}
 	if host, _, _ := net.SplitHostPort(ln.Addr().String()); host != "127.0.0.1" {
 		t.Errorf("listening on %s, want loopback", ln.Addr())
+	}
+}
+
+// handshake connects with the given TLS settings and returns the connection state.
+func handshake(addr string, c *tls.Config) (tls.ConnectionState, error) {
+	conn, err := tls.Dial("tcp", addr, c)
+	if err != nil {
+		return tls.ConnectionState{}, err
+	}
+	defer conn.Close()
+	return conn.ConnectionState(), nil
+}
+
+func TestListenNegotiatesTheHybridPostQuantumKeyExchange(t *testing.T) {
+	certFile, keyFile := selfSigned(t, t.TempDir())
+	srv := &http.Server{Handler: http.NotFoundHandler()}
+	ln, _, err := listen(config.Config{Mode: config.ModeContainer, MCPAddr: "127.0.0.1:0", TLSCert: certFile, TLSKey: keyFile}, srv, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Close()
+	state, err := handshake(ln.Addr().String(), &tls.Config{InsecureSkipVerify: true, CurvePreferences: []tls.CurveID{tls.X25519MLKEM768, tls.X25519}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.CurveID != tls.X25519MLKEM768 {
+		t.Errorf("key exchange %v, want X25519MLKEM768", state.CurveID)
+	}
+}
+
+func TestListenAnswersNoPlaintext(t *testing.T) {
+	certFile, keyFile := selfSigned(t, t.TempDir())
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "secret") })}
+	ln, _, err := listen(config.Config{Mode: config.ModeContainer, MCPAddr: "127.0.0.1:0", TLSCert: certFile, TLSKey: keyFile}, srv, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Close()
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_, _ = io.WriteString(conn, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	answer, _ := io.ReadAll(conn)
+	if strings.Contains(string(answer), "secret") || strings.HasPrefix(string(answer), "HTTP/1.1 200") {
+		t.Errorf("plaintext answer: %q", answer)
+	}
+}
+
+func TestListenRefusesACertificateForAnotherHost(t *testing.T) {
+	certFile, keyFile := selfSigned(t, t.TempDir()) // valid for 127.0.0.1 and hm.example.org
+	cfg := config.Config{Mode: config.ModeContainer, MCPAddr: "127.0.0.1:0", TLSCert: certFile, TLSKey: keyFile, PublicURL: "https://other.example.org:8765"}
+	if _, _, err := listen(cfg, &http.Server{}, slog.New(slog.DiscardHandler)); !errors.Is(err, tlscert.ErrHostNotCovered) {
+		t.Errorf("err = %v, want ErrHostNotCovered", err)
+	}
+	cfg.PublicURL = "https://127.0.0.1:8765"
+	ln, certs, err := listen(cfg, &http.Server{}, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.Close()
+	if present, until := (&gateway{certs: certs}).tlsStatus(); !present || until.IsZero() {
+		t.Errorf("status = %v, %v", present, until)
+	}
+}
+
+func TestListenTakesARenewedCertificateOver(t *testing.T) {
+	dir := t.TempDir()
+	certFile, keyFile := selfSigned(t, dir)
+	srv := &http.Server{Handler: http.NotFoundHandler()}
+	ln, _, err := listen(config.Config{Mode: config.ModeContainer, MCPAddr: "127.0.0.1:0", TLSCert: certFile, TLSKey: keyFile}, srv, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Close()
+	insecure := &tls.Config{InsecureSkipVerify: true}
+	before, err := handshake(ln.Addr().String(), insecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewed := t.TempDir()
+	newCert, newKey := selfSigned(t, renewed)
+	for src, dst := range map[string]string{newCert: certFile, newKey: keyFile} {
+		data, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dst, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.Chtimes(dst, time.Now().Add(time.Second), time.Now().Add(time.Second))
+	}
+	// The loader looks at the files at most once a minute: let that minute pass.
+	certClock = func() time.Time { return time.Now().Add(tlscert.CheckInterval) }
+	defer func() { certClock = time.Now }()
+	after, err := handshake(ln.Addr().String(), insecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.PeerCertificates[0].Equal(after.PeerCertificates[0]) {
+		t.Error("the listener still serves the previous certificate")
 	}
 }
 

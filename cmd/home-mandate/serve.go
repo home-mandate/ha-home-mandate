@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +28,7 @@ import (
 	"github.com/home-mandate/home-mandate/internal/mcp"
 	"github.com/home-mandate/home-mandate/internal/oauth"
 	"github.com/home-mandate/home-mandate/internal/pdp"
+	"github.com/home-mandate/home-mandate/internal/tlscert"
 	"github.com/home-mandate/home-mandate/internal/webui"
 	"github.com/mandate-spec/mandate-spec/ratelimit"
 )
@@ -141,7 +142,7 @@ type gateway struct {
 	listener net.Listener
 	ingress  *http.Server // the UI behind Ingress; nil without HM_INGRESS_ADDR in container mode
 	ingressL net.Listener
-	tlsUntil time.Time // expiry of the MCP certificate; zero without TLS
+	certs    *tlscert.Loader // the MCP certificate; nil without TLS
 }
 
 func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, error) {
@@ -231,17 +232,14 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	g.server = &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: writeTimeout(s.cfg.ApprovalTimeout), IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10,
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelWarn)}
-	if g.listener, err = listen(s.cfg, g.server, logger); err != nil {
+	if g.listener, g.certs, err = listen(s.cfg, g.server, logger); err != nil {
 		return nil, err
-	}
-	if s.cfg.TLSCert != "" && g.server.TLSConfig != nil {
-		g.tlsUntil = certificateExpiry(g.server.TLSConfig)
 	}
 
 	apiCfg := api.Config{Proxy: trustedProxy(ctx, s.cfg, lookupHost, logger), Store: s.store, Log: s.log, Agents: s.agents, Mandates: s.mandates, Admission: s.admission,
 		Approvers: s.approvers, Approvals: approvals, HA: client, Catalog: g.catalog, Marks: g.marks, Renames: g.renames, Status: g.status, UI: webui.Handler(),
 		Principal: s.household, Mode: string(s.cfg.Mode), Version: version, Commit: commit, Retention: retention,
-		TLS: func() (bool, time.Time) { return !g.tlsUntil.IsZero(), g.tlsUntil }, Logger: logger}
+		TLS: g.tlsStatus, Logger: logger}
 	if as != nil {
 		apiCfg.Pairing = as
 	}
@@ -324,16 +322,13 @@ func trustedProxy(ctx context.Context, cfg config.Config, lookup func(context.Co
 	return netip.Addr{}
 }
 
-// certificateExpiry is the end of validity of the configured certificate.
-func certificateExpiry(cfg *tls.Config) time.Time {
-	if len(cfg.Certificates) == 0 || len(cfg.Certificates[0].Certificate) == 0 {
-		return time.Time{}
+// tlsStatus reports whether the MCP endpoint has a certificate and until when it is valid.
+func (g *gateway) tlsStatus() (bool, time.Time) {
+	if g.certs == nil {
+		return false, time.Time{}
 	}
-	cert, err := x509.ParseCertificate(cfg.Certificates[0].Certificate[0])
-	if err != nil {
-		return time.Time{}
-	}
-	return cert.NotAfter
+	until, _ := g.certs.Status()
+	return true, until
 }
 
 // withOAuth adds the authorization server next to the MCP endpoint when a public URL is
@@ -358,29 +353,46 @@ func withOAuth(s *state, mcpHandler http.Handler, resource string, logger *slog.
 
 // listen opens the MCP listener: TLS 1.3 when a certificate is configured, otherwise
 // loopback only (decision 1). In app mode a missing certificate falls back to loopback.
-func listen(cfg config.Config, srv *http.Server, logger *slog.Logger) (net.Listener, error) {
+// The certificate must cover the host of the public URL; renewed files are taken over
+// without a restart.
+func listen(cfg config.Config, srv *http.Server, logger *slog.Logger) (net.Listener, *tlscert.Loader, error) {
 	addr := cfg.MCPAddr
+	var certs *tlscert.Loader
 	if cfg.TLSCert != "" {
-		cert, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
+		loader, err := tlscert.New(tlscert.Config{CertFile: cfg.TLSCert, KeyFile: cfg.TLSKey, Host: publicHost(cfg.PublicURL),
+			Now: func() time.Time { return certClock() }, Logger: logger})
 		switch {
 		case err == nil:
-			srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}}
+			certs = loader
+			srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS13, GetCertificate: loader.GetCertificate}
 		case cfg.Mode == config.ModeApp && errors.Is(err, fs.ErrNotExist):
 			logger.Warn("no TLS certificate in /ssl, MCP endpoint only on localhost")
 			addr = net.JoinHostPort("127.0.0.1", "8765")
 		default:
-			return nil, fmt.Errorf("load TLS certificate: %w", err)
+			return nil, nil, fmt.Errorf("load TLS certificate: %w", err)
 		}
 	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if srv.TLSConfig != nil {
 		ln = tls.NewListener(ln, srv.TLSConfig)
 	}
 	logger.Info("MCP endpoint listening", "addr", ln.Addr().String(), "tls", srv.TLSConfig != nil, "path", mcp.Path)
-	return ln, nil
+	return ln, certs, nil
+}
+
+// certClock is the clock of the certificate loader; replaced in tests.
+var certClock = time.Now
+
+// publicHost is the host of the public URL, empty without one.
+func publicHost(publicURL string) string {
+	u, err := url.Parse(publicURL)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }
 
 func (g *gateway) householdTimeZone() string {

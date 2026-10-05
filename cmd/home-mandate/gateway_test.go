@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -207,13 +206,11 @@ func TestIngressListenerNeedsAFreeAddress(t *testing.T) {
 	}
 }
 
-func TestCertificateExpiryWithoutCertificate(t *testing.T) {
-	if got := certificateExpiry(&tlsConfigWithout); !got.IsZero() {
-		t.Errorf("expiry = %v", got)
+func TestTLSStatusWithoutCertificate(t *testing.T) {
+	if present, until := (&gateway{}).tlsStatus(); present || !until.IsZero() {
+		t.Errorf("status = %v, %v", present, until)
 	}
 }
-
-var tlsConfigWithout = tls.Config{}
 
 // Decision U8: the Home Assistant token is never stored. After a gateway ran with it,
 // no file of the data directory contains it.
