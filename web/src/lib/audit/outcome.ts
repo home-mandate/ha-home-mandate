@@ -30,6 +30,7 @@ const EVENTS: Record<AuditEvent, () => string> = {
   'auth.rejected': () => m.event_login_rejected(),
   'log.truncated': () => m.event_log_pruned(),
   'log.checkpoint': () => m.event_log_checkpoint(),
+  'directory.changed': () => m.event_directory_changed(),
 };
 
 const REASONS: Record<Reason, () => string> = {

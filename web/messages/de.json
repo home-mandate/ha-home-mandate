@@ -803,5 +803,12 @@
   "renames_applied": "Umbenennung von {device} übernommen.",
   "renames_dismissed": "Umbenennung von {device} nicht übernommen.",
   "renames_changed": "Home Assistant hat inzwischen erneut umbenannt. Die Liste ist jetzt aktuell; bitte prüfe sie.",
-  "renames_in_use": "Ein anderes Gerät heißt jetzt {formers}. Die Regeln könnten für dieses Gerät gemeint sein: Passe sie im Editor an oder übernimm die Umbenennung nicht."
+  "renames_in_use": "Ein anderes Gerät heißt jetzt {formers}. Die Regeln könnten für dieses Gerät gemeint sein: Passe sie im Editor an oder übernimm die Umbenennung nicht.",
+  "event_directory_changed": "Geräteverzeichnis geändert",
+  "directory_critical_marked": "{device} als kritisch markiert",
+  "directory_critical_unmarked": "Kritisch-Markierung von {device} entfernt",
+  "directory_renamed": "{former} in Home Assistant umbenannt in {device}",
+  "directory_rename_applied": "Umbenennung {former} → {device} in die Mandate übernommen",
+  "directory_rename_dismissed": "Umbenennung {former} → {device} nicht übernommen",
+  "audit_field_directory": "Änderung"
 }

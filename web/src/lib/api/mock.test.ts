@@ -317,7 +317,10 @@ describe('createMockClient: approvals, settings, audit, approvers, emergency sto
     const devices = (await api.devices()).devices;
     expect(devices.find((d) => d.entity_id === 'switch.garden_gate')).toMatchObject({ critical: true, suggest_critical: false });
     expect(devices.find((d) => d.entity_id === 'switch.cellar_door')).toMatchObject({ critical: false });
-    expect(types(events)).toEqual(['devices.changed', 'devices.changed']);
+    // As the server: every change of a mark is an audit entry (directory.changed).
+    expect(types(events)).toEqual(['audit.appended', 'devices.changed', 'audit.appended', 'devices.changed']);
+    const { entries } = await api.audit({ event: 'directory.changed' });
+    expect(entries.map((e) => e.directory?.change)).toEqual(['critical_unmarked', 'critical_marked']);
     await api.putDeviceCritical('switch.garden_gate', false);
     expect((await api.devices()).devices.find((d) => d.entity_id === 'switch.garden_gate')).toMatchObject({ critical: false, suggest_critical: true });
     await expect(api.putDeviceCritical('light.nowhere', true)).rejects.toMatchObject({ code: 'not_found' });

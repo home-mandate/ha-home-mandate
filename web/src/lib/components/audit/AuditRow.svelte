@@ -6,7 +6,7 @@
 -->
 <script lang="ts">
   import type { AuditEntry, DeviceCatalog } from '../../api/types.ts';
-  import { decisionOf, deviceName } from '../../audit/describe.ts';
+  import { decisionOf, deviceName, directoryText } from '../../audit/describe.ts';
   import { eventLabel, outcomeOf } from '../../audit/outcome.ts';
   import { formatTime, type FormatContext } from '../../format.ts';
   import { m } from '../../i18n.ts';
@@ -35,6 +35,7 @@
   const what = $derived.by(() => {
     const request = entry.request;
     if (request) return deviceName(request.resource.entity_id, catalog) + SEPARATOR + actionLabel(request.resource.category, request.action);
+    if (entry.directory) return directoryText(entry, catalog);
     if (entry.actor?.name) return cleanUntrusted(entry.actor.name);
     return entry.agent ? cleanUntrusted(entry.agent.display_name ?? entry.agent.client_id) : '';
   });

@@ -5,9 +5,10 @@
 // critical, and the name of the device. Overview, audit log, approvals and agent details
 // all show entries through these functions, so they say the same everywhere.
 
-import type { AuditEntry, Category, DecisionFilter, DeviceCatalog } from '../api/types.ts';
+import type { AuditEntry, Category, DecisionFilter, DeviceCatalog, DirectoryChange } from '../api/types.ts';
 import { isCritical } from '../engine/vocabulary.ts';
-import { cleanUntrusted } from '../untrusted.ts';
+import { m } from '../i18n.ts';
+import { cleanUntrusted, isolate } from '../untrusted.ts';
 
 /** decisionOf returns the decision of a request, or null for anything that is no decision. */
 export function decisionOf(entry: AuditEntry): DecisionFilter | null {
@@ -31,6 +32,22 @@ export function isCriticalRequest(entry: AuditEntry): boolean {
   if (!request) return false;
   if (request.resource.critical === true && request.action !== 'read') return true;
   return isCritical(request.resource.category as Category | undefined, request.action);
+}
+
+const DIRECTORY: Record<DirectoryChange, (v: { device: string; former: string }) => string> = {
+  critical_marked: (v) => m.directory_critical_marked(v),
+  critical_unmarked: (v) => m.directory_critical_unmarked(v),
+  renamed: (v) => m.directory_renamed(v),
+  rename_applied: (v) => m.directory_rename_applied(v),
+  rename_dismissed: (v) => m.directory_rename_dismissed(v),
+};
+
+/** directoryText says what changed in the resource directory; empty for other entries. */
+export function directoryText(entry: AuditEntry, catalog: DeviceCatalog | null): string {
+  const d = entry.directory;
+  const text = d ? (DIRECTORY[d.change] as ((v: { device: string; former: string }) => string) | undefined) : undefined;
+  if (!d || !text) return '';
+  return text({ device: isolate(deviceName(d.entity_id, catalog)), former: isolate(cleanUntrusted(d.previous_entity_id ?? '')) });
 }
 
 /** deviceName is the device's name from Home Assistant, else its entity ID, both cleaned. */

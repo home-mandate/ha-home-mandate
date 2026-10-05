@@ -567,7 +567,11 @@ export type AuditEvent =
   | 'emergency_stop.released'
   | 'auth.rejected'
   | 'log.truncated'
-  | 'log.checkpoint';
+  | 'log.checkpoint'
+  | 'directory.changed';
+
+/** A change of the resource directory (SPEC-v0 section 11.4). */
+export type DirectoryChange = 'critical_marked' | 'critical_unmarked' | 'renamed' | 'rename_applied' | 'rename_dismissed';
 
 export type ResultStatus = 'executed' | 'denied' | 'failed';
 export type DeniedBy = 'mandate' | 'approval' | 'rate_limit' | 'emergency_stop' | 'authentication';
@@ -593,6 +597,8 @@ export interface AuditEntry {
   approval?: { outcome: ApprovalOutcome; by?: string; by_name?: string; via?: 'push' | 'ui'; at: string };
   result?: { status: ResultStatus; denied_by?: DeniedBy; error?: string; duration_ms?: number };
   truncated?: { up_to_seq: number; last_digest: string };
+  /** directory.changed: the device, and for a rename its former ID. */
+  directory?: { change: DirectoryChange; entity_id: string; previous_entity_id?: string };
   /** Digest of this entry and of the one before (technical details). */
   digest: string;
   prev: string | null;
