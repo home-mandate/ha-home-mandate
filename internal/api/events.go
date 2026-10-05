@@ -20,6 +20,7 @@ import (
 // sends; its one incoming message is the CSRF token. Events say what changed; the UI
 // reloads lists through the REST endpoints, and everything after every (re)connect.
 const (
+	closeSignedOut = 4401 // direct mode: the session ended (sign-out, idle, 12 hours)
 	closeForbidden = 4403 // the user is no administrator (any more): no further attempts
 	closeCSRF      = 4419 // no or a wrong CSRF token: reload the session, then reconnect
 
@@ -57,20 +58,23 @@ type hub struct {
 
 type client struct {
 	user     string
+	token    string // the session in direct mode; empty behind Ingress
 	send     chan []byte
 	overflow chan struct{}
 	once     sync.Once
+	ended    chan struct{} // closed when the session is signed out
+	endOnce  sync.Once
 }
 
 func newHub() *hub { return &hub{clients: map[*client]struct{}{}} }
 
-func (h *hub) add(user string) (*client, bool) {
+func (h *hub) add(user, token string) (*client, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if len(h.clients) >= maxClients {
 		return nil, false
 	}
-	c := &client{user: user, send: make(chan []byte, clientBuffer), overflow: make(chan struct{})}
+	c := &client{user: user, token: token, send: make(chan []byte, clientBuffer), overflow: make(chan struct{}), ended: make(chan struct{})}
 	h.clients[c] = struct{}{}
 	return c, true
 }
@@ -79,6 +83,17 @@ func (h *hub) remove(c *client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.clients, c)
+}
+
+// endSession closes the streams of a session that was signed out.
+func (h *hub) endSession(token string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for c := range h.clients {
+		if token != "" && c.token == token {
+			c.endOnce.Do(func() { close(c.ended) })
+		}
+	}
 }
 
 // publishFor sends to every connection what payload returns for its user.
@@ -141,11 +156,15 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	user, _ := r.Context().Value(userKey{}).(string)
 	// The browser opens the stream from the page itself; a page of another site cannot
 	// (CSWSH). The CSRF token as first message is the second barrier.
-	if !sameOriginStream(r) {
+	if !s.streamFromPage(r) {
 		writeError(w, fail(codeForbidden))
 		return
 	}
-	c, ok := s.hub.add(user)
+	token := ""
+	if e, direct := entryOf(r); direct {
+		token = e.token
+	}
+	c, ok := s.hub.add(user, token)
 	if !ok {
 		writeError(w, failRetry(codeRateLimited, int(heartbeat/time.Second)))
 		return
@@ -179,6 +198,18 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		_, _, _ = conn.Read(ctx)
 	}()
 	s.stream(ctx, conn, c)
+}
+
+// streamFromPage tells whether a WebSocket handshake comes from the UI's own page. In
+// direct mode its origin is the public URL, and no proxy header is read.
+func (s *Server) streamFromPage(r *http.Request) bool {
+	if _, direct := entryOf(r); !direct {
+		return sameOriginStream(r)
+	}
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
+		return false
+	}
+	return s.sameOrigin(r.Header.Get("Origin"))
 }
 
 // sameOriginStream tells whether a WebSocket handshake comes from the UI's own page.
@@ -263,7 +294,14 @@ func (s *Server) stream(ctx context.Context, conn *websocket.Conn, c *client) {
 			if err != nil || !write(ctx, conn, event{Type: "system", System: &sys}) {
 				return
 			}
+		case <-c.ended:
+			_ = conn.Close(closeSignedOut, "signed out")
+			return
 		case <-check.C:
+			if c.token != "" && !s.ui.valid(c.token) {
+				_ = conn.Close(closeSignedOut, "signed out")
+				return
+			}
 			admin, err := s.users.IsAdmin(ctx, c.user)
 			switch {
 			case err != nil:

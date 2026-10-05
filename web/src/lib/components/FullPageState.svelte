@@ -9,7 +9,8 @@
     title: string;
     body: string;
     note?: string;
-    cta?: { href: string; label: string };
+    /** A link; its icon is "back" unless named. */
+    cta?: { href: string; label: string; icon?: IconName };
   }
 
   let { icon, badge, title, body, note, cta }: Props = $props();
@@ -23,7 +24,7 @@
   <h1>{title}</h1>
   <p>{body}</p>
   {#if note}<p class="note"><Icon name="info" />{note}</p>{/if}
-  {#if cta}<a href={cta.href}><Icon name="back" />{cta.label}</a>{/if}
+  {#if cta}<a href={cta.href}><Icon name={cta.icon ?? 'back'} />{cta.label}</a>{/if}
 </section>
 
 <style>

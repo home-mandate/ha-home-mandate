@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CLOSE_CSRF, CLOSE_FORBIDDEN, connectEvents, eventsUrl, type EventsState } from './events.ts';
+import { CLOSE_CSRF, CLOSE_FORBIDDEN, CLOSE_SIGNED_OUT, connectEvents, eventsUrl, type EventsState } from './events.ts';
 import type { ServerEvent } from './types.ts';
 
 /** FakeSocket stands in for WebSocket; tests drive its lifecycle. */
@@ -149,6 +149,15 @@ describe('connectEvents', () => {
     vi.advanceTimersByTime(60_000);
     expect(FakeSocket.all).toHaveLength(1);
     expect(states.at(-1)).toBe('forbidden');
+  });
+
+  it('stops for good when the server says the session ended', () => {
+    const { states } = connect();
+    latest().open();
+    latest().drop(CLOSE_SIGNED_OUT);
+    vi.advanceTimersByTime(60_000);
+    expect(FakeSocket.all).toHaveLength(1);
+    expect(states.at(-1)).toBe('signed_out');
   });
 
   it('reports a rejected CSRF token and waits for reconnect() after the session reload', () => {

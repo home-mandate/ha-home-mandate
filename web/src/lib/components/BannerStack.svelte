@@ -6,7 +6,7 @@
 -->
 <script lang="ts">
   import type { SystemStatus } from '../api/types.ts';
-  import { formatNumber, formatTime } from '../format.ts';
+  import { formatDate, formatNumber, formatTime } from '../format.ts';
   import { m } from '../i18n.ts';
   import Banner from './Banner.svelte';
 
@@ -34,6 +34,12 @@
     return date && !Number.isNaN(date.getTime()) ? formatTime(date, ctx) : '';
   }
   const brokenAt = $derived(system.chain.valid ? null : system.chain.broken_at_seq);
+  /** The server warns from 14 days before the end of validity; so does the UI. */
+  const TLS_WARNING_MS = 14 * 24 * 3_600_000;
+  const tlsUntil = $derived(system.tls.present && system.tls.valid_until ? new Date(system.tls.valid_until) : null);
+  const tlsLeft = $derived(tlsUntil !== null && !Number.isNaN(tlsUntil.getTime()) ? tlsUntil.getTime() - now : null);
+  const tlsExpired = $derived(tlsLeft !== null && tlsLeft <= 0);
+  const tlsExpiring = $derived(tlsLeft !== null && tlsLeft > 0 && tlsLeft < TLS_WARNING_MS);
   const connectionLost = $derived(downSince !== null && now - downSince >= CONNECTION_GRACE_MS);
 </script>
 
@@ -75,6 +81,15 @@
   {/if}
   {#if !system.tls.present}
     <Banner flush kind="warning" title={m.banner_tls_title()} body={m.set_tls_missing()} />
+  {/if}
+  {#if system.tls.present && system.tls.renewal_failed}
+    <Banner flush kind="warning" title={m.banner_tls_renewal_title()} body={m.banner_tls_renewal_body()} />
+  {/if}
+  {#if tlsExpired && tlsUntil}
+    <Banner flush kind="critical" title={m.banner_tls_expired_title()} body={m.banner_tls_expired_body({ date: formatDate(tlsUntil, ctx) })} />
+  {/if}
+  {#if tlsExpiring && tlsUntil}
+    <Banner flush kind="warning" title={m.banner_tls_expiring_title()} body={m.banner_tls_expiring_body({ date: formatDate(tlsUntil, ctx) })} />
   {/if}
   {#if connectionLost && downSince !== null}
     <Banner flush kind="warning" title={m.banner_conn_title()} body={m.banner_conn_body({ time: formatTime(new Date(downSince), ctx) })} />

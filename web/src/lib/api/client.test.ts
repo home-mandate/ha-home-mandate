@@ -45,6 +45,36 @@ const draft = {
 };
 
 describe('createHttpClient', () => {
+  it('signs out next to api/, with the CSRF token, and counts an ended session as signed out', async () => {
+    const direct = 'https://hm.example.org:8765/ui/';
+    const { fetch, calls } = fakeFetch(json(sessionFixture), new Response(null, { status: 204 }), json(sessionFixture),
+      json({ code: 'unauthenticated' }, 401));
+    const api = createHttpClient({ fetch, base: direct });
+    await api.session();
+    await api.signOut();
+    expect(calls[1]?.url).toBe(`${direct}signout`);
+    expect(calls[1]?.init.method).toBe('POST');
+    expect(header(calls[1], 'X-HM-CSRF')).toBe(sessionFixture.csrf_token);
+    expect(calls[1]?.init.redirect).toBe('error');
+    // A token is needed for the next write: a sign-out drops it.
+    await expect(api.setEmergencyStop(true)).rejects.toMatchObject({ code: 'csrf_invalid' });
+    await api.session();
+    await expect(api.signOut()).resolves.toBeUndefined();
+  });
+
+  it('resolves the sign-in and sign-out links under the UI prefix of direct mode', () => {
+    expect(new URL('signin', 'https://hm.example.org:8765/ui/').pathname).toBe('/ui/signin');
+    expect(new URL('signout', 'https://hm.example.org:8765/ui/#/signin?error=failed').pathname).toBe('/ui/signout');
+  });
+
+  it('reports a refused or failed sign-out', async () => {
+    const { api } = await signedIn(json({ code: 'forbidden' }, 403), new TypeError('offline'));
+    await expect(api.signOut()).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(api.signOut()).rejects.toMatchObject({ code: 'unavailable' });
+    const { fetch } = fakeFetch();
+    await expect(createHttpClient({ fetch, base: BASE }).signOut()).rejects.toMatchObject({ code: 'csrf_invalid' });
+  });
+
   it('resolves paths against the base, keeping the Ingress prefix', async () => {
     const { fetch, calls } = fakeFetch(json(sessionFixture));
     await createHttpClient({ fetch, base: BASE }).session();

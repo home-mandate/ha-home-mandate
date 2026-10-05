@@ -247,9 +247,29 @@ Every line is at least one test. New attack ideas are added here before they are
 - The release binary depends on `tools/conformance` or the harness of mandate-spec → a test fails (`go list -deps ./cmd/home-mandate`)
 - HTTP binding without or with a wrong bearer token → 401; a token shorter than 32 characters or an address other than loopback → refused at start
 
+**UI in direct mode (container mode without Ingress)**
+- No certificate or no `https://` public URL → no UI, `/ui/` answers 404
+- Request without session cookie, with an unknown, guessed, expired (12 hours) or idle (30 minutes) session, or after a restart → API `unauthenticated`, page sends to the sign-in
+- Sign-in callback without the sign-in cookie, with another `state`, a reused or malformed code, or a code Home Assistant refuses → refused, no session; the Home Assistant tokens of a sign-in are revoked in every case
+- Signed-in user who is no administrator, or not active → no session; administrator rights withdrawn later → refused within 30 s, an open event stream closed with 4403
+- Session ID unchanged by the sign-in (fixation) → impossible: every sign-in issues a new ID and the sign-in cookie is cleared
+- Cookie without `__Host-` prefix, `Secure`, `HttpOnly`, `SameSite=Strict` or with a domain → test fails
+- Sign-out without CSRF token or from another site → refused; after sign-out the old cookie is worthless
+- Sixth session of a user → the oldest ends; all sessions taken → the sign-in says "busy"
+- Flood of sign-in starts (one address or many) → the oldest sign-in in progress gives way (of the address first), never a refusal for everyone; the table stays bounded and nothing else grows with unauthenticated requests
+- `X-Remote-User-Id` or `X-Forwarded-Host` sent by the client in direct mode → ignored, never a user or an origin; an agent's bearer token on `/ui/api` → no user
+- Path tricks on the prefix (`/ui/../api`, `/ui/api%2f…`, `/ui//api`, encoded dots) → never a session without signing in
+- Inactive Home Assistant user → no session
+- Event stream with an `Origin` other than the public URL, or none → refused
+- Page framed by another page → refused by CSP (`frame-ancestors 'none'`)
+
 **Transport**
 - TLS 1.2 or older → connection rejected
 - Handshake with `X25519MLKEM768` is negotiated when the client offers it
+- Plaintext HTTP to the TLS port → no answer in plaintext
+- Certificate that does not cover the host of the public URL → start aborted; as a renewal → not taken over, the previous one stays and the error is logged and shown
+- Renewed certificate and key → the next handshake uses them, without a restart, also when size and modification time stayed the same (compared by content); a key that does not belong to the certificate, a half-written, unreadable or oversized file, or a renewal not valid now (expired, not yet valid) → previous pair stays, retried at the next look (at most once a minute); the UI's status looks at the files too, without a handshake
+- Certificate valid for less than 14 days → warning in the log and in the UI
 
 ## 5. Checking internationalization
 

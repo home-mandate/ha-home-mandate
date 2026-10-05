@@ -10,15 +10,16 @@
 import type { ServerEvent } from './types.ts';
 
 /** Close codes of the server (4000–4999 are free for applications, RFC 6455). */
+export const CLOSE_SIGNED_OUT = 4401;
 export const CLOSE_FORBIDDEN = 4403;
 export const CLOSE_CSRF = 4419;
 
 /**
  * connecting/open/closed: the connection; csrf: no or a rejected CSRF token, reload the
  * session and call reconnect(); forbidden: the user may not connect (no admin any more),
- * no further attempts.
+ * no further attempts; signed_out: the session ended (direct mode), no further attempts.
  */
-export type EventsState = 'connecting' | 'open' | 'closed' | 'csrf' | 'forbidden';
+export type EventsState = 'connecting' | 'open' | 'closed' | 'csrf' | 'forbidden' | 'signed_out';
 
 /** The part of WebSocket used here, so tests can drive a fake. */
 export interface EventSocket {
@@ -212,6 +213,11 @@ export function connectEvents(options: EventsOptions): EventsConnection {
       if (e.code === CLOSE_FORBIDDEN) {
         stopped = true;
         options.onState('forbidden');
+        return;
+      }
+      if (e.code === CLOSE_SIGNED_OUT) {
+        stopped = true;
+        options.onState('signed_out');
         return;
       }
       if (e.code === CLOSE_CSRF) {

@@ -815,5 +815,19 @@
   "banner_directory_body": "Umbenennungen aus Home Assistant können seit {time} nicht gespeichert werden. Sie gelten weiter, bis Home-Mandate neu startet; prüfe das Datenverzeichnis.",
   "banner_directory_overflow": "Zu viele Umbenennungen aus Home Assistant warten auf das Speichern. Alle Anfragen werden abgelehnt, bis sie gespeichert werden können; prüfe das Datenverzeichnis.",
   "banner_rename_flood_title": "Viele Umbenennungen in Home Assistant",
-  "banner_rename_flood_body": "{count, plural, other {Home Assistant hat in der letzten Stunde {count, number} Geräte umbenannt.}} Das deutet auf eine fehlerhafte Integration hin. Home-Mandate verarbeitet alle; Regeln für die früheren Namen gelten weiter, bis du entscheidest."
+  "banner_rename_flood_body": "{count, plural, other {Home Assistant hat in der letzten Stunde {count, number} Geräte umbenannt.}} Das deutet auf eine fehlerhafte Integration hin. Home-Mandate verarbeitet alle; Regeln für die früheren Namen gelten weiter, bis du entscheidest.",
+  "signin_title": "Anmelden",
+  "signin_body": "Melde dich mit deinem Home-Assistant-Konto an. Nur Administratoren von Home Assistant können Home-Mandate verwalten.",
+  "signin_action": "Mit Home Assistant anmelden",
+  "signin_error_denied": "Dieses Konto ist kein Administrator von Home Assistant. Melde dich mit einem Administrator-Konto an.",
+  "signin_error_failed": "Die Anmeldung hat nicht geklappt. Bitte versuche es erneut.",
+  "signin_error_busy": "Gerade laufen zu viele Anmeldungen. Warte eine Minute und versuche es erneut.",
+  "signout_button": "Abmelden",
+  "signout_failed": "Abmelden hat nicht geklappt. Bitte versuche es erneut.",
+  "banner_tls_expiring_title": "TLS-Zertifikat läuft bald ab",
+  "banner_tls_expiring_body": "Gültig bis {date}. Danach können sich Agenten nicht mehr verbinden. Erneuere das Zertifikat; Home-Mandate übernimmt es ohne Neustart.",
+  "banner_tls_renewal_title": "Erneuertes Zertifikat nicht übernommen",
+  "banner_tls_renewal_body": "Die neuen Zertifikatsdateien passen nicht zusammen oder nicht zur Adresse von Home-Mandate. Das bisherige Zertifikat bleibt in Gebrauch.",
+  "banner_tls_expired_title": "TLS-Zertifikat abgelaufen",
+  "banner_tls_expired_body": "Abgelaufen am {date}. Agenten können sich nicht mehr verbinden. Erneuere das Zertifikat; Home-Mandate übernimmt es ohne Neustart."
 }

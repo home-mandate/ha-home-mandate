@@ -57,6 +57,8 @@ var env struct {
 	image    string
 	certs    string
 	roots    *x509.CertPool
+	ca       *x509.Certificate // issues the certificates of the test, also a renewal
+	caKey    *ecdsa.PrivateKey
 	haURL    string // https://127.0.0.1:<port>
 	haToken  string // long-lived token of the onboarding admin
 	mcpURL   string // https://localhost:<port>/mcp
@@ -182,6 +184,7 @@ func makeCertificates() error {
 	}
 	env.roots = x509.NewCertPool()
 	env.roots.AddCert(caCert)
+	env.ca, env.caKey = caCert, caKey
 	return nil
 }
 

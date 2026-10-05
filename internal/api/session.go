@@ -27,6 +27,8 @@ type wireSession struct {
 	CSRFToken string        `json:"csrf_token"`
 	Language  *string       `json:"language"`
 	Household wireHousehold `json:"household"`
+	// SignOut: signed in through Home-Mandate (direct mode), so the UI offers to sign out.
+	SignOut bool `json:"sign_out"`
 }
 
 // unitKeys are the units the UI formats with (types.ts UnitSystem).
@@ -52,6 +54,7 @@ func (s *Server) session(r *request) (wireSession, error) {
 	}
 	out := wireSession{User: wireUser{ID: r.user, Name: name}, CSRFToken: s.csrfToken(r.user, s.now()),
 		Household: wireHousehold{TimeZone: tz, Language: st.Language, UnitSystem: units}}
+	_, out.SignOut = entryOf(r.Request)
 	lang, ok, err := s.cfg.Store.Setting(r.Context(), languageKeyPrefix+r.user)
 	if err != nil {
 		return wireSession{}, err

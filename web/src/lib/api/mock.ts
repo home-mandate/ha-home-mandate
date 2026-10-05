@@ -149,6 +149,8 @@ export interface MockOptions {
   empty?: boolean;
   /** Gives the voice assistant WORST_NAME everywhere, an open request with WORST_REASON, and the pairing candidate WORST_NAME. */
   hostile?: boolean;
+  /** Direct mode: signed in through Home-Mandate, so the session offers to sign out. */
+  direct?: boolean;
   now?: () => Date;
 }
 
@@ -572,9 +574,16 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     emit({ type: 'devices.changed' });
   }
 
+  let signedOut = false;
   const api: ApiClient = {
     async session() {
-      return copy(state.session);
+      if (signedOut) fail('unauthenticated');
+      return copy({ ...state.session, sign_out: options.direct ?? false });
+    },
+    async signOut() {
+      signedOut = true;
+      for (const l of listeners) l.onState('signed_out');
+      listeners.clear();
     },
     async setLanguage(language) {
       state = { ...state, session: { ...state.session, language } };

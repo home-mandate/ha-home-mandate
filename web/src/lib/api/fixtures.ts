@@ -48,6 +48,7 @@ export const sessionFixture: Session = {
     language: 'de',
     unit_system: { temperature: '°C', length: 'km', mass: 'g', volume: 'L', pressure: 'Pa', wind_speed: 'm/s' },
   },
+  sign_out: false,
 };
 
 export const systemFixture: SystemStatus = {
@@ -78,7 +79,7 @@ export const systemFixture: SystemStatus = {
     ],
   },
   mcp_url: 'https://home.example:8765/mcp',
-  tls: { present: true, valid_until: '2026-12-24T10:00:00Z' },
+  tls: { present: true, valid_until: '2026-12-24T10:00:00Z', renewal_failed: false },
   emergency_stop: { active: false, since: null, by_name: null },
   chain: { valid: true, broken_at_seq: null, checked_at: '2026-10-02T17:38:00Z' },
   approvers_configured: 1,

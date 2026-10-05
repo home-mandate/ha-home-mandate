@@ -38,13 +38,16 @@ export interface Household {
 }
 
 export interface Session {
-  /** The Home Assistant user signed in through Ingress; always an administrator. */
+  /** The Home Assistant user signed in (through Ingress or, in direct mode, through
+   *  Home-Mandate's own sign-in); always an administrator. */
   user: { id: string; name: string };
   /** Sent back in the X-HM-CSRF header on every request that changes something. */
   csrf_token: string;
   /** The user's language setting in Home-Mandate; null means browser language. */
   language: Language | null;
   household: Household;
+  /** True in direct mode: signed in through Home-Mandate, so the UI offers to sign out. */
+  sign_out: boolean;
 }
 
 export interface LanguageUpdate {
@@ -85,7 +88,8 @@ export interface SystemStatus {
   ha: { connected: boolean; since: string | null; version: string | null; user_name: string | null; commands: string[] };
   /** URL agents connect to; null without TLS (MCP only on localhost then). */
   mcp_url: string | null;
-  tls: { present: boolean; valid_until: string | null };
+  /** renewal_failed: renewed files could not be taken over; the previous certificate is in use. */
+  tls: { present: boolean; valid_until: string | null; renewal_failed: boolean };
   emergency_stop: EmergencyStop;
   /** The server clock lies behind the newest audit entry: no request is decided (SPEC-v0 section 11.4). */
   clock_behind: boolean;

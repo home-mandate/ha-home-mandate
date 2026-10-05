@@ -16,7 +16,7 @@ logged.
 | `app/config.yaml` | Draft of the Home Assistant app configuration |
 | `Dockerfile` | Multi-stage build: UI (Vite) → Go binary with embedded UI |
 
-Planned code structure: `cmd/home-mandate` (gateway), `cmd/relay` (cloud relay, from 2027),
+Planned code structure: `cmd/home-mandate` (gateway), `cmd/relay` (cloud relay),
 `internal/…` (see architecture), `web/` (local UI, Svelte + Vite), `e2e/`.
 
 ## Development
@@ -47,17 +47,22 @@ from Playwright's CDN, for tests only.
 | `HM_HA_TOKEN` or `HM_HA_TOKEN_FILE` | Long-lived token of Home-Mandate's own Home Assistant user |
 | `HM_HA_CA_FILE` | Optional PEM file with a CA to trust for `wss://` (self-signed Home Assistant certificate) |
 | `HM_DATA_DIR` | Data directory, default `/data` |
-| `HM_TLS_CERT`, `HM_TLS_KEY` | Certificate for the MCP endpoint (TLS 1.3); without it, MCP listens on localhost only |
+| `HM_TLS_CERT`, `HM_TLS_KEY` | Certificate for the MCP endpoint and the UI (TLS 1.3); without it, MCP listens on localhost only. Renewed files are taken over without a restart; the certificate must cover the host of `HM_PUBLIC_URL` |
 | `HM_MCP_ADDR` | Listen address of the MCP endpoint, default `:8765` with TLS, `127.0.0.1:8765` without |
 | `HM_PDP_ADDR` | Optional loopback address for the AuthZEN evaluation endpoint, for other gateways on the same host |
 | `HM_PUBLIC_URL` | Origin agents and browsers reach Home-Mandate at, e.g. `https://hm.example.org:8765` (`http://` only for `localhost`). Without it, OAuth is off and no agent can be admitted |
 | `HM_HA_BROWSER_URL` | Home Assistant as the human's browser reaches it, for signing in; default: the origin of `HM_HA_URL` |
 | `HM_APPROVAL_TIMEOUT` | Upper limit in seconds for waiting for an approval, 30–600, default 120; a mandate may only shorten it |
 | `HM_LOG_LEVEL` | `debug`, `info`, `warning` or `error` |
-| `HM_INGRESS_ADDR` | Optional listen address of the UI, e.g. `:8099`, for a proxy that does what Home Assistant's Supervisor does (signs people in, sets `X-Remote-User-Id`, removes client copies of it), and for the E2E tests. Without it, there is no UI in container mode in v0.1 |
+| `HM_INGRESS_ADDR` | Optional listen address of the UI, e.g. `:8099`, for a proxy that does what Home Assistant's Supervisor does (signs people in, sets `X-Remote-User-Id`, removes client copies of it), and for the E2E tests. Not needed for the UI in direct mode (below) |
 | `HM_INGRESS_PROXY` | Required with `HM_INGRESS_ADDR`: the one IP address of that proxy. Requests from any other address get nothing; the user must be a Home Assistant administrator |
 
 Agents connect to `https://<host>:8765/mcp` with an OAuth access token.
+
+`docs/deploy/compose.yaml` is an example next to Home Assistant Container on the same host
+(`make image` builds the image). The certificate must be valid for the host of
+`HM_PUBLIC_URL`; Home-Mandate looks at the files once a minute and takes a renewed pair over
+without a restart.
 
 ## The local UI
 
@@ -66,6 +71,12 @@ Home Assistant user can open Ingress panels, so Home-Mandate checks each request
 must come from the Supervisor, and the user must be a Home Assistant administrator at that
 moment (asked every 30 seconds; if Home Assistant cannot answer, nobody is let in). See
 `docs/ARCHITECTURE.md`, sections 8 and 12.
+
+In container mode with a certificate and `HM_PUBLIC_URL`, the UI is at
+`https://<host>:8765/ui/` (direct mode). You sign in with your Home Assistant account;
+only administrators get in, and the check is repeated on every request. A session ends
+after 30 minutes without use, after 12 hours, on sign-out and with every restart. Without
+a certificate there is no UI in container mode, only the command line.
 
 ## Admitting agents
 
@@ -81,6 +92,29 @@ name and picks a mandate template.
   shows a code like `BCDF-GHJK`, the human opens `https://<host>:8765/pair`, signs in and
   enters it. Five wrong codes lock the session, thirty within ten minutes lock pairing for
   everyone for ten minutes.
+
+- **Local MCP clients without OAuth of their own** (Claude Desktop with a local server
+  entry, other stdio clients) connect through [`mcp-remote`](https://github.com/geelen/mcp-remote),
+  which runs on the same computer and signs in with Authorization Code and PKCE. Home-Mandate
+  publishes a Client ID Metadata Document for it at
+  `https://home-mandate.com/clients/mcp-remote.json` (redirect to
+  `http://localhost:33418/oauth/callback`). Example for Claude Desktop
+  (`claude_desktop_config.json`, Node.js 18 or later):
+
+  ```json
+  {
+    "mcpServers": {
+      "home-mandate": {
+        "command": "npx",
+        "args": ["-y", "mcp-remote@0.14.3", "https://hm.example.org:8765/mcp", "33418",
+                 "--client-metadata-url", "https://home-mandate.com/clients/mcp-remote.json"]
+      }
+    }
+  }
+  ```
+
+  The browser opens Home-Mandate's sign-in; an administrator admits the agent as with any
+  other. The tokens stay on that computer, with `mcp-remote`.
 
 Access tokens are valid for 10 minutes, refresh tokens for 30 days; every refresh token can
 be used once, and presenting a used one again revokes all tokens of that admission.
@@ -143,8 +177,8 @@ A template is a mandate whose `id`, `principal`, `agent`, `created_by`, `created
 - In app mode (Home Assistant OS), admitting agents is not available yet.
 - Changes to mandate templates and approvers are local settings: the specification has no
   audit event for them, so they do not appear in the audit log.
-- In container mode, the UI needs a proxy that acts as the Supervisor (`HM_INGRESS_ADDR`);
-  an own port with sign-in through Home Assistant follows in v0.2.
+- In container mode, the UI needs a certificate and an `https://` public URL (direct mode);
+  without them, only the command line manages Home-Mandate.
 - There is no test clock: time windows are tested against the real household time (E2E
   scenario 9) and at their boundaries by unit tests.
 

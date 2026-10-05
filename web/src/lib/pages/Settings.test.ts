@@ -450,7 +450,7 @@ describe('Settings: system sections', () => {
     await start({
       prepare: (api) => {
         const system = api.system.bind(api);
-        api.system = async () => ({ ...(await system()), tls: { present: false, valid_until: null } });
+        api.system = async () => ({ ...(await system()), tls: { present: false, valid_until: null, renewal_failed: false } });
       },
     });
     const mcp = region('MCP endpoint');

@@ -191,10 +191,13 @@ func TestNewHASignInValidates(t *testing.T) {
 	base := HASignInConfig{PublicURL: "https://hm.example.org", BrowserURL: "https://ha.example.org",
 		HTTPURL: "https://ha.example.org", WebSocketURL: "wss://ha.example.org/api/websocket"}
 	for name, edit := range map[string]func(*HASignInConfig){
-		"no public url":     func(c *HASignInConfig) { c.PublicURL = "" },
-		"no browser url":    func(c *HASignInConfig) { c.BrowserURL = "" },
-		"plaintext ha http": func(c *HASignInConfig) { c.HTTPURL = "http://ha.example.org" },
-		"no websocket":      func(c *HASignInConfig) { c.WebSocketURL = "" },
+		"no public url":          func(c *HASignInConfig) { c.PublicURL = "" },
+		"no browser url":         func(c *HASignInConfig) { c.BrowserURL = "" },
+		"plaintext ha http":      func(c *HASignInConfig) { c.HTTPURL = "http://ha.example.org" },
+		"no websocket":           func(c *HASignInConfig) { c.WebSocketURL = "" },
+		"relative callback":      func(c *HASignInConfig) { c.Callback = "ui/signin/callback" },
+		"callback with query":    func(c *HASignInConfig) { c.Callback = "/ui/signin/callback?x=1" },
+		"callback with fragment": func(c *HASignInConfig) { c.Callback = "/ui/signin/callback#x" },
 	} {
 		cfg := base
 		edit(&cfg)
@@ -204,5 +207,15 @@ func TestNewHASignInValidates(t *testing.T) {
 	}
 	if _, err := NewHASignIn(base); err != nil {
 		t.Errorf("valid config: %v", err)
+	}
+	own := base
+	own.Callback = "/ui/signin/callback"
+	s, err := NewHASignIn(own)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(s.AuthorizeURL("st"))
+	if got := u.Query().Get("redirect_uri"); got != "https://hm.example.org/ui/signin/callback" || u.Query().Get("client_id") != "https://hm.example.org/" {
+		t.Errorf("redirect_uri = %s, client_id = %s", got, u.Query().Get("client_id"))
 	}
 }

@@ -47,6 +47,8 @@ export interface EventHandlers {
 export interface ApiClient {
   /** Loads the session; must be called first, it carries the CSRF token for writes. */
   session(): Promise<Session>;
+  /** Ends the session of direct mode; resolves also when it had ended already. */
+  signOut(): Promise<void>;
   setLanguage(language: Language | null): Promise<Session>;
   system(): Promise<SystemStatus>;
 
@@ -300,6 +302,29 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
 
   return {
     session: async () => useSession(await get<Session>('session')),
+    signOut: async () => {
+      // signout sits next to api/, under the UI's own prefix; like every write it carries
+      // the CSRF token. An ended session counts as signed out.
+      if (csrf === null) throw new ApiError('csrf_invalid', 0);
+      let res: Response;
+      try {
+        res = await fetch(new URL('signout', base).href, {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'X-HM-CSRF': csrf },
+          credentials: 'same-origin',
+          redirect: 'error',
+          cache: 'no-store',
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch {
+        throw new ApiError('unavailable', 0);
+      }
+      if (res.ok || res.status === 401) {
+        csrf = null;
+        return;
+      }
+      throw await errorFrom(res, 'signout');
+    },
     setLanguage: async (language) => useSession(await request<Session>('PUT', 'session/language', { language })),
     system: () => get('system'),
 

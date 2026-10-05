@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,6 +13,8 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/home-mandate/home-mandate/internal/mcp"
 	"github.com/home-mandate/home-mandate/internal/oauth"
 	"github.com/home-mandate/home-mandate/internal/pdp"
+	"github.com/home-mandate/home-mandate/internal/tlscert"
 	"github.com/home-mandate/home-mandate/internal/webui"
 	"github.com/mandate-spec/mandate-spec/ratelimit"
 )
@@ -141,7 +143,10 @@ type gateway struct {
 	listener net.Listener
 	ingress  *http.Server // the UI behind Ingress; nil without HM_INGRESS_ADDR in container mode
 	ingressL net.Listener
-	tlsUntil time.Time // expiry of the MCP certificate; zero without TLS
+	certs    *tlscert.Loader // the MCP certificate; nil without TLS
+	// direct is the UI of direct mode on the MCP listener; nil while it is off. Set once in
+	// newGateway, before the listener serves, so it needs no synchronization.
+	direct http.Handler
 }
 
 func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, error) {
@@ -224,32 +229,41 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	gw := mcp.New(mcp.Config{Resource: resource, ResourceMetadataURL: metadata, Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
 		TemperatureUnit: g.temperatureUnit,
 		Limiter:         restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, Clock: s.log, Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
-	as, handler, err := withOAuth(s, gw.Handler(), resource, logger)
+	as, handler, err := withOAuth(s, gw.Handler(), http.HandlerFunc(g.serveDirect), resource, logger)
 	if err != nil {
 		return nil, err
 	}
 	g.server = &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: writeTimeout(s.cfg.ApprovalTimeout), IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10,
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelWarn)}
-	if g.listener, err = listen(s.cfg, g.server, logger); err != nil {
+	if g.listener, g.certs, err = listen(s.cfg, g.server, time.Now, logger); err != nil {
 		return nil, err
-	}
-	if s.cfg.TLSCert != "" && g.server.TLSConfig != nil {
-		g.tlsUntil = certificateExpiry(g.server.TLSConfig)
 	}
 
 	apiCfg := api.Config{Proxy: trustedProxy(ctx, s.cfg, lookupHost, logger), Store: s.store, Log: s.log, Agents: s.agents, Mandates: s.mandates, Admission: s.admission,
 		Approvers: s.approvers, Approvals: approvals, HA: client, Catalog: g.catalog, Marks: g.marks, Renames: g.renames, Status: g.status, UI: webui.Handler(),
 		Principal: s.household, Mode: string(s.cfg.Mode), Version: version, Commit: commit, Retention: retention,
-		TLS: func() (bool, time.Time) { return !g.tlsUntil.IsZero(), g.tlsUntil }, Logger: logger}
+		TLS: g.tlsStatus, Logger: logger}
 	if as != nil {
 		apiCfg.Pairing = as
+	}
+	if directMode(s.cfg, g.certs) {
+		signIn, err := oauth.NewHASignIn(oauth.HASignInConfig{PublicURL: s.cfg.PublicURL, BrowserURL: s.cfg.HABrowserURL,
+			HTTPURL: s.cfg.HAHTTPURL, WebSocketURL: s.cfg.HAURL, Roots: s.cfg.HARootCAs, Callback: api.DirectCallbackPath})
+		if err != nil {
+			return nil, err
+		}
+		apiCfg.Direct, apiCfg.DirectUI, apiCfg.PublicURL = signIn, webui.DirectHandler(), s.cfg.PublicURL
 	}
 	// The MCP address is taken from the configuration only, never from a request header.
 	if g.server.TLSConfig != nil && s.cfg.PublicURL != "" {
 		apiCfg.MCPURL = s.cfg.PublicURL + mcp.Path
 	}
 	g.api = api.New(apiCfg)
+	if h := g.api.DirectHandler(); h != nil {
+		g.direct = h
+		logger.Info("UI in direct mode", "url", s.cfg.PublicURL+api.DirectPrefix+"/")
+	}
 	// Many renames in an hour hint at a broken integration: the approvers are told.
 	approvers := approverAnchor{approvers: s.approvers, notify: client.Notify, language: g.householdLanguage}
 	flood := &floodNotice{now: time.Now, tell: func(ctx context.Context, count int) error {
@@ -324,21 +338,35 @@ func trustedProxy(ctx context.Context, cfg config.Config, lookup func(context.Co
 	return netip.Addr{}
 }
 
-// certificateExpiry is the end of validity of the configured certificate.
-func certificateExpiry(cfg *tls.Config) time.Time {
-	if len(cfg.Certificates) == 0 || len(cfg.Certificates[0].Certificate) == 0 {
-		return time.Time{}
+// tlsStatus reports the MCP endpoint's certificate for the UI.
+func (g *gateway) tlsStatus() api.TLSStatus {
+	if g.certs == nil {
+		return api.TLSStatus{}
 	}
-	cert, err := x509.ParseCertificate(cfg.Certificates[0].Certificate[0])
-	if err != nil {
-		return time.Time{}
+	until, err := g.certs.Status()
+	return api.TLSStatus{Present: true, ValidUntil: until, RenewalFailed: err != nil}
+}
+
+// directMode tells whether the UI is served on the MCP listener with Home-Mandate's own
+// sign-in (ARCHITECTURE section 12): in container mode with a certificate and an https
+// public URL, which secure cookies and Sec-Fetch-Site need.
+func directMode(cfg config.Config, certs *tlscert.Loader) bool {
+	return cfg.Mode == config.ModeContainer && certs != nil && strings.HasPrefix(cfg.PublicURL, "https://")
+}
+
+// serveDirect serves direct mode once the API exists; 404 while it is off.
+func (g *gateway) serveDirect(w http.ResponseWriter, r *http.Request) {
+	if g.direct != nil {
+		g.direct.ServeHTTP(w, r)
+		return
 	}
-	return cert.NotAfter
+	http.NotFound(w, r)
 }
 
 // withOAuth adds the authorization server next to the MCP endpoint when a public URL is
-// configured; without one, OAuth is off, every token is refused and nobody can pair.
-func withOAuth(s *state, mcpHandler http.Handler, resource string, logger *slog.Logger) (*oauth.Server, http.Handler, error) {
+// configured; without one, OAuth is off, every token is refused and nobody can pair. The
+// UI of direct mode is served under /ui/ next to them.
+func withOAuth(s *state, mcpHandler, ui http.Handler, resource string, logger *slog.Logger) (*oauth.Server, http.Handler, error) {
 	if s.cfg.PublicURL == "" {
 		logger.Warn("no public URL configured: OAuth is off, agents cannot be admitted")
 		return nil, mcpHandler, nil
@@ -352,35 +380,58 @@ func withOAuth(s *state, mcpHandler http.Handler, resource string, logger *slog.
 		Clients: oauth.NewCIMDResolver(nil), Admission: s.admission, Tokens: s.agents, Audit: s.log, Logger: logger})
 	mux := http.NewServeMux()
 	mux.Handle(mcp.Path, mcpHandler)
+	mux.Handle(api.DirectPrefix, ui)
+	mux.Handle(api.DirectPrefix+"/", ui)
 	mux.Handle("/", as.Handler())
 	return as, mux, nil
 }
 
 // listen opens the MCP listener: TLS 1.3 when a certificate is configured, otherwise
 // loopback only (decision 1). In app mode a missing certificate falls back to loopback.
-func listen(cfg config.Config, srv *http.Server, logger *slog.Logger) (net.Listener, error) {
+// The certificate must cover the host of the public URL; renewed files are taken over
+// without a restart.
+func listen(cfg config.Config, srv *http.Server, now func() time.Time, logger *slog.Logger) (net.Listener, *tlscert.Loader, error) {
 	addr := cfg.MCPAddr
+	var certs *tlscert.Loader
 	if cfg.TLSCert != "" {
-		cert, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
+		host, err := publicHost(cfg.PublicURL)
+		if err != nil {
+			return nil, nil, err
+		}
+		loader, err := tlscert.New(tlscert.Config{CertFile: cfg.TLSCert, KeyFile: cfg.TLSKey, Host: host, Now: now, Logger: logger})
 		switch {
 		case err == nil:
-			srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}}
+			certs = loader
+			srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS13, GetCertificate: loader.GetCertificate}
 		case cfg.Mode == config.ModeApp && errors.Is(err, fs.ErrNotExist):
 			logger.Warn("no TLS certificate in /ssl, MCP endpoint only on localhost")
 			addr = net.JoinHostPort("127.0.0.1", "8765")
 		default:
-			return nil, fmt.Errorf("load TLS certificate: %w", err)
+			return nil, nil, fmt.Errorf("load TLS certificate: %w", err)
 		}
 	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if srv.TLSConfig != nil {
 		ln = tls.NewListener(ln, srv.TLSConfig)
 	}
 	logger.Info("MCP endpoint listening", "addr", ln.Addr().String(), "tls", srv.TLSConfig != nil, "path", mcp.Path)
-	return ln, nil
+	return ln, certs, nil
+}
+
+// publicHost is the host of the public URL, empty without one; the certificate must
+// cover it. A URL that cannot be read never turns the check off.
+func publicHost(publicURL string) (string, error) {
+	if publicURL == "" {
+		return "", nil
+	}
+	u, err := url.Parse(publicURL)
+	if err != nil || u.Hostname() == "" {
+		return "", fmt.Errorf("public URL %q has no host", publicURL)
+	}
+	return u.Hostname(), nil
 }
 
 func (g *gateway) householdTimeZone() string {
