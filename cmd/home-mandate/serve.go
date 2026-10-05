@@ -161,6 +161,8 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	if err != nil {
 		return nil, err
 	}
+	// Every change of the directory is an audit entry (SPEC-v0 section 11.4).
+	marks.SetRecorder(s.log)
 	g.catalog.SetMarks(marks)
 	g.marks = marks
 	// Renames a human has not resolved keep the rules on the former IDs in force.
@@ -168,6 +170,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	if err != nil {
 		return nil, err
 	}
+	renames.SetRecorder(s.log)
 	g.catalog.SetAliases(renames)
 	g.renames = renames
 	for _, event := range append([]string{ha.EventStateChanged}, registryEvents...) {

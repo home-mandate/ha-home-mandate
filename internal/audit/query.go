@@ -115,7 +115,7 @@ func (f Filter) where() (string, []any, error) {
 		add(`a.client_id = ?`, f.Agent)
 	}
 	if f.Device != "" {
-		add(`(a.entity_id = ? OR a.area = ?)`, f.Device, f.Device)
+		add(`(a.entity_id = ? OR a.area = ? OR a.directory_entity_id = ? OR a.directory_previous_id = ?)`, f.Device, f.Device, f.Device, f.Device)
 	}
 	switch f.Group {
 	case "":
@@ -136,8 +136,9 @@ func (f Filter) where() (string, []any, error) {
 		// json_each instead of one placeholder per name: no limit on SQL variables.
 		// instr, not LIKE: % and _ in the text are plain characters.
 		add(`(a.seq IN (SELECT seq FROM audit_search WHERE instr(text, ?) > 0)
-			OR a.entity_id IN (SELECT value FROM json_each(?)) OR a.area IN (SELECT value FROM json_each(?)))`,
-			f.Search, jsonList(f.SearchEntities), jsonList(f.SearchAreas))
+			OR a.entity_id IN (SELECT value FROM json_each(?)) OR a.area IN (SELECT value FROM json_each(?))
+			OR a.directory_entity_id IN (SELECT value FROM json_each(?)))`,
+			f.Search, jsonList(f.SearchEntities), jsonList(f.SearchAreas), jsonList(f.SearchEntities))
 	}
 	return strings.Join(conds, " AND "), args, nil
 }

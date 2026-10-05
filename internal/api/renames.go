@@ -244,7 +244,7 @@ func (s *Server) resolveRename(r *request, entityID string, formers []string, re
 		s.cfg.Logger.Error("rename not resolved", "entity_id", entityID, "resolution", resolution, "by", r.user, "error", err)
 		return nil, err
 	}
-	// The audit log of the specification has no event for directory changes yet.
+	// Resolve wrote a directory.changed audit entry per former ID.
 	s.cfg.Logger.Warn("rename resolved", "entity_id", entityID, "formers", formers, "resolution", resolution,
 		"mandates", mandates, "by", r.user)
 	s.publish(event{Type: "devices.changed"})

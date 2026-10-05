@@ -44,6 +44,16 @@ const (
 	EventAuthRejected           = "auth.rejected"
 	EventLogTruncated           = "log.truncated"
 	EventLogCheckpoint          = "log.checkpoint"
+	EventDirectoryChanged       = "directory.changed"
+)
+
+// Changes of the resource directory (SPEC-v0 sections 9.1 and 11.4).
+const (
+	DirectoryCriticalMarked   = "critical_marked"
+	DirectoryCriticalUnmarked = "critical_unmarked"
+	DirectoryRenamed          = "renamed"
+	DirectoryRenameApplied    = "rename_applied"
+	DirectoryRenameDismissed  = "rename_dismissed"
 )
 
 const (
@@ -83,6 +93,7 @@ type Entry struct {
 	Approval   *Approval
 	Result     *Result
 	Truncated  *Truncated
+	Directory  *Directory
 	// checkpoint marks an entry of Checkpoint; its signature is made when the entry
 	// gets its place in the chain.
 	checkpoint bool
@@ -180,6 +191,15 @@ type Result struct {
 	DurationMs int64  `json:"duration_ms,omitempty"`
 }
 
+// Directory is a change of the resource directory that affects the evaluation: a critical
+// mark set or removed, a renamed entity found, or a rename resolved (SPEC-v0 section
+// 11.4). PreviousEntityID is the former ID of a rename; empty for a critical mark.
+type Directory struct {
+	Change           string `json:"change"`
+	EntityID         string `json:"entity_id"`
+	PreviousEntityID string `json:"previous_entity_id,omitempty"`
+}
+
 // Truncated marks deleted entries (SPEC-v0 section 9.4).
 type Truncated struct {
 	UpToSeq    int64  `json:"up_to_seq"`
@@ -201,6 +221,7 @@ type wire struct {
 	Approval   *Approval   `json:"approval,omitempty"`
 	Result     *Result     `json:"result,omitempty"`
 	Truncated  *Truncated  `json:"truncated,omitempty"`
+	Directory  *Directory  `json:"directory,omitempty"`
 	Checkpoint *checkpoint `json:"checkpoint,omitempty"`
 	Prev       *string     `json:"prev"`
 }
@@ -377,7 +398,7 @@ func (l *Log) AppendTx(ctx context.Context, tx *sql.Tx, e Entry) (int64, error) 
 	w := wire{
 		Type: entryType, ID: newUUIDv7(now), Seq: lastSeq + 1, RecordedAt: now.UTC().Format(timeFormat),
 		Event: e.Event, Principal: l.principal, Actor: e.Actor, Agent: e.Agent, Request: e.Request,
-		Mandate: e.Mandate, Evaluation: e.Evaluation, Approval: e.Approval, Result: e.Result, Truncated: e.Truncated,
+		Mandate: e.Mandate, Evaluation: e.Evaluation, Approval: e.Approval, Result: e.Result, Truncated: e.Truncated, Directory: e.Directory,
 	}
 	if lastSeq > 0 {
 		w.Prev = &lastDigest

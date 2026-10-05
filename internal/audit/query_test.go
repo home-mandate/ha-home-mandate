@@ -563,3 +563,21 @@ func TestTruncateRefusesAnAgentAsActor(t *testing.T) {
 		t.Errorf("Truncate by the system = %d, %v", removed, err)
 	}
 }
+
+// The filter by device finds directory changes by the current and by the former ID.
+func TestDeviceFilterFindsDirectoryChanges(t *testing.T) {
+	l, _ := clocked(t, start)
+	user := &audit.Actor{Kind: audit.ActorUser, ID: "u1"}
+	appendAll(t, l, []audit.Entry{
+		{Event: audit.EventDirectoryChanged, Actor: user, Directory: &audit.Directory{Change: audit.DirectoryCriticalMarked, EntityID: "lock.cellar"}},
+		{Event: audit.EventDirectoryChanged, Actor: &audit.Actor{Kind: audit.ActorSystem, ID: "directory"},
+			Directory: &audit.Directory{Change: audit.DirectoryRenamed, EntityID: "lock.cellar_door", PreviousEntityID: "lock.cellar"}},
+		decision("hm-client:voice-1", "Voice", "light.kitchen", "kitchen", "allow", "rule"),
+	})
+	for device, want := range map[string]int{"lock.cellar": 2, "lock.cellar_door": 1, "light.kitchen": 1} {
+		page, err := l.Query(context.Background(), audit.Filter{Device: device, Limit: 10})
+		if err != nil || page.Total != want {
+			t.Errorf("device %s: %d entries, %v; want %d", device, page.Total, err, want)
+		}
+	}
+}

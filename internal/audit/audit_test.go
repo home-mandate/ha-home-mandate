@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"regexp"
 	"sync"
@@ -320,5 +321,41 @@ func TestClockChecksReportDatabaseErrors(t *testing.T) {
 	}
 	if _, _, err := l.AcceptClock(ctx); err == nil {
 		t.Error("AcceptClock without a database")
+	}
+}
+
+// SPEC-v0 sections 9.1 and 11.4: changes of the resource directory are recorded, by a
+// user or the system, never by an agent; a rename names its former ID, a mark does not.
+func TestDirectoryChanges(t *testing.T) {
+	l, _ := newLog(t)
+	ctx := context.Background()
+	user := &audit.Actor{Kind: audit.ActorUser, ID: "user-1"}
+	system := &audit.Actor{Kind: audit.ActorSystem, ID: "directory"}
+	for _, e := range []audit.Entry{
+		{Event: audit.EventDirectoryChanged, Actor: user, Directory: &audit.Directory{Change: audit.DirectoryCriticalMarked, EntityID: "lock.cellar"}},
+		{Event: audit.EventDirectoryChanged, Actor: system, Directory: &audit.Directory{Change: audit.DirectoryRenamed, EntityID: "lock.cellar_door", PreviousEntityID: "lock.cellar"}},
+		{Event: audit.EventDirectoryChanged, Actor: user, Directory: &audit.Directory{Change: audit.DirectoryRenameApplied, EntityID: "lock.cellar_door", PreviousEntityID: "lock.cellar"}},
+		{Event: audit.EventDirectoryChanged, Actor: user, Directory: &audit.Directory{Change: audit.DirectoryRenameDismissed, EntityID: "lock.cellar_door", PreviousEntityID: "lock.cellar"}},
+		{Event: audit.EventDirectoryChanged, Actor: system, Directory: &audit.Directory{Change: audit.DirectoryCriticalUnmarked, EntityID: "lock.cellar"}},
+	} {
+		if _, err := l.Append(ctx, e); err != nil {
+			t.Fatalf("%s: %v", e.Directory.Change, err)
+		}
+	}
+	for name, e := range map[string]audit.Entry{
+		"by an agent":           {Event: audit.EventDirectoryChanged, Actor: &audit.Actor{Kind: audit.ActorAgent, ID: "hm-client:x"}, Directory: &audit.Directory{Change: audit.DirectoryCriticalUnmarked, EntityID: "lock.cellar"}},
+		"without directory":     {Event: audit.EventDirectoryChanged, Actor: user},
+		"rename without former": {Event: audit.EventDirectoryChanged, Actor: system, Directory: &audit.Directory{Change: audit.DirectoryRenamed, EntityID: "lock.b"}},
+		"mark with former":      {Event: audit.EventDirectoryChanged, Actor: user, Directory: &audit.Directory{Change: audit.DirectoryCriticalMarked, EntityID: "lock.b", PreviousEntityID: "lock.a"}},
+		"renamed to itself":     {Event: audit.EventDirectoryChanged, Actor: system, Directory: &audit.Directory{Change: audit.DirectoryRenamed, EntityID: "lock.a", PreviousEntityID: "lock.a"}},
+		"ID with a space":       {Event: audit.EventDirectoryChanged, Actor: user, Directory: &audit.Directory{Change: audit.DirectoryCriticalMarked, EntityID: "lock. a"}},
+		"on another event":      {Event: audit.EventEmergencyStopActivated, Actor: user, Directory: &audit.Directory{Change: audit.DirectoryCriticalMarked, EntityID: "lock.a"}},
+	} {
+		if _, err := l.Append(ctx, e); !errors.Is(err, audit.ErrInvalidEntry) {
+			t.Errorf("%s: err = %v, want ErrInvalidEntry", name, err)
+		}
+	}
+	if r, err := l.Verify(ctx); err != nil || !r.Valid || r.Entries != 5 {
+		t.Errorf("log = %+v, %v", r, err)
 	}
 }

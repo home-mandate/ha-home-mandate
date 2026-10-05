@@ -26,8 +26,8 @@ type storer interface {
 // directoryChanged runs after every catalog refresh. A rename is never rewritten in a
 // mandate by itself: rules on the old ID keep applying until a human takes the rename
 // over or dismisses it, and the UI shows it. The critical mark moves along, so a rename
-// does not lower the protection. The audit log of the specification has no event for
-// directory changes, so the server log keeps them.
+// does not lower the protection. Renames and carried marks are audit entries
+// (directory.changed), written when they are stored.
 func directoryChanged(ctx context.Context, logger *slog.Logger, marks carrier, aliases storer, notify func(), renames []catalog.Rename) {
 	ctx, cancel := context.WithTimeout(ctx, directoryTimeout)
 	defer cancel()
