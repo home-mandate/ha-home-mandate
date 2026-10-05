@@ -11,6 +11,10 @@ GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
 ACTIONLINT  := github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
+# Fuzz targets as package:target; FUZZTIME each (short in pull requests, long twice a month).
+FUZZTIME     ?= 10m
+FUZZ_TARGETS := internal/ha:FuzzDecodeMessage
+
 # Coverage thresholds per package (docs/TESTING.md section 2). The strict packages are
 # enforced as soon as their directory exists.
 COVER_DEFAULT := 85
@@ -21,7 +25,7 @@ VERSION ?= dev
 COMMIT  ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
 GOARCHES := amd64 arm64
 
-.PHONY: check test cover vet staticcheck vulncheck actionlint conformance build webui web-install web-check web-conformance web-e2e e2e e2e-ui
+.PHONY: check test cover vet staticcheck vulncheck actionlint conformance fuzz build webui web-install web-check web-conformance web-e2e e2e e2e-ui
 
 ## check: everything that must be green before a commit
 check: vet staticcheck cover vulncheck actionlint conformance
@@ -44,6 +48,13 @@ vulncheck:
 
 actionlint:
 	go run $(ACTIONLINT)
+
+## fuzz: each fuzz target for FUZZTIME, e.g. make fuzz FUZZTIME=30s
+fuzz:
+	@for spec in $(FUZZ_TARGETS); do \
+		pkg=$${spec%%:*}; target=$${spec#*:}; \
+		go test ./$$pkg/ -run '^$$' -fuzz "^$$target\$$" -fuzztime $(FUZZTIME) || exit 1; \
+	done
 
 ## conformance: mandate-conformance against Home-Mandate's PDP over both bindings of the
 ## test interface (SPEC-v0 section 10); the test tool is never part of the binary

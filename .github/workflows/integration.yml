@@ -1,13 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 name: Integration
 
-# Integration stage: container image, Playwright and E2E against Home Assistant, for every
-# push into a pull request against main, for pushes to main and manual runs. Never on a
-# plain branch push (see ci.yml). main is protected: squash-merged pull requests only,
-# with the checks of both workflows required.
+# Integration stage: mandate-conformance, short fuzzing, container image, Playwright and
+# E2E against Home Assistant, for every push into a pull request against main and manual
+# runs. Never on a plain branch push and never after the merge (see ci.yml). main is
+# protected: squash-merged pull requests only, with the checks of both workflows required.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
@@ -25,6 +23,32 @@ env:
   GOWORK: "off"
 
 jobs:
+  conformance:
+    name: Conformance (mandate-conformance, process and HTTP binding)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: make conformance
+
+  fuzz:
+    name: Fuzz (short)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: make fuzz FUZZTIME=60s
+
   e2e-web:
     name: Web E2E (Playwright, de + en)
     runs-on: ubuntu-24.04
