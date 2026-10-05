@@ -28,7 +28,22 @@ async function start(prepare?: (api: MockClient) => void) {
 
 const codeField = () => screen.getByLabelText('Pairing code') as HTMLInputElement;
 const checkButton = () => screen.getByRole('button', { name: 'Check code' });
+/** The text of every alert on the page (the choice of template has its own). */
+const alerts = () => screen.getAllByRole('alert').map((a) => a.textContent ?? '').join(' | ');
 const step = () => screen.getByRole('list', { name: /Step \d of 3/ });
+
+/** The alert at the choice of template. */
+const choice = () => {
+  const group = screen.getByRole('group', { name: 'New mandate from template' });
+  const id = group.getAttribute('aria-describedby');
+  return (id ? document.getElementById(id) : group.querySelector('[role="alert"]')) as HTMLElement;
+};
+
+async function toMandate() {
+  await enter(MOCK_PAIRING_CODE);
+  await fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+  await screen.findByRole('heading', { name: /What may/ });
+}
 
 async function enter(code: string) {
   await fireEvent.input(codeField(), { target: { value: code } });
@@ -55,8 +70,13 @@ describe('AgentPair', () => {
     const name = screen.getByLabelText('Display name') as HTMLInputElement;
     expect(name.value).toBe('Küchen-Tablet');
     // The empty template is chosen until the person picks another (decision G1).
-    expect((screen.getByRole('radio', { name: 'Empty' }) as HTMLInputElement).checked).toBe(true);
-    await fireEvent.click(screen.getByRole('radio', { name: 'Read only' }));
+    expect((screen.getByRole('radio', { name: 'empty' }) as HTMLInputElement).checked).toBe(true);
+    // Each option says in plain words what the template does; base templates with their description.
+    const readOnly = screen.getByRole('radio', { name: 'Read only' });
+    expect(document.getElementById(readOnly.getAttribute('aria-describedby') ?? '')?.textContent).toMatch(
+      /May read the state of every device.*May.*All devices: read.*Everything else is forbidden\./,
+    );
+    await fireEvent.click(readOnly);
     await fireEvent.input(name, { target: { value: ' Tablet Küche ' } });
     const approve = vi.spyOn(api, 'pairingApprove');
     await fireEvent.click(screen.getByRole('button', { name: 'Approve agent' }));
@@ -67,7 +87,8 @@ describe('AgentPair', () => {
       code: 'BCDFGHJK',
       pairing_id: 'pg-kitchen-tablet',
       display_name: 'Tablet Küche',
-      template: 'read-only',
+      template: 'hm-read-only',
+      template_digest: (await api.template('hm-read-only')).digest,
       mandate_name: 'Read only',
     });
     expect(approve).toHaveBeenCalledTimes(1);
@@ -99,7 +120,7 @@ describe('AgentPair', () => {
     const { api } = await start();
     const check = vi.spyOn(api, 'pairingCheck');
     await enter('BCDF-GH');
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('8 characters'));
+    await waitFor(() => expect(alerts()).toContain('8 characters'));
     expect(document.activeElement).toBe(codeField());
     await enter('BCDF-GHJ0');
     expect(check).not.toHaveBeenCalled();
@@ -114,7 +135,7 @@ describe('AgentPair', () => {
     expect(codeField().getAttribute('aria-invalid')).toBe('true');
     expect(codeField().getAttribute('aria-describedby')).toBe(alert.id);
     await enter(MOCK_EXPIRED_CODE);
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('expired'));
+    await waitFor(() => expect(alerts()).toContain('expired'));
     await fireEvent.input(codeField(), { target: { value: 'B' } });
     expect(screen.queryByRole('alert')).toBeNull();
   });
@@ -123,14 +144,14 @@ describe('AgentPair', () => {
     const { view, app } = await start();
     const now = Date.now();
     for (let i = 0; i < 5; i++) await enter('XXXX-XXXX');
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('locked for 10 minutes'));
+    await waitFor(() => expect(alerts()).toContain('locked for 10 minutes'));
     // Read-only, not disabled: the field and its message stay reachable.
     expect(codeField().readOnly).toBe(true);
     expect(codeField().getAttribute('aria-disabled')).toBe('true');
     expect(document.activeElement).toBe(codeField());
     await view.rerender({ app, now: now + 9.5 * 60_000 });
     // The alert does not count down (it would be announced again every minute).
-    expect(screen.getByRole('alert').textContent).toContain('locked for 10 minutes');
+    expect(alerts()).toContain('locked for 10 minutes');
     await view.rerender({ app, now: now + 10 * 60_000 });
     expect(codeField().readOnly).toBe(false);
     expect(screen.queryByRole('alert')).toBeNull();
@@ -156,7 +177,7 @@ describe('AgentPair', () => {
     await enter(MOCK_PAIRING_CODE);
     await fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Approve agent' }));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('expired'));
+    await waitFor(() => expect(alerts()).toContain('expired'));
     expect(codeField().value).toBe('BCDFGHJK');
     expect(step().getAttribute('aria-label')).toBe('Step 1 of 3');
   });
@@ -168,7 +189,7 @@ describe('AgentPair', () => {
     await enter(MOCK_PAIRING_CODE);
     await fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Approve agent' }));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('locked for 5 minutes'));
+    await waitFor(() => expect(alerts()).toContain('locked for 5 minutes'));
     expect(codeField().readOnly).toBe(true);
     await waitFor(() => expect(document.activeElement).toBe(codeField()));
   });
@@ -180,7 +201,7 @@ describe('AgentPair', () => {
     await enter(MOCK_PAIRING_CODE);
     await fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Approve agent' }));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('expired'));
+    await waitFor(() => expect(alerts()).toContain('expired'));
     expect(step().getAttribute('aria-label')).toBe('Step 1 of 3');
   });
 
@@ -255,8 +276,69 @@ describe('AgentPair', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
     await fireEvent.click(await screen.findByRole('radio', { name: 'Read only' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Approve agent' }));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('the agent keeps waiting'));
+    await waitFor(() => expect(alerts()).toContain('the agent keeps waiting'));
     expect((screen.getByRole('radio', { name: 'Read only' }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('says when nobody could approve for the template, and keeps the choices', async () => {
+    await start((api) => {
+      api.pairingApprove = async () => Promise.reject(new ApiError('no_approvers', 422));
+    });
+    await enter(MOCK_PAIRING_CODE);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Voice assistant (cautious)' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Approve agent' }));
+    await waitFor(() => expect(alerts()).toContain('Nobody could approve requests of this template'));
+    expect((screen.getByRole('radio', { name: 'Voice assistant (cautious)' }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('does not offer hidden base templates; one hidden meanwhile is no choice any more, said at the choice', async () => {
+    const { api } = await start((a) => void a.setTemplateHidden('hm-light-climate', true));
+    await toMandate();
+    await screen.findByRole('radio', { name: 'Read only' });
+    expect(screen.queryByRole('radio', { name: 'Light and climate' })).toBeNull();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Read only' }));
+    await api.setTemplateHidden('hm-read-only', true);
+    const approve = vi.spyOn(api, 'pairingApprove');
+    await fireEvent.click(screen.getByRole('button', { name: 'Approve agent' }));
+    await waitFor(() => expect(choice().textContent).toContain('no longer exists or is hidden'));
+    await waitFor(() => expect(screen.queryByRole('radio', { name: 'Read only' })).toBeNull());
+    expect(screen.getAllByRole('radio').some((r) => (r as HTMLInputElement).checked)).toBe(false);
+    // Approving again without a choice sends nothing and says so at the choice.
+    await fireEvent.click(screen.getByRole('button', { name: 'Approve agent' }));
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(document.activeElement?.getAttribute('type')).toBe('radio');
+    await fireEvent.click(screen.getByRole('radio', { name: 'empty' }));
+    expect(choice().textContent).toBe('');
+  });
+
+  it('binds the approval to the template as shown: changed meanwhile, the person chooses again', async () => {
+    const { api } = await start();
+    await toMandate();
+    await fireEvent.click(await screen.findByRole('radio', { name: 'voice-assistant' }));
+    const seen = await api.template('voice-assistant');
+    await api.putTemplate('voice-assistant', { draft: { ...seen.draft, rules: [] }, base_digest: seen.digest });
+    const approve = vi.spyOn(api, 'pairingApprove');
+    await fireEvent.click(screen.getByRole('button', { name: 'Approve agent' }));
+    await waitFor(() => expect(choice().textContent).toContain('This template was changed in the meantime'));
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(approve.mock.calls[0]?.[0]).toMatchObject({ template: 'voice-assistant', template_digest: seen.digest });
+    // Still on the mandate step with the code kept, nothing chosen, nobody admitted.
+    expect((screen.getByRole('radio', { name: 'voice-assistant' }) as HTMLInputElement).checked).toBe(false);
+    expect((await api.agents()).some((a) => a.display_name === 'Küchen-Tablet')).toBe(false);
+    // The new form says what the template allows now; choosing it again admits.
+    const radio = screen.getByRole('radio', { name: 'voice-assistant' });
+    expect(document.getElementById(radio.getAttribute('aria-describedby') ?? '')?.textContent).not.toContain('Lights');
+    await fireEvent.click(radio);
+    await fireEvent.click(screen.getByRole('button', { name: 'Approve agent' }));
+    await screen.findByRole('heading', { name: /is connected/ });
+    expect(approve).toHaveBeenLastCalledWith(expect.objectContaining({ template_digest: (await api.template('voice-assistant')).digest }));
+  });
+
+  it('preselects the most cautious template: one that grants nothing, else the first base template', async () => {
+    await start(async (a) => void (await a.deleteTemplate('empty')));
+    await toMandate();
+    expect(((await screen.findByRole('radio', { name: 'Read only' })) as HTMLInputElement).checked).toBe(true);
   });
 
   it('asks for a display name before approving', async () => {

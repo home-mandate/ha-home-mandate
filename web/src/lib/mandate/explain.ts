@@ -49,7 +49,8 @@ export interface DetailLine {
 }
 
 /** cellDetail explains a cell: the deciding rule first, then what else is worth knowing. */
-export function cellDetail(c: MatrixCell, draft: MandateDraft, catalog: DeviceCatalog, version: number, locale: string): DetailLine[] {
+/** version: of the stored mandate the draft is compared with; null for a template, which has no versions. */
+export function cellDetail(c: MatrixCell, draft: MandateDraft, catalog: DeviceCatalog, version: number | null, locale: string): DetailLine[] {
   const { cell } = c;
   const lines: DetailLine[] = [];
   const rule = cell.rule === null ? undefined : draft.rules[cell.rule];
@@ -72,6 +73,10 @@ export function cellDetail(c: MatrixCell, draft: MandateDraft, catalog: DeviceCa
       text: `${inside}: ${decisionLabel(cell.timed.decision)} (${who}). ${m.preview_otherwise()}: ${decisionLabel(cell.decision)}.`,
     });
   }
-  if (c.changed) lines.push({ kind: 'changed', text: `${m.preview_change_dot()} · ${m.change_from_to({ version, from: cellText(c.previous) })}` });
+  if (c.changed) {
+    const from = cellText(c.previous);
+    const before = version === null ? m.change_from_saved({ from }) : m.change_from_to({ version, from });
+    lines.push({ kind: 'changed', text: `${m.preview_change_dot()} · ${before}` });
+  }
   return lines;
 }

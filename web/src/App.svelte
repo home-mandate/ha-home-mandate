@@ -21,6 +21,8 @@
   import AuditEntry from './lib/pages/AuditEntry.svelte';
   import AuditLog from './lib/pages/AuditLog.svelte';
   import MandateVersions from './lib/pages/MandateVersions.svelte';
+  import TemplateEditor from './lib/pages/TemplateEditor.svelte';
+  import TemplateList from './lib/pages/TemplateList.svelte';
   import Overview from './lib/pages/Overview.svelte';
   import Requests from './lib/pages/Requests.svelte';
   import Settings from './lib/pages/Settings.svelte';
@@ -245,6 +247,10 @@
     {#key route.id}<MandateEditor {app} id={route.id} {now} />{/key}
   {:else if route.name === 'mandate_versions'}
     {#key route.id}<MandateVersions {app} id={route.id} />{/key}
+  {:else if route.name === 'templates'}
+    <TemplateList {app} />
+  {:else if route.name === 'template'}
+    {#key route.template}<TemplateEditor {app} template={route.template} {now} />{/key}
   {/if}
 </main>
 <ToastHost />
@@ -258,6 +264,8 @@
     flex: 1;
     inline-size: 100%;
     max-inline-size: var(--hm-content-max);
+    /* Centred in wide windows; the header and banners line up with it (issue #7). */
+    margin-inline: auto;
     box-sizing: border-box;
     padding-block: var(--hm-space-6) var(--hm-space-10);
     padding-inline: var(--hm-page-pad);

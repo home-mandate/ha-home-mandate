@@ -1,15 +1,17 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!--
-  A template on the mandate list: its name, how many rules it has and, in the decision
-  language, what those rules do. The chips are computed from the template's rules, so the
-  card cannot promise something the template does not do.
+  A template to start from on the mandate list: its title (a base template's in the UI
+  language, otherwise its name), what it is for, and in plain words what it allows, asks
+  and never allows. The words are computed from the template's rules, so the card cannot
+  promise something the template does not do.
 -->
 <script lang="ts">
   import type { DeviceCatalog, Template } from '../../api/types.ts';
   import { m } from '../../i18n.ts';
-  import { templateChips, templateName } from '../../mandate/template.ts';
+  import { templateDescription, templateTitle } from '../../mandate/template.ts';
   import Button from '../Button.svelte';
-  import DecisionChip from './DecisionChip.svelte';
+  import PlainWords from './PlainWords.svelte';
+  import TemplateBadges from './TemplateBadges.svelte';
 
   interface Props {
     template: Template;
@@ -21,18 +23,19 @@
   let { template, catalog, locale, onuse }: Props = $props();
 
   const id = $props.id();
-  const chips = $derived(templateChips(template.draft, catalog, locale));
+  const title = $derived(templateTitle(template));
+  const description = $derived(templateDescription(template));
 </script>
 
 <article aria-labelledby="{id}-name">
-  <h3 id="{id}-name"><bdi>{templateName(template.name)}</bdi></h3>
-  <p>{m.mandates_rules_count({ count: template.draft.rules.length })}</p>
-  <ul role="list">
-    {#each chips as chip (chip.kind)}
-      <li><DecisionChip kind={chip.kind}><bdi>{chip.text}</bdi></DecisionChip></li>
-    {/each}
-  </ul>
-  <Button size="lg" aria-label="{m.tpl_use()}: {templateName(template.name)}" onclick={() => onuse(template.name)}>{m.tpl_use()}</Button>
+  <div class="head">
+    <h3 id="{id}-name"><bdi>{title}</bdi></h3>
+    <TemplateBadges {template} />
+  </div>
+  {#if description}<p class="description">{description}</p>{/if}
+  <p class="count">{m.mandates_rules_count({ count: template.draft.rules.length })}</p>
+  <div class="words"><PlainWords draft={template.draft} {catalog} {locale} /></div>
+  <Button size="lg" aria-label="{m.tpl_use()}: {title}" onclick={() => onuse(template.name)}>{m.tpl_use()}</Button>
 </article>
 
 <style>
@@ -47,6 +50,12 @@
     border: var(--hm-border-width) solid var(--hm-color-border-subtle);
     box-shadow: var(--hm-shadow-sm);
   }
+  .head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hm-space-1) var(--hm-space-2);
+  }
   h3 {
     margin: 0;
     font-size: var(--hm-font-size-lg);
@@ -57,15 +66,13 @@
     margin: 0;
     font-size: 15px;
     color: var(--hm-color-text-muted);
+    text-wrap: pretty;
   }
-  ul {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
+  .count {
+    font-size: var(--hm-font-size-sm);
+  }
+  .words {
     flex: 1;
-    align-content: flex-start;
+    align-self: stretch;
   }
 </style>

@@ -5,6 +5,8 @@
 // design handoff (README section 1); anything else is not_found. Identifiers in the hash
 // are encoded path segments; client IDs are often URLs.
 
+import { TEMPLATE_NAME } from './mandate/template.ts';
+
 export type SettingsSection = 'approvers' | 'critical' | 'defaults' | 'ha' | 'mcp' | 'retention' | 'estop' | 'about';
 
 export type Route =
@@ -16,6 +18,9 @@ export type Route =
   | { name: 'mandates' }
   | { name: 'mandate'; id: string }
   | { name: 'mandate_versions'; id: string }
+  | { name: 'templates' }
+  /** name: null for a new template. */
+  | { name: 'template'; template: string | null }
   | { name: 'audit'; query: Record<string, string[]> }
   | { name: 'audit_entry'; seq: number }
   | { name: 'requests' }
@@ -26,6 +31,8 @@ export type Section = 'overview' | 'agents' | 'mandates' | 'audit' | 'settings';
 
 const SECTIONS: readonly SettingsSection[] = ['approvers', 'critical', 'defaults', 'ha', 'mcp', 'retention', 'estop', 'about'];
 const MANDATE_ID = /^[A-Za-z0-9_-]{4,64}$/;
+/** The new template has a segment no template name can take. */
+const NEW_TEMPLATE = '_new';
 const SEQ = /^[1-9]\d{0,14}$/;
 const NOT_FOUND: Route = { name: 'not_found' };
 
@@ -69,6 +76,8 @@ export function parseHash(hash: string): Route {
         return { name: 'agents' };
       case 'mandates':
         return { name: 'mandates' };
+      case 'templates':
+        return { name: 'templates' };
       case 'audit':
         return { name: 'audit', query: parseQuery(query) };
       case 'settings':
@@ -84,6 +93,9 @@ export function parseHash(hash: string): Route {
       return NOT_FOUND;
     case 'mandates':
       return MANDATE_ID.test(second) ? { name: 'mandate', id: second } : NOT_FOUND;
+    case 'templates':
+      if (second === NEW_TEMPLATE) return { name: 'template', template: null };
+      return TEMPLATE_NAME.test(second) ? { name: 'template', template: second } : NOT_FOUND;
     case 'audit':
       if (second === 'requests') return { name: 'requests' };
       return SEQ.test(second) ? { name: 'audit_entry', seq: Number(second) } : NOT_FOUND;
@@ -114,6 +126,10 @@ export function href(route: Route): string {
       return `#/mandates/${encodeURIComponent(route.id)}`;
     case 'mandate_versions':
       return `#/mandates/${encodeURIComponent(route.id)}/versions`;
+    case 'templates':
+      return '#/templates';
+    case 'template':
+      return `#/templates/${route.template === null ? NEW_TEMPLATE : encodeURIComponent(route.template)}`;
     case 'audit': {
       const params = new URLSearchParams();
       for (const [key, values] of Object.entries(route.query)) for (const v of values) params.append(key, v);
@@ -142,6 +158,8 @@ export function sectionOf(route: Route): Section | null {
     case 'mandates':
     case 'mandate':
     case 'mandate_versions':
+    case 'templates':
+    case 'template':
       return 'mandates';
     case 'audit':
     case 'audit_entry':

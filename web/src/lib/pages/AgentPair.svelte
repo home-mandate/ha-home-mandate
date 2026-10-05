@@ -25,7 +25,7 @@
   import CriticalTemplateConfirm from '../components/mandate/CriticalTemplateConfirm.svelte';
   import { m } from '../i18n.ts';
   import { NAME_MAX } from '../mandate/problems.ts';
-  import { templateName } from '../mandate/template.ts';
+  import { cautiousChoice, offeredTemplates, titleOf } from '../mandate/template.ts';
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
   import { MARK, around } from '../ui/sentence.ts';
@@ -61,6 +61,10 @@
   let restarted = $state(false);
   /** The mandate step's choices; here, so going back to the check loses nothing. */
   let chosen = $state('');
+  /** The template was preselected for this candidate; afterwards only the person chooses. */
+  let preselected = $state(false);
+  /** Why the chosen template could not be used (changed, hidden or removed meanwhile). */
+  let templateProblem = $state('');
   let displayName = $state('');
   let candidate: PairingCandidate | null = $state.raw(null);
   let admitted: Agent | null = $state.raw(null);
@@ -74,8 +78,8 @@
 
   const choices = new Loader<Choices>(async () => {
     const api = app.api;
-    const [names, catalog] = await Promise.all([api.templates(), api.devices().catch(() => NO_CATALOG)]);
-    const templates = await Promise.all(names.map((t) => api.template(t.name)));
+    // Hidden base templates are not offered: the server would refuse them.
+    const [templates, catalog] = await Promise.all([offeredTemplates(api), api.devices().catch(() => NO_CATALOG)]);
     return { templates, catalog };
   });
 
@@ -95,6 +99,8 @@
     candidate = c;
     displayName = [...cleanUntrusted(c.claimed_name)].slice(0, NAME_MAX).join('');
     chosen = '';
+    preselected = false;
+    templateProblem = '';
     void go('verify');
   }
 
@@ -130,17 +136,17 @@
   }
 
   async function goToMandate() {
-    if (chosen === '' && choices.data) {
-      // The empty template is the safe start ("nothing yet", decision G1).
-      const names = choices.data.templates.map((t) => t.name);
-      chosen = names.includes('empty') ? 'empty' : (names[0] ?? '');
+    if (!preselected && choices.data) {
+      // The most cautious template is the safe start ("nothing yet", decision G1).
+      chosen = cautiousChoice(choices.data.templates);
+      preselected = true;
     }
     await go('mandate');
   }
 
   // Choices that arrive while step 3 waits for them: preselect and move the focus in.
   $effect(() => {
-    if (step === 'mandate' && choices.data && untrack(() => chosen) === '') void goToMandate();
+    if (step === 'mandate' && choices.data && !untrack(() => preselected)) void goToMandate();
   });
 
   async function notMine() {
@@ -165,9 +171,13 @@
     const c = candidate;
     busy = true;
     error = '';
-    const mandate = templateName(template);
+    templateProblem = '';
+    const mandate = titleOf(template, choices.data?.templates ?? []);
+    // Binds the admission to the template as shown: a change meanwhile is a conflict.
+    const shown = choices.data?.templates.find((t) => t.name === template)?.digest;
     try {
       admitted = await app.api.pairingApprove({ code, pairing_id: c.pairing_id, display_name: name, template, mandate_name: mandate,
+        ...(shown ? { template_digest: shown } : {}),
         ...(confirmCritical ? { confirm_critical: true } : {}) });
       critical = null;
     } catch (err) {
@@ -178,11 +188,15 @@
         return;
       }
       critical = null;
+      if (await templateRefused(err, template, shown)) {
+        busy = false;
+        return;
+      }
       admitted = await admittedMeanwhile(err, c, name);
       if (!admitted) {
         const result = codeError(err);
         busy = false;
-        if (result.state === 'failed') error = m.pair_failed();
+        if (result.state === 'failed') error = err instanceof ApiError && err.code === 'no_approvers' ? m.template_no_approvers() : m.pair_failed();
         else restart(result.state, result.lockedFor);
         return;
       }
@@ -190,6 +204,24 @@
     mandateName = admitted.mandate?.name ?? mandate;
     busy = false;
     await go('done');
+  }
+
+  /**
+   * templateRefused handles a refusal that is about the template, not the code: hidden or
+   * removed meanwhile, or changed since it was shown (a conflict whose template now reads
+   * differently). It loads what is there now and lets the person choose again; nothing is
+   * approved on their behalf. False for any other refusal.
+   */
+  async function templateRefused(err: unknown, template: string, shown: string | undefined): Promise<boolean> {
+    if (!(err instanceof ApiError)) return false;
+    const gone = err.code === 'invalid_input' && err.field === '/template';
+    if (!gone && err.code !== 'conflict') return false;
+    await choices.run();
+    const now = choices.data?.templates.find((t) => t.name === template);
+    if (!gone && now && now.digest === shown) return false; // the code, not the template
+    chosen = '';
+    templateProblem = now ? m.pair_template_changed() : m.template_gone();
+    return true;
   }
 
   const doneTitle = $derived(around(m.pair_done_title({ agent: MARK })));
@@ -240,6 +272,7 @@
         {headingId}
         {busy}
         {error}
+        templateError={templateProblem}
         onback={() => {
           critical = null;
           void go('verify');
@@ -251,7 +284,7 @@
       />
       {#if critical}
         <CriticalTemplateConfirm
-          template={critical.template}
+          template={titleOf(critical.template, choices.data.templates)}
           agent={critical.name}
           rules={critical.rules}
           catalog={choices.data.catalog}

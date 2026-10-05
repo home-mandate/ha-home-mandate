@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Texts of the save summary and the version compare: changed settings as "old → new" and
-// the outcome of a cell in words.
+// the outcome of a cell in words; and a template in plain words, as the person sees it
+// before choosing it (docs/ARCHITECTURE.md section 6): what it allows, where it asks, what
+// it never allows. The rest is always forbidden (default deny).
 
+import type { Decision, DeviceCatalog, MandateDraft } from '../api/types.ts';
 import type { Cell } from '../engine/analysis.ts';
 import { parseDateTime } from '../engine/check.ts';
 import { formatDate, formatNumber, type FormatContext } from '../format.ts';
@@ -10,7 +13,8 @@ import { m } from '../i18n.ts';
 import { cleanUntrusted } from '../untrusted.ts';
 import { settingChanges, type Edited, type Setting } from './changes.ts';
 import { decisionLabel } from './labels.ts';
-import { listText } from './text.ts';
+import { isPlaceholder } from './placeholder.ts';
+import { listText, ruleLine, ruleText } from './text.ts';
 import { timeoutText } from './timeout.ts';
 
 export interface SettingLine {
@@ -34,6 +38,12 @@ const LABELS: Readonly<Record<Setting, () => string>> = {
 /** People by Home Assistant user id; an id without a known name is shown as it is. */
 export type People = ReadonlyMap<string, string>;
 
+/** approverName names an approver; the placeholder of templates as what it stands for. */
+export function approverName(id: string, people: People): string {
+  if (isPlaceholder(id)) return m.tpl_approvers_placeholder();
+  return cleanUntrusted(people.get(id)) || id;
+}
+
 function value(setting: Setting, of: Edited, ctx: FormatContext, people: People): string {
   const draft = of.draft;
   switch (setting) {
@@ -53,7 +63,7 @@ function value(setting: Setting, of: Edited, ctx: FormatContext, people: People)
     case 'timeout':
       return timeoutText(draft.approval.timeout, ctx.locale);
     case 'approvers':
-      return listText(draft.approval.approvers.map((id) => cleanUntrusted(people.get(id)) || id), ctx.locale);
+      return listText(draft.approval.approvers.map((id) => approverName(id, people)), ctx.locale);
     case 'order':
       return '';
   }
@@ -73,4 +83,19 @@ export function settingLines(prev: Edited, next: Edited, ctx: FormatContext, peo
 export function cellText(cell: Pick<Cell, 'decision' | 'timed'>): string {
   const decision = decisionLabel(cell.decision);
   return cell.timed ? m.preview_cell_timed({ decision, timed: decisionLabel(cell.timed.decision) }) : decision;
+}
+
+/** A draft in plain words: one line per rule, by decision; lines that read alike once. */
+export type PlainWords = Record<Decision, string[]>;
+
+export function plainWords(draft: MandateDraft, catalog: DeviceCatalog, locale: string): PlainWords {
+  const out: PlainWords = { allow: [], ask: [], deny: [] };
+  for (const rule of draft.rules) {
+    const text = ruleText(rule, catalog, locale);
+    const extra = [text.conditions, rule.decision === 'allow' && rule.allow_critical === true ? m.tpl_summary_critical() : ''];
+    const line = [ruleLine(text), ...extra.filter(Boolean)].join(' · ');
+    const lines = out[rule.decision];
+    if (lines && !lines.includes(line)) lines.push(line);
+  }
+  return out;
 }

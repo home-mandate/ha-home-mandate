@@ -203,7 +203,7 @@ describe('createHttpClient', () => {
 
   it('maps an error body to ApiError with code and field', async () => {
     const { api } = await signedIn(json({ code: 'invalid_mandate', field: '/draft/rules/0/actions' }, 422));
-    const err = await api.putTemplate('voice', { draft }).catch((e: unknown) => e);
+    const err = await api.putTemplate('voice', { draft, base_digest: null }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err).toMatchObject({ code: 'invalid_mandate', status: 422, field: '/draft/rules/0/actions' });
   });
@@ -245,6 +245,12 @@ describe('createHttpClient', () => {
     const { api } = await signedIn(json({ code: 'rate_limited', retry_after: -1 }, 429), json({ code: 'rate_limited', retry_after: 1e9 }, 429));
     await expect(api.system()).rejects.toMatchObject({ retryAfter: undefined });
     await expect(api.system()).rejects.toMatchObject({ retryAfter: undefined });
+  });
+
+  it('knows the error codes of templates: a base template and an empty approvers placeholder', async () => {
+    const { api } = await signedIn(json({ code: 'builtin_template' }, 409), json({ code: 'no_approvers' }, 422));
+    await expect(api.deleteTemplate('hm-read-only')).rejects.toMatchObject({ code: 'builtin_template', status: 409 });
+    await expect(api.createMandate({ client_id: 'pair:kitchen', template: 'hm-read-only' })).rejects.toMatchObject({ code: 'no_approvers', status: 422 });
   });
 
   it('does not trust an unknown error code from the body', async () => {
@@ -305,14 +311,14 @@ describe('createHttpClient', () => {
   });
 
   it('calls every endpoint with the method, path and body of the contract', async () => {
-    const answers = Array.from({ length: 31 }, () => json({ ...sessionFixture }));
+    const answers = Array.from({ length: 33 }, () => json({ ...sessionFixture }));
     const { api: c, calls } = await signedIn(...answers);
     await c.setLanguage('de');
     await c.system();
     await c.agents();
     await c.revokeAgent('pair:kitchen');
     await c.pairingCheck('bcdf-ghjk');
-    await c.pairingApprove({ code: 'BCDFGHJK', pairing_id: 'pg-1', display_name: 'Küche', template: 'voice' });
+    await c.pairingApprove({ code: 'BCDFGHJK', pairing_id: 'pg-1', display_name: 'Küche', template: 'voice', template_digest: 'sha256:ef' });
     await c.pairingDeny({ code: 'BCDFGHJK', pairing_id: 'pg-1' });
     await c.devices();
     await c.putDeviceCritical('switch.garden_gate', true);
@@ -325,8 +331,10 @@ describe('createHttpClient', () => {
     await c.revokeMandate('m1');
     await c.templates();
     await c.template('voice');
-    await c.putTemplate('voice', { draft });
+    await c.putTemplate('voice', { draft, base_digest: 'sha256:cd' });
+    await c.putTemplate('guest', { draft, base_digest: null, confirm_critical: true });
     await c.deleteTemplate('voice');
+    await c.setTemplateHidden('hm-read-only', true);
     await c.settings();
     await c.putSettings({ approval_timeout: 'PT2M', max_actions_per_hour: 60, bell: false });
     await c.approvals();
@@ -344,7 +352,7 @@ describe('createHttpClient', () => {
       'GET api/agents',
       'POST api/agents/revoke {"client_id":"pair:kitchen"}',
       'POST api/pairing/check {"code":"bcdf-ghjk"}',
-      'POST api/pairing/approve {"code":"BCDFGHJK","pairing_id":"pg-1","display_name":"Küche","template":"voice"}',
+      'POST api/pairing/approve {"code":"BCDFGHJK","pairing_id":"pg-1","display_name":"Küche","template":"voice","template_digest":"sha256:ef"}',
       'POST api/pairing/deny {"code":"BCDFGHJK","pairing_id":"pg-1"}',
       'GET api/devices',
       'PUT api/devices/critical {"entity_id":"switch.garden_gate","critical":true}',
@@ -357,8 +365,10 @@ describe('createHttpClient', () => {
       'POST api/mandates/m1/revoke',
       'GET api/templates',
       'GET api/templates/voice',
-      `PUT api/templates/voice ${JSON.stringify({ draft })}`,
+      `PUT api/templates/voice ${JSON.stringify({ draft, base_digest: 'sha256:cd' })}`,
+      `PUT api/templates/guest ${JSON.stringify({ draft, base_digest: null, confirm_critical: true })}`,
       'DELETE api/templates/voice',
+      'PUT api/templates/hm-read-only/hidden {"hidden":true}',
       'GET api/settings',
       'PUT api/settings {"approval_timeout":"PT2M","max_actions_per_hour":60,"bell":false}',
       'GET api/approvals',

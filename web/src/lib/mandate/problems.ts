@@ -118,3 +118,9 @@ export function describeProblems(name: string, draft: MandateDraft): FieldProble
   }
   return problems;
 }
+
+/** isDefaultsProblem: a problem of the approval defaults (timeout, approvers) of the mandate. */
+export const isDefaultsProblem = (p: FieldProblem): boolean => p.rule === null && (p.part === 'timeout' || p.part === 'approvers');
+
+/** isBasicsProblem: a problem of the basics (name, validity, rate limit). */
+export const isBasicsProblem = (p: FieldProblem): boolean => p.rule === null && !isDefaultsProblem(p) && p.part !== 'rules';

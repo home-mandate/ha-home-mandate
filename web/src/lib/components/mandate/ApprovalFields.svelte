@@ -1,12 +1,14 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!--
   Approval settings: the timeout as number and unit, and who gets the push notification.
-  Used for the mandate's default and for a rule's own settings. Errors show once the field
+  Used for the mandate's default and for a rule's own settings. In a template, people may
+  include the approvers placeholder (named by the page), shown with a group mark. Errors show once the field
   was left or a save was tried, never while typing.
 -->
 <script lang="ts">
   import type { Approval } from '../../api/types.ts';
   import { m } from '../../i18n.ts';
+  import { isPlaceholder } from '../../mandate/placeholder.ts';
   import { cleanUntrusted } from '../../untrusted.ts';
   import Icon from '../Icon.svelte';
   import TimeoutField from '../TimeoutField.svelte';
@@ -58,7 +60,9 @@
       {#each people as person (person.id)}
         {@const on = approval.approvers.includes(person.id)}
         <button type="button" class="person" aria-pressed={on} aria-disabled={disabled ? 'true' : undefined} onclick={() => !disabled && toggle(person.id)}>
-          <span class="avatar" aria-hidden="true">{initials(cleanUntrusted(person.name))}</span>
+          <span class="avatar" aria-hidden="true">
+            {#if isPlaceholder(person.id)}<Icon name="person" size={16} />{:else}{initials(cleanUntrusted(person.name))}{/if}
+          </span>
           <bdi>{cleanUntrusted(person.name)}</bdi>
           {#if on}<Icon name="check" size={16} />{/if}
         </button>
@@ -108,6 +112,7 @@
     font: inherit;
     font-size: 15px;
     font-weight: var(--hm-font-weight-medium);
+    text-align: start;
     color: var(--hm-color-text);
     background: var(--hm-color-surface);
     border: var(--hm-border-width) solid var(--hm-color-border-strong);

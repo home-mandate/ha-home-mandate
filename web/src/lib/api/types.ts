@@ -12,8 +12,9 @@ export type Language = 'de' | 'en';
 
 // HTTP status per error code (see ApiErrorCode at the end):
 // 400 invalid_input, pairing_code_invalid · 401 unauthenticated · 403 forbidden,
-// csrf_invalid · 404 not_found · 409 conflict · 410 pairing_code_expired · 413 too_large ·
-// 422 invalid_mandate, critical_confirmation_required · 429 rate_limited, pairing_locked ·
+// csrf_invalid · 404 not_found · 409 conflict, builtin_template · 410 pairing_code_expired ·
+// 413 too_large · 422 invalid_mandate, critical_confirmation_required, no_approvers ·
+// 429 rate_limited, pairing_locked ·
 // 500 internal · 503 unavailable (Home Assistant not reachable).
 
 // ---------------------------------------------------------------------------
@@ -187,6 +188,11 @@ export interface PairingApprove extends PairingDecision {
   display_name: string;
   /** The template that becomes the agent's mandate. */
   template: string;
+  /**
+   * Digest of the template as the human saw it (TemplateSummary.digest). If the template
+   * changed since, the server answers "conflict" and admits nothing: the human chooses again.
+   */
+  template_digest?: string;
   /** Name of the new mandate; default: the template name. */
   mandate_name?: string;
   /**
@@ -454,23 +460,50 @@ export type Reason =
   | 'rule';
 
 // ---------------------------------------------------------------------------
-// Templates: GET api/templates, GET|PUT|DELETE api/templates/{name}
+// Templates: GET api/templates, GET|PUT|DELETE api/templates/{name},
+// PUT api/templates/{name}/hidden {hidden} → 204 (base templates only; not_found otherwise).
+//
+// Base templates ship with Home-Mandate (names starting with "hm-", reserved): they come
+// first, in a fixed order, then the household's own templates by name. A base template is
+// never changed or removed (builtin_template); it can be saved under a new name, and
+// hidden: a hidden one is neither offered nor accepted at admission, for a new mandate or
+// apply-template (invalid_input /template). In a template the approver "$approvers"
+// (APPROVERS_PLACEHOLDER, mandate/placeholder.ts) stands for the human who admits the
+// agent plus every approver set up; admission replaces it, and refuses with no_approvers
+// when nobody is there. A mandate never contains it.
+
+/** Text per UI language; empty for the household's own templates. */
+export type LocalizedText = Partial<Record<Language, string>>;
 
 export interface TemplateSummary {
   name: string;
   rule_count: number;
-  created_at: string;
+  /** null for base templates. */
+  created_at: string | null;
+  /** Home Assistant user ID; "" for base templates. */
   created_by: string;
   created_by_name: string | null;
+  builtin: boolean;
+  hidden: boolean;
+  title: LocalizedText;
+  description: LocalizedText;
+  /** "sha256:<hex>" of the stored template; the base of the next change. */
+  digest: string;
 }
 
-export interface Template {
-  name: string;
+export interface Template extends TemplateSummary {
   draft: MandateDraft;
 }
 
+/**
+ * PUT api/templates/{name}. base_digest: null for a new template, otherwise the digest the
+ * edit started from; an outdated one, or null for a name that exists, is "conflict" and
+ * stores nothing. A bad or reserved name ("hm-…") is invalid_input /name, a base template
+ * builtin_template. confirm_critical as for MandateUpdate (U9). Answers the stored template.
+ */
 export interface TemplateUpdate {
   draft: MandateDraft;
+  base_digest: string | null;
   confirm_critical?: boolean;
 }
 
@@ -747,6 +780,8 @@ export type ApiErrorCode =
   | 'invalid_input'
   | 'invalid_mandate'
   | 'critical_confirmation_required'
+  | 'builtin_template'
+  | 'no_approvers'
   | 'pairing_code_invalid'
   | 'pairing_code_expired'
   | 'pairing_locked'

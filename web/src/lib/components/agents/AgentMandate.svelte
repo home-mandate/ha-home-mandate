@@ -8,10 +8,10 @@
 -->
 <script lang="ts">
   import { ApiError, type ApiClient } from '../../api/client.ts';
-  import type { Agent, Rule, Template } from '../../api/types.ts';
+  import type { Agent, DeviceCatalog, Rule, Template } from '../../api/types.ts';
   import { formatNumber, type FormatContext } from '../../format.ts';
   import { m } from '../../i18n.ts';
-  import { templateName } from '../../mandate/template.ts';
+  import { templateDescription, templateTitle, titleOf } from '../../mandate/template.ts';
   import { currentNumber } from '../../mandate/versions.ts';
   import { href } from '../../router.ts';
   import { toasts } from '../../ui/toasts.ts';
@@ -21,17 +21,20 @@
   import SelectField from '../SelectField.svelte';
   import CriticalTemplateConfirm from '../mandate/CriticalTemplateConfirm.svelte';
   import MandateStatus from '../mandate/MandateStatus.svelte';
+  import PlainWords from '../mandate/PlainWords.svelte';
 
   interface Props {
     api: ApiClient;
     agent: Agent;
-    /** Names of the templates; empty when they could not be loaded. */
-    templates: readonly Pick<Template, 'name'>[];
+    /** Templates that are offered (no hidden base templates); empty when they could not be loaded. */
+    templates: readonly Template[];
+    /** For the plain words of the chosen template; empty without Home Assistant. */
+    catalog: DeviceCatalog;
     ctx: FormatContext;
     headingId: string;
   }
 
-  let { api, agent, templates, ctx, headingId }: Props = $props();
+  let { api, agent, templates, catalog, ctx, headingId }: Props = $props();
 
   let template = $state('');
   let busy = $state(false);
@@ -39,14 +42,14 @@
   /** The server asked for the separate confirmation (U9): the template and its critical rules. */
   let confirming: { template: string; rules: Rule[] | null } | null = $state(null);
   let apply: HTMLButtonElement | undefined = $state();
-  const NO_CATALOG = { areas: [], devices: [] };
 
   const mandate = $derived(agent.mandate);
   const active = $derived(agent.status === 'active');
   const replaces = $derived(mandate?.status === 'active');
-  const options = $derived(templates.map((t) => ({ value: t.name, label: templateName(t.name) })));
+  const options = $derived(templates.map((t) => ({ value: t.name, label: templateTitle(t) })));
   // A template that is no longer offered falls back to the first one.
   const chosen = $derived(templates.some((t) => t.name === template) ? template : (templates[0]?.name ?? ''));
+  const picked = $derived(templates.find((t) => t.name === chosen) ?? null);
   const rate = $derived(
     mandate?.max_actions_per_hour == null
       ? m.agent_detail_rate_none()
@@ -62,7 +65,7 @@
       const detail = mandate && replaces
         ? // The version shown here is the base: a change by someone else since then is a conflict.
           await api.applyTemplate(mandate.id, { template: chosen, base_digest: mandate.digest, ...extra })
-        : await api.createMandate({ client_id: agent.client_id, template: chosen, name: templateName(chosen), ...extra });
+        : await api.createMandate({ client_id: agent.client_id, template: chosen, name: titleOf(chosen, templates), ...extra });
       confirming = null;
       toasts.show({ kind: 'success', text: m.toast_saved({ version: currentNumber(detail.versions) }) });
     } catch (err) {
@@ -71,12 +74,19 @@
         return;
       }
       confirming = null;
-      const conflict = err instanceof ApiError && err.code === 'conflict';
-      // Creating: another mandate came first. Changing: the mandate changed since it was shown.
-      error = conflict ? (replaces ? m.agent_detail_change_conflict() : m.mandates_new_conflict()) : m.agent_detail_change_failed();
+      error = failure(err);
     } finally {
       busy = false;
     }
+  }
+
+  function failure(err: unknown): string {
+    const code = err instanceof ApiError ? err.code : 'internal';
+    // Creating: another mandate came first. Changing: the mandate changed since it was shown.
+    if (code === 'conflict') return replaces ? m.agent_detail_change_conflict() : m.mandates_new_conflict();
+    if (code === 'no_approvers') return m.template_no_approvers();
+    if (code === 'invalid_input' && err instanceof ApiError && err.field === '/template') return m.template_gone();
+    return m.agent_detail_change_failed();
   }
 
   /** The template's rules that allow critical actions without approval; null if it cannot be read. */
@@ -123,14 +133,20 @@
           confirming = null; // another template: its own confirmation
         }}
       />
+      {#if picked}
+        <div class="picked" role="group" aria-label={m.template_what({ template: templateTitle(picked) })}>
+          {#if templateDescription(picked)}<p class="description">{templateDescription(picked)}</p>{/if}
+          <PlainWords draft={picked.draft} {catalog} locale={ctx.locale} />
+        </div>
+      {/if}
       <Button bind:element={apply} {busy} disabled={confirming !== null} onclick={() => change()}>{m.agent_detail_change_apply()}</Button>
     </div>
     {#if confirming}
       <CriticalTemplateConfirm
-        template={confirming.template}
+        template={titleOf(confirming.template, templates)}
         agent={agent.display_name}
         rules={confirming.rules}
-        catalog={NO_CATALOG}
+        {catalog}
         locale={ctx.locale}
         {busy}
         oncancel={cancelCritical}
@@ -183,6 +199,21 @@
   }
   .change > :global(:first-child) {
     align-self: stretch;
+  }
+  .picked {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hm-space-2);
+    align-self: stretch;
+    padding: var(--hm-space-3) var(--hm-space-4);
+    border-radius: var(--hm-radius-md);
+    background: var(--hm-color-surface-sunken);
+    border: var(--hm-border-width) solid var(--hm-color-border-subtle);
+  }
+  .description {
+    margin: 0;
+    font-size: var(--hm-font-size-sm);
+    color: var(--hm-color-text-muted);
   }
   .muted {
     margin: 0;

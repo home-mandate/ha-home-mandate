@@ -138,6 +138,26 @@ describe('AgentDetail', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('changed in the meantime'));
   });
 
+  it('shows the chosen template in plain words and does not offer hidden base templates', async () => {
+    await start(VOICE, (api) => void api.setTemplateHidden('hm-light-climate', true));
+    const select = (await screen.findByLabelText('Change mandate')) as HTMLSelectElement;
+    const options = [...select.options].map((o) => o.textContent);
+    expect(options).toEqual(['Read only', 'Voice assistant (cautious)', 'empty', 'read-only', 'voice-assistant']);
+    await fireEvent.change(select, { target: { value: 'hm-voice-cautious' } });
+    const words = screen.getByRole('group', { name: 'What the template Voice assistant (cautious) allows' });
+    expect(words.textContent).toContain('Opens locks only after you confirm it on your phone');
+    expect(within(words).getByText('Lock: unlock, open')).toBeTruthy();
+    expect(within(words).getByText('Everything else is forbidden.')).toBeTruthy();
+  });
+
+  it('says when nobody could approve for the template (no_approvers)', async () => {
+    const { api } = await start(VOICE);
+    api.applyTemplate = async () => Promise.reject(new ApiError('no_approvers', 422));
+    await screen.findByLabelText('Change mandate');
+    await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Nobody could approve requests of this template'));
+  });
+
   it('changes the mandate to a template as a new version', async () => {
     const { api } = await start(VOICE);
     const select = (await screen.findByLabelText('Change mandate')) as HTMLSelectElement;

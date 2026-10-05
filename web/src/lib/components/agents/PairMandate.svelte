@@ -1,22 +1,24 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!--
   Pairing step 3 (design README 6.2, decision G1): the agent gets a new mandate from a
-  template, never none and never another agent's ("nothing yet" is the empty template).
-  Each option shows in the decision language what the template does. The display name is
-  chosen here; the agent's own name is only the suggestion.
+  template, never none and never another agent's. Each option is a card: a base
+  template's title and description, and in plain words what the template allows, asks and
+  never allows (the rest is forbidden). Hidden base templates are not offered. The display
+  name is chosen here; the agent's own name is only the suggestion.
 -->
 <script lang="ts">
   import { tick } from 'svelte';
   import type { DeviceCatalog, Template } from '../../api/types.ts';
   import { m } from '../../i18n.ts';
   import { NAME_MAX } from '../../mandate/problems.ts';
-  import { templateChips, templateName } from '../../mandate/template.ts';
+  import { templateDescription, templateTitle } from '../../mandate/template.ts';
   import { MARK, around } from '../../ui/sentence.ts';
   import { cleanUntrusted, hasVisibleText } from '../../untrusted.ts';
   import Button from '../Button.svelte';
   import Icon from '../Icon.svelte';
   import TextField from '../TextField.svelte';
-  import DecisionChip from '../mandate/DecisionChip.svelte';
+  import PlainWords from '../mandate/PlainWords.svelte';
+  import TemplateBadges from '../mandate/TemplateBadges.svelte';
 
   interface Props {
     templates: readonly Template[];
@@ -31,6 +33,8 @@
     busy: boolean;
     /** Error of the last attempt, already worded. */
     error: string;
+    /** Why the chosen template could not be used (changed or gone meanwhile); shown at the choice. */
+    templateError: string;
     onback: () => void;
     onconfirm: (template: string, displayName: string) => void;
   }
@@ -45,6 +49,7 @@
     headingId,
     busy,
     error,
+    templateError,
     onback,
     onconfirm,
   }: Props = $props();
@@ -54,7 +59,10 @@
 
   const id = $props.id();
   let checked = $state(false);
+  /** Approving was tried without a template that is offered. */
+  let unchosen = $state(false);
   let nameField: HTMLInputElement | undefined = $state();
+  let options: HTMLElement | undefined = $state();
 
   const title = $derived(around(m.pair_mandate_title({ agent: MARK })));
   const length = $derived([...name.trim()].length);
@@ -62,6 +70,9 @@
   const nameValid = $derived(length >= 1 && length <= NAME_MAX && hasVisibleText(name));
   const nameError = $derived(checked && !nameValid ? m.validation_name({ max: NAME_MAX }) : '');
   const noTemplates = $derived(templates.length === 0);
+  const valid = $derived(templates.some((t) => t.name === chosen));
+  // Once the person picks a template, the problem of the earlier one is gone.
+  const choiceError = $derived(valid ? '' : templateError || (unchosen ? m.pair_choose_template() : ''));
 
   async function confirm(event: SubmitEvent) {
     event.preventDefault();
@@ -71,7 +82,15 @@
       nameField?.focus();
       return;
     }
-    if (busy || noTemplates || !templates.some((t) => t.name === chosen)) return;
+    if (busy || noTemplates) return;
+    if (!valid) {
+      // A template that disappeared is no choice: say so at the choice, not silently.
+      unchosen = true;
+      await tick();
+      options?.querySelector<HTMLInputElement>('input[type="radio"]')?.focus();
+      return;
+    }
+    unchosen = false;
     onconfirm(chosen, name.trim());
   }
 </script>
@@ -88,20 +107,23 @@
     autocomplete="off"
     dir="auto"
   />
-  <fieldset>
+  <fieldset aria-describedby={choiceError ? `${id}-choice` : undefined}>
     <legend>{m.pair_mandate_template()}</legend>
-    <div class="options">
+    <p id="{id}-choice" class="error choice" role="alert">{#if choiceError}<Icon name="warning" size={16} />{choiceError}{/if}</p>
+    <div class="options" bind:this={options}>
       {#each templates as t, i (t.name)}
         <div class="option" class:on={chosen === t.name}>
           <input id="{id}-t{i}" type="radio" name="{id}-template" value={t.name} bind:group={chosen} aria-describedby="{id}-c{i}" />
-          <span class="text">
-            <label class="name" for="{id}-t{i}"><bdi>{templateName(t.name)}</bdi></label>
-            <span class="chips" id="{id}-c{i}">
-              {#each templateChips(t.draft, catalog, locale) as chip (chip.kind)}
-                <DecisionChip kind={chip.kind}><bdi>{chip.text}</bdi></DecisionChip>
-              {/each}
+          <div class="text">
+            <span class="title">
+              <label class="name" for="{id}-t{i}"><bdi>{templateTitle(t)}</bdi></label>
+              <TemplateBadges template={t} />
             </span>
-          </span>
+            <div id="{id}-c{i}">
+              {#if templateDescription(t)}<p class="description">{templateDescription(t)}</p>{/if}
+              <PlainWords draft={t.draft} {catalog} {locale} />
+            </div>
+          </div>
         </div>
       {/each}
     </div>
@@ -163,7 +185,9 @@
     outline-offset: 2px;
   }
   input[type='radio'] {
-    margin: 3px 0 0;
+    margin-block: 3px 0;
+    margin-inline: 0;
+    flex-shrink: 0;
     inline-size: 18px;
     block-size: 18px;
     accent-color: var(--hm-color-accent);
@@ -183,10 +207,17 @@
       outline: 2px solid Highlight;
     }
   }
-  .chips {
+  .title {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    align-items: center;
+    gap: var(--hm-space-1) var(--hm-space-2);
+  }
+  .description {
+    margin-block: 0 var(--hm-space-2);
+    font-size: var(--hm-font-size-sm);
+    color: var(--hm-color-text-muted);
+    text-wrap: pretty;
   }
   .error {
     display: flex;
@@ -194,6 +225,9 @@
     margin: 0;
     font-size: var(--hm-font-size-sm);
     color: var(--hm-color-danger-fg);
+  }
+  .error.choice:has(:global(svg)) {
+    margin-block-end: var(--hm-space-2);
   }
   .actions {
     display: flex;

@@ -12,7 +12,6 @@
   import type { DeviceCatalog, Rule } from '../../api/types.ts';
   import { m } from '../../i18n.ts';
   import { ruleText } from '../../mandate/text.ts';
-  import { templateName } from '../../mandate/template.ts';
   import { MARK, MARK2, around } from '../../ui/sentence.ts';
   import { cleanUntrusted } from '../../untrusted.ts';
   import Button from '../Button.svelte';
@@ -20,7 +19,7 @@
   import RuleSentence from './RuleSentence.svelte';
 
   interface Props {
-    /** Name of the template. */
+    /** Title of the template, as the list showed it (mandate/template.ts templateTitle). */
     template: string;
     /** Name of the agent; untrusted. */
     agent: string;
@@ -55,7 +54,7 @@
 <div class="box" role="alertdialog" tabindex="-1" aria-modal="false" aria-labelledby="{id}-title" aria-describedby="{id}-body" onkeydown={key}>
   <h3 id="{id}-title"><Icon name="critical" size={20} /><span>{m.template_critical_title()}</span></h3>
   <p id="{id}-body">
-    {parts[0]}<bdi>{templateName(template)}</bdi>{tail[0]}<bdi>{cleanUntrusted(agent)}</bdi>{tail[1] ?? ''}
+    {parts[0]}<bdi>{template}</bdi>{tail[0]}<bdi>{cleanUntrusted(agent)}</bdi>{tail[1] ?? ''}
   </p>
   {#if rules && rules.length > 0}
     <ul role="list">

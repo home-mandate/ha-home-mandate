@@ -46,7 +46,7 @@
     border-radius: 0;
     border-inline: none;
     border-block-start: none;
-    padding-inline: var(--hm-page-pad, var(--hm-space-8));
+    padding-inline: var(--hm-bar-pad, var(--hm-space-8));
   }
   .flush .text {
     flex-basis: 240px;

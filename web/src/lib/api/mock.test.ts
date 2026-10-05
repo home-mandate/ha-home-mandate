@@ -280,17 +280,90 @@ describe('createMockClient: mandates and templates', () => {
     expect((await api.agents())[0]?.mandate).toEqual({ id: created.summary.id, name: 'Neu', status: 'active', max_actions_per_hour: 60, digest: created.summary.digest });
   });
 
-  it('manages templates with U9 and tells listeners', async () => {
+  it('manages templates with U9 and the version the edit started from, and tells listeners', async () => {
     const api = createMockClient();
     const { events } = listen(api);
     const draft = { ...voiceAssistantDraft, rules: [criticalRule] };
-    await expect(api.putTemplate('guest', { draft })).rejects.toMatchObject({ code: 'critical_confirmation_required' });
-    await api.putTemplate('guest', { draft, confirm_critical: true });
-    await expect(api.putTemplate('guest', { draft })).resolves.toMatchObject({ name: 'guest' });
-    expect((await api.templates()).find((t) => t.name === 'guest')).toMatchObject({ rule_count: 1, created_by_name: 'Markus' });
+    await expect(api.putTemplate('guest', { draft, base_digest: null })).rejects.toMatchObject({ code: 'critical_confirmation_required' });
+    const first = await api.putTemplate('guest', { draft, base_digest: null, confirm_critical: true });
+    expect(first.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    // A new template must not exist yet; a change names the current version.
+    await expect(api.putTemplate('guest', { draft, base_digest: null })).rejects.toMatchObject({ code: 'conflict', status: 409 });
+    const changed = { ...draft, limits: { max_actions_per_hour: 5 } };
+    const second = await api.putTemplate('guest', { draft: changed, base_digest: first.digest });
+    expect(second.digest).not.toBe(first.digest);
+    await expect(api.putTemplate('guest', { draft, base_digest: first.digest })).rejects.toMatchObject({ code: 'conflict' });
+    await expect(api.putTemplate('guest', { draft, base_digest: 'sha256:x' })).rejects.toMatchObject({ code: 'invalid_input', field: '/base_digest' });
+    expect((await api.templates()).find((t) => t.name === 'guest')).toMatchObject({ rule_count: 1, created_by_name: 'Markus', builtin: false, digest: second.digest });
     await api.deleteTemplate('guest');
     await expect(api.deleteTemplate('guest')).rejects.toMatchObject({ code: 'not_found' });
     expect(types(events)).toEqual(['templates.changed', 'templates.changed', 'templates.changed']);
+  });
+
+  it('lists base templates first, with titles, and the own ones by name', async () => {
+    const api = createMockClient();
+    await api.putTemplate('aaa', { draft: voiceAssistantDraft, base_digest: null });
+    const list = await api.templates();
+    expect(list.map((t) => t.name)).toEqual(['hm-read-only', 'hm-light-climate', 'hm-voice-cautious', 'aaa', 'empty', 'read-only', 'voice-assistant']);
+    expect(list[0]).toMatchObject({ builtin: true, hidden: false, created_at: null, created_by: '', title: { de: 'Nur lesen', en: 'Read only' } });
+    expect(list[3]).toMatchObject({ builtin: false, title: {}, description: {} });
+    expect(list[0]).not.toHaveProperty('draft');
+    const full = await api.template('hm-voice-cautious');
+    expect(full.draft.approval.approvers).toEqual(['$approvers']);
+    expect(full.draft.rules.find((r) => r.decision === 'ask')?.approval?.approvers).toEqual(['$approvers']);
+  });
+
+  it('never changes or removes a base template and keeps "hm-" for them', async () => {
+    const api = createMockClient();
+    const base = await api.template('hm-read-only');
+    await expect(api.putTemplate('hm-read-only', { draft: base.draft, base_digest: base.digest })).rejects.toMatchObject({ code: 'builtin_template', status: 409 });
+    await expect(api.deleteTemplate('hm-read-only')).rejects.toMatchObject({ code: 'builtin_template' });
+    await expect(api.putTemplate('hm-mine', { draft: base.draft, base_digest: null })).rejects.toMatchObject({ code: 'invalid_input', field: '/name' });
+    await expect(api.putTemplate('Gäste', { draft: base.draft, base_digest: null })).rejects.toMatchObject({ code: 'invalid_input', field: '/name' });
+    // Saved under a new name, with the placeholder kept.
+    const copy = await api.putTemplate('my-read-only', { draft: base.draft, base_digest: null });
+    expect(copy).toMatchObject({ name: 'my-read-only', builtin: false, title: {} });
+    expect(copy.draft.approval.approvers).toEqual(['$approvers']);
+  });
+
+  it('hides base templates only, and refuses hidden ones for mandates', async () => {
+    const api = createMockClient();
+    const { events } = listen(api);
+    await expect(api.setTemplateHidden('read-only', true)).rejects.toMatchObject({ code: 'not_found' });
+    await api.setTemplateHidden('hm-read-only', true);
+    expect((await api.templates()).find((t) => t.name === 'hm-read-only')?.hidden).toBe(true);
+    expect((await api.template('hm-read-only')).hidden).toBe(true);
+    const refused = { code: 'invalid_input', field: '/template' };
+    await expect(
+      api.pairingApprove({ code: MOCK_PAIRING_CODE, pairing_id: PAIRING_ID, display_name: 'Tablet', template: 'hm-read-only' }),
+    ).rejects.toMatchObject(refused);
+    const { summary } = await api.mandate('mandate-voice');
+    await expect(api.applyTemplate('mandate-voice', { template: 'hm-read-only', base_digest: summary.digest })).rejects.toMatchObject(refused);
+    await api.revokeMandate('mandate-voice');
+    await expect(api.createMandate({ client_id: 'pair:voice-assistant', template: 'hm-read-only' })).rejects.toMatchObject(refused);
+    await api.setTemplateHidden('hm-read-only', false);
+    await expect(api.createMandate({ client_id: 'pair:voice-assistant', template: 'hm-read-only' })).resolves.toBeTruthy();
+    expect(types(events).filter((t) => t === 'templates.changed')).toHaveLength(2);
+  });
+
+  it('admits only with the template the human saw (template_digest)', async () => {
+    const api = createMockClient();
+    const seen = await api.template('voice-assistant');
+    await api.putTemplate('voice-assistant', { draft: { ...seen.draft, rules: [] }, base_digest: seen.digest });
+    const approve = { code: MOCK_PAIRING_CODE, pairing_id: PAIRING_ID, display_name: 'Tablet', template: 'voice-assistant' };
+    await expect(api.pairingApprove({ ...approve, template_digest: seen.digest })).rejects.toMatchObject({ code: 'conflict', status: 409 });
+    await expect(api.pairingApprove({ ...approve, template_digest: 'sha256:nope' })).rejects.toMatchObject({ code: 'invalid_input', field: '/template_digest' });
+    const now = await api.template('voice-assistant');
+    await expect(api.pairingApprove({ ...approve, template_digest: now.digest })).resolves.toMatchObject({ display_name: 'Tablet' });
+  });
+
+  it('puts the admitting human and every approver in place of the placeholder', async () => {
+    const api = createMockClient();
+    const { summary } = await api.mandate('mandate-voice');
+    const applied = await api.applyTemplate('mandate-voice', { template: 'hm-voice-cautious', base_digest: summary.digest });
+    expect(applied.document.approval.approvers).toEqual(['u-admin']);
+    expect(applied.document.rules.find((r) => r.decision === 'ask')?.approval?.approvers).toEqual(['u-admin']);
+    expect(JSON.stringify(applied.document)).not.toContain('$approvers');
   });
 });
 

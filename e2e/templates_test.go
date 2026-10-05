@@ -6,6 +6,7 @@ package e2e
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -50,9 +51,26 @@ func TestAdmissionWithABaseTemplate(t *testing.T) {
 	}
 	ui.ok(http.MethodPut, "api/templates/hm-light-climate/hidden", map[string]any{"hidden": true}, nil)
 	defer ui.ok(http.MethodPut, "api/templates/hm-light-climate/hidden", map[string]any{"hidden": false}, nil)
+	// Not offered on the consent page; the pairing is denied again, so no pending pairing
+	// is left for the other tests (three per sender).
 	p := requestPairing(t)
-	res := pairAs(t, p, adminApprover, "Versteckt", "hm-light-climate")
-	if res.status != http.StatusBadRequest || strings.Contains(res.body, `value="hm-light-climate"`) {
-		t.Errorf("admission with a hidden template = %d", res.status)
+	b := newBrowser(t)
+	if back := b.signIn(b.get("/pair"), adminApprover); back.status != http.StatusSeeOther {
+		t.Fatalf("sign-in = %d", back.status)
+	}
+	entry := b.get("/pair")
+	if res := b.post("/pair", url.Values{"csrf": {b.csrf(entry)}, "code": {p.UserCode}}); res.status != http.StatusSeeOther {
+		t.Fatalf("code entry = %d", res.status)
+	}
+	consent := b.get("/oauth/consent")
+	if strings.Contains(consent.body, `value="hm-light-climate@`) || !strings.Contains(consent.body, `value="hm-read-only@`) {
+		t.Error("the consent page offers a hidden template, or not the others")
+	}
+	if res := b.post("/oauth/consent", url.Values{"csrf": {b.csrf(consent)}, "action": {"deny"}}); res.status != http.StatusOK {
+		t.Errorf("deny = %d", res.status)
+	}
+	// The agent hears the denial at its next poll, which also ends the pairing.
+	if status, out := pollTokens(t, p); out["error"] != "access_denied" {
+		t.Errorf("poll after the denial = %d %v", status, out)
 	}
 }

@@ -57,7 +57,8 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 0 var(--hm-space-6);
-    padding-inline: var(--hm-space-8);
+    /* The bar spans the window; its content lines up with the centred page (issue #7). */
+    padding-inline: var(--hm-bar-pad);
     min-block-size: 56px;
     background: var(--hm-color-surface);
     border-block-end: var(--hm-border-width) solid var(--hm-color-border-subtle);

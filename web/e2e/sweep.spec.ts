@@ -52,6 +52,10 @@ const SCREENS: Screen[] = [
   { name: 'mandate editor', path: './#/mandates/mandate-voice' },
   { name: 'mandate editor, long names', path: './#/mandates/mandate-long' },
   { name: 'mandate versions', path: './#/mandates/mandate-voice/versions' },
+  { name: 'templates', path: './#/templates' },
+  { name: 'template editor, base template', path: './#/templates/hm-voice-cautious' },
+  { name: 'template editor, own template', path: './#/templates/voice-assistant' },
+  { name: 'template editor, new template', path: './#/templates/_new' },
   { name: 'audit log', path: './#/audit' },
   { name: 'audit entry', path: './#/audit/8' },
   { name: 'requests', path: './#/audit/requests' },
@@ -61,6 +65,19 @@ const SCREENS: Screen[] = [
   { name: 'agent detail, long name', path: './#/agents/id/pair%3Along' },
   { name: 'agent detail, bidi name', path: './#/agents/id/pair%3Abidi' },
   { name: 'pairing', path: './#/agents/pair' },
+  {
+    name: 'pairing, choosing the template',
+    path: './#/agents/pair',
+    setup: async (page) => {
+      await page.getByRole('textbox').first().fill('bcdf ghjk');
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('heading', { level: 2 })).toBeFocused();
+      await page.keyboard.press('Tab'); // "This isn't my agent"
+      await page.keyboard.press('Tab'); // Continue
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('radio').first()).toBeVisible();
+    },
+  },
   { name: 'browser sign-in', path: './#/agents/browser' },
   { name: 'settings', path: './#/settings' },
   { name: 'not found', path: './#/does-not-exist' },

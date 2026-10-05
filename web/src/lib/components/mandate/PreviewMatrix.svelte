@@ -25,8 +25,8 @@
     draft: MandateDraft;
     /** The stored version the draft is compared with. */
     previous: MandateDraft;
-    /** Number of the stored version. */
-    version: number;
+    /** Number of the stored version; null for a template, which has none. */
+    version: number | null;
     catalog: DeviceCatalog;
     locale: string;
     /** Grid with a detail panel (desktop) or cards per device (mobile). */
@@ -147,7 +147,7 @@
     </div>
     <Switch
       checked={onlyChanges}
-      label={m.preview_only_changes({ version })}
+      label={version === null ? m.preview_only_changes_saved() : m.preview_only_changes({ version })}
       onchange={(on) => {
         onlyChanges = on;
         opened = null;

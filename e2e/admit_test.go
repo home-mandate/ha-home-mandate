@@ -149,7 +149,19 @@ func pairAs(t *testing.T, p pairing, user, name, template string) page {
 		t.Fatalf("code entry = %d\n%s", res.status, res.body)
 	}
 	consent := b.get("/oauth/consent")
-	return b.post("/oauth/consent", url.Values{"csrf": {b.csrf(consent)}, "action": {"approve"}, "name": {name}, "template": {template}})
+	return b.post("/oauth/consent", url.Values{"csrf": {b.csrf(consent)}, "action": {"approve"}, "name": {name},
+		"template": {choiceOf(consent, template)}})
+}
+
+// choiceOf is the value the consent page gives a template: its name and the digest of
+// what it showed, as a browser sends it. A template the page does not offer keeps its
+// bare name, which the gateway refuses.
+func choiceOf(consent page, template string) string {
+	m := regexp.MustCompile(`value="(` + regexp.QuoteMeta(template) + `@sha256:[0-9a-f]{64})"`).FindStringSubmatch(consent.body)
+	if m == nil {
+		return template
+	}
+	return m[1]
 }
 
 // admit pairs a new agent through the pairing code, admitted by admin-approver with

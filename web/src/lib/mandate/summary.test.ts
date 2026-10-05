@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { voiceAssistantDraft } from '../api/fixtures.ts';
+import { devicesFixture, templatesFixture, voiceAssistantDraft } from '../api/fixtures.ts';
 import { setLocale } from '../paraglide/runtime.js';
 import { moveRule, withExpires, withLimit, withValidFrom } from './edit.ts';
-import { cellText, settingLines } from './summary.ts';
+import { APPROVERS_PLACEHOLDER } from './placeholder.ts';
+import { approverName, cellText, plainWords, settingLines } from './summary.ts';
 
 beforeEach(() => setLocale('en', { reload: false }));
 
@@ -52,5 +53,54 @@ describe('cellText', () => {
     expect(cellText({ decision: 'allow', timed: null })).toBe('Allowed');
     expect(cellText({ decision: 'default', timed: null })).toBe('Default: denied');
     expect(cellText({ decision: 'allow', timed: { decision: 'deny', rule: 1, demoted: false } })).toBe('Allowed, at times Denied');
+  });
+});
+
+describe('approverName', () => {
+  it('names the placeholder by what it stands for, never by its value', () => {
+    expect(approverName(APPROVERS_PLACEHOLDER, people)).toBe('The household’s approvers and whoever admits the agent');
+    expect(approverName('u-partner', people)).toBe('Alex');
+    expect(approverName('u-unknown', people)).toBe('u-unknown');
+  });
+
+  it('shows the placeholder in the save summary of a template', () => {
+    const next = { ...base, approval: { ...base.approval, approvers: [APPROVERS_PLACEHOLDER] } };
+    const [line] = settingLines({ name: 'A', draft: base }, { name: 'A', draft: next }, ctx, people);
+    expect(line?.to).toBe('The household’s approvers and whoever admits the agent');
+  });
+});
+
+describe('plainWords', () => {
+  const words = (name: string) => {
+    const draft = templatesFixture.find((t) => t.name === name)?.draft;
+    if (!draft) throw new Error(`no template ${name}`);
+    return plainWords(draft, devicesFixture, 'en');
+  };
+
+  it('says what a base template allows, asks and never allows', () => {
+    expect(words('hm-voice-cautious')).toEqual({
+      allow: ['All devices: read', 'Lights: turn on, turn off, adjust', 'Climate: set temperature'],
+      ask: ['Lock: unlock, open'],
+      deny: ['Camera: all actions', 'Alarm: disarm'],
+    });
+  });
+
+  it('has nothing to say for an empty template (everything else is forbidden anyway)', () => {
+    expect(words('empty')).toEqual({ allow: [], ask: [], deny: [] });
+  });
+
+  it('names conditions and critical actions without approval, and each line once', () => {
+    const draft = {
+      ...base,
+      rules: [
+        { id: 'a', resource: { category: 'media' as const }, actions: ['*'], decision: 'allow' as const, conditions: { time_window: '07:00-22:00' } },
+        { id: 'b', resource: { category: 'lock' as const }, actions: ['unlock'], decision: 'allow' as const, allow_critical: true as const },
+        { id: 'c', resource: { category: 'lock' as const }, actions: ['unlock'], decision: 'allow' as const, allow_critical: true as const },
+      ],
+    };
+    const { allow } = plainWords(draft, devicesFixture, 'en');
+    expect(allow).toHaveLength(2);
+    expect(allow[0]).toMatch(/^Media: all actions · 07:00\sAM to 10:00\sPM$/);
+    expect(allow[1]).toBe('Lock: unlock · critical actions too, without approval');
   });
 });

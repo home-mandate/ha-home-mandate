@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { BIDI_NAME, NOW } from '../api/fixtures.ts';
 import { createMockClient, type MockClient, type MockOptions } from '../api/mock.ts';
 import type { Rule } from '../api/types.ts';
+import { ApiError } from '../api/client.ts';
 import { AppState } from '../app/state.svelte.ts';
 import { setLocale } from '../paraglide/runtime.js';
 import MandateList from './MandateList.svelte';
@@ -66,15 +67,36 @@ describe('MandateList', () => {
     expect(within(table).getByText('Revoked')).toBeTruthy();
   });
 
-  it('shows the templates in the decision language', async () => {
+  it('shows the templates in plain words, base templates with title and description', async () => {
     await start();
     const section = await screen.findByRole('region', { name: 'Start from a template' });
     const cards = within(section).getAllByRole('article');
-    expect(cards.map((c) => within(c).getByRole('heading').textContent)).toEqual(['Read only', 'Voice assistant', 'Empty']);
-    expect(within(cards[0] as HTMLElement).getByText('All devices: read')).toBeTruthy();
-    expect(within(cards[1] as HTMLElement).getByText('Camera: all actions')).toBeTruthy();
-    expect(within(cards[2] as HTMLElement).getByText('Default: denied')).toBeTruthy();
-    expect(within(section).getByText('Locks, gates, alarms and cameras are never allowed in templates.')).toBeTruthy();
+    expect(cards.map((c) => within(c).getByRole('heading').textContent)).toEqual([
+      'Read only',
+      'Light and climate',
+      'Voice assistant (cautious)',
+      'empty',
+      'read-only',
+      'voice-assistant',
+    ]);
+    const cautious = within(cards[2] as HTMLElement);
+    expect(cautious.getByText('Built in')).toBeTruthy();
+    expect(cautious.getByText(/Opens locks only after you confirm it on your phone/)).toBeTruthy();
+    expect(cautious.getByText('Asks you first')).toBeTruthy();
+    expect(cautious.getByText('Lock: unlock, open')).toBeTruthy();
+    expect(cautious.getByText('Camera: all actions')).toBeTruthy();
+    expect(within(cards[3] as HTMLElement).queryByText('Built in')).toBeNull();
+    expect(within(cards[3] as HTMLElement).getByText('Everything else is forbidden.')).toBeTruthy();
+    expect(within(section).getByText('Each card says what the template allows; everything else stays forbidden.')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Templates' }).getAttribute('href')).toBe('#/templates');
+  });
+
+  it('does not offer hidden base templates', async () => {
+    await start({}, async (a) => a.setTemplateHidden('hm-light-climate', true));
+    const section = await screen.findByRole('region', { name: 'Start from a template' });
+    const titles = within(section).getAllByRole('heading').map((h) => h.textContent);
+    expect(titles).not.toContain('Light and climate');
+    expect(titles).toContain('Read only');
   });
 
   it('says that mandates keep applying when loading fails, and recovers on retry', async () => {
@@ -143,7 +165,7 @@ describe('MandateList', () => {
     await app.start();
     render(MandateList, { app, now: Date.parse(NOW) });
     const section = await screen.findByRole('region', { name: 'Start from a template' });
-    expect(within(section).getAllByRole('article')).toHaveLength(2);
+    expect(within(section).getAllByRole('article')).toHaveLength(5);
   });
 
   it('shows cards instead of a table on mobile', async () => {
@@ -269,19 +291,32 @@ describe('new mandate', () => {
     await fireEvent.click(within(section).getByRole('button', { name: 'Use template: Read only' }));
     const dialog = await screen.findByRole('dialog', { name: 'New mandate' });
     const template = within(dialog).getByLabelText('Template') as HTMLSelectElement;
-    expect(template.value).toBe('read-only');
+    expect(template.value).toBe('hm-read-only');
     const name = within(dialog).getByLabelText('Display name') as HTMLInputElement;
     expect(name.value).toBe('Read only');
+    // The chosen template is shown in plain words.
+    expect(within(dialog).getByRole('group', { name: 'What the template Read only allows' }).textContent).toContain('All devices: read');
     // The name follows the template until someone types one.
     await fireEvent.change(template, { target: { value: 'empty' } });
-    expect(name.value).toBe('Empty');
+    expect(name.value).toBe('empty');
     await fireEvent.input(name, { target: { value: 'Tablet' } });
-    await fireEvent.change(template, { target: { value: 'read-only' } });
+    await fireEvent.change(template, { target: { value: 'hm-read-only' } });
     expect(name.value).toBe('Tablet');
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Create mandate' }));
     await waitFor(() => expect(window.location.hash).toMatch(/^#\/mandates\/mandate-mock-\d+$/));
     const created = (await api.mandates()).find((x) => x.name === 'Tablet');
     expect(created).toMatchObject({ client_id: 'pair:long', rule_count: 1, status: 'active' });
+  });
+
+  it('says when nobody could approve for the template (no_approvers)', async () => {
+    const { api } = await start({}, async (a) => void (await a.revokeMandate('mandate-long')));
+    api.createMandate = async () => {
+      throw new ApiError('no_approvers', 422);
+    };
+    await fireEvent.click(await screen.findByRole('button', { name: 'New mandate' }));
+    const dialog = await screen.findByRole('dialog', { name: 'New mandate' });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Create mandate' }));
+    await waitFor(() => expect(within(dialog).getByRole('alert').textContent).toContain('Nobody could approve requests of this template'));
   });
 
   it('creates from a critical template only after the separate confirmation (U9)', async () => {

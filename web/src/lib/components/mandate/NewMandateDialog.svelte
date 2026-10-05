@@ -7,11 +7,11 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte';
   import { ApiError, type ApiClient } from '../../api/client.ts';
-  import type { Agent, Rule, Template } from '../../api/types.ts';
+  import type { Agent, DeviceCatalog, Rule, Template } from '../../api/types.ts';
   import { m } from '../../i18n.ts';
   import { getLocale } from '../../paraglide/runtime.js';
   import { NAME_MAX } from '../../mandate/problems.ts';
-  import { templateName } from '../../mandate/template.ts';
+  import { templateDescription, templateTitle, titleOf } from '../../mandate/template.ts';
   import { href } from '../../router.ts';
   import { clientIdentity } from '../../ui/identity.ts';
   import { cleanUntrusted } from '../../untrusted.ts';
@@ -21,20 +21,23 @@
   import SelectField from '../SelectField.svelte';
   import TextField from '../TextField.svelte';
   import CriticalTemplateConfirm from './CriticalTemplateConfirm.svelte';
+  import PlainWords from './PlainWords.svelte';
 
   interface Props {
     open: boolean;
     api: ApiClient;
     /** Active agents without an active mandate. */
     agents: readonly Agent[];
+    /** Templates that are offered (no hidden base templates). */
     templates: readonly Template[];
+    catalog: DeviceCatalog;
     /** Template chosen on the list; the first one otherwise. */
     template: string | null;
     onclose: () => void;
     oncreated: (id: string) => void;
   }
 
-  let { open, api, agents, templates, template, onclose, oncreated }: Props = $props();
+  let { open, api, agents, templates, catalog, template, onclose, oncreated }: Props = $props();
 
   const id = $props.id();
   let agent = $state('');
@@ -53,7 +56,7 @@
     untrack(() => {
       agent = agents[0]?.client_id ?? '';
       chosen = template ?? templates[0]?.name ?? '';
-      name = templateName(chosen);
+      name = titleOf(chosen, templates);
       named = false;
       checked = false;
       busy = false;
@@ -69,17 +72,27 @@
       return { value: a.client_id, label: identity ? `${label} · ${identity.text}` : label };
     }),
   );
-  const templateOptions = $derived(templates.map((t) => ({ value: t.name, label: templateName(t.name) })));
+  const templateOptions = $derived(templates.map((t) => ({ value: t.name, label: templateTitle(t) })));
+  const picked = $derived(templates.find((t) => t.name === chosen) ?? null);
   const length = $derived([...name.trim()].length);
   const nameError = $derived(checked && (length < 1 || length > NAME_MAX) ? m.validation_name({ max: NAME_MAX }) : '');
   const possible = $derived(agents.length > 0 && templates.length > 0);
 
   function pickTemplate(next: string) {
     confirming = null; // another template: its own confirmation
-    if (!named) name = templateName(next);
+    if (!named) name = titleOf(next, templates);
   }
 
   const agentName = $derived(agents.find((a) => a.client_id === agent)?.display_name ?? '');
+
+  function failure(err: unknown): string {
+    if (!(err instanceof ApiError)) return m.mandates_new_failed();
+    if (err.code === 'conflict') return m.mandates_new_conflict();
+    if (err.code === 'no_approvers') return m.template_no_approvers();
+    // A template hidden or removed meanwhile.
+    if (err.code === 'invalid_input' && err.field === '/template') return m.template_gone();
+    return m.mandates_new_failed();
+  }
 
   async function create(event: SubmitEvent) {
     event.preventDefault();
@@ -106,7 +119,7 @@
         return;
       }
       confirming = null;
-      error = err instanceof ApiError && err.code === 'conflict' ? m.mandates_new_conflict() : m.mandates_new_failed();
+      error = failure(err);
     } finally {
       busy = false;
     }
@@ -120,6 +133,12 @@
       <p id="{id}-body">{m.mandates_new_body()}</p>
       <SelectField label={m.mandates_new_agent()} bind:value={agent} options={agentOptions} />
       <SelectField label={m.mandates_new_template()} bind:value={chosen} options={templateOptions} onchange={pickTemplate} />
+      {#if picked}
+        <div class="picked" role="group" aria-label={m.template_what({ template: templateTitle(picked) })}>
+          {#if templateDescription(picked)}<p>{templateDescription(picked)}</p>{/if}
+          <PlainWords draft={picked.draft} {catalog} locale={getLocale()} />
+        </div>
+      {/if}
       <TextField label={m.editor_name()} bind:value={name} bind:element={nameField} error={nameError} maxlength={NAME_MAX} oninput={() => (named = true)} />
     {:else}
       <p id="{id}-body">{m.mandates_new_none()}</p>
@@ -127,10 +146,10 @@
     {/if}
     {#if confirming}
       <CriticalTemplateConfirm
-        template={chosen}
+        template={titleOf(chosen, templates)}
         agent={agentName}
         rules={confirming}
-        catalog={{ areas: [], devices: [] }}
+        {catalog}
         locale={getLocale()}
         {busy}
         oncancel={() => (confirming = null)}
@@ -169,6 +188,15 @@
     min-block-size: var(--hm-size-touch);
     font-weight: var(--hm-font-weight-semibold);
     color: var(--hm-color-accent-text);
+  }
+  .picked {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hm-space-2);
+    padding: var(--hm-space-3) var(--hm-space-4);
+    border-radius: var(--hm-radius-md);
+    background: var(--hm-color-surface-sunken);
+    border: var(--hm-border-width) solid var(--hm-color-border-subtle);
   }
   .error {
     display: flex;
