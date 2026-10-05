@@ -83,6 +83,7 @@ export const systemFixture: SystemStatus = {
   chain: { valid: true, broken_at_seq: null, checked_at: '2026-10-02T17:38:00Z' },
   approvers_configured: 1,
   clock_behind: false,
+  directory: { store_failing_since: null, overflow: false },
 };
 
 export const defaultsFixture: Defaults = { approval_timeout: 'PT2M', max_actions_per_hour: 60, bell: false };

@@ -497,9 +497,10 @@ func TestRenameMovesTheMarkBeforeTheRefresh(t *testing.T) {
 }
 
 type fakeAliases struct {
-	mu      sync.Mutex
-	held    []Rename
-	observe []Rename
+	overflow bool
+	mu       sync.Mutex
+	held     []Rename
+	observe  []Rename
 }
 
 func (f *fakeAliases) Hold(rn Rename) bool {
@@ -516,6 +517,8 @@ func (f *fakeAliases) Observe([]ha.EntityEntry) []Rename {
 	f.observe = nil
 	return found
 }
+
+func (f *fakeAliases) Overflowing() bool { return f.overflow }
 
 func (f *fakeAliases) Formers(id string) []string {
 	f.mu.Lock()
@@ -567,5 +570,19 @@ func TestRenamesTakeEffectAtOnce(t *testing.T) {
 	}
 	if d, ok := c.Lookup("switch.garden_pump"); !ok || len(d.Formers) != 1 {
 		t.Errorf("after the refresh: %+v, %v", d, ok)
+	}
+}
+
+// Renames that can no longer be held would be forgotten: the catalog is not ready then.
+func TestNotReadyWhileRenamesOverflow(t *testing.T) {
+	c := loaded(t, house())
+	aliases := &fakeAliases{}
+	c.SetAliases(aliases)
+	if !c.Ready() {
+		t.Fatal("not ready")
+	}
+	aliases.overflow = true
+	if c.Ready() {
+		t.Error("ready while renames overflow")
 	}
 }

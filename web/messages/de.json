@@ -810,5 +810,8 @@
   "directory_renamed": "{former} in Home Assistant umbenannt in {device}",
   "directory_rename_applied": "Umbenennung {former} → {device} in die Mandate übernommen",
   "directory_rename_dismissed": "Umbenennung {former} → {device} nicht übernommen",
-  "audit_field_directory": "Änderung"
+  "audit_field_directory": "Änderung",
+  "banner_directory_title": "Änderungen am Geräteverzeichnis können nicht gespeichert werden",
+  "banner_directory_body": "Umbenennungen aus Home Assistant können seit {time} nicht gespeichert werden. Sie gelten weiter, bis Home-Mandate neu startet; prüfe das Datenverzeichnis.",
+  "banner_directory_overflow": "Zu viele Umbenennungen aus Home Assistant warten auf das Speichern. Alle Anfragen werden abgelehnt, bis sie gespeichert werden können; prüfe das Datenverzeichnis."
 }

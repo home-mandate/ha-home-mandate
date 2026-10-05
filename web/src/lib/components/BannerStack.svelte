@@ -56,6 +56,14 @@
       action={{ label: m.banner_chain_action(), onclick: () => onchain(brokenAt) }}
     />
   {/if}
+  {#if system.directory.store_failing_since !== null || system.directory.overflow}
+    <Banner
+      flush
+      kind={system.directory.overflow ? 'critical' : 'warning'}
+      title={m.banner_directory_title()}
+      body={system.directory.overflow ? m.banner_directory_overflow() : m.banner_directory_body({ time: at(system.directory.store_failing_since) })}
+    />
+  {/if}
   {#if system.clock_behind}
     <Banner flush kind="critical" title={m.banner_clock_title()} body={m.banner_clock_body()} />
   {/if}

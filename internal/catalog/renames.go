@@ -69,6 +69,28 @@ type Renames struct {
 	registry      map[string]string
 	registryDirty bool
 	unsaved       []held
+	// failingSince is when storing began to fail; zero while it works.
+	failingSince time.Time
+	// overflow: more renames waited to be stored than MaxUnsaved; the catalog is not
+	// ready then and every request is denied, rather than forgetting a rename.
+	overflow bool
+}
+
+// MaxUnsaved bounds the renames held in memory while they cannot be stored.
+const MaxUnsaved = 1000
+
+// FailingSince is when storing renames began to fail; zero while it works.
+func (r *Renames) FailingSince() time.Time {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.failingSince
+}
+
+// Overflowing reports whether more renames waited to be stored than MaxUnsaved.
+func (r *Renames) Overflowing() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.overflow
 }
 
 // LoadRenames reads the unresolved renames and the registry IDs from the database.
@@ -136,6 +158,10 @@ func (r *Renames) Hold(rn Rename) bool {
 		if registry == "" && rn.Registry != "" {
 			r.open[e] = rn.Registry
 		}
+		return false
+	}
+	if len(r.unsaved) >= MaxUnsaved {
+		r.overflow = true
 		return false
 	}
 	// The same entity (same registry ID) gets its former ID back: the rename is undone.
@@ -265,9 +291,16 @@ func (r *Renames) flush(ctx context.Context) error {
 		r.mu.Lock()
 		r.unsaved = append(unsaved, r.unsaved...)
 		r.registryDirty = r.registryDirty || dirty
+		if r.failingSince.IsZero() {
+			r.failingSince = time.Now()
+		}
 		r.mu.Unlock()
 		return err
 	}
+	r.mu.Lock()
+	r.failingSince = time.Time{}
+	r.overflow = r.overflow && len(r.unsaved) >= MaxUnsaved
+	r.mu.Unlock()
 	return nil
 }
 

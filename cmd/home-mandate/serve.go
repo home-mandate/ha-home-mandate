@@ -250,7 +250,11 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	g.api = api.New(apiCfg)
 	g.catalog.OnRefresh(func(renames []catalog.Rename) {
-		directoryChanged(ctx, logger, g.marks, g.renames, g.api.DevicesChanged, renames)
+		directoryChanged(ctx, logger, g.marks, g.renames, func() {
+			g.api.DevicesChanged()
+			// Whether storing renames fails is part of the system status.
+			g.api.SystemChanged()
+		}, renames)
 	})
 	if err := g.api.LoadSettings(ctx); err != nil {
 		g.listener.Close()
