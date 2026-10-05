@@ -620,11 +620,21 @@ func buildRequest(lang i18n.Lang, req Request, nonce string) ha.Notification {
 	}
 }
 
+// maxSchemeLength is the longest URI scheme shownID removes (SPEC-v0 section 3.3: 32).
+const maxSchemeLength = 32
+
 // shownID shows an identifier: the characters identifiers have (SPEC-v0 sections 3.3 and
-// 3.4) and nothing else, without "https://" so that it reads as a name, not a link, and
+// 3.4) and nothing else, without a scheme so that it reads as a name, not a link, and
 // at most maxID characters.
 func shownID(id string) string {
-	id = strings.TrimPrefix(id, "https://")
+	// Any scheme, in any case and repeated ("HTTPS://https://…"), goes.
+	for {
+		i := strings.Index(id, "://")
+		if i < 0 || i > maxSchemeLength {
+			break
+		}
+		id = id[i+3:]
+	}
 	var b strings.Builder
 	for _, r := range id {
 		if b.Len() >= maxID {

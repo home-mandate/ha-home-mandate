@@ -25,8 +25,11 @@ type Marks struct {
 	// rec records every change in the audit log, in the same transaction; nil: none.
 	rec Recorder
 
-	mu  sync.RWMutex
-	set map[string]struct{}
+	// writeMu orders the writers; the transaction runs without mu, so that reading the
+	// marks (every decision) never waits for the database.
+	writeMu sync.Mutex
+	mu      sync.RWMutex
+	set     map[string]struct{}
 }
 
 // LoadMarks reads the marks from the database.
@@ -63,8 +66,11 @@ func (m *Marks) SetRecorder(rec Recorder) {
 }
 
 // change runs query in a transaction and records entry with it if it changed a row; the
-// caller holds the lock. It reports whether a row changed.
+// caller holds writeMu, not mu. It reports whether a row changed.
 func (m *Marks) change(ctx context.Context, entry audit.Entry, query string, args ...any) (bool, error) {
+	m.mu.RLock()
+	rec := m.rec
+	m.mu.RUnlock()
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("catalog: store critical entity: %w", err)
@@ -78,8 +84,8 @@ func (m *Marks) change(ctx context.Context, entry audit.Entry, query string, arg
 	if err != nil {
 		return false, fmt.Errorf("catalog: store critical entity: %w", err)
 	}
-	if n > 0 && m.rec != nil {
-		if _, err := m.rec.AppendTx(ctx, tx, entry); err != nil {
+	if n > 0 && rec != nil {
+		if _, err := rec.AppendTx(ctx, tx, entry); err != nil {
 			return false, err
 		}
 	}
@@ -123,15 +129,17 @@ func (m *Marks) Set(ctx context.Context, entityID string, critical bool, by stri
 	if by == "" {
 		return errors.New("catalog: no user")
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
 	user := audit.Actor{Kind: audit.ActorUser, ID: by}
 	if !critical {
 		if _, err := m.change(ctx, markEntry(user, audit.DirectoryCriticalUnmarked, entityID),
 			`DELETE FROM critical_entities WHERE entity_id = ?`, entityID); err != nil {
 			return err
 		}
+		m.mu.Lock()
 		delete(m.set, entityID)
+		m.mu.Unlock()
 		return nil
 	}
 	if _, err := m.change(ctx, markEntry(user, audit.DirectoryCriticalMarked, entityID), `INSERT INTO critical_entities
@@ -139,7 +147,9 @@ func (m *Marks) Set(ctx context.Context, entityID string, critical bool, by stri
 		entityID, time.Now().UTC().Format(time.RFC3339), by); err != nil {
 		return err
 	}
+	m.mu.Lock()
 	m.set[entityID] = struct{}{}
+	m.mu.Unlock()
 	return nil
 }
 
@@ -172,15 +182,17 @@ func (m *Marks) Carry(ctx context.Context, oldID, newID string) (bool, error) {
 	if !m.Critical(oldID) {
 		return false, nil
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
 	changed, err := m.change(ctx, markEntry(audit.Actor{Kind: audit.ActorSystem, ID: systemActor}, audit.DirectoryCriticalMarked, newID),
 		`INSERT INTO critical_entities (entity_id, marked_at, marked_by) VALUES (?, ?, ?) ON CONFLICT (entity_id) DO NOTHING`,
 		newID, time.Now().UTC().Format(time.RFC3339), systemActor)
 	if err != nil {
 		return false, err
 	}
+	m.mu.Lock()
 	m.set[newID] = struct{}{}
+	m.mu.Unlock()
 	return changed, nil
 }
 

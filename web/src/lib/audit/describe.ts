@@ -47,7 +47,11 @@ export function directoryText(entry: AuditEntry, catalog: DeviceCatalog | null):
   const d = entry.directory;
   const text = d ? (DIRECTORY[d.change] as ((v: { device: string; former: string }) => string) | undefined) : undefined;
   if (!d || !text) return '';
-  return text({ device: isolate(deviceName(d.entity_id, catalog)), former: isolate(cleanUntrusted(d.previous_entity_id ?? '')) });
+  // The name comes from Home Assistant and could imitate another device; the ID cannot.
+  const name = deviceName(d.entity_id, catalog);
+  const id = cleanUntrusted(d.entity_id);
+  const device = name === id ? isolate(id) : `${isolate(name)} (${isolate(id)})`;
+  return text({ device, former: isolate(cleanUntrusted(d.previous_entity_id ?? '')) });
 }
 
 /** deviceName is the device's name from Home Assistant, else its entity ID, both cleaned. */

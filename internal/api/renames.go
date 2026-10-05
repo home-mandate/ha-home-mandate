@@ -212,7 +212,11 @@ func (s *Server) applyRename(r *request) (any, error) {
 		}
 		changes = append(changes, change{a, doc})
 	}
-	// Every affected mandate changes in one transaction: all of them or none.
+	// Every affected mandate and the rename change in one transaction: all or nothing.
+	// Renames only held in memory are stored first, outside it.
+	if err := s.cfg.Renames.Store(r.Context()); err != nil {
+		return nil, err
+	}
 	tx, err := s.cfg.Store.DB().BeginTx(r.Context(), nil)
 	if err != nil {
 		return nil, err
@@ -224,13 +228,23 @@ func (s *Server) applyRename(r *request) (any, error) {
 			return nil, mandateError(err, "/entity_id", nil)
 		}
 	}
+	done, err := s.cfg.Renames.ResolveTx(r.Context(), tx, entityID, formers, catalog.ResolutionApplied, r.user)
+	if errors.Is(err, catalog.ErrRenamesChanged) {
+		return nil, fail(codeConflict)
+	}
+	if err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	done()
 	for _, c := range changes {
 		s.publish(event{Type: "mandates.changed", ID: c.a.info.ID})
 	}
-	return s.resolveRename(r, entityID, formers, catalog.ResolutionApplied, len(changes))
+	s.cfg.Logger.Warn("rename taken over", "entity_id", entityID, "formers", formers, "mandates", len(changes), "by", r.user)
+	s.publish(event{Type: "devices.changed"})
+	return nil, nil
 }
 
 // dismissRename resolves a rename without changing a mandate: rules on the former IDs no

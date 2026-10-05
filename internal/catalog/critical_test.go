@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/home-mandate/home-mandate/internal/catalog"
 	"github.com/home-mandate/home-mandate/internal/store"
@@ -132,5 +133,33 @@ func TestHoldMarksTheNewIDAtOnceInMemory(t *testing.T) {
 	}
 	if reloaded, _ := catalog.LoadMarks(ctx, s.DB()); !reloaded.Critical("lock.cellar_door") {
 		t.Error("Carry did not store the held mark")
+	}
+}
+
+// Reading the marks (every decision does) never waits for a write that waits for the
+// database, e.g. while an action holds the audit log.
+func TestReadingMarksDoesNotWaitForAWrite(t *testing.T) {
+	m, s := newMarks(t)
+	ctx := context.Background()
+	if err := m.Set(ctx, "lock.cellar", true, "user-1"); err != nil {
+		t.Fatal(err)
+	}
+	busy, err := s.DB().BeginTx(ctx, nil) // holds the write lock
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- m.Set(ctx, "lock.garage", true, "user-1") }()
+	time.Sleep(100 * time.Millisecond) // the write is waiting for the database now
+	start := time.Now()
+	if !m.Critical("lock.cellar") || m.Critical("lock.garage") {
+		t.Error("marks read wrong while a write waits")
+	}
+	if waited := time.Since(start); waited > 50*time.Millisecond {
+		t.Errorf("reading waited %v for the write", waited)
+	}
+	_ = busy.Rollback()
+	if err := <-done; err != nil || !m.Critical("lock.garage") {
+		t.Errorf("write after the database was free: %v", err)
 	}
 }

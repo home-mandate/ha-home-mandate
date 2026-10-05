@@ -301,17 +301,37 @@ func (r *Renames) store(ctx context.Context, rec Recorder, unsaved []held, regis
 // meanwhile, nothing is resolved (ErrRenamesChanged). resolution says whether the rules
 // were changed (applied) or a human decided to let them go (dismissed).
 func (r *Renames) Resolve(ctx context.Context, entityID string, expected []string, resolution, by string) error {
-	if resolution != ResolutionApplied && resolution != ResolutionDismissed {
-		return errors.New("catalog: unknown resolution")
-	}
-	if by == "" {
-		return errors.New("catalog: no user")
-	}
 	r.storeMu.Lock()
 	defer r.storeMu.Unlock()
 	// Renames only held in memory are stored first, so that resolving them sticks.
 	if err := r.flush(ctx); err != nil {
 		return err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("catalog: resolve rename: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	done, err := r.ResolveTx(ctx, tx, entityID, expected, resolution, by)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("catalog: resolve rename: %w", err)
+	}
+	done()
+	return nil
+}
+
+// ResolveTx is Resolve inside tx, so that the mandates a rename is taken over into and
+// the rename change together. Call Store before tx begins, so that held renames are
+// stored; call done after tx committed.
+func (r *Renames) ResolveTx(ctx context.Context, tx *sql.Tx, entityID string, expected []string, resolution, by string) (done func(), err error) {
+	if resolution != ResolutionApplied && resolution != ResolutionDismissed {
+		return nil, errors.New("catalog: unknown resolution")
+	}
+	if by == "" {
+		return nil, errors.New("catalog: no user")
 	}
 	r.mu.RLock()
 	rec := r.rec
@@ -328,16 +348,8 @@ func (r *Renames) Resolve(ctx context.Context, entityID string, expected []strin
 	}
 	r.mu.RUnlock()
 	if !sameSet(formers, expected) {
-		return ErrRenamesChanged
+		return nil, ErrRenamesChanged
 	}
-	if len(edges) == 0 {
-		return nil
-	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("catalog: resolve rename: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
 	now := time.Now().UTC().Format(time.RFC3339)
 	if rec != nil {
 		change := audit.DirectoryRenameApplied
@@ -346,25 +358,23 @@ func (r *Renames) Resolve(ctx context.Context, entityID string, expected []strin
 		}
 		for _, former := range formers {
 			if _, err := rec.AppendTx(ctx, tx, renameEntry(audit.Actor{Kind: audit.ActorUser, ID: by}, change, entityID, former)); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
 	for _, e := range edges {
 		if _, err := tx.ExecContext(ctx, `UPDATE entity_renames SET resolved_at = ?, resolved_by = ?, resolution = ?
 			WHERE old_id = ? AND new_id = ? AND resolved_at IS NULL`, now, by, resolution, e.old, e.new); err != nil {
-			return fmt.Errorf("catalog: resolve rename: %w", err)
+			return nil, fmt.Errorf("catalog: resolve rename: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("catalog: resolve rename: %w", err)
-	}
-	r.mu.Lock()
-	for _, e := range edges {
-		delete(r.open, e)
-	}
-	r.mu.Unlock()
-	return nil
+	return func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		for _, e := range edges {
+			delete(r.open, e)
+		}
+	}, nil
 }
 
 func sameSet(a, b []string) bool {

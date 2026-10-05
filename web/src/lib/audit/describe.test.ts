@@ -85,9 +85,9 @@ describe('directoryText', () => {
   });
   it('says what changed in the directory, with the device name and the former ID', () => {
     const catalog = devicesFixture;
-    expect(directoryText(entry({ change: 'critical_marked', entity_id: 'lock.front_door' }), catalog)).toMatch(/^.Haustür. marked as critical$/);
+    expect(directoryText(entry({ change: 'critical_marked', entity_id: 'lock.front_door' }), catalog)).toMatch(/^.Haustür. \(.lock\.front_door.\) marked as critical$/);
     expect(directoryText(entry({ change: 'renamed', entity_id: 'lock.front_door', previous_entity_id: 'lock.old_door' }), catalog)).toMatch(
-      /^.lock\.old_door. renamed to .Haustür. in Home Assistant$/,
+      /^.lock\.old_door. renamed to .Haustür. \(.lock\.front_door.\) in Home Assistant$/,
     );
     expect(directoryText(entry({ change: 'rename_dismissed', entity_id: 'lock.gone', previous_entity_id: 'lock.old' }), null)).toMatch(/not taken over$/);
     expect(directoryText({ ...entry(undefined), event: 'decision' }, catalog)).toBe('');
