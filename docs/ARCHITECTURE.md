@@ -175,7 +175,8 @@ Two ways, both standard OAuth, both require a confirmation inside the household:
   registration is **off**.
 - The human signs in with their Home Assistant account (HA as identity provider via its OAuth
   for external applications) and picks the mandate for the new agent: a mandate template
-  (`home-mandate mandate template import`) that becomes the agent's mandate.
+  that becomes the agent's mandate. Each template shows in plain words what it allows,
+  where it asks and what it never allows.
 - Only HA administrators may admit agents.
 
 **b) Agents without a browser** (Device Authorization Grant, RFC 8628) – the "pairing code"
@@ -185,6 +186,26 @@ Two ways, both standard OAuth, both require a confirmation inside the household:
 
 Agent, mandate and first tokens are created in one transaction when the agent redeems the
 human's decision; codes, pairings and browser sessions live in memory only.
+
+**Mandate templates.** A template is a mandate without principal, agent, issue times and
+validity; admission fills them in.
+- **Base templates** ship with Home-Mandate, so a new installation can admit an agent at
+  once: `hm-read-only` (reads everything), `hm-light-climate` (reads everything, switches
+  lights, sets temperatures, moves covers such as blinds; garage doors and gates are the
+  category `gate` and not included) and `hm-voice-cautious` (as `hm-light-climate` without
+  covers, locks only with approval, never cameras or disarming the alarm). They cannot be
+  changed or removed, only used, loaded into the editor and saved under a new name, and
+  hidden: a hidden base template is neither offered nor accepted at admission. Names
+  starting with `hm-` are reserved for them.
+- **Approvers as a placeholder.** In a template, the approver `$approvers` stands for the
+  human who admits the agent plus every approver set up in Home-Mandate, without
+  duplicates; admission replaces it. Without anyone to put there, admission is refused. A
+  mandate never contains a value starting with `$`: storing one is refused, so no mandate
+  can exist that nobody may approve. The placeholder is Home-Mandate's for now; a template
+  format of the specification is planned to take it over unchanged.
+- Templates of the household are edited in the UI (Mandates → Templates) with the mandate
+  editor and its preview; changing one names the version it started from, as for
+  mandates.
 
 **Tokens:** opaque random values (256 bits), stored in the database only as a hash.
 Access tokens 10 minutes, refresh tokens 30 days with rotation and reuse detection (reusing an
