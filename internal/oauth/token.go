@@ -72,7 +72,7 @@ func pkceMatches(verifier, challenge string) bool {
 // reports whether the failure was on the server side, so that a pairing can be retried;
 // the admission is not cancelled when the agent disconnects.
 func (s *Server) admit(w http.ResponseWriter, r *http.Request, client Client, resource string, d decision) (serverError bool) {
-	a, tokens, err := s.cfg.Admission.Admit(context.WithoutCancel(r.Context()), admission.Request{DisplayName: d.name, Template: d.template,
+	a, tokens, err := s.cfg.Admission.Admit(context.WithoutCancel(r.Context()), admission.Request{DisplayName: d.name, Template: d.template, TemplateDigest: d.templateDigest,
 		OAuthClient: client.ID, ClientVerified: client.Verified, RedirectURIs: client.RedirectURIs, Resource: resource,
 		By: audit.Actor{Kind: audit.ActorUser, ID: d.by}})
 	switch {

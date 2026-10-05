@@ -99,11 +99,14 @@ func openStore(ctx context.Context, dataDir string) (*state, error) {
 	// The approvers placeholder of templates stands for them, with the admitting human.
 	adm.SetApprovers(func(ctx context.Context) ([]string, error) {
 		list, err := approvers.List(ctx)
+		if err != nil {
+			return nil, err
+		}
 		ids := make([]string, len(list))
 		for i, a := range list {
 			ids[i] = a.UserID
 		}
-		return ids, err
+		return ids, nil
 	})
 	return &state{store: st, household: household, log: log, agents: agents, mandates: mandates,
 		admission: adm, approvers: approvers}, nil

@@ -62,7 +62,7 @@ func TestTemplatesUnavailable(t *testing.T) {
 	if res := b.get(ConsentPath); res.status != http.StatusServiceUnavailable {
 		t.Errorf("consent page = %d", res.status)
 	}
-	res := b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, page.body)}, "action": {"approve"}, "name": {"x"}, "template": {"voice-assistant"}})
+	res := b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, page.body)}, "action": {"approve"}, "name": {"x"}, "template": {voiceChoice}})
 	if res.status != http.StatusServiceUnavailable {
 		t.Errorf("approve = %d", res.status)
 	}
@@ -83,7 +83,7 @@ func TestTooManyOpenCodes(t *testing.T) {
 	b := h.browser()
 	_, challenge := pkce()
 	page := b.consentAs(challenge, "admin-code")
-	res := b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, page.body)}, "action": {"approve"}, "name": {"x"}, "template": {"voice-assistant"}})
+	res := b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, page.body)}, "action": {"approve"}, "name": {"x"}, "template": {voiceChoice}})
 	if u, _ := url.Parse(res.location); res.status != http.StatusSeeOther || u.Query().Get("error") != "temporarily_unavailable" {
 		t.Errorf("approve = %d %q", res.status, res.location)
 	}

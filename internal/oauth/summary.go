@@ -8,12 +8,14 @@ import (
 
 	"github.com/home-mandate/home-mandate/internal/admission"
 	"github.com/home-mandate/home-mandate/internal/i18n"
+	"github.com/home-mandate/home-mandate/internal/mandate"
 )
 
 // consentTemplate is a template as the consent page shows it: what the human chooses
 // from, in plain words (ARCHITECTURE section 6).
 type consentTemplate struct {
 	Name, Title, Description string
+	Digest                   string // bound to the choice: the human approves what they saw
 	Base                     bool
 	Allow, Ask, Deny         []string
 }
@@ -30,15 +32,21 @@ func (s *Server) consentTemplates(ctx context.Context, lang i18n.Lang) ([]consen
 		if t.Hidden {
 			continue
 		}
-		doc, _, err := s.cfg.Admission.TemplateDocument(ctx, t.Name)
+		doc, full, err := s.cfg.Admission.TemplateDocument(ctx, t.Name)
 		if err != nil {
 			return nil, err
+		}
+		// A template that grants critical actions without approval needs a separate
+		// confirmation (decision U9), which this page does not ask for: it is admitted
+		// through the UI, which does.
+		if critical, err := mandate.NewCriticalGrant(nil, doc); err != nil || critical {
+			continue
 		}
 		sum, err := admission.Summarize(doc)
 		if err != nil {
 			return nil, err
 		}
-		c := consentTemplate{Name: t.Name, Title: t.Name, Base: t.Builtin,
+		c := consentTemplate{Name: t.Name, Title: t.Name, Base: t.Builtin, Digest: full.Digest,
 			Allow: summaryLines(lang, sum.Allow), Ask: summaryLines(lang, sum.Ask), Deny: summaryLines(lang, sum.Deny)}
 		if t.Builtin {
 			c.Title, c.Description = t.Title[string(lang)], t.Description[string(lang)]

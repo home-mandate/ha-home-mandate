@@ -20,7 +20,7 @@ const (
 	codeInvalidMandate  = "invalid_mandate"
 	codeCriticalConfirm = "critical_confirmation_required"
 	codeBuiltinTemplate = "builtin_template" // a base template cannot be changed or removed
-	codeNoApprovers     = "no_approvers"     // a template's placeholder has nobody to stand for"
+	codeNoApprovers     = "no_approvers"     // a template's placeholder has nobody to stand for
 	codePairingInvalid  = "pairing_code_invalid"
 	codePairingExpired  = "pairing_code_expired"
 	codePairingLocked   = "pairing_locked"

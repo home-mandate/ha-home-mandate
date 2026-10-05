@@ -57,3 +57,12 @@ func TestBaseTemplatesSummarize(t *testing.T) {
 		}
 	}
 }
+
+func TestSummarizeEmptyConditionsRestrictNothing(t *testing.T) {
+	for _, c := range []string{`null`, `{}`, `[]`} {
+		s, err := admission.Summarize([]byte(`{"rules":[{"resource":{"any":true},"actions":["read"],"decision":"allow","conditions":` + c + `}]}`))
+		if err != nil || s.Allow[0].Conditions {
+			t.Errorf("conditions %s: %+v, %v", c, s, err)
+		}
+	}
+}

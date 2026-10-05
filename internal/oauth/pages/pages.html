@@ -37,7 +37,7 @@
 <fieldset class="templates">
 <legend>{{.T "page_consent_template"}}</legend>
 {{range $i, $t := .Templates}}<div class="template">
-<input type="radio" id="template-{{$i}}" name="template" value="{{$t.Name}}" aria-describedby="template-{{$i}}-details" required{{if eq $t.Name $.Selected}} checked{{end}}>
+<input type="radio" id="template-{{$i}}" name="template" value="{{$t.Name}}@{{$t.Digest}}" aria-describedby="template-{{$i}}-details" required{{if eq $t.Name $.Selected}} checked{{end}}>
 <label for="template-{{$i}}">{{$t.Title}}{{if $t.Base}} <span class="badge">{{$.T "page_consent_base"}}</span>{{end}}</label>
 <div class="details" id="template-{{$i}}-details">
 {{if $t.Description}}<p>{{$t.Description}}</p>{{end}}

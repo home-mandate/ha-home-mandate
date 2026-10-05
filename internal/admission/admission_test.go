@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -469,5 +470,43 @@ func TestInvalidTemplates(t *testing.T) {
 	}
 	if invalid, _ := e.adm.InvalidTemplates(ctx); len(invalid) != 2 {
 		t.Errorf("InvalidTemplates with a template that is no JSON = %+v", invalid)
+	}
+}
+
+// Edits of the same version at the same time: exactly one is stored, the others are
+// conflicts; also for new templates of the same name.
+func TestConcurrentTemplateEditsStoreExactlyOne(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if err := e.adm.UpdateTemplate(ctx, "shared", template(t, nil), "", false, admin); err != nil {
+		t.Fatal(err)
+	}
+	_, base, _ := e.adm.TemplateDocument(ctx, "shared")
+	for name, tc := range map[string]struct{ template, base string }{
+		"update of one version": {"shared", base.Digest},
+		"two new templates":     {"fresh", ""},
+	} {
+		var wg sync.WaitGroup
+		results := make(chan error, 8)
+		for i := range 8 {
+			wg.Go(func() {
+				doc := template(t, func(d map[string]any) { d["limits"] = map[string]any{"max_actions_per_hour": 10 + i} })
+				results <- e.adm.UpdateTemplate(ctx, tc.template, doc, tc.base, false, admin)
+			})
+		}
+		wg.Wait()
+		close(results)
+		stored := 0
+		for err := range results {
+			switch {
+			case err == nil:
+				stored++
+			case !errors.Is(err, mandate.ErrConflict):
+				t.Errorf("%s: %v", name, err)
+			}
+		}
+		if stored != 1 {
+			t.Errorf("%s: %d edits stored, want exactly 1", name, stored)
+		}
 	}
 }

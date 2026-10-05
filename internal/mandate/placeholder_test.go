@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/home-mandate/home-mandate/internal/mandate"
@@ -98,9 +99,17 @@ func TestReplaceApproversRefuses(t *testing.T) {
 		"approvers not a list": {`{"approval":{"approvers":"$approvers"},"rules":[]}`, []string{"user-1"}, mandate.ErrInvalid},
 		"approver not a text":  {`{"approval":{"approvers":[1]},"rules":[]}`, []string{"user-1"}, mandate.ErrInvalid},
 		"empty user ID":        {`{"approval":{"approvers":["$approvers"]},"rules":[]}`, []string{""}, mandate.ErrNoApprovers},
+		"empty approver":       {`{"approval":{"approvers":[""]},"rules":[]}`, []string{"user-1"}, mandate.ErrInvalid},
 	} {
 		if _, err := mandate.ReplaceApprovers([]byte(tc.doc), tc.users); !errors.Is(err, tc.want) {
 			t.Errorf("%s: err = %v, want %v", name, err, tc.want)
 		}
+	}
+}
+
+func TestReplaceApproversKeepsNumbersExactly(t *testing.T) {
+	out, err := mandate.ReplaceApprovers([]byte(`{"approval":{"approvers":["$approvers"]},"limits":{"max_actions_per_hour":9007199254740993},"rules":[]}`), []string{"user-1"})
+	if err != nil || !strings.Contains(string(out), "9007199254740993") {
+		t.Errorf("out = %s, %v", out, err)
 	}
 }

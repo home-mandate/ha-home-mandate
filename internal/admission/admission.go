@@ -61,8 +61,12 @@ type Template struct {
 
 // Request is a human's decision to admit an agent.
 type Request struct {
-	DisplayName    string // chosen by the human
-	Template       string
+	DisplayName string // chosen by the human
+	Template    string
+	// TemplateDigest is the digest of the template as the human was shown it: if the
+	// template changed since, nothing is admitted (mandate.ErrConflict). Empty where no
+	// template content was shown.
+	TemplateDigest string
 	OAuthClient    string // client ID of the agent's OAuth client
 	ClientVerified bool   // OAuthClient is a fetched Client ID Metadata Document
 	RedirectURIs   []string
@@ -84,7 +88,6 @@ type Store struct {
 	principal string
 
 	mu        sync.Mutex
-	updating  sync.Mutex // serializes UpdateTemplate
 	now       func() time.Time
 	approvers func(context.Context) ([]string, error)
 }
@@ -123,6 +126,19 @@ func (s *Store) PutTemplate(ctx context.Context, name string, document []byte, b
 	if err := checkOwnName(name); err != nil {
 		return err
 	}
+	if err := s.checkTemplate(document, by); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO mandate_templates (name, document, created_at, created_by) VALUES (?, ?, ?, ?)
+		ON CONFLICT (name) DO UPDATE SET document = excluded.document, created_at = excluded.created_at, created_by = excluded.created_by`,
+		name, string(document), s.clock().Format(time.RFC3339Nano), by.ID); err != nil {
+		return fmt.Errorf("admission: store template: %w", err)
+	}
+	return nil
+}
+
+// checkTemplate accepts a document whose instance is a valid mandate.
+func (s *Store) checkTemplate(document []byte, by audit.Actor) error {
 	if len(document) > evaluator.MaxMandateBytes {
 		return fmt.Errorf("%w: too large", ErrInvalidTemplate)
 	}
@@ -136,11 +152,6 @@ func (s *Store) PutTemplate(ctx context.Context, name string, document []byte, b
 	}
 	if _, err := evaluator.Parse(instance); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidTemplate, err)
-	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO mandate_templates (name, document, created_at, created_by) VALUES (?, ?, ?, ?)
-		ON CONFLICT (name) DO UPDATE SET document = excluded.document, created_at = excluded.created_at, created_by = excluded.created_by`,
-		name, string(document), s.clock().Format(time.RFC3339Nano), by.ID); err != nil {
-		return fmt.Errorf("admission: store template: %w", err)
 	}
 	return nil
 }
@@ -207,6 +218,9 @@ func (s *Store) Admit(ctx context.Context, req Request) (agent.Agent, agent.Toke
 	document, err := s.templateTx(ctx, tx, req.Template, req.ConfirmCritical)
 	if err != nil {
 		return agent.Agent{}, agent.TokenPair{}, err
+	}
+	if req.TemplateDigest != "" && digest(document) != req.TemplateDigest {
+		return agent.Agent{}, agent.TokenPair{}, fmt.Errorf("%w: the template changed since it was shown", mandate.ErrConflict)
 	}
 	a, err := s.agents.RegisterTx(ctx, tx, req.DisplayName, agent.Client{ID: req.OAuthClient, Verified: req.ClientVerified,
 		RedirectURIs: req.RedirectURIs}, req.By)
@@ -422,8 +436,6 @@ func (s *Store) UpdateTemplate(ctx context.Context, name string, document []byte
 	if err := checkOwnName(name); err != nil {
 		return err
 	}
-	s.updating.Lock() // the check of the base version and the write belong together
-	defer s.updating.Unlock()
 	current, info, err := s.TemplateDocument(ctx, name)
 	switch {
 	case errors.Is(err, ErrTemplateNotFound):
@@ -444,7 +456,28 @@ func (s *Store) UpdateTemplate(ctx context.Context, name string, document []byte
 			return mandate.ErrCriticalConfirmation
 		}
 	}
-	return s.PutTemplate(ctx, name, document, by)
+	if err := s.checkTemplate(document, by); err != nil {
+		return err
+	}
+	// The write itself is conditional, so no other writer (the command line is another
+	// process) can come in between the check of the base version and the write: an update
+	// only replaces the content it started from, a new template only takes a free name.
+	now := s.clock().Format(time.RFC3339Nano)
+	var res sql.Result
+	if current == nil {
+		res, err = s.db.ExecContext(ctx, `INSERT INTO mandate_templates (name, document, created_at, created_by) VALUES (?, ?, ?, ?)
+			ON CONFLICT (name) DO NOTHING`, name, string(document), now, by.ID)
+	} else {
+		res, err = s.db.ExecContext(ctx, `UPDATE mandate_templates SET document = ?, created_at = ?, created_by = ?
+			WHERE name = ? AND document = ?`, string(document), now, by.ID, name, string(current))
+	}
+	if err != nil {
+		return fmt.Errorf("admission: store template: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return fmt.Errorf("%w: the template changed since the edit started", mandate.ErrConflict)
+	}
+	return nil
 }
 
 // instantiate makes the mandate of a for a template. The mandate is valid from now on

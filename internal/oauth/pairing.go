@@ -61,6 +61,7 @@ type PairingApproval struct {
 	Code, PairingID string
 	DisplayName     string
 	Template        string
+	TemplateDigest  string // the template as the UI showed it; empty if not shown
 	MandateName     string
 	ConfirmCritical bool
 	By              string // Home Assistant user ID
@@ -219,8 +220,8 @@ func (s *Server) Approve(ctx context.Context, session string, a PairingApproval)
 	if !equalSecret(g.id, a.PairingID) {
 		return agent.Agent{}, ErrPairingConflict
 	}
-	return s.admitGrant(ctx, key, g.id, decision{name: a.DisplayName, template: a.Template, mandateName: a.MandateName,
-		confirmCritical: a.ConfirmCritical, by: a.By})
+	return s.admitGrant(ctx, key, g.id, decision{name: a.DisplayName, template: a.Template, templateDigest: a.TemplateDigest,
+		mandateName: a.MandateName, confirmCritical: a.ConfirmCritical, by: a.By})
 }
 
 // Deny refuses the agent behind a code; its next poll gets access_denied.
@@ -256,7 +257,7 @@ func (s *Server) admitGrant(ctx context.Context, key, id string, d decision) (ag
 	client, resource := g.client, g.resource
 	s.mu.Unlock()
 
-	a, tokens, err := s.cfg.Admission.Admit(context.WithoutCancel(ctx), admission.Request{DisplayName: d.name, Template: d.template,
+	a, tokens, err := s.cfg.Admission.Admit(context.WithoutCancel(ctx), admission.Request{DisplayName: d.name, Template: d.template, TemplateDigest: d.templateDigest,
 		OAuthClient: client.ID, ClientVerified: client.Verified, RedirectURIs: client.RedirectURIs, Resource: resource,
 		MandateName: d.mandateName, ConfirmCritical: d.confirmCritical, By: audit.Actor{Kind: audit.ActorUser, ID: d.by}})
 	s.mu.Lock()
@@ -282,5 +283,6 @@ func (s *Server) admitGrant(ctx context.Context, key, id string, d decision) (ag
 func refused(err error) bool {
 	return errors.Is(err, agent.ErrEmergencyStop) || errors.Is(err, admission.ErrTemplateNotFound) ||
 		errors.Is(err, agent.ErrInvalidName) || errors.Is(err, mandate.ErrInvalid) ||
-		errors.Is(err, mandate.ErrCriticalConfirmation) || errors.Is(err, mandate.ErrConflict)
+		errors.Is(err, mandate.ErrCriticalConfirmation) || errors.Is(err, mandate.ErrConflict) ||
+		errors.Is(err, mandate.ErrNoApprovers)
 }

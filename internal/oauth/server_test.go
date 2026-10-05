@@ -94,6 +94,13 @@ type harness struct {
 	log    *audit.Log
 }
 
+// voiceChoice is the consent page's value for the voice assistant template: its name and
+// the digest of what the page showed of it. Every harness stores the same document.
+var (
+	voiceChoice string
+	voiceOnce   sync.Once
+)
+
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	ctx := context.Background()
@@ -114,6 +121,13 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	clock := &testClock{now: time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)}
+	voiceOnce.Do(func() {
+		_, info, err := adm.TemplateDocument(ctx, "voice-assistant")
+		if err != nil {
+			t.Fatal(err)
+		}
+		voiceChoice = "voice-assistant@" + info.Digest
+	})
 	h := &harness{t: t, clock: clock, agents: agents, adm: adm, log: log}
 	h.server = New(Config{PublicURL: testPublicURL, Resource: testResource,
 		SignIn: fakeSignIn{users: map[string]ha.User{"admin-code": adminUser, "plain-code": {ID: "u-plain", Name: "Plain"}}},
@@ -226,7 +240,7 @@ func (b *browser) consentAs(challenge, haCode string) response {
 func (b *browser) approve(consentPage response) string {
 	b.h.t.Helper()
 	res := b.post(ConsentPath, url.Values{"csrf": {csrfOf(b.h.t, consentPage.body)}, "action": {"approve"},
-		"name": {"Claude"}, "template": {"voice-assistant"}})
+		"name": {"Claude"}, "template": {voiceChoice}})
 	if res.status != http.StatusSeeOther || !strings.HasPrefix(res.location, testRedirect+"?") {
 		b.h.t.Fatalf("consent = %d %q\n%s", res.status, res.location, res.body)
 	}
@@ -597,6 +611,7 @@ func TestConsentRejects(t *testing.T) {
 		"empty name":   {func(c string) url.Values { return form(c, " ", "voice-assistant", "approve") }, nil, http.StatusBadRequest},
 		"no template":  {func(c string) url.Values { return form(c, "x", "none", "approve") }, nil, http.StatusBadRequest},
 		"no action":    {func(c string) url.Values { return form(c, "x", "voice-assistant") }, nil, http.StatusBadRequest},
+		"no digest":    {func(c string) url.Values { return form(c, "x", "voice-assistant", "approve") }, nil, http.StatusBadRequest},
 	} {
 		b := h.browser()
 		page := b.consentAs(challenge, "admin-code")
@@ -712,7 +727,7 @@ func TestConcurrentConsentDecidesOnce(t *testing.T) {
 	b := h.browser()
 	_, challenge := pkce()
 	page := b.consentAs(challenge, "admin-code")
-	form := url.Values{"csrf": {csrfOf(t, page.body)}, "action": {"approve"}, "name": {"x"}, "template": {"voice-assistant"}}
+	form := url.Values{"csrf": {csrfOf(t, page.body)}, "action": {"approve"}, "name": {"x"}, "template": {voiceChoice}}
 	var wg sync.WaitGroup
 	results := make([]response, 8)
 	for i := range results {
@@ -742,7 +757,7 @@ func TestConsentShowsTemplatesInPlainWords(t *testing.T) {
 	b := h.browser()
 	page := b.consentAs(challenge, "admin-code")
 	for _, want := range []string{"Voice assistant (cautious)", "Built in", "Asks you first", "Locks: unlock, open",
-		"Never", "Cameras: everything", "Everything else is forbidden.", `value="hm-read-only" aria-describedby="template-0-details" required checked`, `value="voice-assistant"`} {
+		"Never", "Cameras: everything", "Everything else is forbidden.", `value="hm-read-only@sha256:`, `aria-describedby="template-0-details" required checked`, `value="` + voiceChoice + `"`} {
 		if !strings.Contains(page.body, want) {
 			t.Errorf("consent page lacks %q", want)
 		}
@@ -753,5 +768,31 @@ func TestConsentShowsTemplatesInPlainWords(t *testing.T) {
 	res := b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, page.body)}, "action": {"approve"}, "name": {"Claude"}, "template": {"hm-light-climate"}})
 	if res.status != http.StatusBadRequest {
 		t.Errorf("approve with a hidden template = %d", res.status)
+	}
+}
+
+// Names and device IDs of templates are text, never markup, and a template granting
+// critical actions without approval is not offered here (it needs the UI's separate
+// confirmation).
+func TestConsentEscapesAndLeavesOutCriticalTemplates(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	local := audit.Actor{Kind: audit.ActorUser, ID: "local-admin"}
+	doc := mustDocument(t, h, "voice-assistant")
+	evil := strings.Replace(string(doc), `{"any":true}`, `{"entity_id":"light.<script>x</script>"}`, 1)
+	if err := h.adm.PutTemplate(ctx, "evil", []byte(evil), local); err != nil {
+		t.Fatal(err)
+	}
+	critical := strings.Replace(string(doc), `"rules":[`, `"rules":[{"id":"r-door","resource":{"category":"lock"},"actions":["unlock"],"decision":"allow","allow_critical":true},`, 1)
+	if err := h.adm.PutTemplate(ctx, "doors", []byte(critical), local); err != nil {
+		t.Fatal(err)
+	}
+	_, challenge := pkce()
+	page := h.browser().consentAs(challenge, "admin-code")
+	if strings.Contains(page.body, "<script>") || !strings.Contains(page.body, "light.&lt;script&gt;x&lt;/script&gt;") {
+		t.Error("an entity ID was not escaped")
+	}
+	if strings.Contains(page.body, `value="doors@`) {
+		t.Error("a template granting critical actions without approval is offered")
 	}
 }

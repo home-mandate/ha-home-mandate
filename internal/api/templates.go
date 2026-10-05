@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/home-mandate/home-mandate/internal/admission"
@@ -180,7 +179,7 @@ func (s *Server) putTemplate(r *request) (any, error) {
 		return nil, fail(codeConflict)
 	case errors.Is(err, mandate.ErrCriticalConfirmation):
 		return nil, fail(codeCriticalConfirm)
-	case errors.Is(err, admission.ErrInvalidTemplate) && strings.HasPrefix(name, "hm-"):
+	case errors.Is(err, admission.ErrReservedName):
 		return nil, failField(codeInvalidInput, "/name")
 	case errors.Is(err, admission.ErrInvalidTemplate):
 		return nil, failField(codeInvalidMandate, invalidField(err, "/draft", in.Draft))

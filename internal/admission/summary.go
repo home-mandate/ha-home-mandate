@@ -26,6 +26,23 @@ type SummaryLine struct {
 	Critical       bool // critical actions allowed without approval
 }
 
+// hasConditions tells whether a rule restricts itself: null, {} or [] restrict nothing.
+func hasConditions(raw json.RawMessage) bool {
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return len(raw) > 0
+	}
+	switch c := v.(type) {
+	case nil:
+		return false
+	case map[string]any:
+		return len(c) > 0
+	case []any:
+		return len(c) > 0
+	}
+	return true
+}
+
 // Summarize reads the rules of a mandate or template document.
 func Summarize(document []byte) (Summary, error) {
 	var d struct {
@@ -48,7 +65,7 @@ func Summarize(document []byte) (Summary, error) {
 	var s Summary
 	for _, r := range d.Rules {
 		line := SummaryLine{Any: r.Resource.Any, Category: r.Resource.Category, Area: r.Resource.Area, Entity: r.Resource.Entity,
-			Conditions: len(r.Conditions) > 0, Critical: r.AllowCritical}
+			Conditions: hasConditions(r.Conditions), Critical: r.AllowCritical}
 		for _, a := range r.Actions {
 			if a == "*" {
 				line.All = true

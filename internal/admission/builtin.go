@@ -28,8 +28,13 @@ const (
 	hiddenKey      = "template_hidden:" // settings key of a hidden base template
 )
 
-// ErrBuiltinTemplate means a base template was to be changed or removed.
-var ErrBuiltinTemplate = errors.New("admission: base templates cannot be changed")
+var (
+	// ErrBuiltinTemplate means a base template was to be changed or removed.
+	ErrBuiltinTemplate = errors.New("admission: base templates cannot be changed")
+	// ErrReservedName means a household template's name is not allowed (also wraps
+	// ErrInvalidTemplate).
+	ErrReservedName = fmt.Errorf("%w: name not allowed", ErrInvalidTemplate)
+)
 
 type builtin struct {
 	name               string
@@ -76,7 +81,7 @@ func checkOwnName(name string) error {
 		return ErrBuiltinTemplate
 	}
 	if !templateName.MatchString(name) || strings.HasPrefix(name, reservedPrefix) {
-		return fmt.Errorf("%w: name must match %s and not start with %q", ErrInvalidTemplate, templateName, reservedPrefix)
+		return fmt.Errorf("%w: must match %s and not start with %q", ErrReservedName, templateName, reservedPrefix)
 	}
 	return nil
 }
@@ -85,7 +90,7 @@ func checkOwnName(name string) error {
 func hidden(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }) (map[string]bool, error) {
-	rows, err := q.QueryContext(ctx, `SELECT key FROM settings WHERE key LIKE 'template_hidden:%'`)
+	rows, err := q.QueryContext(ctx, `SELECT key FROM settings WHERE key LIKE ? || '%'`, hiddenKey)
 	if err != nil {
 		return nil, fmt.Errorf("admission: read hidden templates: %w", err)
 	}

@@ -38,6 +38,7 @@ type authzRequest struct {
 // decision is what the human chose on the consent page or in the UI.
 type decision struct {
 	name, template  string
+	templateDigest  string // the template as the human saw it
 	mandateName     string
 	confirmCritical bool
 	by              string // Home Assistant user ID
@@ -279,17 +280,19 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 		s.denyGrant(st.device)
 		s.message(w, r, http.StatusOK, i18n.PageConsentTitle, i18n.PageDenied)
 	case "approve":
-		name, tmpl := strings.TrimSpace(form["name"]), form["template"]
+		name := strings.TrimSpace(form["name"])
+		// The choice names the template and the digest of what the page showed of it.
+		tmpl, shown, _ := strings.Cut(form["template"], "@")
 		templates, err := s.templateNames(r)
 		if err != nil {
 			s.fail(w, r, http.StatusServiceUnavailable, i18n.PageBusy)
 			return
 		}
-		if !displayable(name) || !slices.Contains(templates, tmpl) {
+		if !displayable(name) || !slices.Contains(templates, tmpl) || !strings.HasPrefix(shown, "sha256:") {
 			s.renderConsent(w, r, st, name, tmpl, i18n.PageConsentInvalid)
 			return
 		}
-		d := decision{name: name, template: tmpl, by: st.user.ID}
+		d := decision{name: name, template: tmpl, templateDigest: shown, by: st.user.ID}
 		if !s.decide(w, id, form["csrf"]) {
 			s.fail(w, r, http.StatusForbidden, i18n.PageSessionExpired)
 			return

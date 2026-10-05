@@ -3,6 +3,7 @@
 package mandate
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,10 +21,14 @@ var ErrNoApprovers = errors.New("mandate: nobody to approve")
 
 // ReplaceApprovers puts approvers in place of ApproversPlaceholder, on the mandate and on
 // every rule, without duplicates and keeping the order. Any other value starting with "$"
-// is refused, as is the placeholder without anyone to put there.
+// is refused, as is an empty approver and the placeholder without anyone to put there.
+// The document is written anew (numbers kept exactly), also when it has no placeholder;
+// approver lists lose duplicates then too.
 func ReplaceApprovers(document []byte, approvers []string) ([]byte, error) {
 	var doc map[string]any
-	if err := json.Unmarshal(document, &doc); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(document))
+	dec.UseNumber()
+	if err := dec.Decode(&doc); err != nil || doc == nil {
 		return nil, fmt.Errorf("%w: not a JSON object", ErrInvalid)
 	}
 	replace := func(approval any) error {
@@ -50,7 +55,7 @@ func ReplaceApprovers(document []byte, approvers []string) ([]byte, error) {
 		for _, v := range values {
 			s, ok := v.(string)
 			switch {
-			case !ok:
+			case !ok || s == "":
 				return fmt.Errorf("%w: an approver is not a text", ErrInvalid)
 			case s == ApproversPlaceholder:
 				if !slices.ContainsFunc(approvers, func(a string) bool { return a != "" }) {
