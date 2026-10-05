@@ -40,7 +40,10 @@ type Device struct {
 	Area     string
 	// Critical is true if the household marked the entity as critical: every action on
 	// it except read then needs a confirmation or allow_critical (SPEC-v0 section 4).
-	Critical   bool
+	Critical bool
+	// Formers are former IDs of a renamed entity that a human has not resolved yet: rules
+	// on them keep applying to it, the stricter evaluation wins.
+	Formers    []string
 	State      string
 	Attributes map[string]any
 }
@@ -94,7 +97,9 @@ type Catalog struct {
 	refreshing bool
 	pending    []stateChange
 	// renames are the entity IDs Home Assistant renamed since the last refresh by Run.
-	renames   []Rename
+	renames []Rename
+	// aliases keeps renames until a human resolves them; nil: renames are only reported.
+	aliases   Aliases
 	onRefresh func([]Rename)
 
 	refresh chan struct{}
@@ -105,6 +110,9 @@ type Catalog struct {
 type Rename struct {
 	Old string
 	New string
+	// Registry is the registry ID of Home Assistant the rename was found by; empty for
+	// one from the rename event.
+	Registry string
 }
 
 // maxRenames bounds the renames kept between two refreshes.
@@ -145,6 +153,20 @@ func (c *Catalog) Lookup(entityID string) (Device, bool) {
 	return c.marked(clone(d)), true
 }
 
+// Aliases are the renames a human has not resolved yet (Renames).
+type Aliases interface {
+	Hold(Rename) bool
+	Observe([]ha.EntityEntry) []Rename
+	Formers(entityID string) []string
+}
+
+// SetAliases sets where renames are kept until a human resolves them.
+func (c *Catalog) SetAliases(a Aliases) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.aliases = a
+}
+
 // SetMarks tells the catalog which entities the household marked as critical; without
 // it no entity is.
 func (c *Catalog) SetMarks(marks interface{ Critical(entityID string) bool }) {
@@ -153,9 +175,13 @@ func (c *Catalog) SetMarks(marks interface{ Critical(entityID string) bool }) {
 	c.marks = marks
 }
 
-// marked sets Critical from the marks of the household; the caller holds the lock.
+// marked sets Critical from the marks of the household and Formers from the unresolved
+// renames; the caller holds the lock.
 func (c *Catalog) marked(d Device) Device {
 	d.Critical = c.marks != nil && c.marks.Critical(d.EntityID)
+	if c.aliases != nil {
+		d.Formers = c.aliases.Formers(d.EntityID)
+	}
 	return d
 }
 
@@ -267,6 +293,13 @@ func (c *Catalog) Refresh(ctx context.Context) error {
 	if len(c.pending) >= maxPending {
 		return fmt.Errorf("catalog: too many changes during refresh")
 	}
+	// Renames while the events were missed (an outage, a restart) are found by the
+	// registry IDs, and take effect before the new IDs become visible.
+	if c.aliases != nil {
+		for _, rn := range c.aliases.Observe(entities) {
+			c.holdLocked(rn)
+		}
+	}
 	c.devices, c.entityArea, c.disabled, c.areas = snapshot, entityArea, disabled, areas
 	for _, ch := range c.pending {
 		c.applyLocked(ch)
@@ -329,17 +362,29 @@ func (c *Catalog) noteRename(data json.RawMessage) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// The mark moves at once, before the new ID can be decided on; Run stores it.
+	c.holdLocked(Rename{Old: oldID, New: newID})
+}
+
+// holdLocked takes a rename into effect at once, before the new ID can be decided on:
+// rules on the old ID keep applying and the critical mark moves along. Run stores both
+// after the refresh. The caller holds the lock.
+func (c *Catalog) holdLocked(rn Rename) {
 	if h, ok := c.marks.(interface {
 		Hold(oldID, newID string) bool
-	}); ok && h.Hold(oldID, newID) {
-		c.log.Warn("critical mark held for the renamed entity", "old", oldID, "new", newID)
+	}); ok && h.Hold(rn.Old, rn.New) {
+		c.log.Warn("critical mark held for the renamed entity", "old", rn.Old, "new", rn.New)
 	}
-	if len(c.renames) >= maxRenames {
-		c.log.Error("rename not reported: too many renames since the last refresh", "old", oldID, "new", newID)
+	if c.aliases != nil {
+		c.aliases.Hold(rn)
+	}
+	if slices.ContainsFunc(c.renames, func(x Rename) bool { return x.Old == rn.Old && x.New == rn.New }) {
 		return
 	}
-	c.renames = append(c.renames, Rename{Old: oldID, New: newID})
+	if len(c.renames) >= maxRenames {
+		c.log.Error("rename not reported: too many renames since the last refresh", "old", rn.Old, "new", rn.New)
+		return
+	}
+	c.renames = append(c.renames, rn)
 }
 
 func (c *Catalog) applyLocked(ch stateChange) {
@@ -379,23 +424,18 @@ func (c *Catalog) Run(ctx context.Context, debounce time.Duration) {
 		case <-c.refresh:
 		default:
 		}
-		c.mu.Lock()
-		renames := c.renames
-		c.renames = nil
-		c.mu.Unlock()
 		if err := c.Refresh(ctx); err != nil {
-			c.mu.Lock() // report them after the refresh that succeeds
-			c.renames = append(renames, c.renames...)[:min(len(renames)+len(c.renames), maxRenames)]
-			c.mu.Unlock()
+			// The renames stay and are reported after the refresh that succeeds.
 			if ctx.Err() == nil {
 				c.log.Warn("catalog refresh failed, retrying", "error", err)
 				c.RequestRefresh()
 			}
 			continue
 		}
-		c.mu.RLock()
-		fn := c.onRefresh
-		c.mu.RUnlock()
+		c.mu.Lock()
+		renames, fn := c.renames, c.onRefresh
+		c.renames = nil
+		c.mu.Unlock()
 		if fn != nil {
 			fn(renames)
 		}

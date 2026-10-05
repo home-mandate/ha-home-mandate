@@ -116,7 +116,27 @@ func (f *fakeHA) recorded() []ha.ServiceCall {
 	return append([]ha.ServiceCall(nil), f.calls...)
 }
 
+// fakeClock answers whether the clock is behind the audit log.
+type fakeClock struct {
+	mu     sync.Mutex
+	behind bool
+	err    error
+}
+
+func (f *fakeClock) ClockBehind(context.Context) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.behind, f.err
+}
+
+func (f *fakeClock) set(behind bool, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.behind, f.err = behind, err
+}
+
 type harness struct {
+	clock    *fakeClock
 	t        *testing.T
 	url      string
 	token    string
@@ -167,7 +187,7 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 		t.Fatal(err)
 	}
 
-	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin",
+	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin", clock: &fakeClock{},
 		ha: &fakeHA{connected: true},
 		catalog: &fakeCatalog{ready: true, devices: map[string]catalog.Device{
 			"light.kitchen":            {EntityID: "light.kitchen", Category: "light", Area: "kitchen", State: "off", Attributes: map[string]any{"friendly_name": "Kitchen"}},
@@ -189,6 +209,7 @@ func (h *harness) serve(auditor Auditor) string {
 		decider = h.decider
 	}
 	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test"})
+	g.cfg.Clock = h.clock
 	srv := httptest.NewServer(g.Handler())
 	h.t.Cleanup(srv.Close)
 	return srv.URL + Path
@@ -805,5 +826,32 @@ func TestConstraintsLimitParameters(t *testing.T) {
 	}
 	if calls := h.ha.recorded(); len(calls) != 1 {
 		t.Errorf("a denied value reached Home Assistant: %+v", calls)
+	}
+}
+
+// SPEC-v0 section 11.4: while the clock is behind the newest audit entry nothing is
+// decided; a failed check counts as behind.
+func TestNothingIsDecidedWhileTheClockIsBehind(t *testing.T) {
+	for name, tc := range map[string]struct {
+		behind bool
+		err    error
+	}{"behind": {behind: true}, "check failed": {err: errors.New("database gone")}} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, nil)
+			h.clock.set(tc.behind, tc.err)
+			s := h.session()
+			if _, errText := h.call(s, "perform_action", map[string]any{"entity_id": "light.kitchen", "action": "turn_on"}); errText != "unavailable" {
+				t.Errorf("perform_action = %q", errText)
+			}
+			if calls := h.ha.recorded(); len(calls) != 0 {
+				t.Errorf("Home Assistant called: %v", calls)
+			}
+			if e := h.lastEntry(); path(e, "result", "error") != "clock_behind" {
+				t.Errorf("audit entry = %v", e)
+			}
+			if _, errText := h.call(s, "list_devices", map[string]any{}); errText != "unavailable" {
+				t.Errorf("list_devices = %q", errText)
+			}
+		})
 	}
 }

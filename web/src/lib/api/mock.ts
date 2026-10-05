@@ -40,6 +40,7 @@ import type {
   ApproverList,
   ApproverUpdate,
   ReachChannel,
+  Rename,
   Rule,
   StaleReference,
   AuditEntry,
@@ -107,6 +108,8 @@ interface State {
   system: SystemStatus;
   defaults: Defaults;
   devices: DeviceCatalog;
+  /** Renames nobody resolved: current entity ID → former IDs, nearest first. */
+  renames: Record<string, string[]>;
   agents: Agent[];
   mandates: Record<string, StoredMandate>;
   templates: Template[];
@@ -123,6 +126,8 @@ export interface MockControls {
   openApproval(request: ApprovalRequest): void;
   closeApproval(id: string, outcome: ApprovalHistoryEntry['outcome'], byName: string | null, via?: 'push' | 'ui'): void;
   setHaConnected(connected: boolean): void;
+  /** As a host clock behind the newest audit entry. */
+  setClockBehind(behind: boolean): void;
   /** As a rename in Home Assistant: the device gets another entity ID, rules keep the old one. */
   renameDevice(from: string, to: string): void;
   breakChain(seq: number): void;
@@ -239,12 +244,17 @@ function reachOf(update: ApproverUpdate, admin: boolean): Approver['reach'] {
 }
 
 /** As the server: rules that name a device or area the catalog does not have. */
-function staleReferences(rules: readonly Rule[], catalog: DeviceCatalog): StaleReference[] {
+function staleReferences(rules: readonly Rule[], catalog: DeviceCatalog, renames: Readonly<Record<string, readonly string[]>>): StaleReference[] {
+  const renamedTo = new Map(Object.entries(renames).flatMap(([to, formers]) => formers.map((f) => [f, to] as const)));
   const out: StaleReference[] = [];
   rules.forEach((r, i) => {
     const { entity_id: entity, area } = r.resource;
     const ref: StaleReference = { rule: i, rule_id: r.id };
-    if (entity !== undefined && !catalog.devices.some((d) => d.entity_id === entity)) ref.entity_id = entity;
+    if (entity !== undefined && !catalog.devices.some((d) => d.entity_id === entity)) {
+      ref.entity_id = entity;
+      const to = renamedTo.get(entity);
+      if (to !== undefined) ref.renamed_to = to;
+    }
     if (area !== undefined && !catalog.areas.some((a) => a.id === area)) ref.area = area;
     if (ref.entity_id !== undefined || ref.area !== undefined) out.push(ref);
   });
@@ -301,6 +311,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     system: systemFixture,
     defaults: defaultsFixture,
     devices: devicesFixture,
+    renames: {},
     agents: options.empty ? [] : agentsFixture,
     mandates: options.empty ? {} : initialMandates(),
     templates: templatesFixture,
@@ -360,7 +371,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
         expires: doc.expires ?? null,
         max_actions_per_hour: doc.limits.max_actions_per_hour,
         updated_at: current.meta.created_at,
-        stale_references: m.status === 'active' ? staleReferences(doc.rules, state.devices) : [],
+        stale_references: m.status === 'active' ? staleReferences(doc.rules, state.devices, state.renames) : [],
       },
       document: doc,
       versions: m.versions.map((v) => v.meta),
@@ -512,8 +523,13 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     closeApproval,
     renameDevice(from, to) {
       const devices = state.devices.devices.map((d) => (d.entity_id === from ? { ...d, entity_id: to } : d));
-      state = { ...state, devices: { ...state.devices, devices } };
+      // As the server: rules on the former ID keep applying until a human resolves the rename.
+      const { [from]: earlier = [], ...renames } = state.renames;
+      state = { ...state, devices: { ...state.devices, devices }, renames: { ...renames, [to]: [from, ...earlier] } };
       emit({ type: 'devices.changed' });
+    },
+    setClockBehind(behind) {
+      setSystem({ ...state.system, clock_behind: behind });
     },
     setHaConnected(connected) {
       setSystem({ ...state.system, ha: { ...state.system.ha, connected, since: now().toISOString() } });
@@ -525,6 +541,25 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       await api.setEmergencyStop(active);
     },
   };
+
+  /** Active mandates whose rules name one of formers, with those rules. */
+  function affectedBy(formers: readonly string[]): { id: string; rules: Rule[] }[] {
+    return Object.keys(state.mandates).flatMap((id) => {
+      const m = state.mandates[id];
+      if (!m || m.status !== 'active') return [];
+      const rules = detail(id).document.rules.filter((r) => r.resource.entity_id !== undefined && formers.includes(r.resource.entity_id));
+      return rules.length > 0 ? [{ id, rules }] : [];
+    });
+  }
+
+  const sameIds = (a: readonly string[], b: readonly string[]) => [...a].sort().join('\n') === [...b].sort().join('\n');
+
+  function resolveRename(entityId: string): void {
+    const { [entityId]: _resolved, ...renames } = state.renames;
+    void _resolved;
+    state = { ...state, renames };
+    emit({ type: 'devices.changed' });
+  }
 
   const api: ApiClient = {
     async session() {
@@ -604,6 +639,43 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       const devices = state.devices.devices.map((d) => (d.entity_id === entityId ? { ...d, critical, suggest_critical: !critical && proposed(d.entity_id) } : d));
       state = { ...state, devices: { ...state.devices, devices } };
       emit({ type: 'devices.changed' });
+    },
+
+    async renames() {
+      const out: Rename[] = [];
+      for (const [entityId, formers] of Object.entries(state.renames)) {
+        const mandates = affectedBy(formers).map(({ id, rules }) => ({
+          id,
+          name: state.mandates[id]?.name ?? id,
+          rules: rules.map((r) => r.id),
+          critical: rules.some((r) => r.allow_critical === true),
+        }));
+        if (mandates.length === 0) continue;
+        const name = state.devices.devices.find((d) => d.entity_id === entityId)?.name ?? entityId;
+        const inUse = formers.filter((f) => state.devices.devices.some((d) => d.entity_id === f));
+        out.push({ entity_id: entityId, name, formers, formers_in_use: inUse, mandates });
+      }
+      return copy(out.sort((a, b) => a.entity_id.localeCompare(b.entity_id)));
+    },
+    async applyRename(entityId, seen, confirmCritical) {
+      const formers = state.renames[entityId] ?? fail('not_found');
+      if (!sameIds(formers, seen)) fail('conflict');
+      if (!state.devices.devices.some((d) => d.entity_id === entityId)) fail('not_found');
+      if (formers.some((f) => state.devices.devices.some((d) => d.entity_id === f))) fail('conflict');
+      const affected = affectedBy(formers);
+      if (!confirmCritical && affected.some(({ rules }) => rules.some((r) => r.allow_critical === true))) fail('critical_confirmation_required');
+      for (const { id } of affected) {
+        const { document: doc, summary } = detail(id);
+        const rename = (r: Rule): Rule =>
+          r.resource.entity_id !== undefined && formers.includes(r.resource.entity_id) ? { ...r, resource: { ...r.resource, entity_id: entityId } } : r;
+        storeVersion(id, summary.digest, { ...draftOf(doc), rules: doc.rules.map(rename) }, confirmCritical);
+      }
+      resolveRename(entityId);
+    },
+    async dismissRename(entityId, seen) {
+      const formers = state.renames[entityId] ?? fail('not_found');
+      if (!sameIds(formers, seen)) fail('conflict');
+      resolveRename(entityId);
     },
 
     async mandates() {

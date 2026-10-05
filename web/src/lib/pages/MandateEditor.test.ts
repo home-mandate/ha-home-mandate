@@ -780,14 +780,22 @@ describe('states', () => {
     expect(screen.getByRole('status', { name: 'Loading …' })).toBeTruthy();
   });
 
-  it('warns when Home Assistant renames a device a rule names, and keeps the edit', async () => {
+  it('says that a rule keeps applying to a renamed device until the rename is resolved, and keeps the edit', async () => {
     const { api } = await start();
     const first = await open(1);
     await fireEvent.click(first.getByRole('button', { name: 'adjust' }));
-    expect(screen.queryByText('Home Assistant changed')).toBeNull();
     api.control.renameDevice('lock.front_door', 'lock.front_door_main');
+    expect(
+      await (await card(3)).findByText(
+        '“lock.front_door” is now called “lock.front_door_main” in Home Assistant. Until the rename is taken over or dismissed in the mandate list, this rule keeps applying to the device.',
+      ),
+    ).toBeTruthy();
+    // Nothing is unprotected, so no warning banner.
+    expect(screen.queryByText('Home Assistant changed')).toBeNull();
+    expect(status()).toBe('1 unsaved change');
+    // Dismissed: now the rule names a device that no longer exists, and that is a warning.
+    await api.dismissRename('lock.front_door_main', ['lock.front_door']);
     expect(await screen.findByText('Home Assistant changed')).toBeTruthy();
-    expect(screen.getByText('1 rule names a device or area that no longer exists. Renamed devices are no longer protected by it.')).toBeTruthy();
     expect(
       (await card(3)).getByText('“lock.front_door” no longer exists in Home Assistant. If it was renamed, this rule no longer protects it. Choose the device again.'),
     ).toBeTruthy();

@@ -5,10 +5,10 @@
   it must never look as if protection were off.
 -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { Loader } from '../app/loader.svelte.ts';
   import type { AppState } from '../app/state.svelte.ts';
-  import type { Agent, DeviceCatalog, MandateSummary, Template } from '../api/types.ts';
+  import type { Agent, DeviceCatalog, MandateSummary, Rename, Template } from '../api/types.ts';
   import AgentName from '../components/AgentName.svelte';
   import Button from '../components/Button.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -16,6 +16,7 @@
   import Icon from '../components/Icon.svelte';
   import MandateStatus from '../components/mandate/MandateStatus.svelte';
   import NewMandateDialog from '../components/mandate/NewMandateDialog.svelte';
+  import RenamesNotice from '../components/mandate/RenamesNotice.svelte';
   import TemplateCard from '../components/mandate/TemplateCard.svelte';
   import { formatDate } from '../format.ts';
   import { m } from '../i18n.ts';
@@ -24,6 +25,7 @@
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
   import { DESKTOP, Media } from '../ui/media.svelte.ts';
+  import { toasts } from '../ui/toasts.ts';
   import { cleanUntrusted } from '../untrusted.ts';
 
   interface Props {
@@ -37,6 +39,7 @@
     templates: Template[];
     agents: Agent[];
     catalog: DeviceCatalog;
+    renames: Rename[];
   }
 
   let { app, now }: Props = $props();
@@ -51,7 +54,7 @@
     // Only the mandates are essential. Without templates or agents the list still shows
     // (a new mandate cannot be created then); without Home Assistant the template cards
     // show ids instead of names.
-    const [mandates, templates, agents, catalog] = await Promise.all([
+    const [mandates, templates, agents, catalog, renames] = await Promise.all([
       api.mandates(),
       api
         .templates()
@@ -60,8 +63,9 @@
         .catch((): Template[] => []),
       api.agents().catch((): Agent[] => []),
       api.devices().catch(() => NO_CATALOG),
+      api.renames().catch((): Rename[] => []),
     ]);
-    return { mandates, templates, agents, catalog };
+    return { mandates, templates, agents, catalog, renames };
   });
 
   let dialog = $state(false);
@@ -91,6 +95,17 @@
     return Number.isNaN(expires) ? m.mandates_valid_open() : formatDate(new Date(expires - 1), ctx);
   }
 
+  let heading: HTMLElement | undefined = $state();
+
+  /** A rename was resolved (text) or the attempt failed (null): reload, say so and keep the focus on the page. */
+  async function resolved(text: string | null) {
+    await list.run();
+    if (text === null) return;
+    toasts.show({ kind: 'success', text });
+    await tick();
+    heading?.focus();
+  }
+
   function start(name: string | null) {
     template = name;
     dialog = true;
@@ -103,7 +118,7 @@
 </script>
 
 <div class="head">
-  <h1>{m.mandates_title()}</h1>
+  <h1 bind:this={heading} tabindex="-1">{m.mandates_title()}</h1>
   {#if data}<Button variant="primary" size="lg" icon="plus" onclick={() => start(null)}>{m.mandates_new()}</Button>{/if}
 </div>
 
@@ -114,6 +129,10 @@
     {#each SKELETON_ROWS as width (width)}<span class="bone" style:inline-size={width}></span>{/each}
   </div>
 {:else}
+  {#if data.renames.length > 0}
+    <RenamesNotice renames={data.renames} api={app.api} locale={ctx.locale} onresolved={resolved} />
+  {/if}
+
   {#if data.mandates.length === 0}
     <EmptyState icon="logo" title={m.mandates_empty_title()} body={m.mandates_empty_body()} />
   {/if}

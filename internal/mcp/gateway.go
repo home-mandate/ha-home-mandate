@@ -37,6 +37,10 @@ const Path = "/mcp"
 const (
 	maxRequestBytes    = 64 << 10
 	defaultCallTimeout = 10 * time.Second
+	// errClockBehind is the error of a request refused because the clock is wrong.
+	errClockBehind = "clock_behind"
+	// defaultApprovalLimit is the upper limit of an approval wait without configuration.
+	defaultApprovalLimit = 2 * time.Minute
 	// noMandateLimit bounds requests of agents without a usable mandate, which would
 	// otherwise fill the audit log with denials.
 	noMandateLimit = 60
@@ -82,8 +86,13 @@ type (
 		CallService(ctx context.Context, call ha.ServiceCall) error
 		Connected() bool
 	}
+	// Clock tells whether the clock lies behind the newest audit entry (audit.Log).
+	Clock interface {
+		ClockBehind(ctx context.Context) (bool, error)
+	}
 	Limiter interface {
-		Allow(clientID string, perHour int) bool
+		// Allow counts a request for key (pdp.RateKey) against perHour.
+		Allow(key string, perHour int) bool
 	}
 	Auditor interface {
 		Append(ctx context.Context, e audit.Entry) (int64, error)
@@ -108,7 +117,9 @@ type Config struct {
 	Catalog Catalog
 	HA      Executor
 	Limiter Limiter
-	Audit   Auditor
+	// Clock, if set, stops all decisions while the clock is behind (SPEC-v0 section 11.4).
+	Clock Clock
+	Audit Auditor
 	// Approvals asks humans for ask decisions; nil refuses every ask.
 	Approvals Approver
 	Logger    *slog.Logger
@@ -118,6 +129,9 @@ type Config struct {
 	TemperatureUnit func() string
 	Now             func() time.Time
 	CallTimeout     time.Duration
+	// ApprovalLimit is the upper limit of a wait for an approval (HM_APPROVAL_TIMEOUT); a
+	// confirmation is valid for the request's timeout, at most this long.
+	ApprovalLimit time.Duration
 }
 
 // Gateway serves the MCP tools.
@@ -138,6 +152,9 @@ func New(cfg Config) *Gateway {
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.ApprovalLimit <= 0 {
+		cfg.ApprovalLimit = defaultApprovalLimit
 	}
 	if cfg.CallTimeout <= 0 {
 		cfg.CallTimeout = defaultCallTimeout
@@ -234,6 +251,24 @@ func (g *Gateway) available() bool {
 	return g.cfg.HA.Connected() && g.cfg.Catalog.Ready()
 }
 
+// clockWrong reports whether the clock lies behind the newest audit entry: validity
+// periods and time windows cannot be trusted then (SPEC-v0 section 11.4), and nothing is
+// decided. A failed check counts as wrong.
+func (g *Gateway) clockWrong(ctx context.Context) bool {
+	if g.cfg.Clock == nil {
+		return false
+	}
+	behind, err := g.cfg.Clock.ClockBehind(ctx)
+	if err != nil {
+		g.cfg.Logger.Error("cannot check the clock against the audit log", "error", err)
+		return true
+	}
+	if behind {
+		g.cfg.Logger.Error("the clock is behind the newest audit entry; no request is decided until it is right")
+	}
+	return behind
+}
+
 // Tool inputs and outputs.
 type (
 	noInput     struct{}
@@ -322,14 +357,14 @@ func (g *Gateway) listSnapshot(ctx context.Context, req *sdk.CallToolRequest) (*
 	if g.stopped(ctx) {
 		return nil, errors.New(codeDenied + ": emergency_stop")
 	}
-	if !g.available() {
+	if !g.available() || g.clockWrong(ctx) {
 		return nil, errors.New(codeUnavailable)
 	}
 	snap, err := g.cfg.PDP.Snapshot(ctx, a.ClientID)
 	if err != nil {
 		g.cfg.Logger.Error("loading the mandate failed", "error", err)
 	}
-	if !g.cfg.Limiter.Allow(a.ClientID, limitOf(snap)) {
+	if !g.cfg.Limiter.Allow(snap.RateKey(), limitOf(snap)) {
 		return nil, errors.New(codeRateLimited)
 	}
 	return snap, nil
@@ -426,13 +461,15 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 	if ask {
 		return g.askHuman(ctx, a, tokenOf(req), d, call, in.Reason)
 	}
-	return g.execute(ctx, a, d, call, approvalRef{})
+	return g.execute(ctx, a, d, call, approvalRef{}, time.Time{})
 }
 
 // execute calls Home Assistant only while its "executed" entry is being written in the
 // same transaction: no entry, no execution. A failed call rolls the entry back and is
 // logged as failed.
-func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, call ha.ServiceCall, appr approvalRef) (*sdk.CallToolResult, actionOut, error) {
+// execute calls the service; a confirmed action ends at expires at the latest (zero: no
+// confirmation).
+func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, call ha.ServiceCall, appr approvalRef, expires time.Time) (*sdk.CallToolResult, actionOut, error) {
 	start := g.cfg.Now()
 	executed := false
 	e := g.entry(a, d, true, audit.Result{Status: audit.StatusExecuted})
@@ -440,6 +477,11 @@ func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, ca
 	err := g.cfg.Audit.WithEntry(context.WithoutCancel(ctx), e, func() error {
 		cctx, cancel := context.WithTimeout(ctx, g.cfg.CallTimeout)
 		defer cancel()
+		if !expires.IsZero() {
+			var cancelExpiry context.CancelFunc
+			cctx, cancelExpiry = context.WithDeadline(cctx, expires)
+			defer cancelExpiry()
+		}
 		if err := g.cfg.HA.CallService(cctx, call); err != nil {
 			return err
 		}
@@ -482,6 +524,11 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusFailed, Error: "ha_unavailable"})
 		return pdp.Decision{}, errors.New(codeUnavailable)
 	}
+	if g.clockWrong(ctx) {
+		d := pdp.Decision{Time: g.cfg.Now(), Resource: evaluator.Resource{EntityID: entityID}, Action: action}
+		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusFailed, Error: errClockBehind})
+		return pdp.Decision{}, errors.New(codeUnavailable)
+	}
 	snap, err := g.cfg.PDP.Snapshot(ctx, a.ClientID)
 	if err != nil {
 		g.cfg.Logger.Error("loading the mandate failed", "error", err)
@@ -491,7 +538,7 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusFailed, Error: "timezone_unknown"})
 		return pdp.Decision{}, errors.New(codeUnavailable)
 	}
-	if !g.cfg.Limiter.Allow(a.ClientID, limitOf(snap)) {
+	if !g.cfg.Limiter.Allow(snap.RateKey(), limitOf(snap)) {
 		g.recordRateLimited(ctx, a, d)
 		return pdp.Decision{}, errors.New(codeRateLimited)
 	}

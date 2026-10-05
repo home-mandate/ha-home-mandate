@@ -487,3 +487,67 @@ func TestInvalidMandateIsNamed(t *testing.T) {
 		t.Errorf("Decide = %+v, %v", d, err)
 	}
 }
+
+// SPEC-v0 section 11.2: the count belongs to the mandate; an agent without one is counted
+// on its own.
+func TestRateKeyIsTheMandate(t *testing.T) {
+	cfg, clientID := voice(t)
+	snap, err := New(cfg).Snapshot(context.Background(), clientID)
+	if err != nil || snap.RateKey() != "mandate:m-voice-assistant" {
+		t.Errorf("RateKey = %q, %v", snap.RateKey(), err)
+	}
+	cfg.Mandates = fakeMandates{}
+	if snap, _ := New(cfg).Snapshot(context.Background(), clientID); snap.RateKey() != "agent:"+clientID {
+		t.Errorf("without a mandate = %q", snap.RateKey())
+	}
+	if RateKey("a", "m") == RateKey("m", "") || RateKey("x", "") == RateKey("y", "x") {
+		t.Error("keys of agents and mandates can collide")
+	}
+}
+
+// A renamed entity whose rename nobody resolved yet: rules on its former ID keep applying,
+// the stricter evaluation wins (fail closed).
+func TestRulesOnAFormerIDKeepApplying(t *testing.T) {
+	doc := func(rules ...map[string]any) []byte {
+		data, _ := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+		var d map[string]any
+		_ = json.Unmarshal(data, &d)
+		list := make([]any, len(rules))
+		for i, r := range rules {
+			list[i] = r
+		}
+		d["rules"] = list
+		out, _ := json.Marshal(d)
+		return out
+	}
+	rule := func(id string, resource map[string]any, decision string) map[string]any {
+		return map[string]any{"id": id, "resource": resource, "actions": []any{"turn_on"}, "decision": decision}
+	}
+	allSwitches := rule("r-switches", map[string]any{"category": "switch"}, "allow")
+	for name, tc := range map[string]struct {
+		rules   []map[string]any
+		formers []string
+		want    evaluator.Decision
+		former  string
+	}{
+		"deny on the former ID wins":             {[]map[string]any{allSwitches, rule("r-gate", map[string]any{"entity_id": "switch.gate_opener"}, "deny")}, []string{"switch.gate_opener"}, evaluator.Deny, "switch.gate_opener"},
+		"ask on the former ID wins":              {[]map[string]any{allSwitches, rule("r-gate", map[string]any{"entity_id": "switch.gate_opener"}, "ask")}, []string{"switch.gate_opener"}, evaluator.Ask, "switch.gate_opener"},
+		"resolved: the broad rule applies":       {[]map[string]any{allSwitches, rule("r-gate", map[string]any{"entity_id": "switch.gate_opener"}, "deny")}, nil, evaluator.Allow, ""},
+		"a former ID no rule names":              {[]map[string]any{allSwitches}, []string{"switch.gate_opener"}, evaluator.Allow, ""},
+		"an allow on the former ID adds nothing": {[]map[string]any{rule("r-gate", map[string]any{"entity_id": "switch.gate_opener"}, "allow")}, []string{"switch.gate_opener"}, evaluator.Deny, ""},
+		"a chain of renames":                     {[]map[string]any{allSwitches, rule("r-gate", map[string]any{"entity_id": "switch.gate"}, "deny")}, []string{"switch.gate_opener", "switch.gate"}, evaluator.Deny, "switch.gate"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, clientID := voice(t)
+			d := doc(tc.rules...)
+			c := stored(d, mandate.Info{ID: "m-voice-assistant"})
+			c.Entities = mandate.NamedEntities(d)
+			cfg.Mandates = fakeMandates{candidates: []mandate.Candidate{c}}
+			cfg.Catalog = fakeCatalog{"switch.garage_opener": {EntityID: "switch.garage_opener", Category: "switch", Formers: tc.formers}}
+			got, err := New(cfg).Decide(context.Background(), clientID, "switch.garage_opener", "turn_on", nil)
+			if err != nil || got.Result.Decision != tc.want || got.Former != tc.former || got.Resource.EntityID != "switch.garage_opener" {
+				t.Errorf("Decide = %+v, %v; want %s by former %q", got, err, tc.want, tc.former)
+			}
+		})
+	}
+}

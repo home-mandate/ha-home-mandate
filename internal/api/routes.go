@@ -60,6 +60,9 @@ func (s *Server) routes() *http.ServeMux {
 
 	route("GET /api/devices", noBody, s.getDevices)
 	route("PUT /api/devices/critical", jsonBody, s.putDeviceCritical)
+	route("GET /api/renames", noBody, s.getRenames)
+	route("POST /api/renames/apply", jsonBody, s.applyRename)
+	route("POST /api/renames/dismiss", jsonBody, s.dismissRename)
 
 	route("GET /api/mandates", noBody, s.getMandates)
 	route("POST /api/mandates", jsonBody, s.createMandate)

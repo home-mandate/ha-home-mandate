@@ -50,13 +50,13 @@ var registryEvents = []string{"entity_registry_updated", "device_registry_update
 // (SPEC-v0 section 11.2). If the log cannot be read, the limiter starts empty.
 func restoredLimiter(ctx context.Context, log *audit.Log, now func() time.Time, logger *slog.Logger) *ratelimit.Limiter {
 	limiter := ratelimit.New(now)
-	requests, err := log.RequestsSince(ctx, now().Add(-ratelimit.Window))
+	requests, err := log.RequestsSince(ctx, now().Add(-ratelimit.Window), pdp.RateKey)
 	if err != nil {
 		logger.Warn("cannot restore the rate limits from the audit log", "error", err)
 		return limiter
 	}
-	for clientID, times := range requests {
-		limiter.Restore(clientID, times)
+	for key, times := range requests {
+		limiter.Restore(key, times)
 	}
 	return limiter
 }
@@ -121,6 +121,7 @@ func serve(ctx context.Context, e env) int {
 
 type gateway struct {
 	marks    *catalog.Marks
+	renames  *catalog.Renames
 	state    *state
 	logger   *slog.Logger
 	client   *ha.Client
@@ -162,6 +163,13 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	g.catalog.SetMarks(marks)
 	g.marks = marks
+	// Renames a human has not resolved keep the rules on the former IDs in force.
+	renames, err := catalog.LoadRenames(ctx, s.store.DB())
+	if err != nil {
+		return nil, err
+	}
+	g.catalog.SetAliases(renames)
+	g.renames = renames
 	for _, event := range append([]string{ha.EventStateChanged}, registryEvents...) {
 		if _, err := client.SubscribeEvents(ctx, event, g.catalog.HandleEvent); err != nil {
 			return nil, fmt.Errorf("subscribe %s: %w", event, err)
@@ -211,7 +219,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	gw := mcp.New(mcp.Config{Resource: resource, ResourceMetadataURL: metadata, Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
 		TemperatureUnit: g.temperatureUnit,
-		Limiter:         restoredLimiter(ctx, s.log, time.Now, logger), Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
+		Limiter:         restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, Clock: s.log, Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
 	as, handler, err := withOAuth(s, gw.Handler(), resource, logger)
 	if err != nil {
 		return nil, err
@@ -227,7 +235,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 
 	apiCfg := api.Config{Proxy: trustedProxy(ctx, s.cfg, lookupHost, logger), Store: s.store, Log: s.log, Agents: s.agents, Mandates: s.mandates, Admission: s.admission,
-		Approvers: s.approvers, Approvals: approvals, HA: client, Catalog: g.catalog, Marks: g.marks, Status: g.status, UI: webui.Handler(),
+		Approvers: s.approvers, Approvals: approvals, HA: client, Catalog: g.catalog, Marks: g.marks, Renames: g.renames, Status: g.status, UI: webui.Handler(),
 		Principal: s.household, Mode: string(s.cfg.Mode), Version: version, Commit: commit, Retention: retention,
 		TLS: func() (bool, time.Time) { return !g.tlsUntil.IsZero(), g.tlsUntil }, Logger: logger}
 	if as != nil {
@@ -239,7 +247,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	g.api = api.New(apiCfg)
 	g.catalog.OnRefresh(func(renames []catalog.Rename) {
-		directoryChanged(ctx, logger, g.marks, g.api.DevicesChanged, renames)
+		directoryChanged(ctx, logger, g.marks, g.renames, g.api.DevicesChanged, renames)
 	})
 	if err := g.api.LoadSettings(ctx); err != nil {
 		g.listener.Close()

@@ -87,6 +87,8 @@ export interface SystemStatus {
   mcp_url: string | null;
   tls: { present: boolean; valid_until: string | null };
   emergency_stop: EmergencyStop;
+  /** The server clock lies behind the newest audit entry: no request is decided (SPEC-v0 section 11.4). */
+  clock_behind: boolean;
   chain: ChainStatus;
   /** Approvers set up; 0 means every approval request is denied at once. */
   approvers_configured: number;
@@ -343,7 +345,29 @@ export interface StaleReference {
   rule: number;
   rule_id: string;
   entity_id?: string;
+  /** The entity the device was renamed to; the rule keeps applying to it until the rename is resolved. */
+  renamed_to?: string;
   area?: string;
+}
+
+/**
+ * GET api/renames: an entity Home Assistant renamed while active mandates still name a
+ * former ID. Until a human takes it over (POST api/renames/apply {entity_id, formers,
+ * confirm_critical?}) or dismisses it (POST api/renames/dismiss {entity_id, formers,
+ * confirm: true}), those rules
+ * keep applying to the entity and the stricter evaluation wins. Taking over a rule that
+ * allows critical actions without approval needs the separate confirmation
+ * ("critical_confirmation_required" otherwise).
+ */
+export interface Rename {
+  entity_id: string;
+  /** Name from Home Assistant, untrusted. */
+  name: string;
+  /** Former IDs, nearest first; sent back when resolving, so that a rename that arrived meanwhile is a conflict. */
+  formers: string[];
+  /** Former IDs another device has now: the rename cannot be taken over, only dismissed or edited by hand. */
+  formers_in_use: string[];
+  mandates: { id: string; name: string; rules: string[]; critical: boolean }[];
 }
 
 export interface MandateVersion {

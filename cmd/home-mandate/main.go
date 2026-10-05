@@ -8,7 +8,7 @@
 //	home-mandate emergency-stop …   block all agents at once, or release the stop
 //	home-mandate approver …         who receives approval requests, on which phone
 //	home-mandate mandate …          manage mandates (local administration only)
-//	home-mandate audit verify|export|key
+//	home-mandate audit verify|export|key|accept-clock
 //
 // The administration commands work on the local database only; they are never
 // reachable over the network.
@@ -45,7 +45,7 @@ const usage = `Usage:
   home-mandate approver add USER_ID NOTIFY_SERVICE [de|en] | list | remove USER_ID
   home-mandate mandate import FILE|- | list | revoke ID | check
   home-mandate mandate template import NAME FILE|- | list | remove NAME
-  home-mandate audit verify | export | key
+  home-mandate audit verify | export | key | accept-clock
 `
 
 // env is the process environment, replaceable in tests.

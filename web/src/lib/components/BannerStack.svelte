@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!--
   Banners under the header, in the order of design README section 5: emergency stop ›
-  audit chain broken › Home Assistant unreachable › TLS missing; then the lost live
+  audit chain broken › clock behind the audit log › Home Assistant unreachable › TLS missing; then the lost live
   connection (README section 7), shown only after 5 s. They leave when the cause is gone.
 -->
 <script lang="ts">
@@ -55,6 +55,9 @@
       body={m.banner_chain_body()}
       action={{ label: m.banner_chain_action(), onclick: () => onchain(brokenAt) }}
     />
+  {/if}
+  {#if system.clock_behind}
+    <Banner flush kind="critical" title={m.banner_clock_title()} body={m.banner_clock_body()} />
   {/if}
   {#if !system.ha.connected}
     <Banner flush kind="warning" title={m.banner_ha_title()} body={m.banner_ha_body({ time: at(system.ha.since) })} />

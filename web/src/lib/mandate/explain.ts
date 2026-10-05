@@ -12,6 +12,7 @@ import { cleanUntrusted, isolate } from '../untrusted.ts';
 import { actionLabel, decisionLabel } from './labels.ts';
 import type { MatrixCell } from './matrix.ts';
 import { cellText } from './summary.ts';
+import { limitsText } from './limits.ts';
 import { conditionsText, ruleLine, ruleText } from './text.ts';
 
 /** shortLabel is the word inside a cell; the default is abbreviated. */
@@ -25,9 +26,9 @@ export function cellReason(cell: Pick<Cell, 'rule'>): string {
 }
 
 /** cellWhy is the line under a decision on mobile: the reason and what the corner marks of the grid say. */
-export function cellWhy(cell: Pick<Cell, 'rule' | 'demoted' | 'timed'>): string {
+export function cellWhy(cell: Pick<Cell, 'rule' | 'demoted' | 'timed' | 'limited'>): string {
   const timed = cell.timed ? `${m.preview_timed()}: ${decisionLabel(cell.timed.decision)}` : '';
-  return [cellReason(cell), cell.demoted ? m.demoted_label() : '', timed].filter(Boolean).join(' · ');
+  return [cellReason(cell), cell.demoted ? m.demoted_label() : '', cell.limited ? m.preview_limited() : '', timed].filter(Boolean).join(' · ');
 }
 
 /** cellLabel is the accessible name of a cell. */
@@ -38,12 +39,12 @@ export function cellLabel(device: Device, c: MatrixCell): string {
     decision: cellText(c.cell),
     reason: cellReason(c.cell),
   });
-  const marks = [c.cell.demoted ? m.demoted_label() : '', c.changed ? m.preview_change_dot() : ''].filter(Boolean);
+  const marks = [c.cell.demoted ? m.demoted_label() : '', c.cell.limited ? m.preview_limited() : '', c.changed ? m.preview_change_dot() : ''].filter(Boolean);
   return [label, ...marks].join('. ');
 }
 
 export interface DetailLine {
-  kind: 'rule' | 'critical' | 'danger' | 'timed' | 'changed';
+  kind: 'rule' | 'critical' | 'danger' | 'timed' | 'limits' | 'changed';
   text: string;
 }
 
@@ -59,6 +60,7 @@ export function cellDetail(c: MatrixCell, draft: MandateDraft, catalog: DeviceCa
     lines.push({ kind: 'rule', text: `${m.matrix_cell_no_rule()}. ${m.decision_default_desc()}` });
   }
   if (cell.demoted) lines.push({ kind: 'critical', text: `${m.demoted_label()}: ${m.demoted_hint()}` });
+  if (cell.limited && rule) lines.push({ kind: 'limits', text: m.preview_limited_detail({ limits: limitsText(rule, locale) }) });
   // A critical action that runs without anyone being asked is never just "allowed".
   if (cell.critical && cell.decision === 'allow') lines.push({ kind: 'danger', text: m.critical_override_active() });
   const timedRule = cell.timed?.rule == null ? undefined : draft.rules[cell.timed.rule];

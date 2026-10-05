@@ -7,6 +7,7 @@ package e2e
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -35,10 +36,11 @@ type staleMandate struct {
 }
 
 // A rename in Home Assistant leaves a deny rule on the old ID that no longer protects the
-// device (decision H-E1): the mandate reports it, and the critical mark moves along.
+// device on its own: until a human resolves the rename, the rule keeps applying to the
+// renamed device, the mandate reports it, and the critical mark moves along.
 func TestDirectoryRenameIsReported(t *testing.T) {
 	const old, renamed, agent = "light.ceiling_lights", "light.ceiling_lights_renamed", "Directory rename"
-	newAgent(t, agent, func(d map[string]any) {
+	token := newAgent(t, agent, func(d map[string]any) {
 		d["rules"] = append(d["rules"].([]any), map[string]any{"id": "r-ceiling", "resource": map[string]any{"entity_id": old},
 			"actions": []any{"turn_on"}, "decision": "deny"})
 	})
@@ -98,4 +100,26 @@ func TestDirectoryRenameIsReported(t *testing.T) {
 	eventually(t, "the rename in the server log", 30*time.Second, func() bool {
 		return hasLine(logsOf(env.hm), "entity renamed in Home Assistant", old, renamed)
 	})
+
+	// The deny rule on the former ID keeps protecting the renamed light, although the
+	// voice assistant may switch every light: the stricter evaluation wins.
+	ui.ok(http.MethodPut, "api/devices/critical", map[string]any{"entity_id": renamed, "critical": false}, nil)
+	var renames []struct {
+		EntityID string   `json:"entity_id"`
+		Formers  []string `json:"formers"`
+	}
+	ui.ok(http.MethodGet, "api/renames", nil, &renames)
+	if len(renames) != 1 || renames[0].EntityID != renamed || renames[0].Formers[0] != old {
+		t.Fatalf("renames = %+v", renames)
+	}
+	s := session(t, token)
+	ready(t, s)
+	if _, errText := call(t, s, "perform_action", map[string]any{"entity_id": renamed, "action": "turn_on"}); !strings.HasPrefix(errText, "denied") {
+		t.Errorf("renamed light before the rename is resolved = %q, want denied", errText)
+	}
+	// Dismissed: the rule on the former ID no longer applies, the broad rule does.
+	ui.ok(http.MethodPost, "api/renames/dismiss", map[string]any{"entity_id": renamed, "formers": []string{old}, "confirm": true}, nil)
+	if _, errText := call(t, s, "perform_action", map[string]any{"entity_id": renamed, "action": "turn_on"}); errText != "" {
+		t.Errorf("renamed light after dismissing = %q, want executed", errText)
+	}
 }

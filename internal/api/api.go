@@ -93,6 +93,11 @@ type Config struct {
 	Marks interface {
 		Set(ctx context.Context, entityID string, critical bool, by string) error
 	}
+	// Renames are the renamed entities a human has not resolved (catalog.Renames).
+	Renames interface {
+		Open() map[string][]string
+		Resolve(ctx context.Context, entityID string, expected []string, resolution, by string) error
+	}
 	Status func() Status
 	// UI serves everything outside /api/; nil answers 404.
 	UI http.Handler

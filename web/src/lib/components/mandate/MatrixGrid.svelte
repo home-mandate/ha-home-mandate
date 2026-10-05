@@ -113,6 +113,7 @@
             <span>{shortLabel(cell.cell.decision)}</span>
             {#if cell.cell.demoted}<span class="mark end critical"><Icon name="critical" size={16} /></span>{/if}
             {#if cell.cell.timed}<span class="mark start"><Icon name="history" size={16} /></span>{/if}
+            {#if cell.cell.limited}<span class="mark start bottom"><Icon name="limits" size={16} /></span>{/if}
             {#if cell.changed}<span class="dot"></span>{/if}
           </div>
         {:else}
@@ -258,6 +259,10 @@
   }
   .mark.start {
     inset-inline-start: -5px;
+  }
+  .mark.bottom {
+    inset-block-start: auto;
+    inset-block-end: -5px;
   }
   .mark.critical {
     color: var(--hm-color-critical-fg);

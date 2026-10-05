@@ -13,6 +13,10 @@ import (
 	"github.com/home-mandate/home-mandate/internal/catalog"
 )
 
+type fakeStorer struct{ err error }
+
+func (f fakeStorer) Store(context.Context) error { return f.err }
+
 type fakeCarrier struct {
 	marked map[string]bool
 	err    error
@@ -34,7 +38,7 @@ func TestDirectoryChangedCarriesMarksAndNotifies(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 	marks := &fakeCarrier{marked: map[string]bool{"lock.cellar": true}}
 	notified := 0
-	directoryChanged(context.Background(), logger, marks, func() { notified++ }, []catalog.Rename{
+	directoryChanged(context.Background(), logger, marks, fakeStorer{}, func() { notified++ }, []catalog.Rename{
 		{Old: "lock.cellar", New: "lock.cellar_door"},
 		{Old: "light.kitchen", New: "light.kitchen_ceiling"},
 	})
@@ -56,8 +60,9 @@ func TestDirectoryChangedLogsAFailedCarryAndStillNotifies(t *testing.T) {
 	var buf bytes.Buffer
 	notified := false
 	directoryChanged(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)), &fakeCarrier{err: errors.New("disk full")},
-		func() { notified = true }, []catalog.Rename{{Old: "lock.a", New: "lock.b"}})
-	if !notified || !strings.Contains(buf.String(), "level=ERROR") || !strings.Contains(buf.String(), "disk full") {
+		fakeStorer{err: errors.New("database locked")}, func() { notified = true }, []catalog.Rename{{Old: "lock.a", New: "lock.b"}})
+	if !notified || !strings.Contains(buf.String(), "level=ERROR") || !strings.Contains(buf.String(), "disk full") ||
+		!strings.Contains(buf.String(), "renames not stored") {
 		t.Errorf("notified=%v log=%s", notified, buf.String())
 	}
 }

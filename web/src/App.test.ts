@@ -156,9 +156,10 @@ describe('App frame', () => {
     expect(window.location.hash).toBe('#/settings/estop');
   });
 
-  it('orders the banners: emergency stop, chain, Home Assistant', async () => {
+  it('orders the banners: emergency stop, chain, clock, Home Assistant', async () => {
     const { api, app } = await start();
     api.control.setHaConnected(false);
+    api.control.setClockBehind(true);
     api.control.breakChain(18342);
     await app.setEmergencyStop(true);
     await tick();
@@ -167,7 +168,7 @@ describe('App frame', () => {
       .getAllByRole('alert')
       .map((a) => a.querySelector('strong')?.textContent)
       .filter(Boolean);
-    expect(titles).toEqual(['Emergency stop active', 'Audit chain broken at entry no. 18,342', 'Home Assistant unreachable']);
+    expect(titles).toEqual(['Emergency stop active', 'Audit chain broken at entry no. 18,342', 'Clock of the host is wrong', 'Home Assistant unreachable']);
   });
 
   it('opens the broken entry from the chain banner', async () => {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { BIDI_NAME, NOW } from '../api/fixtures.ts';
 import { createMockClient, type MockClient, type MockOptions } from '../api/mock.ts';
+import type { Rule } from '../api/types.ts';
 import { AppState } from '../app/state.svelte.ts';
 import { setLocale } from '../paraglide/runtime.js';
 import MandateList from './MandateList.svelte';
@@ -171,6 +172,63 @@ describe('MandateList', () => {
     api.control.renameDevice('lock.front_door', 'lock.front_door_main');
     const row = within(within(table).getByRole('link', { name: 'Sprachassistent Küche' }).closest('tr') as HTMLElement);
     expect(await row.findByText('1 rule names a device or area that no longer exists')).toBeTruthy();
+  });
+
+  it('offers to take a rename over into the mandates', async () => {
+    const { api } = await start();
+    await screen.findByRole('table');
+    api.control.renameDevice('lock.front_door', 'lock.front_door_main');
+    const notice = await screen.findByRole('region', { name: 'Renamed in Home Assistant' });
+    expect(within(notice).getByText(/lock\.front_door_main.*, formerly .*lock\.front_door/)).toBeTruthy();
+    await fireEvent.click(within(notice).getByRole('button', { name: 'Take over' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Renamed in Home Assistant' })).toBeNull());
+    const { document: doc } = await api.mandate('mandate-voice');
+    expect(JSON.stringify(doc.rules)).toContain('"lock.front_door_main"');
+  });
+
+  it('asks before a rename is dismissed', async () => {
+    const { api } = await start();
+    await screen.findByRole('table');
+    api.control.renameDevice('lock.front_door', 'lock.front_door_main');
+    const notice = await screen.findByRole('region', { name: 'Renamed in Home Assistant' });
+    await fireEvent.click(within(notice).getByRole('button', { name: 'Don’t take over' }));
+    expect(within(notice).getByText(/no longer protects it/)).toBeTruthy();
+    expect(document.activeElement).toBe(within(notice).getByRole('button', { name: 'Cancel' }));
+    await fireEvent.click(within(notice).getByRole('button', { name: 'Cancel' }));
+    expect((await api.renames()).length).toBe(1);
+    await fireEvent.click(within(notice).getByRole('button', { name: 'Don’t take over' }));
+    const confirm = within(within(notice).getByRole('group'));
+    await fireEvent.click(confirm.getByRole('button', { name: 'Don’t take over' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Renamed in Home Assistant' })).toBeNull());
+    expect((await api.renames()).length).toBe(0);
+  });
+
+  it('asks separately before a rule that allows critical actions without approval is taken over', async () => {
+    const { api } = await start({}, async (api) => {
+      const { document: doc, summary } = await api.mandate('mandate-voice');
+      const gate: Rule = { id: 'gate', resource: { entity_id: 'cover.garage_door' }, actions: ['open'], decision: 'allow', allow_critical: true };
+      const draft = { rules: [...doc.rules, gate], approval: doc.approval, limits: doc.limits, valid_from: doc.valid_from };
+      await api.putMandate('mandate-voice', { name: 'Sprachassistent Küche', draft, base_digest: summary.digest, confirm_critical: true });
+    });
+    await screen.findByRole('table');
+    api.control.renameDevice('cover.garage_door', 'cover.garage');
+    const notice = await screen.findByRole('region', { name: 'Renamed in Home Assistant' });
+    await fireEvent.click(within(notice).getByRole('button', { name: 'Take over' }));
+    expect(within(notice).getByText(/allows critical actions without approval/)).toBeTruthy();
+    expect((await api.renames()).length).toBe(1);
+    await fireEvent.click(within(notice).getByRole('button', { name: 'Take over, allow without approval' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Renamed in Home Assistant' })).toBeNull());
+  });
+
+  it('does not offer to take a rename over when another device has the former ID now', async () => {
+    const { api } = await start();
+    await screen.findByRole('table');
+    api.control.renameDevice('lock.front_door', 'lock.front_door_main');
+    api.control.renameDevice('cover.garage_door', 'lock.front_door');
+    const notice = await screen.findByRole('region', { name: 'Renamed in Home Assistant' });
+    await waitFor(() => expect(within(notice).getByText(/Another device is called .*lock\.front_door/)).toBeTruthy());
+    expect(within(notice).queryByRole('button', { name: 'Take over' })).toBeNull();
+    expect(within(notice).getByRole('button', { name: 'Don’t take over' })).toBeTruthy();
   });
 
   it('marks it on mobile too', async () => {

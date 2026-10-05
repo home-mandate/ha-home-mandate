@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -492,5 +493,79 @@ func TestRenameMovesTheMarkBeforeTheRefresh(t *testing.T) {
 		"new_state": map[string]any{"entity_id": "light.kitchen_ceiling", "state": "on"}}))
 	if d, ok := c.Lookup("light.kitchen_ceiling"); !ok || !d.Critical {
 		t.Errorf("renamed entity = %+v, %v; want it critical at once", d, ok)
+	}
+}
+
+type fakeAliases struct {
+	mu      sync.Mutex
+	held    []Rename
+	observe []Rename
+}
+
+func (f *fakeAliases) Hold(rn Rename) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.held = append(f.held, rn)
+	return true
+}
+
+func (f *fakeAliases) Observe([]ha.EntityEntry) []Rename {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	found := f.observe
+	f.observe = nil
+	return found
+}
+
+func (f *fakeAliases) Formers(id string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, rn := range f.held {
+		if rn.New == id {
+			out = append(out, rn.Old)
+		}
+	}
+	return out
+}
+
+// A rename found by the event or by the registry IDs takes effect before the new ID can
+// be decided on: the device carries its former ID.
+func TestRenamesTakeEffectAtOnce(t *testing.T) {
+	src := house()
+	c := loaded(t, src)
+	aliases := &fakeAliases{}
+	c.SetAliases(aliases)
+	c.HandleEvent(event(t, "entity_registry_updated", map[string]any{"action": "update",
+		"entity_id": "light.kitchen_ceiling", "old_entity_id": "light.kitchen"}))
+	c.HandleEvent(event(t, "state_changed", map[string]any{"entity_id": "light.kitchen_ceiling",
+		"new_state": map[string]any{"entity_id": "light.kitchen_ceiling", "state": "on"}}))
+	if d, ok := c.Lookup("light.kitchen_ceiling"); !ok || len(d.Formers) != 1 || d.Formers[0] != "light.kitchen" {
+		t.Errorf("after the event: %+v, %v", d, ok)
+	}
+
+	// While Home-Mandate was away, the pool pump became the garden pump.
+	aliases.mu.Lock()
+	aliases.observe = []Rename{{Old: "switch.pool_pump", New: "switch.garden_pump"}}
+	aliases.mu.Unlock()
+	src.set(func(f *fakeSource) {
+		for i := range f.states {
+			if f.states[i].EntityID == "switch.pool_pump" {
+				f.states[i].EntityID = "switch.garden_pump"
+			}
+		}
+	})
+	reports := make(chan []Rename, 1)
+	c.OnRefresh(func(r []Rename) { reports <- r })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.Run(ctx, time.Millisecond)
+	c.RequestRefresh()
+	got := <-reports
+	if !slices.Contains(got, Rename{Old: "switch.pool_pump", New: "switch.garden_pump"}) || !slices.Contains(got, Rename{Old: "light.kitchen", New: "light.kitchen_ceiling"}) {
+		t.Errorf("reported = %v", got)
+	}
+	if d, ok := c.Lookup("switch.garden_pump"); !ok || len(d.Formers) != 1 {
+		t.Errorf("after the refresh: %+v, %v", d, ok)
 	}
 }

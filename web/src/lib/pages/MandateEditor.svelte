@@ -10,7 +10,7 @@
   import { onMount, tick } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { ApiError } from '../api/client.ts';
-  import type { ApproverList, DeviceCatalog, MandateDetail, MandateDraft, Rule } from '../api/types.ts';
+  import type { ApproverList, DeviceCatalog, MandateDetail, MandateDraft, Rename, Rule } from '../api/types.ts';
   import { Loader } from '../app/loader.svelte.ts';
   import type { AppState } from '../app/state.svelte.ts';
   import Banner from '../components/Banner.svelte';
@@ -60,6 +60,7 @@
     /** null: the device list could not be loaded. */
     catalog: DeviceCatalog | null;
     approvers: ApproverList;
+    renames: Rename[];
   }
 
   let { app, id, now }: Props = $props();
@@ -86,13 +87,14 @@
   const desktop = new Media(DESKTOP);
   const page = new Loader<Data>(async () => {
     const api = app.api;
-    const [detail, catalog, approvers] = await Promise.all([
+    const [detail, catalog, approvers, renames] = await Promise.all([
       api.mandate(id),
       // Without Home Assistant the editor shows ids instead of names; rules stay editable.
       api.devices().catch(() => null),
       api.approvers().catch(() => NO_APPROVERS),
+      api.renames().catch((): Rename[] => []),
     ]);
-    return { detail, catalog, approvers };
+    return { detail, catalog, approvers, renames };
   });
 
   /** The version the edit is based on. */
@@ -148,8 +150,14 @@
   const isDefault = (p: FieldProblem) => p.rule === null && (p.part === 'timeout' || p.part === 'approvers');
   const isBasic = (p: FieldProblem) => p.rule === null && !isDefault(p) && p.part !== 'rules';
   const visible = $derived(problems.filter((p) => attempted || touched.has(fieldOf(p))));
-  /** Rules on devices or areas Home Assistant does not have (any more), e.g. after a rename. */
-  const staleCount = $derived(draft && !catalogMissing && !readonly ? draft.rules.filter((r) => isStale(r, catalog)).length : 0);
+  /** Former IDs of renamed devices nobody resolved yet → current IDs (rules on them keep applying). */
+  const renamed = $derived(new Map((page.data?.renames ?? []).flatMap((r) => r.formers.map((f) => [f, r.entity_id] as const))));
+  /** Rules on devices or areas Home Assistant does not have (any more) and no open rename covers. */
+  const staleCount = $derived(
+    draft && !catalogMissing && !readonly
+      ? draft.rules.filter((r) => isStale(r, catalog) && !(r.resource.entity_id !== undefined && renamed.has(r.resource.entity_id))).length
+      : 0,
+  );
   const storedInvalid = $derived(base ? describeProblems(base.name, base.draft).some((p) => p.part !== 'name') : false);
 
   const texts = $derived(draft ? draft.rules.map((r) => ruleText(r, catalog, ctx.locale)) : []);
@@ -248,9 +256,9 @@
 
   /** refreshCatalog reloads only the devices: a rename in Home Assistant must not touch the edit. */
   async function refreshCatalog() {
-    const fresh = await app.api.devices().catch(() => null);
+    const [fresh, renames] = await Promise.all([app.api.devices().catch(() => null), app.api.renames().catch(() => null)]);
     const data = page.data;
-    if (fresh && data) page.set({ ...data, catalog: fresh });
+    if (data) page.set({ ...data, catalog: fresh ?? data.catalog, renames: renames ?? data.renames });
   }
 
   /** announce puts a message into the live region; emptied first so the same text is read again. */
@@ -386,7 +394,7 @@
         ...(needsCriticalConfirmation(base.draft, draft) ? { confirm_critical: true } : {}),
       });
       adopt(detail);
-      page.set({ detail, catalog, approvers: page.data?.approvers ?? NO_APPROVERS });
+      page.set({ detail, catalog, approvers: page.data?.approvers ?? NO_APPROVERS, renames: page.data?.renames ?? [] });
       saveOpen = false;
       toasts.show({ kind: 'success', text: m.toast_saved({ version: currentNumber(detail.versions) }) });
     } catch (err) {
@@ -577,7 +585,7 @@
                 count={draft.rules.length}
                 text={texts[index] ?? ruleText(rule, catalog, ctx.locale)}
                 decision={rule.decision}
-                notes={ruleNotes(draft, index, catalog, overridden[index] ?? null, ctx.locale, !catalogMissing)}
+                notes={ruleNotes(draft, index, catalog, overridden[index] ?? null, ctx.locale, !catalogMissing, renamed)}
                 errors={errors.map((p) => p.text)}
                 matches={matchText(index)}
                 editing={editing === rule.id}

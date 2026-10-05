@@ -246,3 +246,79 @@ func TestVerifyEmptyLog(t *testing.T) {
 		t.Errorf("Verify(empty) = %+v", r)
 	}
 }
+
+// SPEC-v0 section 11.4: a clock before the newest entry of the log is wrong.
+func TestClockBehindTheNewestEntry(t *testing.T) {
+	l, _ := newLog(t)
+	ctx := context.Background()
+	if behind, err := l.ClockBehind(ctx); err != nil || behind {
+		t.Fatalf("empty log: %v, %v", behind, err)
+	}
+	at := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	l.SetClock(func() time.Time { return at })
+	if _, err := l.Append(ctx, audit.Entry{Event: audit.EventEmergencyStopActivated, Actor: &audit.Actor{Kind: audit.ActorUser, ID: "u1"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		now    time.Time
+		behind bool
+	}{
+		{at, false},
+		{at.Add(-audit.ClockTolerance), false}, // a small correction is tolerated
+		{at.Add(-audit.ClockTolerance - time.Second), true},
+		{at.Add(-48 * time.Hour), true}, // a host without a clock battery after a power cut
+		{at.Add(time.Hour), false},
+	} {
+		l.SetClock(func() time.Time { return tc.now })
+		if behind, err := l.ClockBehind(ctx); err != nil || behind != tc.behind {
+			t.Errorf("clock at %v: behind = %v, %v; want %v", tc.now, behind, err, tc.behind)
+		}
+	}
+	// An entry written while the clock is behind does not hide that it is.
+	l.SetClock(func() time.Time { return at.Add(-48 * time.Hour) })
+	if _, err := l.Append(ctx, audit.Entry{Event: audit.EventEmergencyStopReleased, Actor: &audit.Actor{Kind: audit.ActorUser, ID: "u1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if behind, err := l.ClockBehind(ctx); err != nil || !behind {
+		t.Errorf("after an entry with the wrong time: behind = %v, %v", behind, err)
+	}
+	// The clock had run ahead and is right now: a human sets the entries so far aside.
+	seq, latest, err := l.AcceptClock(ctx)
+	if err != nil || seq != 2 || latest != "2026-10-13T12:00:00.000Z" {
+		t.Fatalf("AcceptClock = %d, %q, %v", seq, latest, err)
+	}
+	if behind, err := l.ClockBehind(ctx); err != nil || behind {
+		t.Errorf("after accepting: behind = %v, %v", behind, err)
+	}
+	// Later entries count again.
+	l.SetClock(func() time.Time { return at })
+	if _, err := l.Append(ctx, audit.Entry{Event: audit.EventEmergencyStopActivated, Actor: &audit.Actor{Kind: audit.ActorUser, ID: "u1"}}); err != nil {
+		t.Fatal(err)
+	}
+	l.SetClock(func() time.Time { return at.Add(-time.Hour) })
+	if behind, err := l.ClockBehind(ctx); err != nil || !behind {
+		t.Errorf("entries after accepting: behind = %v, %v", behind, err)
+	}
+}
+
+func TestClockChecksReportDatabaseErrors(t *testing.T) {
+	l, db := newLog(t)
+	ctx := context.Background()
+	if _, err := l.Append(ctx, audit.Entry{Event: audit.EventEmergencyStopActivated, Actor: &audit.Actor{Kind: audit.ActorUser, ID: "u1"}}); err != nil {
+		t.Fatal(err)
+	}
+	// A time that cannot be read is an error, never "the clock is fine".
+	if _, err := db.Exec(`UPDATE audit_log SET recorded_at = 'yesterday'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.ClockBehind(ctx); err == nil {
+		t.Error("ClockBehind read an unreadable time")
+	}
+	_ = db.Close()
+	if _, err := l.ClockBehind(ctx); err == nil {
+		t.Error("ClockBehind without a database")
+	}
+	if _, _, err := l.AcceptClock(ctx); err == nil {
+		t.Error("AcceptClock without a database")
+	}
+}

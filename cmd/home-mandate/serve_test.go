@@ -24,6 +24,7 @@ import (
 
 	"github.com/home-mandate/home-mandate/internal/audit"
 	"github.com/home-mandate/home-mandate/internal/config"
+	"github.com/home-mandate/home-mandate/internal/pdp"
 	"github.com/home-mandate/home-mandate/internal/store"
 )
 
@@ -212,13 +213,14 @@ func TestRestoredLimiterCountsTheLastHour(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	limiter := restoredLimiter(ctx, log, func() time.Time { return now }, logger)
-	if !limiter.Allow("hm-client:a", 3) {
+	a := pdp.RateKey("hm-client:a", "")
+	if !limiter.Allow(a, 3) {
 		t.Error("third request within the hour denied")
 	}
-	if limiter.Allow("hm-client:a", 3) {
+	if limiter.Allow(a, 3) {
 		t.Error("fourth request within the hour allowed after a restart")
 	}
-	if !limiter.Allow("hm-client:b", 1) {
+	if !limiter.Allow(pdp.RateKey("hm-client:b", ""), 1) {
 		t.Error("another agent is affected")
 	}
 	// A log that cannot be read leaves the limiter empty instead of failing the start.

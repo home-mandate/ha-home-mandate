@@ -224,6 +224,57 @@ func New(db *sql.DB, principal string) *Log {
 	return &Log{db: db, principal: principal, now: time.Now}
 }
 
+// ClockTolerance is how far the clock may lie behind the newest entry, e.g. after a
+// small correction by NTP, before Home-Mandate stops deciding.
+const ClockTolerance = time.Minute
+
+// ClockBehind reports whether the clock lies more than ClockTolerance before the newest
+// entry of the log: then it is wrong, and validity periods and time windows cannot be
+// trusted (SPEC-v0 section 11.4).
+func (l *Log) ClockBehind(ctx context.Context) (bool, error) {
+	// The latest time, not the last entry: entries written while the clock was behind
+	// must not hide it. timeFormat has a fixed width in UTC, so text order is time order.
+	// Entries up to an accepted position (AcceptClock) do not count.
+	// It runs for every request: the index on recorded_at is walked from the latest time
+	// down to the first entry after the accepted position, mostly the very first one.
+	var newest sql.NullString
+	err := l.db.QueryRowContext(ctx, `SELECT recorded_at FROM audit_log INDEXED BY audit_log_recorded_at WHERE seq >
+		coalesce((SELECT CAST(value AS INTEGER) FROM settings WHERE key = ?), 0) ORDER BY recorded_at DESC LIMIT 1`, settingClockAccepted).Scan(&newest)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("audit: read: %w", err)
+	}
+	at, err := time.Parse(timeFormat, newest.String)
+	if err != nil {
+		return false, fmt.Errorf("audit: newest entry: %w", err)
+	}
+	return l.clock().Add(ClockTolerance).Before(at), nil
+}
+
+// settingClockAccepted holds the position up to which entries do not count for
+// ClockBehind.
+const settingClockAccepted = "audit_clock_accepted_seq"
+
+// AcceptClock makes ClockBehind ignore every entry written so far. A human runs it after
+// the clock ran ahead by mistake and was corrected: the entries with the future times
+// would otherwise stop every decision until that time. It returns the position and the
+// latest time it set aside.
+func (l *Log) AcceptClock(ctx context.Context) (int64, string, error) {
+	var seq sql.NullInt64
+	var latest sql.NullString
+	if err := l.db.QueryRowContext(ctx, `SELECT max(seq), max(recorded_at) FROM audit_log`).Scan(&seq, &latest); err != nil {
+		return 0, "", fmt.Errorf("audit: read: %w", err)
+	}
+	if _, err := l.db.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+		settingClockAccepted, fmt.Sprint(seq.Int64), l.clock().UTC().Format(timeFormat)); err != nil {
+		return 0, "", fmt.Errorf("audit: accept clock: %w", err)
+	}
+	return seq.Int64, latest.String, nil
+}
+
 // SetClock replaces the clock, for tests.
 func (l *Log) SetClock(now func() time.Time) {
 	l.mu.Lock()

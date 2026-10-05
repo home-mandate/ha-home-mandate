@@ -5,8 +5,6 @@ package mcp
 import (
 	"context"
 	"errors"
-	"strconv"
-	"strings"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -51,14 +49,14 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 	}()
 
 	req := approval.Request{ClientID: a.ClientID, Agent: a.DisplayName, EntityID: d.Resource.EntityID, Area: d.Resource.Area,
-		Device: d.Resource.EntityID, Action: d.Action, Reason: reason, Params: call.Data, Critical: evaluator.IsCritical(d.Resource.Category, d.Action)}
+		Device: d.Resource.EntityID, Action: d.Action, Reason: reason, Params: call.Data, Critical: criticalRequest(d)}
 	if dev, ok := g.cfg.Catalog.Lookup(d.Resource.EntityID); ok {
 		if name, _ := dev.Attributes["friendly_name"].(string); name != "" {
 			req.Device = name
 		}
 	}
 	if ap := d.Result.Approval; ap != nil {
-		req.Approvers, req.Timeout = ap.Approvers, approvalTimeout(ap.Timeout)
+		req.Approvers, req.Timeout = ap.Approvers, ap.Duration()
 	}
 	res, err := g.cfg.Approvals.Ask(ctx, req)
 	if err != nil {
@@ -75,7 +73,7 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 	var code string
 	switch res.Outcome {
 	case approval.OutcomeApproved:
-		return g.afterApproval(ctx, a, token, d, call, appr)
+		return g.afterApproval(ctx, a, token, d, call, appr, res.At.Add(g.approvalValidity(req.Timeout)))
 	case approval.OutcomeRejected:
 		code = "approval_rejected"
 	case approval.OutcomeInvalidResponse:
@@ -110,7 +108,11 @@ func (g *Gateway) cancelled(ctx context.Context, a agent.Agent, d pdp.Decision, 
 // afterApproval checks again what may have changed while the human decided: the
 // emergency stop, the agent's token (revoked, e.g. after refresh token reuse), the
 // mandate (a revoked agent's mandate denies) and the connection.
-func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, appr approvalRef) (*sdk.CallToolResult, actionOut, error) {
+//
+// A confirmation is valid until expires, its timeout after it was given (SPEC-v0 section
+// 11.1 item 5): it is checked right before the call, and the call to Home Assistant ends
+// at that point at the latest.
+func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, appr approvalRef, expires time.Time) (*sdk.CallToolResult, actionOut, error) {
 	if g.stopped(ctx) {
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop}, appr)
 		return nil, actionOut{}, errors.New(codeDenied + ": emergency_stop")
@@ -136,32 +138,29 @@ func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: "ha_unavailable"}, appr)
 		return nil, actionOut{}, errors.New(codeUnavailable)
 	}
-	return g.execute(ctx, a, d, call, appr)
+	if g.clockWrong(ctx) {
+		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: errClockBehind}, appr)
+		return nil, actionOut{}, errors.New(codeUnavailable)
+	}
+	if !g.cfg.Now().Before(expires) {
+		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}, appr)
+		return nil, actionOut{}, errors.New(codeDenied + ": approval_expired")
+	}
+	return g.execute(ctx, a, d, call, appr, expires)
 }
 
-// approvalTimeout reads the PT<m>M<s>S timeout of a mandate (validated by the
-// evaluator); 0 lets the upper limit apply.
-func approvalTimeout(s string) time.Duration {
-	rest, ok := strings.CutPrefix(s, "PT")
-	if !ok {
-		return 0
+// approvalValidity is how long a confirmation stays valid: the timeout of the request,
+// at most the configured upper limit of a wait.
+func (g *Gateway) approvalValidity(timeout time.Duration) time.Duration {
+	if timeout <= 0 || timeout > g.cfg.ApprovalLimit {
+		return g.cfg.ApprovalLimit
 	}
-	var total time.Duration
-	if minutes, after, found := strings.Cut(rest, "M"); found {
-		n, err := strconv.Atoi(minutes)
-		if err != nil {
-			return 0
-		}
-		total, rest = time.Duration(n)*time.Minute, after
-	}
-	if seconds, found := strings.CutSuffix(rest, "S"); found {
-		n, err := strconv.Atoi(seconds)
-		if err != nil {
-			return 0
-		}
-		total += time.Duration(n) * time.Second
-	} else if rest != "" {
-		return 0
-	}
-	return total
+	return timeout
+}
+
+// criticalRequest tells whether an approval request is critical: by the vocabulary, or on
+// a device the household marked, every action except read (SPEC-v0 section 4, step 5).
+// Critical requests reach only devices where critical requests are on.
+func criticalRequest(d pdp.Decision) bool {
+	return evaluator.IsCritical(d.Resource.Category, d.Action) || d.Resource.Critical && d.Action != "read"
 }
