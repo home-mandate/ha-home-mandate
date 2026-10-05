@@ -99,6 +99,7 @@ func TestTemplates(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, err := e.adm.Templates(ctx)
+	list = own(list)
 	if err != nil || len(list) != 2 || list[0].Name != "lights-only" || list[1].Name != "voice-assistant" || list[1].CreatedBy != admin.ID {
 		t.Errorf("templates = %+v, %v", list, err)
 	}
@@ -112,9 +113,20 @@ func TestTemplates(t *testing.T) {
 	if err := e.adm.RemoveTemplate(ctx, "lights-only"); !errors.Is(err, admission.ErrTemplateNotFound) {
 		t.Errorf("second remove = %v", err)
 	}
-	if list, _ := e.adm.Templates(ctx); len(list) != 1 {
+	if list, _ := e.adm.Templates(ctx); len(own(list)) != 1 {
 		t.Errorf("templates = %+v", list)
 	}
+}
+
+// own leaves out the base templates.
+func own(list []admission.Template) []admission.Template {
+	var out []admission.Template
+	for _, t := range list {
+		if !t.Builtin {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func TestPutTemplateRejects(t *testing.T) {
@@ -133,6 +145,7 @@ func TestPutTemplateRejects(t *testing.T) {
 		"action not in cat.": {"x", template(t, func(d map[string]any) { d["rules"].([]any)[1].(map[string]any)["actions"] = []any{"unlock"} })},
 		"default allow":      {"x", template(t, func(d map[string]any) { d["default"] = "allow" })},
 		"unknown field":      {"x", template(t, func(d map[string]any) { d["extra"] = true })},
+		"reserved prefix":    {"hm-mine", template(t, nil)},
 		"oversized":          {"x", append(template(t, nil)[:1], append(bytes.Repeat([]byte(" "), 300<<10), template(t, nil)[1:]...)...)},
 	} {
 		if err := e.adm.PutTemplate(ctx, tc.name, tc.doc, admin); !errors.Is(err, admission.ErrInvalidTemplate) {
@@ -377,25 +390,59 @@ func TestNewMandate(t *testing.T) {
 func TestUpdateTemplateNeedsConfirmationForNewCriticalRules(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	if err := e.adm.UpdateTemplate(ctx, "doors", criticalTemplate(t), false, admin); !errors.Is(err, mandate.ErrCriticalConfirmation) {
+	if err := e.adm.UpdateTemplate(ctx, "doors", criticalTemplate(t), "", false, admin); !errors.Is(err, mandate.ErrCriticalConfirmation) {
 		t.Fatalf("new critical template = %v", err)
 	}
-	if err := e.adm.UpdateTemplate(ctx, "doors", criticalTemplate(t), true, admin); err != nil {
+	if err := e.adm.UpdateTemplate(ctx, "doors", criticalTemplate(t), "", true, admin); err != nil {
 		t.Fatal(err)
 	}
-	// Unchanged critical rule: no new confirmation.
-	if err := e.adm.UpdateTemplate(ctx, "doors", criticalTemplate(t), false, admin); err != nil {
-		t.Errorf("unchanged critical rule = %v", err)
-	}
 	doc, tmpl, err := e.adm.TemplateDocument(ctx, "doors")
-	if err != nil || !bytes.Contains(doc, []byte("allow_critical")) || tmpl.Name != "doors" || tmpl.CreatedBy != admin.ID || tmpl.CreatedAt.IsZero() {
+	if err != nil || !bytes.Contains(doc, []byte("allow_critical")) || tmpl.Name != "doors" || tmpl.CreatedBy != admin.ID || tmpl.CreatedAt.IsZero() ||
+		!strings.HasPrefix(tmpl.Digest, "sha256:") {
 		t.Errorf("TemplateDocument = %s %+v %v", doc, tmpl, err)
+	}
+	// Unchanged critical rule: no new confirmation.
+	if err := e.adm.UpdateTemplate(ctx, "doors", criticalTemplate(t), tmpl.Digest, false, admin); err != nil {
+		t.Errorf("unchanged critical rule = %v", err)
 	}
 	if _, _, err := e.adm.TemplateDocument(ctx, "none"); !errors.Is(err, admission.ErrTemplateNotFound) {
 		t.Errorf("unknown template = %v", err)
 	}
-	if err := e.adm.UpdateTemplate(ctx, "doors", []byte(`not json`), false, admin); !errors.Is(err, admission.ErrInvalidTemplate) {
+	_, tmpl, _ = e.adm.TemplateDocument(ctx, "doors")
+	if err := e.adm.UpdateTemplate(ctx, "doors", []byte(`not json`), tmpl.Digest, false, admin); !errors.Is(err, admission.ErrInvalidTemplate) {
 		t.Errorf("invalid template = %v", err)
+	}
+}
+
+// Nobody overwrites a version of a template they have not seen.
+func TestUpdateTemplateNeedsTheVersionTheEditStartedFrom(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if err := e.adm.UpdateTemplate(ctx, "mine", template(t, nil), "", false, admin); err != nil {
+		t.Fatal(err)
+	}
+	_, first, _ := e.adm.TemplateDocument(ctx, "mine")
+	edited := template(t, func(d map[string]any) { d["limits"] = map[string]any{"max_actions_per_hour": 10} })
+	for name, base := range map[string]string{
+		"as new although it exists": "",
+		"an unknown version":        "sha256:" + strings.Repeat("0", 64),
+	} {
+		if err := e.adm.UpdateTemplate(ctx, "mine", edited, base, false, admin); !errors.Is(err, mandate.ErrConflict) {
+			t.Errorf("%s: %v, want ErrConflict", name, err)
+		}
+	}
+	if err := e.adm.UpdateTemplate(ctx, "mine", edited, first.Digest, false, admin); err != nil {
+		t.Fatal(err)
+	}
+	// The first version is now outdated.
+	if err := e.adm.UpdateTemplate(ctx, "mine", template(t, nil), first.Digest, false, admin); !errors.Is(err, mandate.ErrConflict) {
+		t.Errorf("edit of an outdated version = %v", err)
+	}
+	if err := e.adm.RemoveTemplate(ctx, "mine"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.adm.UpdateTemplate(ctx, "mine", edited, first.Digest, false, admin); !errors.Is(err, mandate.ErrConflict) {
+		t.Errorf("edit of a removed template = %v", err)
 	}
 }
 

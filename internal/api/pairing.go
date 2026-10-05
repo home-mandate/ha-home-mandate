@@ -66,6 +66,8 @@ func pairingError(err error) error {
 		return fail(codeConflict)
 	case errors.Is(err, mandate.ErrCriticalConfirmation):
 		return fail(codeCriticalConfirm)
+	case errors.Is(err, mandate.ErrNoApprovers):
+		return fail(codeNoApprovers)
 	case errors.Is(err, admission.ErrTemplateNotFound):
 		return failField(codeInvalidInput, "/template")
 	case errors.Is(err, agent.ErrInvalidName):

@@ -274,12 +274,19 @@ func TestTemplateCommands(t *testing.T) {
 	c := newCLI(t)
 	household := strings.TrimSpace(c.mustRun("", "household"))
 	c.mustRun(mandateFor(t, household, "hm-client:placeholder-00000000"), "mandate", "template", "import", "voice-assistant", "-")
-	if out := c.mustRun("", "mandate", "template", "list"); !strings.HasPrefix(out, "voice-assistant\t") || !strings.Contains(out, "local-admin") {
+	base := "hm-read-only\tbase template\nhm-light-climate\tbase template\nhm-voice-cautious\tbase template\n"
+	if out := c.mustRun("", "mandate", "template", "list"); !strings.HasPrefix(out, base+"voice-assistant\t") || !strings.Contains(out, "local-admin") {
 		t.Errorf("template list = %q", out)
 	}
 	c.mustRun("", "mandate", "template", "remove", "voice-assistant")
-	if out := c.mustRun("", "mandate", "template", "list"); out != "" {
+	if out := c.mustRun("", "mandate", "template", "list"); out != base {
 		t.Errorf("template list after remove = %q", out)
+	}
+	if code, _, _ := c.run("", "mandate", "template", "remove", "hm-read-only"); code == 0 {
+		t.Error("a base template was removed")
+	}
+	if code, _, _ := c.run(mandateFor(t, household, "hm-client:placeholder-00000000"), "mandate", "template", "import", "hm-read-only", "-"); code == 0 {
+		t.Error("a base template was overwritten")
 	}
 }
 

@@ -34,10 +34,20 @@
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <label for="name">{{.T "page_consent_name"}}</label>
 <input id="name" name="name" value="{{.Name}}" maxlength="80" required>
-<label for="template">{{.T "page_consent_template"}}</label>
-<select id="template" name="template" required>
-{{range .Templates}}<option value="{{.}}"{{if eq . $.Selected}} selected{{end}}>{{.}}</option>
-{{end}}</select>
+<fieldset class="templates">
+<legend>{{.T "page_consent_template"}}</legend>
+{{range $i, $t := .Templates}}<div class="template">
+<input type="radio" id="template-{{$i}}" name="template" value="{{$t.Name}}" aria-describedby="template-{{$i}}-details" required{{if eq $t.Name $.Selected}} checked{{end}}>
+<label for="template-{{$i}}">{{$t.Title}}{{if $t.Base}} <span class="badge">{{$.T "page_consent_base"}}</span>{{end}}</label>
+<div class="details" id="template-{{$i}}-details">
+{{if $t.Description}}<p>{{$t.Description}}</p>{{end}}
+{{if $t.Allow}}<p class="group">{{$.T "summary_allow"}}</p><ul>{{range $t.Allow}}<li>{{.}}</li>{{end}}</ul>{{end}}
+{{if $t.Ask}}<p class="group">{{$.T "summary_ask"}}</p><ul>{{range $t.Ask}}<li>{{.}}</li>{{end}}</ul>{{end}}
+{{if $t.Deny}}<p class="group">{{$.T "summary_deny"}}</p><ul>{{range $t.Deny}}<li>{{.}}</li>{{end}}</ul>{{end}}
+<p class="rest">{{$.T "summary_rest"}}</p>
+</div>
+</div>
+{{end}}</fieldset>
 <div class="actions">
 <button type="submit" name="action" value="approve">{{.T "page_consent_approve"}}</button>
 <button type="submit" name="action" value="deny" class="secondary">{{.T "page_consent_deny"}}</button>

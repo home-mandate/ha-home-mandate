@@ -205,14 +205,18 @@ func (s *Server) consentPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renderConsent(w http.ResponseWriter, r *http.Request, st consentState, name, selected string, errKey i18n.Key) {
-	templates, err := s.templateNames(r)
+	templates, err := s.consentTemplates(r.Context(), language(r))
 	if err != nil {
+		s.cfg.Logger.Error("listing mandate templates failed", "error", err)
 		s.fail(w, r, http.StatusServiceUnavailable, i18n.PageBusy)
 		return
 	}
 	if len(templates) == 0 {
 		s.message(w, r, http.StatusConflict, i18n.PageConsentTitle, i18n.PageConsentNoTemplates)
 		return
+	}
+	if selected == "" {
+		selected = templates[0].Name // the most cautious comes first
 	}
 	p := page{Lang: language(r), Title: i18n.PageConsentTitle, User: st.user.Name, CSRF: st.csrf, Claimed: st.client.Name,
 		ClientID: st.client.ID, Verified: st.client.Verified, Name: name, Selected: selected, Templates: templates, Error: errKey}
@@ -233,15 +237,18 @@ func (s *Server) renderConsent(w http.ResponseWriter, r *http.Request, st consen
 	s.render(w, status, "consent", p, formTarget)
 }
 
+// templateNames are the templates a human may choose: hidden base templates are left out.
 func (s *Server) templateNames(r *http.Request) ([]string, error) {
 	list, err := s.cfg.Admission.Templates(r.Context())
 	if err != nil {
 		s.cfg.Logger.Error("listing mandate templates failed", "error", err)
 		return nil, err
 	}
-	names := make([]string, len(list))
-	for i, t := range list {
-		names[i] = t.Name
+	names := make([]string, 0, len(list))
+	for _, t := range list {
+		if !t.Hidden {
+			names = append(names, t.Name)
+		}
 	}
 	return names, nil
 }

@@ -622,6 +622,11 @@ func TestConsentWithoutTemplates(t *testing.T) {
 	if err := h.adm.RemoveTemplate(context.Background(), "voice-assistant"); err != nil {
 		t.Fatal(err)
 	}
+	for _, name := range []string{"hm-read-only", "hm-light-climate", "hm-voice-cautious"} {
+		if err := h.adm.SetHidden(context.Background(), name, true); err != nil {
+			t.Fatal(err)
+		}
+	}
 	_, challenge := pkce()
 	if res := h.browser().consentAs(challenge, "admin-code"); res.status != http.StatusConflict {
 		t.Errorf("consent page = %d", res.status)
@@ -722,5 +727,31 @@ func TestConcurrentConsentDecidesOnce(t *testing.T) {
 	}
 	if codes != 1 {
 		t.Errorf("%d codes issued", codes)
+	}
+}
+
+// The consent page says in plain words what each template allows, offers no hidden base
+// template and refuses one named anyway.
+func TestConsentShowsTemplatesInPlainWords(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if err := h.adm.SetHidden(ctx, "hm-light-climate", true); err != nil {
+		t.Fatal(err)
+	}
+	_, challenge := pkce()
+	b := h.browser()
+	page := b.consentAs(challenge, "admin-code")
+	for _, want := range []string{"Voice assistant (cautious)", "Built in", "Asks you first", "Locks: unlock, open",
+		"Never", "Cameras: everything", "Everything else is forbidden.", `value="hm-read-only" aria-describedby="template-0-details" required checked`, `value="voice-assistant"`} {
+		if !strings.Contains(page.body, want) {
+			t.Errorf("consent page lacks %q", want)
+		}
+	}
+	if strings.Contains(page.body, `value="hm-light-climate"`) {
+		t.Error("a hidden base template is offered")
+	}
+	res := b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, page.body)}, "action": {"approve"}, "name": {"Claude"}, "template": {"hm-light-climate"}})
+	if res.status != http.StatusBadRequest {
+		t.Errorf("approve with a hidden template = %d", res.status)
 	}
 }

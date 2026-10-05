@@ -1,0 +1,69 @@
+{
+  "type": "https://mandate-spec.org/mandate/v0",
+  "id": "m-template",
+  "principal": "household:template",
+  "agent": {
+    "client_id": "hm-client:template",
+    "display_name": "Template"
+  },
+  "rules": [
+    {
+      "id": "r-read-all",
+      "resource": {
+        "any": true
+      },
+      "actions": [
+        "read"
+      ],
+      "decision": "allow"
+    },
+    {
+      "id": "r-lights",
+      "resource": {
+        "category": "light"
+      },
+      "actions": [
+        "turn_on",
+        "turn_off",
+        "set"
+      ],
+      "decision": "allow"
+    },
+    {
+      "id": "r-climate",
+      "resource": {
+        "category": "climate"
+      },
+      "actions": [
+        "set_temperature"
+      ],
+      "decision": "allow"
+    },
+    {
+      "id": "r-covers",
+      "resource": {
+        "category": "cover"
+      },
+      "actions": [
+        "open",
+        "close",
+        "stop",
+        "set_position"
+      ],
+      "decision": "allow"
+    }
+  ],
+  "default": "deny",
+  "approval": {
+    "timeout": "PT2M",
+    "approvers": [
+      "$approvers"
+    ]
+  },
+  "limits": {
+    "max_actions_per_hour": 60
+  },
+  "valid_from": "2026-01-01T00:00:00Z",
+  "created_by": "home-mandate",
+  "created_at": "2026-01-01T00:00:00Z"
+}

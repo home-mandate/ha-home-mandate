@@ -73,13 +73,36 @@ const (
 	PageConsentNoTemplates Key = "page_consent_no_templates"
 	PageConsentInvalid     Key = "page_consent_invalid"
 	PageDenied             Key = "page_denied"
-	PageAdmitted           Key = "page_admitted"
-	PagePairTitle          Key = "page_pair_title"
-	PagePairIntro          Key = "page_pair_intro"
-	PagePairCode           Key = "page_pair_code"
-	PagePairSubmit         Key = "page_pair_submit"
-	PagePairInvalid        Key = "page_pair_invalid"
-	PagePairLocked         Key = "page_pair_locked"
+
+	// Base templates (ARCHITECTURE section 6): title and description.
+	TemplateReadOnlyTitle            Key = "template_read_only_title"
+	TemplateReadOnlyDescription      Key = "template_read_only_description"
+	TemplateLightClimateTitle        Key = "template_light_climate_title"
+	TemplateLightClimateDescription  Key = "template_light_climate_description"
+	TemplateVoiceCautiousTitle       Key = "template_voice_cautious_title"
+	TemplateVoiceCautiousDescription Key = "template_voice_cautious_description"
+
+	// Plain-words summary of a template (consent page).
+	SummaryAllow      Key = "summary_allow"
+	SummaryAsk        Key = "summary_ask"
+	SummaryDeny       Key = "summary_deny"
+	SummaryRest       Key = "summary_rest"
+	SummaryAnyDevice  Key = "summary_any_device"
+	SummaryDevice     Key = "summary_device"
+	SummaryArea       Key = "summary_area"
+	SummaryInArea     Key = "summary_in_area"
+	SummaryAllActions Key = "summary_all_actions"
+	SummaryConditions Key = "summary_conditions"
+	SummaryCritical   Key = "summary_critical"
+	SummaryLine       Key = "summary_line"
+	PageConsentBase   Key = "page_consent_base"
+	PageAdmitted      Key = "page_admitted"
+	PagePairTitle     Key = "page_pair_title"
+	PagePairIntro     Key = "page_pair_intro"
+	PagePairCode      Key = "page_pair_code"
+	PagePairSubmit    Key = "page_pair_submit"
+	PagePairInvalid   Key = "page_pair_invalid"
+	PagePairLocked    Key = "page_pair_locked"
 )
 
 // actions are the vocabulary actions of SPEC-v0 section 5; their display names have the
@@ -93,7 +116,24 @@ var Keys = append([]Key{
 	ApprovalInvalidTitle, ApprovalInvalidMessage, ApprovalBellTitle, ApprovalBellMessage, ApprovalTestTitle, ApprovalTestMessage,
 	CheckpointTitle, CheckpointMessage, RenameFloodTitle, RenameFloodMessage,
 	PageErrorTitle, PageInvalidRequest, PageInvalidClient, PageSessionExpired, PageSignInFailed, PageNotAdmin, PageBusy, PageSignedInAs, PageConsentTitle, PageConsentClaimed, PageConsentVerified, PageConsentUnverified, PageConsentReturn, PageConsentName, PageConsentTemplate, PageConsentApprove, PageConsentDeny, PageConsentNoTemplates, PageConsentInvalid, PageDenied, PageAdmitted, PagePairTitle, PagePairIntro, PagePairCode, PagePairSubmit, PagePairInvalid, PagePairLocked,
-}, actionKeys()...)
+	TemplateReadOnlyTitle, TemplateReadOnlyDescription, TemplateLightClimateTitle, TemplateLightClimateDescription,
+	TemplateVoiceCautiousTitle, TemplateVoiceCautiousDescription,
+	SummaryAllow, SummaryAsk, SummaryDeny, SummaryRest, SummaryAnyDevice, SummaryDevice, SummaryArea, SummaryInArea,
+	SummaryAllActions, SummaryConditions, SummaryCritical, SummaryLine, PageConsentBase,
+}, append(actionKeys(), categoryKeys()...)...)
+
+// categories are the vocabulary categories of SPEC-v0 section 5; their display names
+// have the keys category_<category>.
+var categories = []string{"light", "switch", "climate", "cover", "gate", "lock", "alarm", "camera", "media", "sensor",
+	"scene", "script", "other"}
+
+func categoryKeys() []Key {
+	keys := make([]Key, len(categories))
+	for i, c := range categories {
+		keys[i] = Key("category_" + c)
+	}
+	return keys
+}
 
 func actionKeys() []Key {
 	keys := make([]Key, len(actions))
