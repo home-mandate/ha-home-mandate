@@ -337,13 +337,13 @@ func trustedProxy(ctx context.Context, cfg config.Config, lookup func(context.Co
 	return netip.Addr{}
 }
 
-// tlsStatus reports whether the MCP endpoint has a certificate and until when it is valid.
-func (g *gateway) tlsStatus() (bool, time.Time) {
+// tlsStatus reports the MCP endpoint's certificate for the UI.
+func (g *gateway) tlsStatus() api.TLSStatus {
 	if g.certs == nil {
-		return false, time.Time{}
+		return api.TLSStatus{}
 	}
-	until, _ := g.certs.Status()
-	return true, until
+	until, err := g.certs.Status()
+	return api.TLSStatus{Present: true, ValidUntil: until, RenewalFailed: err != nil}
 }
 
 // directMode tells whether the UI is served on the MCP listener with Home-Mandate's own

@@ -281,7 +281,7 @@ func (h *harness) build() {
 		Approvals: h.approvals, Pairing: h.pairing, HA: h.ha, Catalog: h.cat, Marks: h.marks, Renames: h.renames, Status: func() Status { return h.status },
 		UI:    http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ui") }),
 		Proxy: netip.MustParseAddr(supervisorAddr), Principal: household, Mode: "app", Version: "0.1.0", Commit: "abc123", MCPURL: "https://hm.example.org:8765/mcp",
-		TLS: func() (bool, time.Time) { return true, testStart.Add(90 * 24 * time.Hour) }, Retention: 30 * 24 * time.Hour,
+		TLS: func() TLSStatus { return TLSStatus{Present: true, ValidUntil: testStart.Add(90 * 24 * time.Hour)} }, Retention: 30 * 24 * time.Hour,
 		Direct: h.direct, PublicURL: h.publicURL,
 		DirectUI: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "direct ui") }),
 		Now:      h.now.Now})

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, expect, it, vi } from 'vitest';
-import type { ApiClient, EventHandlers } from '../api/client.ts';
+import { ApiError, type ApiClient, type EventHandlers } from '../api/client.ts';
 import { createMockClient } from '../api/mock.ts';
 import type { EventsState } from '../api/events.ts';
 import { approvalsOpenFixture, systemFixture } from '../api/fixtures.ts';
@@ -187,6 +187,43 @@ describe('AppState', () => {
     await app.start();
     state('forbidden');
     expect(app.phase).toBe('forbidden');
+  });
+
+  it('offers to sign in when there is no session (direct mode)', async () => {
+    const app = new AppState(createMockClient({ failures: { session: 'unauthenticated' } }));
+    await app.start();
+    expect(app.phase).toBe('signed_out');
+  });
+
+  it('offers to sign in when the stream says the session ended', async () => {
+    const { api, state } = controllable(createMockClient({ direct: true }));
+    const app = new AppState(api);
+    await app.start();
+    expect(app.session?.sign_out).toBe(true);
+    state('signed_out');
+    expect(app.phase).toBe('signed_out');
+  });
+
+  it('offers to sign in when the session ended while it was renewed', async () => {
+    const base = createMockClient({ direct: true });
+    const { api, state } = controllable(base);
+    const app = new AppState(api);
+    await app.start();
+    api.session = async () => {
+      throw new ApiError('unauthenticated', 401);
+    };
+    state('csrf');
+    await flush();
+    expect(app.phase).toBe('signed_out');
+  });
+
+  it('signs out and closes the stream', async () => {
+    const api = createMockClient({ direct: true });
+    const app = new AppState(api);
+    await app.start();
+    await app.signOut();
+    expect(app.phase).toBe('signed_out');
+    await expect(api.session()).rejects.toMatchObject({ code: 'unauthenticated' });
   });
 
   it('keeps the old system status when a reload after reconnect fails', async () => {

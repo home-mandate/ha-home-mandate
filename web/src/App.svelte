@@ -28,6 +28,8 @@
   import AgentDetail from './lib/pages/AgentDetail.svelte';
   import AgentPair from './lib/pages/AgentPair.svelte';
   import Agents from './lib/pages/Agents.svelte';
+  import SignIn from './lib/pages/SignIn.svelte';
+  import { signInError } from './lib/app/signin.ts';
   import { getLocale } from './lib/paraglide/runtime.js';
   import { href, parseHash, sectionOf, type Route, type Section } from './lib/router.ts';
   import { toasts } from './lib/ui/toasts.ts';
@@ -153,6 +155,14 @@
     toasts.show({ kind: 'success', text: m.estop_triggered_toast() });
   }
 
+  async function signOut() {
+    try {
+      await app.signOut();
+    } catch {
+      toasts.show({ kind: 'error', text: m.signout_failed() });
+    }
+  }
+
   function skip(event: MouseEvent) {
     event.preventDefault();
     main?.focus();
@@ -162,7 +172,13 @@
 <svelte:window onhashchange={navigated} />
 
 <a class="skip" href="#main" onclick={skip}>{m.skip_to_content()}</a>
-<Header {section} {estopActive} showNav={app.phase !== 'forbidden'} onestop={estop} />
+<Header
+  {section}
+  {estopActive}
+  showNav={app.phase !== 'forbidden' && app.phase !== 'signed_out'}
+  onestop={estop}
+  onsignout={app.phase === 'ready' && app.session?.sign_out ? signOut : undefined}
+/>
 {#if app.system && app.phase === 'ready'}
   <BannerStack
     system={app.system}
@@ -177,6 +193,8 @@
 <main id="main" bind:this={main} tabindex="-1" aria-busy={app.phase === 'loading'}>
   {#if app.phase === 'loading'}
     <Skeleton lines={['30%', '70%', '50%']} />
+  {:else if app.phase === 'signed_out'}
+    <SignIn error={signInError(window.location.hash)} />
   {:else if app.phase === 'forbidden'}
     <FullPageState icon="lock" badge="person" title={m.noaccess_title()} body={m.noaccess_body()} note={m.noaccess_approver()} />
   {:else if app.phase === 'error'}

@@ -229,6 +229,73 @@ describe('App frame', () => {
     expect(screen.queryByRole('button', { name: /Emergency stop/ })).toBeNull();
   });
 
+  it('offers to sign in without a session, and says why the last sign-in failed', async () => {
+    await start({ failures: { session: 'unauthenticated' } }, '#/signin?error=denied');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Sign in');
+    const link = screen.getByRole('link', { name: /Sign in with Home Assistant/ });
+    expect(link.getAttribute('href')).toBe('signin');
+    expect(screen.getByText(/not a Home Assistant administrator/)).toBeTruthy();
+    expect(screen.queryByRole('navigation')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Emergency stop/ })).toBeNull();
+  });
+
+  it('offers to sign in without a reason when none is given', async () => {
+    await start({ failures: { session: 'unauthenticated' } }, '#/signin?error=<b>');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Sign in');
+    expect(screen.queryByText(/administrator account|did not work|Too many/)).toBeNull();
+  });
+
+  it('signs out in direct mode and offers to sign in again', async () => {
+    const { app } = await start({ direct: true });
+    await fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await tick();
+    expect(app.phase).toBe('signed_out');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Sign in');
+    expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull();
+  });
+
+  it('offers no sign-out behind Ingress, where Home Assistant signs people in', async () => {
+    await start();
+    expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull();
+  });
+
+  it('reports a sign-out that failed and stays signed in', async () => {
+    const { app } = await start({ direct: true, failures: { signOut: 'unavailable' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await tick();
+    await tick();
+    expect(app.phase).toBe('ready');
+    expect(screen.getByText('Signing out did not work. Please try again.')).toBeTruthy();
+  });
+
+  it('warns about a certificate that expires soon or a renewal that was not taken over', async () => {
+    const api = createMockClient();
+    const system = api.system.bind(api);
+    const soon = new Date(Date.now() + 3 * 24 * 3_600_000).toISOString();
+    api.system = async () => ({ ...(await system()), tls: { present: true, valid_until: soon, renewal_failed: true } });
+    const app = new AppState(api);
+    render(App, { app });
+    await app.start();
+    await tick();
+    const titles = screen.getAllByRole('alert').map((a) => a.querySelector('strong')?.textContent);
+    expect(titles).toContain('Renewed certificate not taken over');
+    expect(titles).toContain('TLS certificate expires soon');
+  });
+
+  it('does not warn about a certificate valid for longer than 14 days', async () => {
+    const api = createMockClient();
+    const system = api.system.bind(api);
+    const later = new Date(Date.now() + 30 * 24 * 3_600_000).toISOString();
+    api.system = async () => ({ ...(await system()), tls: { present: true, valid_until: later, renewal_failed: false } });
+    const app = new AppState(api);
+    render(App, { app });
+    await app.start();
+    await tick();
+    const titles = screen.queryAllByRole('alert').map((a) => a.querySelector('strong')?.textContent);
+    expect(titles).not.toContain('TLS certificate expires soon');
+    expect(titles).not.toContain('Renewed certificate not taken over');
+  });
+
   it('says what keeps working when the service cannot be reached', async () => {
     await start({ failures: { system: 'unavailable' } });
     const alerts = screen.getAllByRole('alert').map((a) => a.textContent ?? '');

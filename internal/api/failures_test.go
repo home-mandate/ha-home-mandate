@@ -18,7 +18,7 @@ func TestNewFillsDefaults(t *testing.T) {
 	if s.cfg.Logger == nil || s.cfg.Now == nil || s.cfg.Status().HAConnected || s.cfg.Status().Units != nil {
 		t.Error("defaults missing")
 	}
-	if present, until := s.cfg.TLS(); present || !until.IsZero() {
+	if tls := s.cfg.TLS(); tls.Present || !tls.ValidUntil.IsZero() || tls.RenewalFailed {
 		t.Error("TLS default")
 	}
 	if admin, err := s.IsAdmin(context.Background(), adminID); admin || err == nil {

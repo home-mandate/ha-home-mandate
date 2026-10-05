@@ -179,8 +179,8 @@ func TestListenRefusesACertificateForAnotherHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	ln.Close()
-	if present, until := (&gateway{certs: certs}).tlsStatus(); !present || until.IsZero() {
-		t.Errorf("status = %v, %v", present, until)
+	if st := (&gateway{certs: certs}).tlsStatus(); !st.Present || st.ValidUntil.IsZero() || st.RenewalFailed {
+		t.Errorf("status = %+v", st)
 	}
 }
 

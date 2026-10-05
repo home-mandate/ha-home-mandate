@@ -207,8 +207,8 @@ func TestIngressListenerNeedsAFreeAddress(t *testing.T) {
 }
 
 func TestTLSStatusWithoutCertificate(t *testing.T) {
-	if present, until := (&gateway{}).tlsStatus(); present || !until.IsZero() {
-		t.Errorf("status = %v, %v", present, until)
+	if st := (&gateway{}).tlsStatus(); st.Present || !st.ValidUntil.IsZero() || st.RenewalFailed {
+		t.Errorf("status = %+v", st)
 	}
 }
 

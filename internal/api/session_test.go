@@ -90,7 +90,12 @@ func TestSystem(t *testing.T) {
 	if _, err := h.agents.SetEmergencyStop(t.Context(), true, audit.Actor{Kind: audit.ActorUser, ID: annaID}); err != nil {
 		t.Fatal(err)
 	}
-	h.srv.cfg.TLS = func() (bool, time.Time) { return false, time.Time{} }
+	h.srv.cfg.TLS = func() TLSStatus { return TLSStatus{Present: true, ValidUntil: testStart, RenewalFailed: true} }
+	h.ok(http.MethodGet, "/api/system", nil, &sys)
+	if !sys.TLS.Present || !sys.TLS.RenewalFailed {
+		t.Errorf("renewal failure not reported: %+v", sys.TLS)
+	}
+	h.srv.cfg.TLS = func() TLSStatus { return TLSStatus{} }
 	h.srv.cfg.MCPURL = ""
 	h.status.HAConnected, h.status.HAVersion = false, ""
 	h.ok(http.MethodGet, "/api/system", nil, &sys)

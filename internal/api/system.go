@@ -33,6 +33,8 @@ type wireHA struct {
 type wireTLS struct {
 	Present    bool    `json:"present"`
 	ValidUntil *string `json:"valid_until"`
+	// RenewalFailed: renewed files were found but not taken over (the previous pair stays).
+	RenewalFailed bool `json:"renewal_failed"`
 }
 
 type wireStop struct {
@@ -104,14 +106,14 @@ func (s *Server) system(ctx context.Context) (wireSystem, error) {
 	if err != nil {
 		return wireSystem{}, err
 	}
-	present, until := s.cfg.TLS()
+	tls := s.cfg.TLS()
 	out := wireSystem{
 		Mode: s.cfg.Mode, Version: s.cfg.Version, Commit: s.cfg.Commit, ServerTime: *formatTime(s.now()),
 		RetentionDays: int(s.cfg.Retention / (24 * time.Hour)),
 		HA: wireHA{Connected: st.HAConnected, Since: formatTime(st.HASince), Version: optional(st.HAVersion),
 			UserName: s.users.name(ctx, st.ServiceUser), Commands: ha.AllowedCommands()},
 		MCPURL:              optional(s.cfg.MCPURL),
-		TLS:                 wireTLS{Present: present, ValidUntil: formatTime(until)},
+		TLS:                 wireTLS{Present: tls.Present, ValidUntil: formatTime(tls.ValidUntil), RenewalFailed: tls.RenewalFailed},
 		EmergencyStop:       stop,
 		Chain:               s.chain.get(),
 		ApproversConfigured: len(approvers),
@@ -122,7 +124,7 @@ func (s *Server) system(ctx context.Context) (wireSystem, error) {
 	if since := s.cfg.Renames.FailingSince(); !since.IsZero() && s.now().Sub(since) >= directoryGrace {
 		out.Directory.StoreFailingSince = formatTime(since)
 	}
-	if !present {
+	if !tls.Present {
 		out.TLS.ValidUntil = nil
 	}
 	return out, nil

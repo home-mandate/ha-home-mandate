@@ -15,9 +15,11 @@
     /** False without access: name only, no sections, no emergency stop. */
     showNav?: boolean;
     onestop: () => void;
+    /** Direct mode: offers to sign out. */
+    onsignout?: () => void;
   }
 
-  let { section, estopActive, showNav = true, onestop }: Props = $props();
+  let { section, estopActive, showNav = true, onestop, onsignout }: Props = $props();
 
   const TABS: readonly { key: Section; href: string; label: () => string }[] = [
     { key: 'overview', href: '#/', label: () => m.nav_overview() },
@@ -43,6 +45,9 @@
       <Icon name="power" />
       <span>{estopActive ? m.estop_button_active() : m.estop_button()}</span>
     </button>
+    {#if onsignout}
+      <button type="button" class="signout" onclick={onsignout}>{m.signout_button()}</button>
+    {/if}
   {/if}
 </header>
 
@@ -120,6 +125,24 @@
     background: var(--hm-color-surface);
     border: var(--hm-border-width) solid var(--hm-color-danger-fg);
     cursor: pointer;
+  }
+  .signout {
+    order: 4;
+    min-block-size: var(--hm-size-control);
+    padding-inline: var(--hm-space-3);
+    border-radius: var(--hm-radius-md);
+    font: inherit;
+    font-size: 15px;
+    font-weight: var(--hm-font-weight-medium);
+    white-space: nowrap;
+    color: var(--hm-color-text-muted);
+    background: transparent;
+    border: var(--hm-border-width) solid var(--hm-color-border-subtle);
+    cursor: pointer;
+  }
+  .signout:hover {
+    color: var(--hm-color-text);
+    background: var(--hm-color-surface-hover);
   }
   .estop.active {
     color: var(--hm-color-on-danger);

@@ -125,12 +125,20 @@ type Config struct {
 
 	// MCPURL is the URL agents connect to, from the configuration only; empty without TLS.
 	MCPURL string
-	// TLS reports whether the MCP endpoint has a certificate and until when it is valid.
-	TLS       func() (present bool, validUntil time.Time)
+	// TLS reports the certificate of the MCP endpoint.
+	TLS       func() TLSStatus
 	Retention time.Duration
 
 	Logger *slog.Logger
 	Now    func() time.Time
+}
+
+// TLSStatus is the certificate of the MCP endpoint, for the UI.
+type TLSStatus struct {
+	Present    bool
+	ValidUntil time.Time
+	// RenewalFailed: renewed files could not be taken over; the previous pair is in use.
+	RenewalFailed bool
 }
 
 // Server is the API.
@@ -185,7 +193,7 @@ func New(cfg Config) *Server {
 		cfg.Status = func() Status { return Status{} }
 	}
 	if cfg.TLS == nil {
-		cfg.TLS = func() (bool, time.Time) { return false, time.Time{} }
+		cfg.TLS = func() TLSStatus { return TLSStatus{} }
 	}
 	key := make([]byte, 32)
 	_, _ = rand.Read(key) // crypto/rand.Read never fails (Go ≥ 1.24)

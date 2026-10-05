@@ -13,7 +13,16 @@ import type { UnsavedMandate } from '../mandate/versions.ts';
 import { clockOffset } from '../ui/countdown.ts';
 import { Bus } from './bus.ts';
 
-export type Phase = 'loading' | 'ready' | 'forbidden' | 'error';
+/** signed_out: no session (direct mode); the UI offers to sign in through Home Assistant. */
+export type Phase = 'loading' | 'ready' | 'forbidden' | 'signed_out' | 'error';
+
+/** phaseOf maps an error of the session or stream to the phase it means. */
+function phaseOf(err: unknown): Phase | null {
+  if (!(err instanceof ApiError)) return null;
+  if (err.code === 'forbidden') return 'forbidden';
+  if (err.code === 'unauthenticated') return 'signed_out';
+  return null;
+}
 
 type EventType = ServerEvent['type'];
 type Listener<E> = (event: E) => void;
@@ -68,7 +77,7 @@ export class AppState {
       this.session = await this.#api.session();
       this.#setSystem(await this.#api.system());
     } catch (err) {
-      this.phase = err instanceof ApiError && err.code === 'forbidden' ? 'forbidden' : 'error';
+      this.phase = phaseOf(err) ?? 'error';
       return;
     }
     if (this.#stopped) return;
@@ -92,6 +101,14 @@ export class AppState {
   on(topic: 'reconnected', listener: Listener<void>): () => void;
   on(topic: Topic, listener: Listener<never>): () => void {
     return this.#bus.on(topic, listener as (payload: unknown) => void);
+  }
+
+  /** Ends the session of direct mode and closes the stream; the UI then offers to sign in. */
+  async signOut(): Promise<void> {
+    await this.#api.signOut();
+    this.#stream?.close();
+    this.#stream = null;
+    this.phase = 'signed_out';
   }
 
   /** Switches the emergency stop; the header and banners show the new state at once. */
@@ -131,8 +148,8 @@ export class AppState {
 
   #onState(state: EventsState): void {
     this.connection = state;
-    if (state === 'forbidden') {
-      this.phase = 'forbidden';
+    if (state === 'forbidden' || state === 'signed_out') {
+      this.phase = state;
       return;
     }
     if (state === 'open') {
@@ -152,8 +169,9 @@ export class AppState {
     try {
       this.session = await this.#api.session();
     } catch (err) {
-      if (err instanceof ApiError && err.code === 'forbidden') {
-        this.phase = 'forbidden';
+      const phase = phaseOf(err);
+      if (phase !== null) {
+        this.phase = phase;
         return;
       }
       const delay = this.#renewDelay;
