@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/home-mandate/home-mandate/internal/catalog"
 	"github.com/home-mandate/home-mandate/internal/ha"
 )
 
@@ -60,7 +61,23 @@ type wireSystem struct {
 	ApproversConfigured int       `json:"approvers_configured"`
 	// ClockBehind: the clock lies behind the newest audit entry; nothing is decided.
 	ClockBehind bool `json:"clock_behind"`
+	// Directory: storing renames of Home Assistant has failed for a while; with overflow,
+	// renames cannot be held any more and nothing is decided.
+	Directory wireDirectory `json:"directory"`
 }
+
+type wireDirectory struct {
+	StoreFailingSince *string `json:"store_failing_since"`
+	Overflow          bool    `json:"overflow"`
+	// RenamesLastHour: renames from Home Assistant in the last hour; above
+	// RenameFloodThreshold the UI says that this hints at a broken integration.
+	RenamesLastHour      int `json:"renames_last_hour"`
+	RenameFloodThreshold int `json:"rename_flood_threshold"`
+}
+
+// directoryGrace is how long storing renames may fail before the UI says so: a short
+// lock of the database is no news.
+const directoryGrace = 2 * time.Minute
 
 func optional(s string) *string {
 	if s == "" {
@@ -99,6 +116,11 @@ func (s *Server) system(ctx context.Context) (wireSystem, error) {
 		Chain:               s.chain.get(),
 		ApproversConfigured: len(approvers),
 		ClockBehind:         behind,
+		Directory: wireDirectory{Overflow: s.cfg.Renames.Overflowing(), RenamesLastHour: s.cfg.Renames.RenamesLastHour(),
+			RenameFloodThreshold: catalog.RenameFloodThreshold},
+	}
+	if since := s.cfg.Renames.FailingSince(); !since.IsZero() && s.now().Sub(since) >= directoryGrace {
+		out.Directory.StoreFailingSince = formatTime(since)
 	}
 	if !present {
 		out.TLS.ValidUntil = nil

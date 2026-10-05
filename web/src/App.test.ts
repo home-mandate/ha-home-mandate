@@ -171,6 +171,31 @@ describe('App frame', () => {
     expect(titles).toEqual(['Emergency stop active', 'Audit chain broken at entry no. 18,342', 'Clock of the host is wrong', 'Home Assistant unreachable']);
   });
 
+  it('says when renames from Home Assistant cannot be stored, and when nothing is decided because of it', async () => {
+    const { api } = await start();
+    api.control.setDirectoryStore('2026-10-02T15:00:00Z', false);
+    await tick();
+    expect(screen.getByText('Device directory changes cannot be stored')).toBeTruthy();
+    expect(screen.getByText(/cannot be stored since .*They keep applying until Home-Mandate restarts/)).toBeTruthy();
+    api.control.setDirectoryStore('2026-10-02T15:00:00Z', true);
+    await tick();
+    expect(screen.getByText(/All requests are declined until they can be stored/)).toBeTruthy();
+    api.control.setDirectoryStore(null, false);
+    await tick();
+    expect(screen.queryByText('Device directory changes cannot be stored')).toBeNull();
+  });
+
+  it('says when Home Assistant renamed many devices in the last hour', async () => {
+    const { api } = await start();
+    api.control.setRenamesLastHour(50);
+    await tick();
+    expect(screen.queryByText('Many renames in Home Assistant')).toBeNull();
+    api.control.setRenamesLastHour(51);
+    await tick();
+    expect(screen.getByText('Many renames in Home Assistant')).toBeTruthy();
+    expect(screen.getByText(/renamed 51 devices in the last hour.*broken integration/)).toBeTruthy();
+  });
+
   it('opens the broken entry from the chain banner', async () => {
     const { api } = await start();
     api.control.breakChain(7);

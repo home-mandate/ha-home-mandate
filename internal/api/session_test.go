@@ -10,6 +10,7 @@ import (
 
 	"github.com/home-mandate/home-mandate/internal/approval"
 	"github.com/home-mandate/home-mandate/internal/audit"
+	"github.com/home-mandate/home-mandate/internal/catalog"
 	"github.com/home-mandate/home-mandate/internal/ha"
 )
 
@@ -157,5 +158,38 @@ func TestRunVerifierAndRunTailStop(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("did not stop")
 		}
+	}
+}
+
+// failingRenames reports that storing renames fails.
+type failingRenames struct {
+	*catalog.Renames
+	since    time.Time
+	overflow bool
+}
+
+func (f failingRenames) FailingSince() time.Time { return f.since }
+func (f failingRenames) Overflowing() bool       { return f.overflow }
+func (f failingRenames) RenamesLastHour() int    { return 77 }
+
+// Storing renames that fails for a while, and renames that cannot be held, are reported.
+func TestSystemReportsRenamesThatCannotBeStored(t *testing.T) {
+	h := newHarness(t)
+	var sys wireSystem
+	h.ok(http.MethodGet, "/api/system", nil, &sys)
+	if sys.Directory.StoreFailingSince != nil || sys.Directory.Overflow {
+		t.Errorf("directory = %+v", sys.Directory)
+	}
+	// A short failure is no news.
+	h.srv.cfg.Renames = failingRenames{Renames: h.renames, since: testStart.Add(-time.Minute)}
+	h.ok(http.MethodGet, "/api/system", nil, &sys)
+	if sys.Directory.StoreFailingSince != nil {
+		t.Errorf("reported after a minute: %+v", sys.Directory)
+	}
+	h.srv.cfg.Renames = failingRenames{Renames: h.renames, since: testStart.Add(-10 * time.Minute), overflow: true}
+	h.ok(http.MethodGet, "/api/system", nil, &sys)
+	if sys.Directory.StoreFailingSince == nil || *sys.Directory.StoreFailingSince != "2026-10-03T09:50:00.000Z" || !sys.Directory.Overflow ||
+		sys.Directory.RenamesLastHour != 77 || sys.Directory.RenameFloodThreshold != 50 {
+		t.Errorf("directory = %+v", sys.Directory)
 	}
 }

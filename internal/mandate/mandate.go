@@ -467,6 +467,29 @@ func (s *Store) candidate(digest, document string) (evaluator.Stored, map[string
 	return c.stored, c.entities
 }
 
+// Named returns a function that tells whether a rule of an active mandate names an
+// entity ID.
+func (s *Store) Named(ctx context.Context) (func(entityID string) bool, error) {
+	list, err := s.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	named := map[string]bool{}
+	for _, info := range list {
+		if info.Status != StatusActive {
+			continue
+		}
+		_, doc, err := s.Current(ctx, info.ID)
+		if err != nil {
+			return nil, err
+		}
+		for id := range NamedEntities(doc) {
+			named[id] = true
+		}
+	}
+	return func(entityID string) bool { return named[entityID] }, nil
+}
+
 // NamedEntities returns the entity IDs the rules of a document name.
 func NamedEntities(document []byte) map[string]bool {
 	var doc struct {

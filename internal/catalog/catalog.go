@@ -139,7 +139,8 @@ func New(src Source, log *slog.Logger) *Catalog {
 func (c *Catalog) Ready() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.ready
+	// Renames that can no longer be held would be forgotten: nothing is decided then.
+	return c.ready && (c.aliases == nil || !c.aliases.Overflowing())
 }
 
 // Lookup returns a copy of the device with entityID.
@@ -158,6 +159,8 @@ type Aliases interface {
 	Hold(Rename) bool
 	Observe([]ha.EntityEntry) []Rename
 	Formers(entityID string) []string
+	// Overflowing: more renames wait to be stored than can be held.
+	Overflowing() bool
 }
 
 // SetAliases sets where renames are kept until a human resolves them.

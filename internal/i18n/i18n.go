@@ -50,6 +50,8 @@ const (
 	ApprovalTestMessage    Key = "approval_test_message"
 	CheckpointTitle        Key = "checkpoint_title"
 	CheckpointMessage      Key = "checkpoint_message"
+	RenameFloodTitle       Key = "rename_flood_title"
+	RenameFloodMessage     Key = "rename_flood_message"
 
 	PageErrorTitle         Key = "page_error_title"
 	PageInvalidRequest     Key = "page_invalid_request"
@@ -89,7 +91,7 @@ var actions = []string{"read", "turn_on", "turn_off", "set", "set_temperature", 
 var Keys = append([]Key{
 	ApprovalTitle, ApprovalMessage, ApprovalReason, ApprovalParams, ApprovalIdentity, ApprovalNoAnswer, ApprovalApprove, ApprovalDeny,
 	ApprovalInvalidTitle, ApprovalInvalidMessage, ApprovalBellTitle, ApprovalBellMessage, ApprovalTestTitle, ApprovalTestMessage,
-	CheckpointTitle, CheckpointMessage,
+	CheckpointTitle, CheckpointMessage, RenameFloodTitle, RenameFloodMessage,
 	PageErrorTitle, PageInvalidRequest, PageInvalidClient, PageSessionExpired, PageSignInFailed, PageNotAdmin, PageBusy, PageSignedInAs, PageConsentTitle, PageConsentClaimed, PageConsentVerified, PageConsentUnverified, PageConsentReturn, PageConsentName, PageConsentTemplate, PageConsentApprove, PageConsentDeny, PageConsentNoTemplates, PageConsentInvalid, PageDenied, PageAdmitted, PagePairTitle, PagePairIntro, PagePairCode, PagePairSubmit, PagePairInvalid, PagePairLocked,
 }, actionKeys()...)
 

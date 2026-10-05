@@ -61,5 +61,7 @@
   "approval_params": "Parameter: {params}",
   "checkpoint_title": "Home-Mandate: Stand des Protokolls",
   "checkpoint_message": "Protokoll bis Eintrag {seq}, Prüfwert {digest}. Diese Nachricht belegt den Stand des Protokolls; bitte aufbewahren. Protokoll {log}.",
-  "approval_identity": "Agent {client_id} · Gerät {entity_id}"
+  "approval_identity": "Agent {client_id} · Gerät {entity_id}",
+  "rename_flood_title": "Viele Umbenennungen in Home Assistant",
+  "rename_flood_message": "Home Assistant hat in der letzten Stunde {count} Geräte umbenannt. Das deutet auf eine fehlerhafte Integration hin. Home-Mandate verarbeitet alle; Regeln für die früheren Namen gelten weiter, bis du entscheidest."
 }

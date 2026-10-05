@@ -128,6 +128,10 @@ export interface MockControls {
   setHaConnected(connected: boolean): void;
   /** As a host clock behind the newest audit entry. */
   setClockBehind(behind: boolean): void;
+  /** As renames of Home Assistant that cannot be stored (since: when it began to fail). */
+  setDirectoryStore(since: string | null, overflow: boolean): void;
+  /** As Home Assistant renaming this many entities in the last hour. */
+  setRenamesLastHour(count: number): void;
   /** As a rename in Home Assistant: the device gets another entity ID, rules keep the old one. */
   renameDevice(from: string, to: string): void;
   breakChain(seq: number): void;
@@ -528,6 +532,12 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       state = { ...state, devices: { ...state.devices, devices }, renames: { ...renames, [to]: [from, ...earlier] } };
       log('directory.changed', { actor: { kind: 'system', id: 'directory' }, directory: { change: 'renamed', entity_id: to, previous_entity_id: from } });
       emit({ type: 'devices.changed' });
+    },
+    setDirectoryStore(since, overflow) {
+      setSystem({ ...state.system, directory: { ...state.system.directory, store_failing_since: since, overflow } });
+    },
+    setRenamesLastHour(count) {
+      setSystem({ ...state.system, directory: { ...state.system.directory, renames_last_hour: count } });
     },
     setClockBehind(behind) {
       setSystem({ ...state.system, clock_behind: behind });

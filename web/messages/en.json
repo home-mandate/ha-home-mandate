@@ -810,5 +810,10 @@
   "directory_renamed": "{former} renamed to {device} in Home Assistant",
   "directory_rename_applied": "Rename {former} → {device} taken over into the mandates",
   "directory_rename_dismissed": "Rename {former} → {device} not taken over",
-  "audit_field_directory": "Change"
+  "audit_field_directory": "Change",
+  "banner_directory_title": "Device directory changes cannot be stored",
+  "banner_directory_body": "Renames from Home Assistant cannot be stored since {time}. They keep applying until Home-Mandate restarts; check the data directory.",
+  "banner_directory_overflow": "Too many renames from Home Assistant wait to be stored. All requests are declined until they can be stored; check the data directory.",
+  "banner_rename_flood_title": "Many renames in Home Assistant",
+  "banner_rename_flood_body": "{count, plural, other {Home Assistant renamed {count, number} devices in the last hour.}} That hints at a broken integration. Home-Mandate processes all of them; rules on the former names keep applying until you decide."
 }

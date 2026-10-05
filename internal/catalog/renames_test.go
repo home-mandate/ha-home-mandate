@@ -5,6 +5,7 @@ package catalog_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 
@@ -236,5 +237,49 @@ func TestRenamesThatCannotBeStoredStayHeld(t *testing.T) {
 	}
 	if _, err := catalog.LoadRenames(ctx, s.DB()); err == nil {
 		t.Error("LoadRenames without a database succeeded")
+	}
+}
+
+func TestEdgesListTheUnresolvedRenames(t *testing.T) {
+	r, reload := newRenames(t)
+	r.Hold(rn("lock.b", "lock.c"))
+	r.Hold(rn("lock.a", "lock.b"))
+	if err := r.Store(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []catalog.Rename{rn("lock.a", "lock.b"), rn("lock.b", "lock.c")}
+	if got := reload().Edges(); !slices.Equal(got, want) {
+		t.Errorf("Edges after a restart = %v", got)
+	}
+}
+
+// Renames that cannot be stored are held up to MaxUnsaved; beyond, nothing more is held
+// and the catalog is not ready (every request is denied) until storing works again.
+func TestRenamesHeldWhileStoringFailsAreBounded(t *testing.T) {
+	_, s := newMarks(t)
+	ctx := context.Background()
+	r, err := catalog.LoadRenames(ctx, s.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range catalog.MaxUnsaved {
+		r.Hold(rn(fmt.Sprintf("light.a%d", i), fmt.Sprintf("light.b%d", i)))
+	}
+	if r.Overflowing() {
+		t.Fatal("overflowing at the limit")
+	}
+	if r.Hold(rn("light.x", "light.y")) || !r.Overflowing() {
+		t.Error("held beyond the limit")
+	}
+	if !r.FailingSince().IsZero() {
+		t.Error("failing before a store failed")
+	}
+	if err := r.Store(ctx); err != nil || r.Overflowing() || !r.FailingSince().IsZero() {
+		t.Errorf("after storing: %v, overflow %v", err, r.Overflowing())
+	}
+	r.Hold(rn("light.p", "light.q"))
+	_ = s.Close()
+	if err := r.Store(ctx); err == nil || r.FailingSince().IsZero() {
+		t.Errorf("a failed store is not reported: %v", err)
 	}
 }
