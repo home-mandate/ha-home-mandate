@@ -116,8 +116,14 @@
   const section = $derived(sectionOf(route));
   // The page title follows the route, from the first load on (review a11y M6).
   $effect(() => {
-    const page = section ? TITLES[section]() : m.notfound_title();
+    const page =
+      app.phase === 'signed_out' ? m.signin_title() : app.phase === 'forbidden' ? m.noaccess_title() : section ? TITLES[section]() : m.notfound_title();
     document.title = `${page} – ${m.app_name()}`;
+  });
+  /** Why the last sign-in failed (direct mode); follows the hash like the route. */
+  const signInFailure = $derived.by(() => {
+    void route;
+    return signInError(window.location.hash);
   });
   const estopActive = $derived(app.system?.emergency_stop.active ?? false);
   const timeZone = $derived(app.session?.household.time_zone ?? 'UTC');
@@ -155,12 +161,20 @@
     toasts.show({ kind: 'success', text: m.estop_triggered_toast() });
   }
 
+  let signingOut = false;
   async function signOut() {
+    if (signingOut) return;
+    signingOut = true;
     try {
       await app.signOut();
     } catch {
       toasts.show({ kind: 'error', text: m.signout_failed() });
+      return;
+    } finally {
+      signingOut = false;
     }
+    // The focused button is gone with the session: focus the sign-in page's heading.
+    void focusPage();
   }
 
   function skip(event: MouseEvent) {
@@ -194,7 +208,7 @@
   {#if app.phase === 'loading'}
     <Skeleton lines={['30%', '70%', '50%']} />
   {:else if app.phase === 'signed_out'}
-    <SignIn error={signInError(window.location.hash)} />
+    <SignIn error={signInFailure} />
   {:else if app.phase === 'forbidden'}
     <FullPageState icon="lock" badge="person" title={m.noaccess_title()} body={m.noaccess_body()} note={m.noaccess_approver()} />
   {:else if app.phase === 'error'}

@@ -324,8 +324,8 @@ Decided by Markus on 2026-10-01.
 
    **Addition: certificates are renewed without a restart.** The listener takes the
    certificate for each handshake from memory and looks at the files at most once a
-   minute. A new pair is used only if certificate and key belong together and the
-   certificate covers the host of the public URL; otherwise the previous pair stays and
+   minute (by content). A new pair is used only if certificate and key belong together, it
+   is valid now and covers the host of the public URL; otherwise the previous pair stays and
    the error is logged and shown in the UI. If the certificate does not cover that host
    at start, Home-Mandate does not start. From 14 days before the end of validity, the
    log and the UI warn.

@@ -4,6 +4,7 @@ package api
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -108,10 +109,7 @@ func TestUISessionLimits(t *testing.T) {
 func TestSignInStates(t *testing.T) {
 	c := &clock{t: testStart}
 	s := newUISessions(c.Now)
-	state, err := s.startSignIn("192.0.2.10")
-	if err != nil {
-		t.Fatal(err)
-	}
+	state := s.startSignIn("192.0.2.10")
 	if s.finishSignIn(state, state+"x") || s.finishSignIn("", "") {
 		t.Error("a sign-in finished with a state that does not match the cookie")
 	}
@@ -122,21 +120,31 @@ func TestSignInStates(t *testing.T) {
 		t.Error("a state was used twice")
 	}
 
-	old, _ := s.startSignIn("192.0.2.10")
+	old := s.startSignIn("192.0.2.10")
 	c.Add(signInTTL + time.Second)
 	if s.finishSignIn(old, old) {
 		t.Error("an expired sign-in finished")
 	}
 
-	for range signInPerAddr {
-		if _, err := s.startSignIn("192.0.2.20"); err != nil {
-			t.Fatal(err)
-		}
+	// Per address, the oldest gives way; other addresses keep theirs.
+	other := s.startSignIn("192.0.2.21")
+	var states []string
+	for range signInPerAddr + 1 {
+		states = append(states, s.startSignIn("192.0.2.20"))
+		c.Add(time.Second)
 	}
-	if _, err := s.startSignIn("192.0.2.20"); !errors.Is(err, errUISessionsFull) {
-		t.Errorf("err = %v, want a limit per address", err)
+	if s.finishSignIn(states[0], states[0]) {
+		t.Error("the oldest sign-in of the address did not give way")
 	}
-	if _, err := s.startSignIn("192.0.2.21"); err != nil {
-		t.Errorf("another address is refused: %v", err)
+	if !s.finishSignIn(states[1], states[1]) || !s.finishSignIn(other, other) {
+		t.Error("a newer sign-in or one of another address is gone")
+	}
+
+	// Overall, the oldest gives way too: the table never grows past signInTotal.
+	for i := range signInTotal * 2 {
+		s.startSignIn("198.51.100." + strconv.Itoa(i))
+	}
+	if n := len(s.signIns); n > signInTotal {
+		t.Errorf("%d sign-ins in progress, at most %d", n, signInTotal)
 	}
 }

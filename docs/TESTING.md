@@ -255,8 +255,11 @@ Every line is at least one test. New attack ideas are added here before they are
 - Session ID unchanged by the sign-in (fixation) → impossible: every sign-in issues a new ID and the sign-in cookie is cleared
 - Cookie without `__Host-` prefix, `Secure`, `HttpOnly`, `SameSite=Strict` or with a domain → test fails
 - Sign-out without CSRF token or from another site → refused; after sign-out the old cookie is worthless
-- Sixth session of a user → the oldest ends; sign-in starts beyond the limit per address → `rate_limited`
-- `X-Remote-User-Id` or `X-Forwarded-Host` sent by the client in direct mode → ignored, never a user or an origin
+- Sixth session of a user → the oldest ends; all sessions taken → the sign-in says "busy"
+- Flood of sign-in starts (one address or many) → the oldest sign-in in progress gives way (of the address first), never a refusal for everyone; the table stays bounded and nothing else grows with unauthenticated requests
+- `X-Remote-User-Id` or `X-Forwarded-Host` sent by the client in direct mode → ignored, never a user or an origin; an agent's bearer token on `/ui/api` → no user
+- Path tricks on the prefix (`/ui/../api`, `/ui/api%2f…`, `/ui//api`, encoded dots) → never a session without signing in
+- Inactive Home Assistant user → no session
 - Event stream with an `Origin` other than the public URL, or none → refused
 - Page framed by another page → refused by CSP (`frame-ancestors 'none'`)
 
@@ -265,7 +268,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - Handshake with `X25519MLKEM768` is negotiated when the client offers it
 - Plaintext HTTP to the TLS port → no answer in plaintext
 - Certificate that does not cover the host of the public URL → start aborted; as a renewal → not taken over, the previous one stays and the error is logged and shown
-- Renewed certificate and key → the next handshake uses them, without a restart; a key that does not belong to the certificate, a half-written or unreadable file → previous pair stays, retried at the next look (at most once a minute)
+- Renewed certificate and key → the next handshake uses them, without a restart, also when size and modification time stayed the same (compared by content); a key that does not belong to the certificate, a half-written, unreadable or oversized file, or a renewal not valid now (expired, not yet valid) → previous pair stays, retried at the next look (at most once a minute); the UI's status looks at the files too, without a handshake
 - Certificate valid for less than 14 days → warning in the log and in the UI
 
 ## 5. Checking internationalization

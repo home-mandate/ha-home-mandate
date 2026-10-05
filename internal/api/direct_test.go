@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -324,21 +325,46 @@ func TestDirectSignOut(t *testing.T) {
 	}
 }
 
-func TestDirectSignInLimitPerAddress(t *testing.T) {
+// Starting a sign-in needs no session: a flood never locks the administrators out, it
+// only makes the oldest sign-in in progress (of the same address first) give way.
+func TestDirectSignInFloodEvictsInsteadOfRefusing(t *testing.T) {
 	d := newDirect(t)
-	b := newBrowser()
-	for range signInStarts {
-		if r := d.send(b, http.MethodGet, "/ui/signin", nil); !strings.HasPrefix(r.Header().Get("Location"), "https://ha.example.org/") {
-			t.Fatalf("start refused early: %s", r.Header().Get("Location"))
+	victim := newBrowser()
+	victim.addr = "192.0.2.50:1"
+	start := d.send(victim, http.MethodGet, "/ui/signin", nil)
+	to, _ := url.Parse(start.Header().Get("Location"))
+	victimState := to.Query().Get("state")
+
+	attacker := newBrowser()
+	for i := range signInTotal + 5 {
+		attacker.addr = "198.51.100." + strconv.Itoa(i%250) + ":1"
+		if r := d.send(attacker, http.MethodGet, "/ui/signin", nil); !strings.HasPrefix(r.Header().Get("Location"), "https://ha.example.org/") {
+			t.Fatalf("start %d refused: %s", i, r.Header().Get("Location"))
 		}
 	}
-	if r := d.send(b, http.MethodGet, "/ui/signin", nil); r.Header().Get("Location") != signInBusy {
-		t.Errorf("start beyond the limit sent to %s", r.Header().Get("Location"))
+	// The victim's sign-in gave way; starting again works at once.
+	if got := d.send(victim, http.MethodGet, "/ui/signin/callback?code=code-admin&state="+url.QueryEscape(victimState), nil).Header().Get("Location"); got != signInFailed {
+		t.Errorf("evicted sign-in ended at %q", got)
 	}
-	other := newBrowser()
-	other.addr = "192.0.2.11:1"
-	if r := d.send(other, http.MethodGet, "/ui/signin", nil); !strings.HasPrefix(r.Header().Get("Location"), "https://ha.example.org/") {
-		t.Errorf("another address is refused: %s", r.Header().Get("Location"))
+	if got := d.signInWith(victim, "code-admin"); got != "/ui/" {
+		t.Errorf("a new sign-in after the flood ended at %q", got)
+	}
+}
+
+func TestDirectSignInPerAddressKeepsTheNewest(t *testing.T) {
+	d := newDirect(t)
+	b := newBrowser()
+	var states []string
+	for range signInPerAddr + 1 {
+		r := d.send(b, http.MethodGet, "/ui/signin", nil)
+		to, _ := url.Parse(r.Header().Get("Location"))
+		states = append(states, to.Query().Get("state"))
+	}
+	if d.srv.ui.finishSignIn(states[0], states[0]) {
+		t.Error("the oldest sign-in of the address did not give way")
+	}
+	if !d.srv.ui.finishSignIn(states[len(states)-1], states[len(states)-1]) {
+		t.Error("the newest sign-in is gone")
 	}
 }
 
@@ -512,18 +538,8 @@ func TestDirectEventStreamOutlivesServerTimeouts(t *testing.T) {
 	}
 }
 
-func TestDirectSignInWhenFull(t *testing.T) {
+func TestDirectSignInWhenAllSessionsAreTaken(t *testing.T) {
 	d := newDirect(t)
-	for i := range signInTotal {
-		if _, err := d.srv.ui.startSignIn("198.51.100." + string(rune('0'+i%10)) + string(rune('0'+i/10))); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if r := d.send(newBrowser(), http.MethodGet, "/ui/signin", nil); r.Header().Get("Location") != signInBusy {
-		t.Errorf("start with all sign-ins in progress sent to %s", r.Header().Get("Location"))
-	}
-
-	d = newDirect(t)
 	b := newBrowser()
 	start := d.send(b, http.MethodGet, "/ui/signin", nil)
 	to, _ := url.Parse(start.Header().Get("Location"))
@@ -535,5 +551,83 @@ func TestDirectSignInWhenFull(t *testing.T) {
 	end := d.send(b, http.MethodGet, "/ui/signin/callback?code=code-admin&state="+url.QueryEscape(to.Query().Get("state")), nil)
 	if end.Header().Get("Location") != signInBusy || b.cookies[uiCookie] != nil {
 		t.Errorf("callback with all sessions taken = %s", end.Header().Get("Location"))
+	}
+}
+
+func TestDirectEventStreamEndsWhenAdministratorRightsAreWithdrawn(t *testing.T) {
+	d := newDirect(t)
+	b := newBrowser()
+	d.signInWith(b, "code-anna")
+	oldCheck := adminRecheck
+	adminRecheck = 20 * time.Millisecond
+	defer func() { adminRecheck = oldCheck }()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.RemoteAddr = b.addr
+		d.d.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/ui/api/events", &websocket.DialOptions{
+		HTTPHeader: http.Header{"Cookie": {uiCookie + "=" + b.cookies[uiCookie].Value}, "Origin": {publicURL}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseNow()
+	if err := conn.Write(ctx, websocket.MessageText, []byte(`{"csrf":"`+d.srv.csrfToken(annaID, d.now.Now())+`"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := conn.Read(ctx); err != nil {
+		t.Fatalf("first event: %v", err)
+	}
+	d.ha.set(func(f *fakeHA) { f.users[1].GroupIDs = []string{"system-users"} })
+	d.now.Add(usersTTL + time.Second/2) // the session stays live; only the rights are gone
+	for {
+		_, _, err := conn.Read(ctx)
+		if err == nil {
+			continue
+		}
+		if websocket.CloseStatus(err) != closeForbidden {
+			t.Errorf("closed with %v, want %d", err, closeForbidden)
+		}
+		break
+	}
+}
+
+func TestDirectSignInOfAnInactiveUser(t *testing.T) {
+	d := newDirect(t)
+	d.ha.set(func(f *fakeHA) { f.users[1].IsActive = false })
+	b := newBrowser()
+	if got := d.signInWith(b, "code-anna"); got != signInDenied || b.cookies[uiCookie] != nil {
+		t.Errorf("inactive administrator ended at %q", got)
+	}
+}
+
+// Path tricks on the prefix and an agent's bearer token never reach the API without a
+// session.
+func TestDirectPrefixTricksAndBearerTokens(t *testing.T) {
+	d := newDirect(t)
+	b := newBrowser()
+	for _, target := range []string{"/ui/api/session", "/ui/api%2fsession", "/ui//api/session", "/ui/./api/session",
+		"/ui/x/../api/session", "/ui/%2e%2e/ui/api/session", "/ui/API/session"} {
+		r := d.send(b, http.MethodGet, target, func(r *http.Request) {
+			r.Header.Set("Authorization", "Bearer hm_at_"+strings.Repeat("a", 43))
+			r.Header.Set("X-Remote-User-Id", adminID)
+		})
+		if r.Code == http.StatusOK && strings.Contains(r.Body.String(), "csrf_token") {
+			t.Errorf("%s: a session without signing in", target)
+		}
+	}
+	// And through the gateway's outer mux, which cleans paths before direct mode sees them.
+	mux := http.NewServeMux()
+	mux.Handle("/ui/", d.d)
+	for _, target := range []string{"/ui/../api/session", "/ui/x/../api/session"} {
+		req := httptest.NewRequest(http.MethodGet, publicURL+target, nil)
+		req.RemoteAddr = b.addr
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code == http.StatusOK && strings.Contains(rec.Body.String(), "csrf_token") {
+			t.Errorf("%s: a session without signing in", target)
+		}
 	}
 }

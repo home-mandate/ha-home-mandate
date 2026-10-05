@@ -37,7 +37,9 @@
   /** The server warns from 14 days before the end of validity; so does the UI. */
   const TLS_WARNING_MS = 14 * 24 * 3_600_000;
   const tlsUntil = $derived(system.tls.present && system.tls.valid_until ? new Date(system.tls.valid_until) : null);
-  const tlsExpiring = $derived(tlsUntil !== null && !Number.isNaN(tlsUntil.getTime()) && tlsUntil.getTime() - now < TLS_WARNING_MS);
+  const tlsLeft = $derived(tlsUntil !== null && !Number.isNaN(tlsUntil.getTime()) ? tlsUntil.getTime() - now : null);
+  const tlsExpired = $derived(tlsLeft !== null && tlsLeft <= 0);
+  const tlsExpiring = $derived(tlsLeft !== null && tlsLeft > 0 && tlsLeft < TLS_WARNING_MS);
   const connectionLost = $derived(downSince !== null && now - downSince >= CONNECTION_GRACE_MS);
 </script>
 
@@ -82,6 +84,9 @@
   {/if}
   {#if system.tls.present && system.tls.renewal_failed}
     <Banner flush kind="warning" title={m.banner_tls_renewal_title()} body={m.banner_tls_renewal_body()} />
+  {/if}
+  {#if tlsExpired && tlsUntil}
+    <Banner flush kind="critical" title={m.banner_tls_expired_title()} body={m.banner_tls_expired_body({ date: formatDate(tlsUntil, ctx) })} />
   {/if}
   {#if tlsExpiring && tlsUntil}
     <Banner flush kind="warning" title={m.banner_tls_expiring_title()} body={m.banner_tls_expiring_body({ date: formatDate(tlsUntil, ctx) })} />

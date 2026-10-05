@@ -62,6 +62,11 @@ describe('createHttpClient', () => {
     await expect(api.signOut()).resolves.toBeUndefined();
   });
 
+  it('resolves the sign-in and sign-out links under the UI prefix of direct mode', () => {
+    expect(new URL('signin', 'https://hm.example.org:8765/ui/').pathname).toBe('/ui/signin');
+    expect(new URL('signout', 'https://hm.example.org:8765/ui/#/signin?error=failed').pathname).toBe('/ui/signout');
+  });
+
   it('reports a refused or failed sign-out', async () => {
     const { api } = await signedIn(json({ code: 'forbidden' }, 403), new TypeError('offline'));
     await expect(api.signOut()).rejects.toMatchObject({ code: 'forbidden' });

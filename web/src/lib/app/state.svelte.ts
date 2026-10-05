@@ -106,8 +106,12 @@ export class AppState {
   /** Ends the session of direct mode and closes the stream; the UI then offers to sign in. */
   async signOut(): Promise<void> {
     await this.#api.signOut();
+    this.#stopped = true; // no reconnects or session retries for an ended session
     this.#stream?.close();
     this.#stream = null;
+    this.session = null;
+    this.system = null;
+    this.downSince = null;
     this.phase = 'signed_out';
   }
 

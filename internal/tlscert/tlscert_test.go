@@ -34,12 +34,18 @@ type pair struct {
 // newPair returns a self-signed certificate for names (DNS names or IP addresses).
 func newPair(t *testing.T, serial int64, notAfter time.Time, names ...string) pair {
 	t.Helper()
+	return newPairFrom(t, serial, start.Add(-time.Hour), notAfter, names...)
+}
+
+// newPairFrom is newPair with a start of validity.
+func newPairFrom(t *testing.T, serial int64, notBefore, notAfter time.Time, names ...string) pair {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tmpl := &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: "tlscert test"},
-		NotBefore: start.Add(-time.Hour), NotAfter: notAfter}
+		NotBefore: notBefore, NotAfter: notAfter}
 	for _, n := range names {
 		if ip := net.ParseIP(n); ip != nil {
 			tmpl.IPAddresses = append(tmpl.IPAddresses, ip)
@@ -335,5 +341,82 @@ func TestConcurrentHandshakesDuringARenewal(t *testing.T) {
 	wg.Wait()
 	if got := serving(t, l); got != 2 {
 		t.Errorf("serial %d, want 2", got)
+	}
+}
+
+func TestRenewalWithTheSameSizeAndTimeIsTakenOver(t *testing.T) {
+	f := newFiles(t)
+	first := newPair(t, 1, start.Add(30*24*time.Hour), "hm.example.org")
+	f.write(first.cert, first.key)
+	l, c, _ := newLoader(t, f, "hm.example.org")
+	info, _ := os.Stat(f.cert)
+	mtime := info.ModTime()
+	// cp -p keeps the time; a P-256 certificate of the same form has the same size often.
+	second := newPair(t, 2, start.Add(30*24*time.Hour), "hm.example.org")
+	for path, data := range map[string][]byte{f.cert: second.cert, f.key: second.key} {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.advance(CheckInterval)
+	if got := serving(t, l); got != 2 {
+		t.Errorf("serial %d, want the renewal taken over by its content", got)
+	}
+}
+
+func TestARenewalThatIsNotValidNowIsRefused(t *testing.T) {
+	for name, p := range map[string]func(t *testing.T) pair{
+		"expired": func(t *testing.T) pair { return newPair(t, 2, start.Add(-time.Minute), "hm.example.org") },
+		"not valid yet": func(t *testing.T) pair {
+			p := newPairFrom(t, 2, start.Add(time.Hour), start.Add(90*24*time.Hour), "hm.example.org")
+			return p
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFiles(t)
+			good := newPair(t, 1, start.Add(30*24*time.Hour), "hm.example.org")
+			f.write(good.cert, good.key)
+			l, c, _ := newLoader(t, f, "hm.example.org")
+			bad := p(t)
+			f.write(bad.cert, bad.key)
+			c.advance(CheckInterval)
+			if got := serving(t, l); got != 1 {
+				t.Errorf("serial %d, want the previous pair", got)
+			}
+			if _, err := l.Status(); err == nil {
+				t.Error("no error reported")
+			}
+		})
+	}
+}
+
+func TestStatusLooksAtTheFilesWithoutAHandshake(t *testing.T) {
+	f := newFiles(t)
+	first := newPair(t, 1, start.Add(30*24*time.Hour), "hm.example.org")
+	f.write(first.cert, first.key)
+	l, c, _ := newLoader(t, f, "hm.example.org")
+	second := newPair(t, 2, start.Add(90*24*time.Hour), "hm.example.org")
+	f.write(second.cert, second.key)
+	c.advance(CheckInterval)
+	if until, err := l.Status(); !until.Equal(start.Add(90*24*time.Hour)) || err != nil {
+		t.Errorf("status = %v, %v; want the renewal seen without a handshake", until, err)
+	}
+}
+
+func TestOversizedFilesAreRefused(t *testing.T) {
+	f := newFiles(t)
+	good := newPair(t, 1, start.Add(30*24*time.Hour), "hm.example.org")
+	f.write(good.cert, good.key)
+	l, c, _ := newLoader(t, f, "hm.example.org")
+	f.write(bytes.Repeat([]byte("x"), maxFileBytes+1), good.key)
+	c.advance(CheckInterval)
+	if _, err := l.Status(); err == nil || !strings.Contains(err.Error(), "larger") {
+		t.Errorf("err = %v", err)
+	}
+	if got := serving(t, l); got != 1 {
+		t.Errorf("serial %d", got)
 	}
 }

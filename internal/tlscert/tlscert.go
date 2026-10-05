@@ -7,10 +7,12 @@
 package tlscert
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"sync"
@@ -51,11 +53,9 @@ type Loader struct {
 	lastWarns time.Time
 }
 
-// fileStamp tells whether a file changed since it was read.
-type fileStamp struct {
-	mod  time.Time
-	size int64
-}
+// fileStamp tells whether a file changed since it was read: by content, because a
+// renewal may keep size and modification time (cp -p, coarse timestamps of a volume).
+type fileStamp [sha256.Size]byte
 
 // New loads the pair; it fails if the files cannot be read, do not belong together or the
 // certificate does not cover cfg.Host. A missing file is reported as fs.ErrNotExist.
@@ -82,15 +82,17 @@ func New(cfg Config) (*Loader, error) {
 // GetCertificate is tls.Config.GetCertificate: the current pair, renewed when the files
 // changed and the new pair is usable.
 func (l *Loader) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	l.refresh()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.refresh()
 	return l.cert, nil
 }
 
 // Status is the end of validity of the pair in use and the error of the last attempt to
-// take over renewed files, nil if it succeeded or there was none.
+// take over renewed files, nil if it succeeded or there was none. It looks at the files
+// too (at most once per CheckInterval), so the UI is current also when no agent connects.
 func (l *Loader) Status() (time.Time, error) {
+	l.refresh()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.notAfter, l.lastErr
@@ -101,23 +103,35 @@ func Expiring(notAfter, now time.Time) bool {
 	return notAfter.Sub(now) < ExpiryWarning
 }
 
-// refresh looks at the files at most once per CheckInterval; called with mu held.
+// refresh looks at the files at most once per CheckInterval. The files are read outside
+// the lock, so handshakes are not held up by the disk; only one caller looks at a time,
+// because the time of the look is taken under the lock.
 func (l *Loader) refresh() {
+	l.mu.Lock()
 	now := l.cfg.Now()
 	if now.Sub(l.checked) < CheckInterval && !now.Before(l.checked) {
+		l.mu.Unlock()
 		return
 	}
 	l.checked = now
 	l.warnExpiry(now)
+	seen := l.seen
+	l.mu.Unlock()
+
 	stamps, err := l.stamps()
-	if err != nil {
-		l.fail(err)
+	if err == nil && stamps == seen {
 		return
 	}
-	if stamps == l.seen {
-		return
+	var cert *tls.Certificate
+	var notAfter time.Time
+	if err == nil {
+		cert, notAfter, err = l.load()
 	}
-	cert, notAfter, err := l.load()
+	if err == nil {
+		err = validNow(cert, now)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if err != nil {
 		// Certificate and key are often written one after the other: retried at the next look.
 		l.fail(err)
@@ -146,13 +160,42 @@ func (l *Loader) warnExpiry(now time.Time) {
 func (l *Loader) stamps() ([2]fileStamp, error) {
 	var out [2]fileStamp
 	for i, path := range []string{l.cfg.CertFile, l.cfg.KeyFile} {
-		info, err := os.Stat(path)
+		data, err := readLimited(path)
 		if err != nil {
 			return out, fmt.Errorf("tlscert: %w", err)
 		}
-		out[i] = fileStamp{mod: info.ModTime(), size: info.Size()}
+		out[i] = sha256.Sum256(data)
 	}
 	return out, nil
+}
+
+// maxFileBytes bounds what is read of a certificate or key file once a minute.
+const maxFileBytes = 1 << 20
+
+// validNow refuses a renewal that is not valid yet or any more: the previous pair is the
+// better one to keep.
+func validNow(cert *tls.Certificate, now time.Time) error {
+	if now.Before(cert.Leaf.NotBefore) || now.After(cert.Leaf.NotAfter) {
+		return fmt.Errorf("tlscert: renewed certificate is not valid now (valid %s to %s)",
+			cert.Leaf.NotBefore.UTC().Format(time.RFC3339), cert.Leaf.NotAfter.UTC().Format(time.RFC3339))
+	}
+	return nil
+}
+
+func readLimited(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxFileBytes {
+		return nil, fmt.Errorf("%s is larger than %d bytes", path, maxFileBytes)
+	}
+	return data, nil
 }
 
 func (l *Loader) load() (*tls.Certificate, time.Time, error) {
@@ -165,10 +208,11 @@ func (l *Loader) load() (*tls.Certificate, time.Time, error) {
 		if leaf, err = x509.ParseCertificate(cert.Certificate[0]); err != nil {
 			return nil, time.Time{}, fmt.Errorf("tlscert: parse certificate: %w", err)
 		}
+		cert.Leaf = leaf
 	}
 	if l.cfg.Host != "" {
 		if err := leaf.VerifyHostname(l.cfg.Host); err != nil {
-			return nil, time.Time{}, fmt.Errorf("%w (%s)", ErrHostNotCovered, l.cfg.Host)
+			return nil, time.Time{}, fmt.Errorf("%w: %w", ErrHostNotCovered, err)
 		}
 	}
 	return &cert, leaf.NotAfter, nil

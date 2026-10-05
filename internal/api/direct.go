@@ -33,7 +33,6 @@ const (
 	signInCookie = "__Host-hm_signin"
 
 	signInTimeout = 15 * time.Second
-	signInStarts  = 10 // per address and minute
 )
 
 // Where a failed sign-in sends the browser: the UI says why, from its own catalog.
@@ -120,16 +119,10 @@ func peer(r *http.Request) string {
 	return host
 }
 
+// startSignIn needs no session and keeps nothing per address beyond the bounded table of
+// sign-ins in progress (uisessions.go): unauthenticated requests never grow other state.
 func (s *Server) startSignIn(w http.ResponseWriter, r *http.Request) {
-	if ok, _ := s.limits.allow("signin:"+peer(r), signInStarts, time.Minute); !ok {
-		http.Redirect(w, r, signInBusy, http.StatusSeeOther)
-		return
-	}
-	state, err := s.ui.startSignIn(peer(r))
-	if err != nil {
-		http.Redirect(w, r, signInBusy, http.StatusSeeOther)
-		return
-	}
+	state := s.ui.startSignIn(peer(r))
 	// Lax: Home Assistant sends the browser back with a top-level navigation from its
 	// own origin, which a Strict cookie would not accompany.
 	http.SetCookie(w, &http.Cookie{Name: signInCookie, Value: state, Path: "/", MaxAge: int(signInTTL / time.Second),
@@ -187,7 +180,7 @@ func setUICookie(w http.ResponseWriter, value string, maxAge int) {
 // CSRF token.
 func (s *Server) signOut(w http.ResponseWriter, r *http.Request) {
 	r = s.directRequest(r)
-	e, _ := entryOf(r)
+	e, _ := entryOf(r) // directRequest always marks the request as direct
 	if e.user == "" {
 		writeError(w, fail(codeUnauthenticated))
 		return

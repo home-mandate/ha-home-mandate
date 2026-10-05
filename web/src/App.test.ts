@@ -250,8 +250,13 @@ describe('App frame', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
     await tick();
     expect(app.phase).toBe('signed_out');
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Sign in');
+    expect(app.session).toBeNull();
+    const heading = screen.getByRole('heading', { level: 1 });
+    expect(heading.textContent).toBe('Sign in');
     expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull();
+    await tick();
+    expect(document.activeElement).toBe(heading);
+    expect(document.title).toBe('Sign in – Home-Mandate');
   });
 
   it('offers no sign-out behind Ingress, where Home Assistant signs people in', async () => {
@@ -262,10 +267,8 @@ describe('App frame', () => {
   it('reports a sign-out that failed and stays signed in', async () => {
     const { app } = await start({ direct: true, failures: { signOut: 'unavailable' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
-    await tick();
-    await tick();
+    expect(await screen.findByText('Signing out did not work. Please try again.')).toBeTruthy();
     expect(app.phase).toBe('ready');
-    expect(screen.getByText('Signing out did not work. Please try again.')).toBeTruthy();
   });
 
   it('warns about a certificate that expires soon or a renewal that was not taken over', async () => {
@@ -280,6 +283,20 @@ describe('App frame', () => {
     const titles = screen.getAllByRole('alert').map((a) => a.querySelector('strong')?.textContent);
     expect(titles).toContain('Renewed certificate not taken over');
     expect(titles).toContain('TLS certificate expires soon');
+  });
+
+  it('says when the certificate has expired, instead of warning that it expires', async () => {
+    const api = createMockClient();
+    const system = api.system.bind(api);
+    const past = new Date(Date.now() - 24 * 3_600_000).toISOString();
+    api.system = async () => ({ ...(await system()), tls: { present: true, valid_until: past, renewal_failed: false } });
+    const app = new AppState(api);
+    render(App, { app });
+    await app.start();
+    await tick();
+    const titles = screen.getAllByRole('alert').map((a) => a.querySelector('strong')?.textContent);
+    expect(titles).toContain('TLS certificate expired');
+    expect(titles).not.toContain('TLS certificate expires soon');
   });
 
   it('does not warn about a certificate valid for longer than 14 days', async () => {

@@ -20,8 +20,11 @@ const (
 	uiPerUser = 5   // a sixth sign-in ends the oldest session of the user
 	uiTotal   = 100 // beyond it, nobody can sign in until sessions end
 
+	// Sign-ins in progress. Beyond either bound the oldest one gives way (of the address
+	// first): starting sign-ins needs no session, so a full table must never lock the
+	// administrators out; a flood only makes a slow sign-in start over.
 	signInTTL     = 10 * time.Minute
-	signInPerAddr = 10 // sign-ins in progress per address
+	signInPerAddr = 10
 	signInTotal   = 100
 )
 
@@ -31,11 +34,13 @@ var errUISessionsFull = errors.New("api: too many sessions or sign-ins")
 type uiSession struct {
 	user          string
 	created, seen time.Time
+	seq           uint64 // order of creation: times can be equal
 }
 
 type signIn struct {
 	addr    string
 	created time.Time
+	seq     uint64 // order of starting: times can be equal
 }
 
 type uiSessions struct {
@@ -44,6 +49,7 @@ type uiSessions struct {
 	mu       sync.Mutex
 	sessions map[[sha256.Size]byte]*uiSession
 	signIns  map[[sha256.Size]byte]*signIn
+	started  uint64
 }
 
 func newUISessions(now func() time.Time) *uiSessions {
@@ -73,19 +79,21 @@ func (u *uiSessions) create(user string) (string, error) {
 		if s.user != user {
 			continue
 		}
-		if count == 0 || s.created.Before(u.sessions[oldest].created) {
+		if count == 0 || s.seq < u.sessions[oldest].seq {
 			oldest = k
 		}
 		count++
 	}
 	if count >= uiPerUser {
+		// Its event streams end at their next check (adminRecheck), as for an idle session.
 		delete(u.sessions, oldest)
 	}
 	if len(u.sessions) >= uiTotal {
 		return "", errUISessionsFull
 	}
 	token := newToken()
-	u.sessions[tokenHash(token)] = &uiSession{user: user, created: now, seen: now}
+	u.started++
+	u.sessions[tokenHash(token)] = &uiSession{user: user, created: now, seen: now, seq: u.started}
 	return token, nil
 }
 
@@ -131,23 +139,38 @@ func live(s *uiSession, now time.Time) bool {
 
 // startSignIn returns the state of a new sign-in from addr; it goes into a cookie and
 // into the request to Home Assistant, and must come back in both.
-func (u *uiSessions) startSignIn(addr string) (string, error) {
+func (u *uiSessions) startSignIn(addr string) string {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	now := u.now()
 	u.sweep(now)
-	fromAddr := 0
-	for _, s := range u.signIns {
-		if s.addr == addr {
-			fromAddr++
-		}
+	if key, n := u.oldestSignIn(func(s *signIn) bool { return s.addr == addr }); n >= signInPerAddr {
+		delete(u.signIns, key)
 	}
-	if fromAddr >= signInPerAddr || len(u.signIns) >= signInTotal {
-		return "", errUISessionsFull
+	if key, n := u.oldestSignIn(func(*signIn) bool { return true }); n >= signInTotal {
+		delete(u.signIns, key)
 	}
 	state := newToken()
-	u.signIns[tokenHash(state)] = &signIn{addr: addr, created: now}
-	return state, nil
+	u.started++
+	u.signIns[tokenHash(state)] = &signIn{addr: addr, created: now, seq: u.started}
+	return state
+}
+
+// oldestSignIn returns the oldest sign-in that match selects and how many it selects;
+// called with mu held.
+func (u *uiSessions) oldestSignIn(match func(*signIn) bool) ([sha256.Size]byte, int) {
+	var oldest [sha256.Size]byte
+	n := 0
+	for k, s := range u.signIns {
+		if !match(s) {
+			continue
+		}
+		if n == 0 || s.seq < u.signIns[oldest].seq {
+			oldest = k
+		}
+		n++
+	}
+	return oldest, n
 }
 
 // finishSignIn uses up the sign-in if the state from the cookie and the one Home

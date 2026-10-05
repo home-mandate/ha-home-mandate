@@ -827,5 +827,7 @@
   "banner_tls_expiring_title": "TLS certificate expires soon",
   "banner_tls_expiring_body": "Valid until {date}. After that, agents can no longer connect. Renew the certificate; Home-Mandate takes it over without a restart.",
   "banner_tls_renewal_title": "Renewed certificate not taken over",
-  "banner_tls_renewal_body": "The new certificate files do not belong together or do not match Home-Mandate’s address. The previous certificate stays in use."
+  "banner_tls_renewal_body": "The new certificate files do not match each other or Home-Mandate’s address. The previous certificate stays in use.",
+  "banner_tls_expired_title": "TLS certificate expired",
+  "banner_tls_expired_body": "Expired on {date}. Agents can no longer connect. Renew the certificate; Home-Mandate takes it over without a restart."
 }

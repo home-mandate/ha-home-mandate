@@ -144,8 +144,9 @@ type gateway struct {
 	ingress  *http.Server // the UI behind Ingress; nil without HM_INGRESS_ADDR in container mode
 	ingressL net.Listener
 	certs    *tlscert.Loader // the MCP certificate; nil without TLS
-	// direct is the UI of direct mode on the MCP listener; nil while it is off.
-	direct atomic.Pointer[http.Handler]
+	// direct is the UI of direct mode on the MCP listener; nil while it is off. Set once in
+	// newGateway, before the listener serves, so it needs no synchronization.
+	direct http.Handler
 }
 
 func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, error) {
@@ -235,7 +236,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	g.server = &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: writeTimeout(s.cfg.ApprovalTimeout), IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10,
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelWarn)}
-	if g.listener, g.certs, err = listen(s.cfg, g.server, logger); err != nil {
+	if g.listener, g.certs, err = listen(s.cfg, g.server, time.Now, logger); err != nil {
 		return nil, err
 	}
 
@@ -260,7 +261,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	g.api = api.New(apiCfg)
 	if h := g.api.DirectHandler(); h != nil {
-		g.direct.Store(&h)
+		g.direct = h
 		logger.Info("UI in direct mode", "url", s.cfg.PublicURL+api.DirectPrefix+"/")
 	}
 	// Many renames in an hour hint at a broken integration: the approvers are told.
@@ -355,8 +356,8 @@ func directMode(cfg config.Config, certs *tlscert.Loader) bool {
 
 // serveDirect serves direct mode once the API exists; 404 while it is off.
 func (g *gateway) serveDirect(w http.ResponseWriter, r *http.Request) {
-	if h := g.direct.Load(); h != nil {
-		(*h).ServeHTTP(w, r)
+	if g.direct != nil {
+		g.direct.ServeHTTP(w, r)
 		return
 	}
 	http.NotFound(w, r)
@@ -389,12 +390,15 @@ func withOAuth(s *state, mcpHandler, ui http.Handler, resource string, logger *s
 // loopback only (decision 1). In app mode a missing certificate falls back to loopback.
 // The certificate must cover the host of the public URL; renewed files are taken over
 // without a restart.
-func listen(cfg config.Config, srv *http.Server, logger *slog.Logger) (net.Listener, *tlscert.Loader, error) {
+func listen(cfg config.Config, srv *http.Server, now func() time.Time, logger *slog.Logger) (net.Listener, *tlscert.Loader, error) {
 	addr := cfg.MCPAddr
 	var certs *tlscert.Loader
 	if cfg.TLSCert != "" {
-		loader, err := tlscert.New(tlscert.Config{CertFile: cfg.TLSCert, KeyFile: cfg.TLSKey, Host: publicHost(cfg.PublicURL),
-			Now: func() time.Time { return certClock() }, Logger: logger})
+		host, err := publicHost(cfg.PublicURL)
+		if err != nil {
+			return nil, nil, err
+		}
+		loader, err := tlscert.New(tlscert.Config{CertFile: cfg.TLSCert, KeyFile: cfg.TLSKey, Host: host, Now: now, Logger: logger})
 		switch {
 		case err == nil:
 			certs = loader
@@ -417,16 +421,17 @@ func listen(cfg config.Config, srv *http.Server, logger *slog.Logger) (net.Liste
 	return ln, certs, nil
 }
 
-// certClock is the clock of the certificate loader; replaced in tests.
-var certClock = time.Now
-
-// publicHost is the host of the public URL, empty without one.
-func publicHost(publicURL string) string {
-	u, err := url.Parse(publicURL)
-	if err != nil {
-		return ""
+// publicHost is the host of the public URL, empty without one; the certificate must
+// cover it. A URL that cannot be read never turns the check off.
+func publicHost(publicURL string) (string, error) {
+	if publicURL == "" {
+		return "", nil
 	}
-	return u.Hostname()
+	u, err := url.Parse(publicURL)
+	if err != nil || u.Hostname() == "" {
+		return "", fmt.Errorf("public URL %q has no host", publicURL)
+	}
+	return u.Hostname(), nil
 }
 
 func (g *gateway) householdTimeZone() string {
