@@ -98,7 +98,9 @@ name and picks a mandate template.
   which runs on the same computer and signs in with Authorization Code and PKCE. Home-Mandate
   publishes a Client ID Metadata Document for it at
   `https://home-mandate.com/clients/mcp-remote.json` (redirect to
-  `http://localhost:33418/oauth/callback`). Example for Claude Desktop
+  `http://127.0.0.1:33418/oauth/callback`, which `mcp-remote` uses, or
+  `http://localhost:33418/oauth/callback`; a loopback redirect may change its port but not
+  its host). Example for Claude Desktop
   (`claude_desktop_config.json`, Node.js 18 or later):
 
   ```json
