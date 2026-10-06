@@ -326,7 +326,8 @@ func TestAuthorizationCodeFlow(t *testing.T) {
 	}
 	csp := page.header.Get("Content-Security-Policy")
 	if !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "form-action 'self' http://127.0.0.1:33418") ||
-		strings.Contains(csp, "unsafe") || page.header.Get("X-Frame-Options") != "DENY" || page.header.Get("Referrer-Policy") != "no-referrer" {
+		strings.Contains(csp, "unsafe") || page.header.Get("X-Frame-Options") != "DENY" || page.header.Get("Referrer-Policy") != "same-origin" ||
+		!strings.Contains(page.body, `<meta name="referrer" content="same-origin">`) {
 		t.Errorf("headers = %v", page.header)
 	}
 	code := b.approve(page)
@@ -607,6 +608,7 @@ func TestConsentRejects(t *testing.T) {
 		"no csrf":      {func(string) url.Values { return form("", "x", "voice-assistant", "approve") }, nil, http.StatusForbidden},
 		"wrong csrf":   {func(string) url.Values { return form("x", "x", "voice-assistant", "approve") }, nil, http.StatusForbidden},
 		"cross origin": {func(c string) url.Values { return form(c, "x", "voice-assistant", "approve") }, []string{"Origin", "https://evil.example.org"}, http.StatusForbidden},
+		"null origin":  {func(c string) url.Values { return form(c, "x", voiceChoice, "approve") }, []string{"Origin", "null"}, http.StatusForbidden},
 		"bad name":     {func(c string) url.Values { return form(c, "bad\u202ename", "voice-assistant", "approve") }, nil, http.StatusBadRequest},
 		"empty name":   {func(c string) url.Values { return form(c, " ", "voice-assistant", "approve") }, nil, http.StatusBadRequest},
 		"no template":  {func(c string) url.Values { return form(c, "x", "none", "approve") }, nil, http.StatusBadRequest},

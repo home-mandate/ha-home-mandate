@@ -229,7 +229,10 @@ func (s *Server) render(w http.ResponseWriter, status int, name string, p page, 
 		"; frame-ancestors 'none'; base-uri 'none'")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Referrer-Policy", "no-referrer")
+	// same-origin, not no-referrer: under no-referrer browsers send "Origin: null" with a
+	// form post, which the same-origin check of the consent and pairing forms refuses.
+	// Towards other origins (the agent, Home Assistant) no referrer is sent either way.
+	h.Set("Referrer-Policy", "same-origin")
 	h.Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_, _ = w.Write(buf.Bytes())

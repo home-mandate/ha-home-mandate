@@ -259,6 +259,9 @@ Every line is at least one test. New attack ideas are added here before they are
 - Template granting critical actions without approval → not offered on the consent page (which asks for no separate confirmation); admitted only through the UI with it
 - Device IDs, areas and names in a template's summary containing markup → shown as text
 
+**Sign-in, consent and pairing pages**
+- Referrer policy `no-referrer` on these pages → a browser sends `Origin: null` with the consent and pairing forms, which the same-origin check refuses: the pages keep `same-origin` (header and meta), which sends the real origin to themselves and no referrer to other origins; a form post with `Origin: null` or another origin stays refused
+
 **UI in direct mode (container mode without Ingress)**
 - No certificate or no `https://` public URL → no UI, `/ui/` answers 404
 - Request without session cookie, with an unknown, guessed, expired (12 hours) or idle (30 minutes) session, or after a restart → API `unauthenticated`, page sends to the sign-in
