@@ -284,12 +284,70 @@ func TestRevokeMandate(t *testing.T) {
 	}
 }
 
+func TestBaseTemplatesThroughTheAPI(t *testing.T) {
+	h := newHarness(t)
+	var tmpl wireTemplate
+	h.ok(http.MethodGet, "/api/templates/hm-voice-cautious", nil, &tmpl)
+	if !tmpl.Builtin || tmpl.Draft == nil || !strings.Contains(string(tmpl.Draft), "$approvers") {
+		t.Errorf("base template = %+v %s", tmpl.wireTemplateInfo, tmpl.Draft)
+	}
+	d := draft(t)
+	for _, tc := range []struct{ method, path, code string }{
+		{http.MethodPut, "/api/templates/hm-voice-cautious", codeBuiltinTemplate},
+		{http.MethodDelete, "/api/templates/hm-read-only", codeBuiltinTemplate},
+		{http.MethodPut, "/api/templates/hm-mine", codeInvalidInput},
+	} {
+		var body any
+		if tc.method == http.MethodPut {
+			body = map[string]any{"draft": d, "base_digest": tmpl.Digest}
+		}
+		if r := h.do(tc.method, tc.path, body); r.errCode() != tc.code {
+			t.Errorf("%s %s = %d %s", tc.method, tc.path, r.code, r.body)
+		}
+	}
+	// Saved under a new name it is the household's own; the placeholder stays a placeholder.
+	var copied wireTemplate
+	h.ok(http.MethodPut, "/api/templates/my-voice", map[string]any{"draft": json.RawMessage(tmpl.Draft)}, &copied)
+	if copied.Builtin || !strings.Contains(string(copied.Draft), "$approvers") {
+		t.Errorf("copy = %+v %s", copied.wireTemplateInfo, copied.Draft)
+	}
+
+	// Hiding: only base templates; hidden ones stay in the list, marked.
+	h.ok(http.MethodPut, "/api/templates/hm-voice-cautious/hidden", map[string]any{"hidden": true}, nil)
+	var list []wireTemplateInfo
+	h.ok(http.MethodGet, "/api/templates", nil, &list)
+	if !list[2].Hidden {
+		t.Errorf("not hidden: %+v", list[2])
+	}
+	for _, tc := range []struct {
+		path string
+		body any
+		code string
+	}{
+		{"/api/templates/my-voice/hidden", map[string]any{"hidden": true}, codeNotFound},
+		{"/api/templates/hm-read-only/hidden", map[string]any{}, codeInvalidInput},
+		{"/api/templates/hm-read-only/hidden", map[string]any{"hidden": "yes"}, codeInvalidInput},
+	} {
+		if r := h.do(http.MethodPut, tc.path, tc.body); r.errCode() != tc.code {
+			t.Errorf("%s %v = %d %s", tc.path, tc.body, r.code, r.body)
+		}
+	}
+	h.ok(http.MethodPut, "/api/templates/hm-voice-cautious/hidden", map[string]any{"hidden": false}, nil)
+}
+
 func TestTemplates(t *testing.T) {
 	h := newHarness(t)
-	var list []wireTemplateSummary
+	var list []wireTemplateInfo
 	h.ok(http.MethodGet, "/api/templates", nil, &list)
-	if len(list) != 1 || list[0].Name != "voice-assistant" || list[0].RuleCount == 0 || *list[0].CreatedByName != "Markus" {
+	if len(list) != 4 || list[3].Name != "voice-assistant" || list[3].RuleCount == 0 || *list[3].CreatedByName != "Markus" ||
+		list[3].Builtin || list[3].CreatedAt == nil || !digestPattern.MatchString(list[3].Digest) {
 		t.Errorf("templates = %+v", list)
+	}
+	for i, name := range []string{"hm-read-only", "hm-light-climate", "hm-voice-cautious"} {
+		b := list[i]
+		if b.Name != name || !b.Builtin || b.CreatedAt != nil || b.CreatedByName != nil || b.Title["de"] == "" || b.Description["en"] == "" {
+			t.Errorf("base template %d = %+v", i, b)
+		}
 	}
 	var tmpl wireTemplate
 	h.ok(http.MethodGet, "/api/templates/voice-assistant", nil, &tmpl)
@@ -307,11 +365,20 @@ func TestTemplates(t *testing.T) {
 	}
 	crit := draft(t)
 	crit["rules"] = []any{criticalRule()}
-	if r := h.do(http.MethodPut, "/api/templates/garden", map[string]any{"draft": crit}); r.errCode() != codeCriticalConfirm {
+	if r := h.do(http.MethodPut, "/api/templates/garden", map[string]any{"draft": crit, "base_digest": tmpl.Digest}); r.errCode() != codeCriticalConfirm {
 		t.Errorf("critical template = %d %s", r.code, r.body)
 	}
-	h.ok(http.MethodPut, "/api/templates/garden", map[string]any{"draft": crit, "confirm_critical": true}, nil)
-	h.ok(http.MethodPut, "/api/templates/garden", map[string]any{"draft": crit}, nil) // unchanged: no new confirmation
+	// Without the version the edit started from, or with an outdated one: nothing is overwritten.
+	for _, base := range []any{nil, "sha256:" + strings.Repeat("0", 64)} {
+		if r := h.do(http.MethodPut, "/api/templates/garden", map[string]any{"draft": crit, "base_digest": base, "confirm_critical": true}); r.errCode() != codeConflict {
+			t.Errorf("base %v = %d %s", base, r.code, r.body)
+		}
+	}
+	if r := h.do(http.MethodPut, "/api/templates/garden", map[string]any{"draft": crit, "base_digest": "x"}); r.field() != "/base_digest" {
+		t.Errorf("malformed base digest = %d %s", r.code, r.body)
+	}
+	h.ok(http.MethodPut, "/api/templates/garden", map[string]any{"draft": crit, "base_digest": tmpl.Digest, "confirm_critical": true}, &tmpl)
+	h.ok(http.MethodPut, "/api/templates/garden", map[string]any{"draft": crit, "base_digest": tmpl.Digest}, &tmpl) // unchanged: no new confirmation
 	bad := draft(t)
 	bad["limits"] = map[string]any{"max_actions_per_hour": "many"}
 	for _, tc := range []struct {
@@ -324,14 +391,14 @@ func TestTemplates(t *testing.T) {
 		{"/api/templates/-x", map[string]any{"draft": d}, codeInvalidInput, "/name"},
 		{"/api/templates/garden", map[string]any{"draft": "x"}, codeInvalidInput, "/draft"},
 		{"/api/templates/garden", map[string]any{"draft": map[string]any{"id": "m-evil"}}, codeInvalidInput, "/draft/id"},
-		{"/api/templates/garden", map[string]any{"draft": bad}, codeInvalidMandate, "/draft/limits/max_actions_per_hour"},
+		{"/api/templates/garden", map[string]any{"draft": bad, "base_digest": tmpl.Digest}, codeInvalidMandate, "/draft/limits/max_actions_per_hour"},
 	} {
 		if r := h.do(http.MethodPut, tc.path, tc.body); r.errCode() != tc.code || r.field() != tc.field {
 			t.Errorf("%s %v = %d %s", tc.path, tc.body, r.code, r.body)
 		}
 	}
 	h.ok(http.MethodGet, "/api/templates", nil, &list)
-	if len(list) != 2 {
+	if len(list) != 5 {
 		t.Errorf("templates = %+v", list)
 	}
 	h.ok(http.MethodDelete, "/api/templates/garden", nil, nil)
@@ -465,5 +532,25 @@ func TestEmergencyStop(t *testing.T) {
 		if r := h.do(http.MethodPut, "/api/emergency-stop", body); r.errCode() != codeInvalidInput {
 			t.Errorf("%v = %d", body, r.code)
 		}
+	}
+}
+
+// A base template applied to a mandate puts the human who applies it in place of the
+// approvers placeholder; a hidden one is refused as at admission.
+func TestApplyABaseTemplate(t *testing.T) {
+	h := newHarness(t)
+	a := h.admit("Garten")
+	m := h.mandateOf(a.ClientID)
+	h.ok(http.MethodPost, "/api/mandates/"+m.ID+"/apply-template", map[string]any{"template": "hm-voice-cautious", "base_digest": m.Digest}, nil)
+	_, doc, err := h.mandates.Current(t.Context(), m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(doc), "$approvers") || !strings.Contains(string(doc), adminID) {
+		t.Errorf("mandate after applying a base template = %s", doc)
+	}
+	h.ok(http.MethodPut, "/api/templates/hm-read-only/hidden", map[string]any{"hidden": true}, nil)
+	if r := h.do(http.MethodPost, "/api/mandates/"+m.ID+"/apply-template", map[string]any{"template": "hm-read-only", "base_digest": h.mandateOf(a.ClientID).Digest}); r.field() != "/template" {
+		t.Errorf("hidden template = %d %s", r.code, r.body)
 	}
 }

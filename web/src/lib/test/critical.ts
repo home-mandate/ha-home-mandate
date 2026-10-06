@@ -11,6 +11,7 @@ export async function addCriticalTemplate(api: MockClient): Promise<void> {
   const base = templatesFixture[0]!.draft;
   await api.putTemplate(DOORS, {
     draft: { ...base, rules: [{ id: 'r-unlock', resource: { category: 'lock' }, actions: ['unlock'], decision: 'allow', allow_critical: true }] },
+    base_digest: null,
     confirm_critical: true,
   });
 }

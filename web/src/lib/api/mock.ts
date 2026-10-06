@@ -10,6 +10,8 @@ import { cleanSearch } from '../audit/filters.ts';
 import { cleanUntrusted } from '../untrusted.ts';
 import { checkDraft, timeoutSeconds } from '../engine/check.ts';
 import { canonical, needsCriticalConfirmation } from '../engine/vocabulary.ts';
+import { withApprovers } from '../mandate/placeholder.ts';
+import { RESERVED_PREFIX, TEMPLATE_NAME } from '../mandate/template.ts';
 import { ApiError, type ApiClient, type EventHandlers } from './client.ts';
 import type { EventsConnection, EventsState } from './events.ts';
 import {
@@ -25,7 +27,6 @@ import {
   sessionFixture,
   systemFixture,
   templatesFixture,
-  USERS,
   voiceAssistantMandate,
   WORST_NAME,
   WORST_REASON,
@@ -57,6 +58,7 @@ import type {
   Session,
   SystemStatus,
   Template,
+  TemplateSummary,
 } from './types.ts';
 
 const STATUS: Record<ApiErrorCode, number> = {
@@ -68,6 +70,8 @@ const STATUS: Record<ApiErrorCode, number> = {
   invalid_input: 400,
   invalid_mandate: 422,
   critical_confirmation_required: 422,
+  builtin_template: 409,
+  no_approvers: 422,
   pairing_code_invalid: 400,
   pairing_code_expired: 410,
   pairing_locked: 429,
@@ -165,7 +169,6 @@ function householdDay(at: Date, timeZone: string): string {
 }
 
 const normalizeCode = (code: string) => code.toUpperCase().replace(/[\s-]/g, '');
-const nameOf = (userId: string) => USERS[userId] ?? null;
 
 const HOSTILE_AGENT = 'pair:voice-assistant';
 
@@ -221,6 +224,39 @@ const draftOf = (d: MandateDocument): MandateDraft => ({
 function validate(draft: MandateDraft): void {
   const [first] = checkDraft(draft);
   if (first) fail('invalid_mandate', `/draft${first.field}`);
+}
+
+const DIGEST = /^sha256:[0-9a-f]{64}$/;
+const FNV_OFFSET = 0x811c9dc5;
+const FNV_PRIME = 0x01000193;
+const DIGEST_WORDS = 8;
+
+/** contentDigest stands in for the server's SHA-256: the same content gives the same "sha256:<64 hex>". */
+export function contentDigest(text: string): string {
+  const words = Array.from({ length: DIGEST_WORDS }, (_, seed) => {
+    let h = (FNV_OFFSET ^ seed) >>> 0;
+    for (const ch of text) h = Math.imul(h ^ (ch.codePointAt(0) ?? 0), FNV_PRIME) >>> 0;
+    return h.toString(16).padStart(8, '0');
+  });
+  return `sha256:${words.join('')}`;
+}
+
+/** As the server stores a template: without expiry, with its rule count and digest. */
+/** withoutExpires is the draft without an expiry: a template carries none. */
+function withoutExpires(d: MandateDraft): MandateDraft {
+  return { rules: d.rules, approval: d.approval, limits: d.limits, valid_from: d.valid_from };
+}
+
+function storedTemplate(t: Template): Template {
+  const draft = withoutExpires(t.draft);
+  return { ...t, draft, rule_count: draft.rules.length, digest: contentDigest(canonical(draft)) };
+}
+
+/** Base templates first in their order, then the household's own by name (as GET api/templates). */
+function templateOrder(list: readonly Template[]): Template[] {
+  const builtins = list.filter((t) => t.builtin);
+  const own = list.filter((t) => !t.builtin).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return [...builtins, ...own];
 }
 
 const MAX_DEVICES = 5;
@@ -320,7 +356,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     renames: {},
     agents: options.empty ? [] : agentsFixture,
     mandates: options.empty ? {} : initialMandates(),
-    templates: templatesFixture,
+    templates: templatesFixture.map(storedTemplate),
     audit: options.empty ? [] : auditFixture,
     approvals: options.empty ? { open: [], history: [] } : { open: approvalsOpenFixture, history: approvalsHistoryFixture },
     approvers: approversFixture,
@@ -441,8 +477,19 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     putStored(id, { ...stored(id), status });
   }
 
+  /** A template to make a mandate from: hidden base templates are refused, as at admission. */
   function template(name: string, field = '/template'): Template {
-    return state.templates.find((t) => t.name === name) ?? fail('invalid_input', field);
+    const t = state.templates.find((x) => x.name === name);
+    return t && !t.hidden ? t : fail('invalid_input', field);
+  }
+
+  /**
+   * resolved is a template's draft ready for a mandate: the approvers placeholder stands for
+   * the admitting human and every approver set up, without duplicates (no_approvers if none).
+   */
+  function resolved(name: string): MandateDraft {
+    const people = [...new Set([user().id, ...state.approvers.approvers.map((a) => a.user_id)])];
+    return withApprovers(template(name).draft, people) ?? fail('no_approvers');
   }
 
   /** The server asks for the separate confirmation when a template allows critical actions (U9). */
@@ -452,12 +499,13 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 
   function createFromTemplate(clientId: string, name: string, mandateName?: string): string {
     const agent = state.agents.find((a) => a.client_id === clientId) ?? fail('not_found');
-    const t = template(name);
+    const draft = resolved(name);
     const createdAt = now().toISOString();
     const id = `mandate-mock-${++counter}`;
     const document: MandateDocument = {
       ...voiceAssistantMandate,
-      ...t.draft,
+      ...draft,
+      valid_from: createdAt,
       id,
       agent: { client_id: agent.client_id, display_name: agent.display_name },
       created_by: user().id,
@@ -613,9 +661,14 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     async pairingApprove(req) {
       const name = req.display_name.trim();
       if (name.length < 1 || name.length > 80) fail('invalid_input', '/display_name');
-      template(req.template);
+      resolved(req.template);
       const key = checkPairing(req.code);
       if (req.pairing_id !== pairingCandidate.pairing_id) fail('conflict');
+      // The template must still be the one the human saw.
+      if (req.template_digest !== undefined) {
+        if (!DIGEST.test(req.template_digest)) fail('invalid_input', '/template_digest');
+        if (template(req.template).digest !== req.template_digest) fail('conflict');
+      }
       checkCritical(req.template, req.confirm_critical);
       const clientId = `pair:${pairingCandidate.client}-${++counter}`;
       const agent: Agent = {
@@ -707,6 +760,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     async createMandate({ client_id: clientId, template: name, name: mandateName, confirm_critical: confirm }) {
       const agent = state.agents.find((a) => a.client_id === clientId) ?? fail('not_found');
       if (agent.status !== 'active' || agent.mandate?.status === 'active') return fail('conflict');
+      resolved(name);
       checkCritical(name, confirm);
       return detail(createFromTemplate(clientId, name, mandateName));
     },
@@ -724,8 +778,8 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     },
     async applyTemplate(id, apply) {
       const current = detail(id).document;
-      const t = template(apply.template);
-      const draft = { ...draftOf(current), rules: t.draft.rules, approval: t.draft.approval, limits: t.draft.limits };
+      const t = resolved(apply.template);
+      const draft = { ...draftOf(current), rules: t.rules, approval: t.approval, limits: t.limits };
       return storeVersion(id, apply.base_digest, draft, apply.confirm_critical);
     },
     async revokeMandate(id) {
@@ -735,31 +789,56 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     },
 
     async templates() {
-      return state.templates.map((t) => ({
-        name: t.name,
-        rule_count: t.draft.rules.length,
-        created_at: '2026-10-01T08:00:00Z',
-        created_by: 'u-admin',
-        created_by_name: nameOf('u-admin'),
-      }));
+      return copy(
+        state.templates.map(({ draft: _draft, ...info }): TemplateSummary => {
+          void _draft;
+          return info;
+        }),
+      );
     },
     async template(name) {
       return copy(state.templates.find((t) => t.name === name) ?? fail('not_found'));
     },
     async putTemplate(name, update) {
-      validate(update.draft);
+      if (!TEMPLATE_NAME.test(name)) fail('invalid_input', '/name');
+      if (update.base_digest !== null && !DIGEST.test(update.base_digest)) fail('invalid_input', '/base_digest');
       const existing = state.templates.find((t) => t.name === name);
+      if (existing?.builtin) fail('builtin_template');
+      if (name.startsWith(RESERVED_PREFIX)) fail('invalid_input', '/name');
+      // Nobody overwrites a version they have not seen; a new template must not exist yet.
+      if ((existing?.digest ?? null) !== update.base_digest) fail('conflict');
+      validate(update.draft);
       if (needsCriticalConfirmation(existing?.draft ?? null, update.draft) && update.confirm_critical !== true) {
         return fail('critical_confirmation_required');
       }
-      const t: Template = { name, draft: update.draft };
-      state = { ...state, templates: [...state.templates.filter((x) => x.name !== name), t] };
+      const t = storedTemplate({
+        name,
+        draft: update.draft,
+        rule_count: 0,
+        created_at: now().toISOString(),
+        created_by: user().id,
+        created_by_name: user().name,
+        builtin: false,
+        hidden: false,
+        title: {},
+        description: {},
+        digest: '',
+      });
+      state = { ...state, templates: templateOrder([...state.templates.filter((x) => x.name !== name), t]) };
       emit({ type: 'templates.changed' });
       return copy(t);
     },
     async deleteTemplate(name) {
-      if (!state.templates.some((t) => t.name === name)) fail('not_found');
+      const existing = state.templates.find((t) => t.name === name) ?? fail('not_found');
+      if (existing.builtin) fail('builtin_template');
       state = { ...state, templates: state.templates.filter((t) => t.name !== name) };
+      emit({ type: 'templates.changed' });
+    },
+    async setTemplateHidden(name, hidden) {
+      if (typeof hidden !== 'boolean') fail('invalid_input', '/hidden');
+      // Only base templates can be hidden; anything else is not found.
+      if (!state.templates.some((t) => t.name === name && t.builtin)) fail('not_found');
+      state = { ...state, templates: state.templates.map((t) => (t.name === name ? { ...t, hidden } : t)) };
       emit({ type: 'templates.changed' });
     },
 

@@ -16,6 +16,8 @@ const text = {
 
 type Lang = keyof typeof text;
 
+/** More arrow presses than there are templates in the mock. */
+const TEMPLATE_STEPS = 12;
 const CLAUDE = encodeURIComponent('https://claude.ai/oauth/claude-code-client-metadata');
 
 test('lists agents and shows hostile names as text', async ({ page }, info) => {
@@ -44,9 +46,12 @@ test('pairs an agent by code with the keyboard only', async ({ page }, info) => 
   await page.keyboard.press('Enter');
 
   await page.keyboard.press('Tab'); // display name
-  await page.keyboard.press('Tab'); // templates: "Empty" is chosen
-  await page.keyboard.press('ArrowUp');
-  await expect(page.getByRole('radio', { name: t.voice })).toBeChecked();
+  await page.keyboard.press('Tab'); // templates: the most cautious one is chosen
+  // Arrow keys move through the templates, whatever their order, to the voice assistant.
+  const voice = page.getByRole('radio', { name: t.voice });
+  for (let i = 0; i < TEMPLATE_STEPS && !(await voice.isChecked()); i++) await page.keyboard.press('ArrowDown');
+  await expect(voice).toBeChecked();
+  await expect(voice).toBeFocused();
   await page.keyboard.press('Tab'); // Back
   await page.keyboard.press('Tab'); // Approve
   await page.keyboard.press('Enter');

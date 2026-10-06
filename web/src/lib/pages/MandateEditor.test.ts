@@ -814,6 +814,14 @@ describe('states', () => {
     expect(screen.getByRole('button', { name: /u-admin/ }).getAttribute('aria-pressed')).toBe('true');
   });
 
+  it('never offers the approvers placeholder of templates in a mandate', async () => {
+    await start();
+    await screen.findByRole('heading', { level: 1 });
+    const group = screen.getByRole('group', { name: 'Approvers' });
+    expect(within(group).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['M Markus']);
+    expect(document.body.textContent).not.toContain('whoever admits the agent');
+  });
+
   it('cannot edit a rule on an extension category, only move or delete it', async () => {
     const extension: Rule = { id: 'docs', resource: { category: 'paperless:document' }, actions: ['read'], decision: 'allow' };
     await start({}, async (api) => void (await store(api, (d) => ({ ...d, rules: [extension, ...d.rules] }))));

@@ -38,6 +38,7 @@ type authzRequest struct {
 // decision is what the human chose on the consent page or in the UI.
 type decision struct {
 	name, template  string
+	templateDigest  string // the template as the human saw it
 	mandateName     string
 	confirmCritical bool
 	by              string // Home Assistant user ID
@@ -205,14 +206,18 @@ func (s *Server) consentPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renderConsent(w http.ResponseWriter, r *http.Request, st consentState, name, selected string, errKey i18n.Key) {
-	templates, err := s.templateNames(r)
+	templates, err := s.consentTemplates(r.Context(), language(r))
 	if err != nil {
+		s.cfg.Logger.Error("listing mandate templates failed", "error", err)
 		s.fail(w, r, http.StatusServiceUnavailable, i18n.PageBusy)
 		return
 	}
 	if len(templates) == 0 {
 		s.message(w, r, http.StatusConflict, i18n.PageConsentTitle, i18n.PageConsentNoTemplates)
 		return
+	}
+	if selected == "" {
+		selected = templates[0].Name // the most cautious comes first
 	}
 	p := page{Lang: language(r), Title: i18n.PageConsentTitle, User: st.user.Name, CSRF: st.csrf, Claimed: st.client.Name,
 		ClientID: st.client.ID, Verified: st.client.Verified, Name: name, Selected: selected, Templates: templates, Error: errKey}
@@ -233,15 +238,18 @@ func (s *Server) renderConsent(w http.ResponseWriter, r *http.Request, st consen
 	s.render(w, status, "consent", p, formTarget)
 }
 
+// templateNames are the templates a human may choose: hidden base templates are left out.
 func (s *Server) templateNames(r *http.Request) ([]string, error) {
 	list, err := s.cfg.Admission.Templates(r.Context())
 	if err != nil {
 		s.cfg.Logger.Error("listing mandate templates failed", "error", err)
 		return nil, err
 	}
-	names := make([]string, len(list))
-	for i, t := range list {
-		names[i] = t.Name
+	names := make([]string, 0, len(list))
+	for _, t := range list {
+		if !t.Hidden {
+			names = append(names, t.Name)
+		}
 	}
 	return names, nil
 }
@@ -272,17 +280,19 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 		s.denyGrant(st.device)
 		s.message(w, r, http.StatusOK, i18n.PageConsentTitle, i18n.PageDenied)
 	case "approve":
-		name, tmpl := strings.TrimSpace(form["name"]), form["template"]
+		name := strings.TrimSpace(form["name"])
+		// The choice names the template and the digest of what the page showed of it.
+		tmpl, shown, _ := strings.Cut(form["template"], "@")
 		templates, err := s.templateNames(r)
 		if err != nil {
 			s.fail(w, r, http.StatusServiceUnavailable, i18n.PageBusy)
 			return
 		}
-		if !displayable(name) || !slices.Contains(templates, tmpl) {
+		if !displayable(name) || !slices.Contains(templates, tmpl) || !strings.HasPrefix(shown, "sha256:") {
 			s.renderConsent(w, r, st, name, tmpl, i18n.PageConsentInvalid)
 			return
 		}
-		d := decision{name: name, template: tmpl, by: st.user.ID}
+		d := decision{name: name, template: tmpl, templateDigest: shown, by: st.user.ID}
 		if !s.decide(w, id, form["csrf"]) {
 			s.fail(w, r, http.StatusForbidden, i18n.PageSessionExpired)
 			return

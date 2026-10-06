@@ -202,19 +202,28 @@
   }
   @media (min-width: 768px) {
     .layout {
-      grid-template-columns: 200px minmax(0, 1fr);
+      /* The index is as wide as its longest entry (issue #8). */
+      grid-template-columns: max-content minmax(0, 1fr);
       align-items: start;
     }
     nav {
       position: sticky;
       inset-block-start: var(--hm-space-4);
-      /* Short windows: the index scrolls inside instead of running off the screen. */
+      /* Short windows: the index scrolls inside instead of running off the screen; while
+         everything fits, nothing overflows and no scroll bar shows (issue #8). The padding
+         keeps the focus ring inside the scroll container, the negative margin the
+         alignment of the entries. */
       max-block-size: calc(100dvh - 2 * var(--hm-space-4));
       overflow-y: auto;
+      box-sizing: border-box;
+      padding: var(--hm-space-2);
+      margin: calc(-1 * var(--hm-space-2));
     }
     nav ul {
       flex-direction: column;
       overflow: visible;
+      padding: 0;
+      margin: 0;
     }
   }
   nav {
@@ -223,10 +232,9 @@
   nav ul {
     display: flex;
     gap: var(--hm-space-2);
-    margin: 0;
-    /* room for the focus ring inside the scroll container */
-    padding: 8px;
-    margin: -8px;
+    /* room for the focus ring inside the scrolling chip row */
+    padding: var(--hm-space-2);
+    margin: calc(-1 * var(--hm-space-2));
     list-style: none;
     overflow-x: auto;
   }

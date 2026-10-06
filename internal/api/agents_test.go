@@ -206,10 +206,11 @@ func TestPairingHandlers(t *testing.T) {
 		f.approved.By != adminID || f.approved.PairingID != "p1" {
 		t.Errorf("approve = %+v, %+v", a, f.approved)
 	}
+	shown := "sha256:" + strings.Repeat("a", 64)
 	h.ok(http.MethodPost, "/api/pairing/approve", map[string]any{"code": "BCDF-GHJK", "pairing_id": "p1", "display_name": "Tablet",
-		"template": "voice-assistant", "mandate_name": "  "}, nil)
-	if f.approved.MandateName != "" {
-		t.Errorf("blank mandate name = %q", f.approved.MandateName)
+		"template": "voice-assistant", "template_digest": shown, "mandate_name": "  "}, nil)
+	if f.approved.MandateName != "" || f.approved.TemplateDigest != shown {
+		t.Errorf("approve = %+v", f.approved)
 	}
 	h.ok(http.MethodPost, "/api/pairing/deny", map[string]any{"code": "BCDF-GHJK", "pairing_id": "p1"}, nil)
 	for _, tc := range []struct {
@@ -225,6 +226,7 @@ func TestPairingHandlers(t *testing.T) {
 		{"/api/pairing/approve", map[string]any{"code": "x", "pairing_id": "p1", "display_name": "\u3164", "template": "t"}, "/display_name"},
 		{"/api/pairing/approve", map[string]any{"code": "x", "pairing_id": "p1", "display_name": strings.Repeat("a", 81), "template": "t"}, "/display_name"},
 		{"/api/pairing/approve", map[string]any{"code": "x", "pairing_id": "p1", "display_name": "A", "template": ""}, "/template"},
+		{"/api/pairing/approve", map[string]any{"code": "x", "pairing_id": "p1", "display_name": "A", "template": "t", "template_digest": "md5:x"}, "/template_digest"},
 		{"/api/pairing/approve", map[string]any{"code": "x", "pairing_id": "p1", "display_name": "A", "template": "t", "mandate_name": "a\u202eb"}, "/mandate_name"},
 	} {
 		if r := h.do(http.MethodPost, tc.path, tc.body); r.errCode() != codeInvalidInput || r.field() != tc.field {

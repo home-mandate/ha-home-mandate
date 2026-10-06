@@ -26,6 +26,7 @@
   import ActivityList from '../components/overview/ActivityList.svelte';
   import { formatDateTime, formatNumber, formatRelative } from '../format.ts';
   import { m } from '../i18n.ts';
+  import { offeredTemplates } from '../mandate/template.ts';
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
   import { cleanUntrusted, isolate } from '../untrusted.ts';
@@ -40,13 +41,14 @@
 
   interface Data {
     agent: Agent | null;
-    templates: Pick<Template, 'name'>[];
+    templates: Template[];
     log: AuditEntry[];
     catalog: DeviceCatalog | null;
   }
 
   let { app, id, now }: Props = $props();
 
+  const NO_CATALOG: DeviceCatalog = { areas: [], devices: [] };
   const LOG_ENTRIES = 5;
   /** Redirect addresses come from the agent's metadata: cleaned, cut and at most this many shown. */
   const REDIRECTS_SHOWN = 10;
@@ -58,7 +60,7 @@
     const api = app.api;
     const [agents, templates, log, catalog] = await Promise.all([
       api.agents(),
-      api.templates().catch((): Pick<Template, 'name'>[] => []),
+      offeredTemplates(api).catch((): Template[] => []),
       api.audit({ agent: id, limit: LOG_ENTRIES }).then((p) => p.entries).catch((): AuditEntry[] => []),
       api.devices().catch(() => null),
     ]);
@@ -75,6 +77,7 @@
     const stop = [
       app.on('agents.changed', reload),
       app.on('mandates.changed', reload),
+      app.on('templates.changed', reload),
       app.on('audit.appended', reload),
       app.on('reconnected', reload),
     ];
@@ -175,7 +178,7 @@
         </dl>
       </div>
       <div class="card">
-        <AgentMandate api={app.api} {agent} templates={data.data.templates} {ctx} headingId="{uid}-mandate" />
+        <AgentMandate api={app.api} {agent} templates={data.data.templates} catalog={data.data.catalog ?? NO_CATALOG} {ctx} headingId="{uid}-mandate" />
       </div>
     </div>
 

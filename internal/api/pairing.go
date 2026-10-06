@@ -66,6 +66,8 @@ func pairingError(err error) error {
 		return fail(codeConflict)
 	case errors.Is(err, mandate.ErrCriticalConfirmation):
 		return fail(codeCriticalConfirm)
+	case errors.Is(err, mandate.ErrNoApprovers):
+		return fail(codeNoApprovers)
 	case errors.Is(err, admission.ErrTemplateNotFound):
 		return failField(codeInvalidInput, "/template")
 	case errors.Is(err, agent.ErrInvalidName):
@@ -122,6 +124,7 @@ func (s *Server) pairingApprove(r *request) (any, error) {
 		pairingDecision
 		DisplayName     string  `json:"display_name"`
 		Template        string  `json:"template"`
+		TemplateDigest  *string `json:"template_digest"` // the template as the UI showed it
 		MandateName     *string `json:"mandate_name"`
 		ConfirmCritical bool    `json:"confirm_critical"`
 	}
@@ -130,6 +133,13 @@ func (s *Server) pairingApprove(r *request) (any, error) {
 	}
 	if err := in.check(); err != nil {
 		return nil, err
+	}
+	shown := ""
+	if in.TemplateDigest != nil {
+		if !digestPattern.MatchString(*in.TemplateDigest) {
+			return nil, failField(codeInvalidInput, "/template_digest")
+		}
+		shown = *in.TemplateDigest
 	}
 	name, ok := validDisplayName(in.DisplayName)
 	if !ok {
@@ -145,7 +155,7 @@ func (s *Server) pairingApprove(r *request) (any, error) {
 		}
 	}
 	a, err := p.Approve(r.Context(), r.user, oauth.PairingApproval{Code: in.Code, PairingID: in.PairingID, DisplayName: name,
-		Template: in.Template, MandateName: mandateName, ConfirmCritical: in.ConfirmCritical, By: r.user})
+		Template: in.Template, TemplateDigest: shown, MandateName: mandateName, ConfirmCritical: in.ConfirmCritical, By: r.user})
 	if err != nil {
 		return nil, pairingError(err)
 	}

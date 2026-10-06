@@ -25,6 +25,11 @@ describe('parseHash', () => {
     ['#/mandates', { name: 'mandates' }],
     ['#/mandates/mandate-voice', { name: 'mandate', id: 'mandate-voice' }],
     ['#/mandates/mandate-voice/versions', { name: 'mandate_versions', id: 'mandate-voice' }],
+    ['#/templates', { name: 'templates' }],
+    ['#/templates/hm-read-only', { name: 'template', template: 'hm-read-only' }],
+    // "new" is a name a template may have; the new template has a segment no name can take.
+    ['#/templates/new', { name: 'template', template: 'new' }],
+    ['#/templates/_new', { name: 'template', template: null }],
     ['#/audit', { name: 'audit', query: {} }],
     ['#/audit?decision=deny&decision=default&agent=pair%3Ax', { name: 'audit', query: { decision: ['deny', 'default'], agent: ['pair:x'] } }],
     ['#/audit/requests', { name: 'requests' }],
@@ -53,6 +58,11 @@ describe('parseHash', () => {
     '#/audit/12abc',
     '#/audit/99999999999999999999',
     '#/settings/unknown',
+    '#/templates/Guest',
+    '#/templates/-guest',
+    '#/templates/a%20b',
+    '#/templates/guest/deeper',
+    `#/templates/${'a'.repeat(33)}`,
     '#//evil.example',
     '#javascript:alert(1)',
     '#/AGENTS',
@@ -78,6 +88,9 @@ describe('href', () => {
     [{ name: 'connect' }, '#/agents/browser'],
     [{ name: 'agents' }, '#/agents'],
     [{ name: 'mandates' }, '#/mandates'],
+    [{ name: 'templates' }, '#/templates'],
+    [{ name: 'template', template: 'guest-room' }, '#/templates/guest-room'],
+    [{ name: 'template', template: null }, '#/templates/_new'],
   ])('%j → %s and back', (route, hash) => {
     expect(href(route)).toBe(hash);
     expect(parseHash(hash)).toEqual(route);
@@ -95,6 +108,8 @@ describe('sectionOf', () => {
     [{ name: 'pair' }, 'agents'],
     [{ name: 'mandate', id: 'm-1234' }, 'mandates'],
     [{ name: 'mandate_versions', id: 'm-1234' }, 'mandates'],
+    [{ name: 'templates' }, 'mandates'],
+    [{ name: 'template', template: null }, 'mandates'],
     [{ name: 'requests' }, 'audit'],
     [{ name: 'audit_entry', seq: 1 }, 'audit'],
     [{ name: 'settings', section: 'estop' }, 'settings'],

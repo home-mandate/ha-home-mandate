@@ -94,8 +94,22 @@ func openStore(ctx context.Context, dataDir string) (*state, error) {
 	}
 	log := audit.New(st.DB(), household)
 	agents, mandates := agent.New(st.DB(), log), mandate.New(st.DB(), log, household, issuer)
+	approvers := approval.NewApprovers(st.DB())
+	adm := admission.New(st.DB(), agents, mandates, household)
+	// The approvers placeholder of templates stands for them, with the admitting human.
+	adm.SetApprovers(func(ctx context.Context) ([]string, error) {
+		list, err := approvers.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ids := make([]string, len(list))
+		for i, a := range list {
+			ids[i] = a.UserID
+		}
+		return ids, nil
+	})
 	return &state{store: st, household: household, log: log, agents: agents, mandates: mandates,
-		admission: admission.New(st.DB(), agents, mandates, household), approvers: approval.NewApprovers(st.DB())}, nil
+		admission: adm, approvers: approvers}, nil
 }
 
 // settingMandateIssuer holds the issuer of the mandates this installation stores.
@@ -333,7 +347,14 @@ func templateCommand(ctx context.Context, e env, args []string) int {
 		return withState(ctx, e, func(s *state) error {
 			list, err := s.admission.Templates(ctx)
 			for _, t := range list {
-				fmt.Fprintf(e.stdout, "%s\t%s\t%s\n", t.Name, t.CreatedAt.Format(time.RFC3339), t.CreatedBy)
+				switch {
+				case t.Builtin && t.Hidden:
+					fmt.Fprintf(e.stdout, "%s\tbase template, hidden\n", t.Name)
+				case t.Builtin:
+					fmt.Fprintf(e.stdout, "%s\tbase template\n", t.Name)
+				default:
+					fmt.Fprintf(e.stdout, "%s\t%s\t%s\n", t.Name, t.CreatedAt.Format(time.RFC3339), t.CreatedBy)
+				}
 			}
 			return err
 		})

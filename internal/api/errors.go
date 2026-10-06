@@ -19,6 +19,8 @@ const (
 	codeInvalidInput    = "invalid_input"
 	codeInvalidMandate  = "invalid_mandate"
 	codeCriticalConfirm = "critical_confirmation_required"
+	codeBuiltinTemplate = "builtin_template" // a base template cannot be changed or removed
+	codeNoApprovers     = "no_approvers"     // a template's placeholder has nobody to stand for
 	codePairingInvalid  = "pairing_code_invalid"
 	codePairingExpired  = "pairing_code_expired"
 	codePairingLocked   = "pairing_locked"
@@ -38,6 +40,8 @@ var statusOf = map[string]int{
 	codeInvalidInput:    http.StatusBadRequest,
 	codeInvalidMandate:  http.StatusUnprocessableEntity,
 	codeCriticalConfirm: http.StatusUnprocessableEntity,
+	codeBuiltinTemplate: http.StatusConflict,
+	codeNoApprovers:     http.StatusUnprocessableEntity,
 	codePairingInvalid:  http.StatusBadRequest,
 	codePairingExpired:  http.StatusGone,
 	codePairingLocked:   http.StatusTooManyRequests,

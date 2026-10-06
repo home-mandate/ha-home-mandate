@@ -80,8 +80,11 @@ export interface ApiClient {
 
   templates(): Promise<TemplateSummary[]>;
   template(name: string): Promise<Template>;
+  /** Stores a template; update.base_digest names the version the edit started from (null: new). */
   putTemplate(name: string, update: TemplateUpdate): Promise<Template>;
   deleteTemplate(name: string): Promise<void>;
+  /** Hides a base template from admission, or shows it again. */
+  setTemplateHidden(name: string, hidden: boolean): Promise<void>;
 
   settings(): Promise<Defaults>;
   putSettings(defaults: Defaults): Promise<Defaults>;
@@ -113,6 +116,8 @@ const ERROR_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   'invalid_input',
   'invalid_mandate',
   'critical_confirmation_required',
+  'builtin_template',
+  'no_approvers',
   'pairing_code_invalid',
   'pairing_code_expired',
   'pairing_locked',
@@ -353,6 +358,7 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
     template: async (name) => get(`templates/${segment(name)}`),
     putTemplate: async (name, update) => request('PUT', `templates/${segment(name)}`, update),
     deleteTemplate: async (name) => request('DELETE', `templates/${segment(name)}`),
+    setTemplateHidden: async (name, hidden) => request('PUT', `templates/${segment(name)}/hidden`, { hidden }),
 
     settings: () => get('settings'),
     putSettings: (defaults) => request('PUT', 'settings', defaults),

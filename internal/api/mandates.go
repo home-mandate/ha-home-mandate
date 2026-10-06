@@ -210,6 +210,8 @@ func mandateError(err error, prefix string, draft json.RawMessage) error {
 		return fail(codeConflict)
 	case errors.Is(err, mandate.ErrCriticalConfirmation):
 		return fail(codeCriticalConfirm)
+	case errors.Is(err, mandate.ErrNoApprovers):
+		return fail(codeNoApprovers)
 	case errors.Is(err, mandate.ErrInvalid):
 		return failField(codeInvalidMandate, invalidField(err, prefix, draft))
 	}
@@ -361,12 +363,14 @@ func (s *Server) applyTemplate(r *request) (any, error) {
 	if !digestPattern.MatchString(in.BaseDigest) {
 		return nil, failField(codeInvalidInput, "/base_digest")
 	}
-	tdoc, _, err := s.cfg.Admission.TemplateDocument(r.Context(), in.Template)
-	if errors.Is(err, admission.ErrTemplateNotFound) {
+	tdoc, err := s.cfg.Admission.Resolved(r.Context(), in.Template, s.actor(r))
+	switch {
+	case errors.Is(err, admission.ErrTemplateNotFound):
 		return nil, failField(codeInvalidInput, "/template")
-	}
-	if err != nil {
-		return nil, err
+	case errors.Is(err, mandate.ErrNoApprovers):
+		return nil, fail(codeNoApprovers)
+	case err != nil:
+		return nil, mandateError(err, "/template", nil)
 	}
 	_, current, err := s.cfg.Mandates.Current(r.Context(), id)
 	if err != nil {

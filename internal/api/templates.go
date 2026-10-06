@@ -15,17 +15,41 @@ import (
 
 var templateNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
-type wireTemplateSummary struct {
-	Name          string  `json:"name"`
-	RuleCount     int     `json:"rule_count"`
-	CreatedAt     string  `json:"created_at"`
-	CreatedBy     string  `json:"created_by"`
-	CreatedByName *string `json:"created_by_name"`
+// wireTemplateInfo is what the list and a single template say about it. Base templates
+// have no creation and carry a title and description per language.
+type wireTemplateInfo struct {
+	Name          string            `json:"name"`
+	RuleCount     int               `json:"rule_count"`
+	CreatedAt     *string           `json:"created_at"`
+	CreatedBy     string            `json:"created_by"`
+	CreatedByName *string           `json:"created_by_name"`
+	Builtin       bool              `json:"builtin"`
+	Hidden        bool              `json:"hidden"`
+	Title         map[string]string `json:"title"`
+	Description   map[string]string `json:"description"`
+	Digest        string            `json:"digest"`
 }
 
 type wireTemplate struct {
-	Name  string          `json:"name"`
+	wireTemplateInfo
 	Draft json.RawMessage `json:"draft"`
+}
+
+func (s *Server) templateInfo(r *request, t admission.Template, doc []byte) (wireTemplateInfo, error) {
+	f, err := parseDoc(doc)
+	if err != nil {
+		return wireTemplateInfo{}, err
+	}
+	title, description := t.Title, t.Description
+	if title == nil {
+		title, description = map[string]string{}, map[string]string{}
+	}
+	out := wireTemplateInfo{Name: t.Name, RuleCount: len(f.Rules), CreatedAt: formatTime(t.CreatedAt), CreatedBy: t.CreatedBy,
+		Builtin: t.Builtin, Hidden: t.Hidden, Title: title, Description: description, Digest: t.Digest}
+	if t.CreatedBy != "" {
+		out.CreatedByName = s.users.name(r.Context(), t.CreatedBy)
+	}
+	return out, nil
 }
 
 func (s *Server) getTemplates(r *request) (any, error) {
@@ -33,18 +57,17 @@ func (s *Server) getTemplates(r *request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]wireTemplateSummary, 0, len(list))
+	out := make([]wireTemplateInfo, 0, len(list))
 	for _, t := range list {
-		doc, _, err := s.cfg.Admission.TemplateDocument(r.Context(), t.Name)
+		doc, full, err := s.cfg.Admission.TemplateDocument(r.Context(), t.Name)
 		if err != nil {
 			return nil, err
 		}
-		f, err := parseDoc(doc)
+		info, err := s.templateInfo(r, full, doc)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, wireTemplateSummary{Name: t.Name, RuleCount: len(f.Rules), CreatedAt: *formatTime(t.CreatedAt),
-			CreatedBy: t.CreatedBy, CreatedByName: s.users.name(r.Context(), t.CreatedBy)})
+		out = append(out, info)
 	}
 	return out, nil
 }
@@ -90,11 +113,19 @@ func (s *Server) getTemplate(r *request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	return s.wireTemplateOf(r, t, doc)
+}
+
+func (s *Server) wireTemplateOf(r *request, t admission.Template, doc []byte) (wireTemplate, error) {
 	draft, err := draftOf(doc, t.CreatedAt)
 	if err != nil {
-		return nil, err
+		return wireTemplate{}, err
 	}
-	return wireTemplate{Name: name, Draft: draft}, nil
+	info, err := s.templateInfo(r, t, doc)
+	if err != nil {
+		return wireTemplate{}, err
+	}
+	return wireTemplate{wireTemplateInfo: info, Draft: draft}, nil
 }
 
 // putTemplate stores a template from a draft. The template is checked as a mandate
@@ -107,10 +138,18 @@ func (s *Server) putTemplate(r *request) (any, error) {
 	}
 	var in struct {
 		Draft           json.RawMessage `json:"draft"`
+		BaseDigest      *string         `json:"base_digest"` // null for a new template
 		ConfirmCritical bool            `json:"confirm_critical"`
 	}
 	if err := r.decode(&in); err != nil {
 		return nil, err
+	}
+	base := ""
+	if in.BaseDigest != nil {
+		if !digestPattern.MatchString(*in.BaseDigest) {
+			return nil, failField(codeInvalidInput, "/base_digest")
+		}
+		base = *in.BaseDigest
 	}
 	dec := json.NewDecoder(bytes.NewReader(in.Draft))
 	dec.UseNumber()
@@ -132,21 +171,27 @@ func (s *Server) putTemplate(r *request) (any, error) {
 	if err := s.checkResources(doc, "/draft"); err != nil {
 		return nil, err
 	}
-	err = s.cfg.Admission.UpdateTemplate(r.Context(), name, doc, in.ConfirmCritical, s.actor(r))
+	err = s.cfg.Admission.UpdateTemplate(r.Context(), name, doc, base, in.ConfirmCritical, s.actor(r))
 	switch {
+	case errors.Is(err, admission.ErrBuiltinTemplate):
+		return nil, fail(codeBuiltinTemplate)
+	case errors.Is(err, mandate.ErrConflict):
+		return nil, fail(codeConflict)
 	case errors.Is(err, mandate.ErrCriticalConfirmation):
 		return nil, fail(codeCriticalConfirm)
+	case errors.Is(err, admission.ErrReservedName):
+		return nil, failField(codeInvalidInput, "/name")
 	case errors.Is(err, admission.ErrInvalidTemplate):
 		return nil, failField(codeInvalidMandate, invalidField(err, "/draft", in.Draft))
 	case err != nil:
 		return nil, err
 	}
 	s.publish(event{Type: "templates.changed"})
-	draft, err := draftOf(doc, s.now())
+	stored, t, err := s.cfg.Admission.TemplateDocument(r.Context(), name)
 	if err != nil {
 		return nil, err
 	}
-	return wireTemplate{Name: name, Draft: draft}, nil
+	return s.wireTemplateOf(r, t, stored)
 }
 
 func (s *Server) deleteTemplate(r *request) (any, error) {
@@ -154,8 +199,35 @@ func (s *Server) deleteTemplate(r *request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := s.cfg.Admission.RemoveTemplate(r.Context(), name); errors.Is(err, admission.ErrTemplateNotFound) {
+	switch err := s.cfg.Admission.RemoveTemplate(r.Context(), name); {
+	case errors.Is(err, admission.ErrTemplateNotFound):
 		return nil, fail(codeNotFound)
+	case errors.Is(err, admission.ErrBuiltinTemplate):
+		return nil, fail(codeBuiltinTemplate)
+	case err != nil:
+		return nil, err
+	}
+	s.publish(event{Type: "templates.changed"})
+	return nil, nil
+}
+
+// putTemplateHidden hides a base template from admission, or shows it again.
+func (s *Server) putTemplateHidden(r *request) (any, error) {
+	name, err := templateName(r)
+	if err != nil {
+		return nil, err
+	}
+	var in struct {
+		Hidden *bool `json:"hidden"`
+	}
+	if err := r.decode(&in); err != nil {
+		return nil, err
+	}
+	if in.Hidden == nil {
+		return nil, failField(codeInvalidInput, "/hidden")
+	}
+	if err := s.cfg.Admission.SetHidden(r.Context(), name, *in.Hidden); errors.Is(err, admission.ErrInvalidTemplate) {
+		return nil, fail(codeNotFound) // only base templates can be hidden
 	} else if err != nil {
 		return nil, err
 	}

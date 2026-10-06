@@ -155,6 +155,9 @@ func (s *Store) check(document []byte) (Info, error) {
 	if md.Principal != s.principal {
 		return Info{}, fmt.Errorf("%w: principal is not this household", ErrInvalid)
 	}
+	if err := placeholderApprover(document); err != nil {
+		return Info{}, err
+	}
 	// Mandates issued elsewhere (signed ones, SPEC-v0 section 7) cannot be imported yet.
 	if m.Issuer() != "" && m.Issuer() != s.issuer {
 		return Info{}, fmt.Errorf("%w: issued by %q, not by this installation", ErrInvalid, m.Issuer())

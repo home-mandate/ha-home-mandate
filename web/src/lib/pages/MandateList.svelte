@@ -21,6 +21,7 @@
   import { formatDate } from '../format.ts';
   import { m } from '../i18n.ts';
   import { effectiveStatus } from '../mandate/dates.ts';
+  import { offeredTemplates } from '../mandate/template.ts';
   import { parseDateTime } from '../engine/check.ts';
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
@@ -53,14 +54,10 @@
     const api = app.api;
     // Only the mandates are essential. Without templates or agents the list still shows
     // (a new mandate cannot be created then); without Home Assistant the template cards
-    // show ids instead of names.
+    // show ids instead of names. Hidden base templates are not offered.
     const [mandates, templates, agents, catalog, renames] = await Promise.all([
       api.mandates(),
-      api
-        .templates()
-        .then((list) => Promise.all(list.map((t) => api.template(t.name).catch(() => null))))
-        .then((list) => list.filter((t) => t !== null))
-        .catch((): Template[] => []),
+      offeredTemplates(api).catch((): Template[] => []),
       api.agents().catch((): Agent[] => []),
       api.devices().catch(() => NO_CATALOG),
       api.renames().catch((): Rename[] => []),
@@ -119,7 +116,10 @@
 
 <div class="head">
   <h1 bind:this={heading} tabindex="-1">{m.mandates_title()}</h1>
-  {#if data}<Button variant="primary" size="lg" icon="plus" onclick={() => start(null)}>{m.mandates_new()}</Button>{/if}
+  <div class="head-actions">
+    <a class="manage" href={href({ name: 'templates' })}><Icon name="list" />{m.templates_manage()}</a>
+    {#if data}<Button variant="primary" size="lg" icon="plus" onclick={() => start(null)}>{m.mandates_new()}</Button>{/if}
+  </div>
 </div>
 
 {#if list.status === 'error'}
@@ -202,7 +202,7 @@
     </ul>
   {/if}
 
-  <NewMandateDialog open={dialog} api={app.api} agents={eligible} templates={data.templates} {template} onclose={() => (dialog = false)} oncreated={created} />
+  <NewMandateDialog open={dialog} api={app.api} agents={eligible} templates={data.templates} catalog={data.catalog} {template} onclose={() => (dialog = false)} oncreated={created} />
 {/if}
 
 <style>
@@ -220,6 +220,30 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--hm-space-3) var(--hm-space-4);
+  }
+  .head-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hm-space-3);
+  }
+  .manage {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    box-sizing: border-box;
+    min-block-size: var(--hm-size-touch);
+    padding-inline: 14px;
+    border-radius: var(--hm-radius-md);
+    font-size: 15px;
+    font-weight: var(--hm-font-weight-semibold);
+    text-decoration: none;
+    color: var(--hm-color-text);
+    background: var(--hm-color-surface);
+    border: var(--hm-border-width) solid var(--hm-color-border-strong);
+  }
+  .manage:hover {
+    background: var(--hm-color-surface-hover);
   }
   h1 {
     margin: 0;

@@ -88,7 +88,7 @@ test('from the list into the editor: change a rule, read the summary, save a ver
   const t = texts(info.project.name);
   await page.goto('./#/mandates');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(t.list);
-  await expect(page.getByRole('region', { name: t.templates }).getByRole('article')).toHaveCount(3);
+  await expect(page.getByRole('region', { name: t.templates }).getByRole('article')).toHaveCount(6);
   await page.getByRole('link', { name: MANDATE }).click();
   await expect(page).toHaveURL(/#\/mandates\/mandate-voice$/);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(MANDATE);

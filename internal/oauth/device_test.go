@@ -3,6 +3,7 @@
 package oauth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/home-mandate/home-mandate/internal/admission"
+	"github.com/home-mandate/home-mandate/internal/audit"
 )
 
 type deviceAnswer struct {
@@ -98,7 +100,7 @@ func TestDeviceFlow(t *testing.T) {
 		t.Fatalf("consent = %d %v\n%s", consent.status, consent.header, consent.body)
 	}
 	res = b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, consent.body)}, "action": {"approve"}, "name": {"Kitchen n8n"},
-		"template": {"voice-assistant"}})
+		"template": {voiceChoice}})
 	if res.status != http.StatusOK || !strings.Contains(res.body, "admitted") {
 		t.Fatalf("approve = %d\n%s", res.status, res.body)
 	}
@@ -172,7 +174,7 @@ func TestApprovalAfterExpiryIsRefused(t *testing.T) {
 		g.expires = h.clock.Now()
 	}
 	h.server.mu.Unlock()
-	res := b.post(ConsentPath, url.Values{"csrf": {csrf}, "action": {"approve"}, "name": {"x"}, "template": {"voice-assistant"}})
+	res := b.post(ConsentPath, url.Values{"csrf": {csrf}, "action": {"approve"}, "name": {"x"}, "template": {voiceChoice}})
 	if res.status == http.StatusOK {
 		t.Errorf("approve after expiry = %d", res.status)
 	}
@@ -327,7 +329,7 @@ func TestDeviceApprovalAfterAServerError(t *testing.T) {
 		b, page := h.pairBrowser("admin-code")
 		b.enterCode(page, a.UserCode)
 		consent := b.get(ConsentPath)
-		return b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, consent.body)}, "action": {"approve"}, "name": {"Kitchen"}, "template": {"voice-assistant"}})
+		return b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, consent.body)}, "action": {"approve"}, "name": {"Kitchen"}, "template": {voiceChoice}})
 	}
 	h.server.cfg.Admission = brokenAdmission{Admitter: h.adm, admitErr: errors.New("database is locked")}
 	if res := approve(); res.status != http.StatusServiceUnavailable {
@@ -358,11 +360,55 @@ func TestDeviceApprovalRefused(t *testing.T) {
 	b.enterCode(page, a.UserCode)
 	consent := b.get(ConsentPath)
 	h.server.cfg.Admission = brokenAdmission{Admitter: h.adm, admitErr: admission.ErrTemplateNotFound}
-	res := b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, consent.body)}, "action": {"approve"}, "name": {"Kitchen"}, "template": {"voice-assistant"}})
+	res := b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, consent.body)}, "action": {"approve"}, "name": {"Kitchen"}, "template": {voiceChoice}})
 	if res.status != http.StatusBadRequest {
 		t.Errorf("refused admission = %d", res.status)
 	}
 	if status, out := h.poll(a, "n8n-kitchen"); out["error"] != "authorization_pending" {
 		t.Errorf("poll = %d %v", status, out)
 	}
+}
+
+// The human approves what the page showed: a template changed after the page was shown
+// admits nobody, and the pairing stays pending.
+func TestApprovalOfATemplateChangedSinceItWasShown(t *testing.T) {
+	h := newHarness(t)
+	a := h.device("n8n-kitchen")
+	b, page := h.pairBrowser("admin-code")
+	b.enterCode(page, a.UserCode)
+	consent := b.get(ConsentPath)
+	_, info, err := h.adm.TemplateDocument(context.Background(), "voice-assistant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	broader := []byte(strings.Replace(string(mustDocument(t, h, "voice-assistant")), `"decision":"deny"`, `"decision":"allow"`, 1))
+	if err := h.adm.UpdateTemplate(context.Background(), "voice-assistant", broader, info.Digest, true, audit.Actor{Kind: audit.ActorUser, ID: "local-admin"}); err != nil {
+		t.Fatal(err)
+	}
+	res := b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, consent.body)}, "action": {"approve"}, "name": {"Kitchen"}, "template": {voiceChoice}})
+	if res.status != http.StatusBadRequest {
+		t.Errorf("approval of a changed template = %d", res.status)
+	}
+	if n := countAgents(t, h); n != 0 {
+		t.Errorf("%d agents admitted", n)
+	}
+	// A choice without the digest of what was shown is refused as well (or the session is
+	// used up already): never an admission.
+	res = b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, consent.body)}, "action": {"approve"}, "name": {"Kitchen"}, "template": {"voice-assistant"}})
+	if res.status == http.StatusOK || countAgents(t, h) != 0 {
+		t.Errorf("approval without digest = %d", res.status)
+	}
+}
+
+func mustDocument(t *testing.T, h *harness, name string) []byte {
+	t.Helper()
+	doc, _, err := h.adm.TemplateDocument(context.Background(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, doc); err != nil {
+		t.Fatal(err)
+	}
+	return compact.Bytes()
 }

@@ -247,6 +247,18 @@ Every line is at least one test. New attack ideas are added here before they are
 - The release binary depends on `tools/conformance` or the harness of mandate-spec → a test fails (`go list -deps ./cmd/home-mandate`)
 - HTTP binding without or with a wrong bearer token → 401; a token shorter than 32 characters or an address other than loopback → refused at start
 
+**Mandate templates**
+- Storing, changing, removing or hiding with a name starting with `hm-` that is no base template → refused; changing or removing a base template → refused (`builtin_template`), saving it under a new name works
+- Hidden base template → not offered at admission or for a new mandate, and refused when named anyway
+- `$approvers` → replaced at admission by the admitting human plus every approver, without duplicates; nobody to put there (command line without approvers) → admission refused; any value starting with `$` in a mandate (also at rule level) → storing refused
+- Changing a template without the digest of the version it started from, or with an outdated one → `conflict`, nothing overwritten
+- Template allowing critical actions without approval → stored only with the separate confirmation, as for mandates
+- Plain-words summary of a template on the consent page and in the UI: every allowed, asked and denied category is named, the default (`deny`) is said; names and descriptions are escaped
+- Template changed between showing it and approving it (consent page or the UI's pairing) → nobody admitted (`conflict`); a choice without the digest of what was shown → refused
+- Two edits of the same template version at once (also from another process such as the command line) → exactly one is stored, the other is a conflict
+- Template granting critical actions without approval → not offered on the consent page (which asks for no separate confirmation); admitted only through the UI with it
+- Device IDs, areas and names in a template's summary containing markup → shown as text
+
 **UI in direct mode (container mode without Ingress)**
 - No certificate or no `https://` public URL → no UI, `/ui/` answers 404
 - Request without session cookie, with an unknown, guessed, expired (12 hours) or idle (30 minutes) session, or after a restart → API `unauthenticated`, page sends to the sign-in

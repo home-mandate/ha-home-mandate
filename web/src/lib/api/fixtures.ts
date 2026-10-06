@@ -14,6 +14,7 @@ import type {
   DeviceCatalog,
   MandateDocument,
   MandateDraft,
+  Rule,
   Session,
   SystemStatus,
   Template,
@@ -205,13 +206,83 @@ export const agentsFixture: Agent[] = [
   }),
 ];
 
+/** The approvers placeholder of templates (mandate/placeholder.ts), as the server ships it. */
+const EVERYONE = { timeout: 'PT2M', approvers: ['$approvers'] };
+const BASE_FROM = '2026-01-01T00:00:00Z';
+const readAll: Rule = { id: 'r-read-all', resource: { any: true }, actions: ['read'], decision: 'allow' };
+const lights: Rule = { id: 'r-lights', resource: { category: 'light' }, actions: ['turn_on', 'turn_off', 'set'], decision: 'allow' };
+const climate: Rule = { id: 'r-climate', resource: { category: 'climate' }, actions: ['set_temperature'], decision: 'allow' };
+
+type TemplateInput = Pick<Template, 'name' | 'draft'> & Partial<Template>;
+
+/** Digests are filled in by the mock from the content, as the server computes them. */
+const template = (t: TemplateInput): Template => ({
+  rule_count: t.draft.rules.length,
+  created_at: '2026-10-01T08:00:00Z',
+  created_by: 'u-admin',
+  created_by_name: 'Markus',
+  builtin: false,
+  hidden: false,
+  title: {},
+  description: {},
+  digest: '',
+  ...t,
+});
+
+/** A base template of internal/admission/builtin, with its texts of internal/i18n. */
+const builtin = (name: string, rules: Rule[], title: Template['title'], description: Template['description']): Template =>
+  template({
+    name,
+    draft: { rules, approval: EVERYONE, limits: { max_actions_per_hour: 60 }, valid_from: BASE_FROM },
+    created_at: null,
+    created_by: '',
+    created_by_name: null,
+    builtin: true,
+    title,
+    description,
+  });
+
+/** Base templates first, in the server's order, then the household's own by name. */
 export const templatesFixture: Template[] = [
-  {
-    name: 'read-only',
-    draft: { ...voiceAssistantDraft, rules: [{ id: 'read', resource: { any: true }, actions: ['read'], decision: 'allow' }] },
-  },
-  { name: 'voice-assistant', draft: voiceAssistantDraft },
-  { name: 'empty', draft: { ...voiceAssistantDraft, rules: [] } },
+  builtin(
+    'hm-read-only',
+    [readAll],
+    { de: 'Nur lesen', en: 'Read only' },
+    { de: 'Darf den Zustand aller Geräte lesen, aber nichts schalten.', en: 'May read the state of every device, but switches nothing.' },
+  ),
+  builtin(
+    'hm-light-climate',
+    [
+      readAll,
+      lights,
+      climate,
+      { id: 'r-covers', resource: { category: 'cover' }, actions: ['open', 'close', 'stop', 'set_position'], decision: 'allow' },
+    ],
+    { de: 'Licht und Klima', en: 'Light and climate' },
+    {
+      de: 'Darf alles lesen, Licht schalten und dimmen, Temperaturen setzen und Rollläden bewegen. Garagen- und Hoftore gehören nicht dazu.',
+      en: 'May read everything, switch and dim lights, set temperatures and move covers such as blinds. Garage doors and gates are not included.',
+    },
+  ),
+  builtin(
+    'hm-voice-cautious',
+    [
+      readAll,
+      lights,
+      climate,
+      { id: 'r-locks', resource: { category: 'lock' }, actions: ['unlock', 'open'], decision: 'ask', approval: EVERYONE },
+      { id: 'r-no-cameras', resource: { category: 'camera' }, actions: ['*'], decision: 'deny' },
+      { id: 'r-no-alarm', resource: { category: 'alarm' }, actions: ['disarm'], decision: 'deny' },
+    ],
+    { de: 'Sprachassistent (vorsichtig)', en: 'Voice assistant (cautious)' },
+    {
+      de: 'Darf alles lesen, Licht schalten und Temperaturen setzen. Schlösser öffnet er nur, wenn du es auf deinem Handy bestätigst; Kameras und das Entschärfen der Alarmanlage nie.',
+      en: 'May read everything, switch lights and set temperatures. Opens locks only after you confirm it on your phone; never cameras or disarming the alarm.',
+    },
+  ),
+  template({ name: 'empty', draft: { ...voiceAssistantDraft, rules: [] } }),
+  template({ name: 'read-only', draft: { ...voiceAssistantDraft, rules: [{ id: 'read', resource: { any: true }, actions: ['read'], decision: 'allow' }] } }),
+  template({ name: 'voice-assistant', draft: voiceAssistantDraft }),
 ];
 
 export const approversFixture: Omit<ApproverList, 'version'> = {

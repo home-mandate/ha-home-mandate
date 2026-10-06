@@ -6,6 +6,10 @@
 
 :root {
   --hm-page-pad: var(--hm-space-8);
+  /* Inline padding of a full-width bar (header, banners) whose content lines up with the
+     centred page content: the page padding, plus half of what the window has beyond
+     --hm-content-max (issue #7). */
+  --hm-bar-pad: max(var(--hm-page-pad), calc((100% - var(--hm-content-max)) / 2 + var(--hm-page-pad)));
   font-family: var(--hm-font-sans);
   font-size: 100%;
   line-height: var(--hm-line-height-normal);

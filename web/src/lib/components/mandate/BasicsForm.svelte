@@ -2,7 +2,8 @@
 <!--
   Basics of a mandate (design README 6.5): display name, the agent it belongs to, validity
   as calendar days in the household time zone and the rate limit. The agent cannot be
-  changed: a mandate belongs to one agent (decision D3).
+  changed: a mandate belongs to one agent (decision D3). A template has only the rate
+  limit here: name, agent and validity come with the admission.
 -->
 <script lang="ts">
   import { untrack } from 'svelte';
@@ -18,7 +19,8 @@
   interface Props {
     name: string;
     draft: MandateDraft;
-    agent: { client_id: string; display_name: string };
+    /** The mandate's agent; none for a template. */
+    agent?: { client_id: string; display_name: string };
     timeZone: string;
     /** Problems of the settings that may be shown now. */
     problems: readonly FieldProblem[];
@@ -29,7 +31,7 @@
     ontouch: (part: Part) => void;
   }
 
-  let { name, draft, agent, timeZone, problems, disabled, onname, onchange, ontouch }: Props = $props();
+  let { name, draft, agent = undefined, timeZone, problems, disabled, onname, onchange, ontouch }: Props = $props();
 
   const id = $props.id();
   const WHOLE = /^\d{1,6}$/;
@@ -70,23 +72,25 @@
 </script>
 
 <div class="grid">
-  <TextField label={m.editor_name()} value={name} error={nameError} maxlength={NAME_MAX} {disabled} oninput={(e) => onname(value(e))} onblur={() => ontouch(NAME)} />
-  <div class="agent">
-    <span id="{id}-agent" class="label">{m.editor_agent()}</span>
-    <span class="value" aria-labelledby="{id}-agent" role="group"><AgentName name={agent.display_name} client={agent.client_id} /></span>
-    <span class="help">{m.editor_agent_help()}</span>
-  </div>
-  <TextField type="date" label={m.editor_valid_from()} value={from} error={fromError} {disabled} oninput={setFrom} onblur={() => ontouch(FROM)} />
-  <TextField
-    type="date"
-    label={m.editor_valid_until()}
-    value={until}
-    error={untilError}
-    help={m.editor_valid_until_help()}
-    {disabled}
-    oninput={setUntil}
-    onblur={() => ontouch(UNTIL)}
-  />
+  {#if agent}
+    <TextField label={m.editor_name()} value={name} error={nameError} maxlength={NAME_MAX} {disabled} oninput={(e) => onname(value(e))} onblur={() => ontouch(NAME)} />
+    <div class="agent">
+      <span id="{id}-agent" class="label">{m.editor_agent()}</span>
+      <span class="value" aria-labelledby="{id}-agent" role="group"><AgentName name={agent.display_name} client={agent.client_id} /></span>
+      <span class="help">{m.editor_agent_help()}</span>
+    </div>
+    <TextField type="date" label={m.editor_valid_from()} value={from} error={fromError} {disabled} oninput={setFrom} onblur={() => ontouch(FROM)} />
+    <TextField
+      type="date"
+      label={m.editor_valid_until()}
+      value={until}
+      error={untilError}
+      help={m.editor_valid_until_help()}
+      {disabled}
+      oninput={setUntil}
+      onblur={() => ontouch(UNTIL)}
+    />
+  {/if}
   <div class="rate">
     <label for="{id}-rate">{m.editor_rate()}</label>
     <span class="row">
@@ -104,7 +108,9 @@
       />
       <span id="{id}-unit" class="unit">{m.editor_rate_unit()}</span>
     </span>
-    <span id="{id}-rate-help" class="help error">{#if limitError}<Icon name="warning" size={16} />{limitError}{/if}</span>
+    <span id="{id}-rate-help" class="help" class:error={limitError}>
+      {#if limitError}<Icon name="warning" size={16} />{limitError}{:else if !agent}{m.template_basics_note()}{/if}
+    </span>
   </div>
 </div>
 

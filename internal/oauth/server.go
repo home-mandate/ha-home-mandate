@@ -45,6 +45,7 @@ type (
 	Admitter interface {
 		Admit(ctx context.Context, req admission.Request) (agent.Agent, agent.TokenPair, error)
 		Templates(ctx context.Context) ([]admission.Template, error)
+		TemplateDocument(ctx context.Context, name string) ([]byte, admission.Template, error)
 	}
 	// Refresher rotates refresh tokens.
 	Refresher interface {
@@ -197,7 +198,7 @@ type page struct {
 	Claimed, ClientID, Host, ReturnHost string
 	Verified                            bool
 	Name, Selected                      string
-	Templates                           []string
+	Templates                           []consentTemplate
 }
 
 // T translates key with name/value pairs as arguments.

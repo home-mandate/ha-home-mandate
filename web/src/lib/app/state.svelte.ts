@@ -9,6 +9,7 @@ import { SvelteMap } from 'svelte/reactivity';
 import { ApiError, type ApiClient } from '../api/client.ts';
 import type { EventsConnection, EventsState } from '../api/events.ts';
 import type { ChainStatus, ServerEvent, Session, SystemStatus } from '../api/types.ts';
+import type { UnsavedTemplate } from '../mandate/template.ts';
 import type { UnsavedMandate } from '../mandate/versions.ts';
 import { clockOffset } from '../ui/countdown.ts';
 import { Bus } from './bus.ts';
@@ -53,6 +54,8 @@ export class AppState {
   offsetMs = $state(0);
   /** Unsaved edits of mandates by mandate id, so leaving the editor does not lose them. */
   readonly unsaved = new SvelteMap<string, UnsavedMandate>();
+  /** Unsaved edits of templates by name (NEW_TEMPLATE_KEY for a new one), likewise. */
+  readonly unsavedTemplates = new SvelteMap<string, UnsavedTemplate>();
   /** Set when an audit entry opens on its own page; the list takes it back once (review M19). */
   auditReturn: AuditReturn | null = null;
 
