@@ -8,3 +8,7 @@ trustPolicy: no-downgrade
 # No git or tarball URLs anywhere in the dependency tree.
 blockExoticSubdeps: true
 saveExact: true
+# Security fixes for transitive dependencies (remove once the parents require them):
+# source-map-js < 1.2.2: GHSA-68fv-2mgg-jv7q (build and test tooling only).
+overrides:
+  source-map-js: 1.2.2
