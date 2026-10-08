@@ -4,7 +4,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -369,6 +371,41 @@ func TestMandateVersionOriginMigration(t *testing.T) {
 	} {
 		if err := insert(tc.origin, tc.name, tc.digest); (err == nil) != tc.ok {
 			t.Errorf("origin %q template %q digest %q: err = %v, want ok %v", tc.origin, tc.name, tc.digest, err, tc.ok)
+		}
+	}
+}
+
+// releasedMigrations are the checksums of migrations that installations have applied.
+// An applied migration must never change, not even in a comment: Migrate refuses to
+// start with ErrMigrationChanged. Add every new migration here once it is installed
+// anywhere; change nothing else.
+var releasedMigrations = map[string]string{
+	"0001_settings.sql":               "0297d128ce4f2b60f8e480e78da3f162672cfe0dc2d24c51420fcfc64f5ba100",
+	"0002_audit_log.sql":              "ab6c29a63ab53fe583b65fc09ab54b56a3ddc2fedcd5c53b25c6256ac8adad10",
+	"0003_agents.sql":                 "307b8e72b77c6d62c528f697a2f076ac99a35c9995116a89cfa7e509587ccec1",
+	"0004_mandates.sql":               "c04cf59857fac44043918653bbd8ef50120b394723cd7d733b205e2244b1cfd8",
+	"0005_oauth_tokens.sql":           "3b6ec7a20b6279d6dfa31fd32233f40bbc793a3d5f56a993683624be5e24079d",
+	"0006_admission.sql":              "0758cf5f9d4e93d53220a8b05e952b03c8d652359cc4f4549f15d41cda56e387",
+	"0007_approvers.sql":              "1a04af8976eeaf780036e4e90cc4fe68c89fb1b6ee0e07a02350f70a1090707f",
+	"0008_approver_channels.sql":      "d094c2ec7ed9a395c3d9b0bacc637ea365614ca647bde1fc1f00337d929a999a",
+	"0009_ui.sql":                     "1dd679e9b9c12c6b2f1c416a29bafb58cd352b8f27af29f05720fbacec395a18",
+	"0010_critical_entities.sql":      "fca46aa8393927162c32b211044d0acb6a0fafdb5f973196c5dec76f352da5bd",
+	"0011_mandate_versions.sql":       "6d154348cd038ede10fff7017712bf031e4873a6d91d44504c60051be191ed87",
+	"0012_entity_renames.sql":         "aae965a7b15e1eaa9524b4da25db1dcff697eed8e0df8a4bb09478af4b7cc7ec",
+	"0013_audit_directory.sql":        "f2dbbab4ba6ac677b45b72b5aaaf6239162ef8c2cab41700959278547c5d06d2",
+	"0014_mandate_version_origin.sql": "74ef985cbb3a5f900c04ecdc8cac36c822d5069044055ebc8250fd0132b8d7b7",
+}
+
+func TestReleasedMigrationsAreFrozen(t *testing.T) {
+	for name, want := range releasedMigrations {
+		data, err := migrationFiles.ReadFile("migrations/" + name)
+		if err != nil {
+			t.Errorf("%s: %v (a released migration must never be removed or renamed)", name, err)
+			continue
+		}
+		sum := sha256.Sum256(data)
+		if got := hex.EncodeToString(sum[:]); got != want {
+			t.Errorf("%s changed (sha256 %s, released %s): installations refuse to start; restore it byte for byte", name, got, want)
 		}
 	}
 }
