@@ -88,6 +88,7 @@ type Server struct {
 	pairing    pairingLimit
 	uiFailures map[string]*uiFailures  // wrong codes per UI session (pairing.go)
 	uiLocks    map[string]*sessionLock // attempts in progress per UI session
+	approvers  ApproverPreview         // who may approve, for the consent page (approvers.go)
 }
 
 //go:embed pages

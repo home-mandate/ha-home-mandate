@@ -96,13 +96,26 @@ const (
 	SummaryCritical   Key = "summary_critical"
 	SummaryLine       Key = "summary_line"
 	PageConsentBase   Key = "page_consent_base"
-	PageAdmitted      Key = "page_admitted"
-	PagePairTitle     Key = "page_pair_title"
-	PagePairIntro     Key = "page_pair_intro"
-	PagePairCode      Key = "page_pair_code"
-	PagePairSubmit    Key = "page_pair_submit"
-	PagePairInvalid   Key = "page_pair_invalid"
-	PagePairLocked    Key = "page_pair_locked"
+	// Who may approve after an admission (consent page).
+	PageConsentApprovers          Key = "page_consent_approvers"
+	PageConsentApproversHint      Key = "page_consent_approvers_hint"
+	PageConsentApproverUnnamed    Key = "page_consent_approver_unnamed"
+	PageConsentApproverSelf       Key = "page_consent_approver_self"
+	PageConsentApproverNone       Key = "page_consent_approver_none"
+	PageConsentApproverNoCritical Key = "page_consent_approver_no_critical"
+	PageConsentApproverUI         Key = "page_consent_approver_ui"
+	PageConsentApproverUnknown    Key = "page_consent_approver_unknown"
+	PageConsentApproverService    Key = "page_consent_approver_service"
+	PageConsentNobody             Key = "page_consent_nobody"
+	PageConsentNobodyCritical     Key = "page_consent_nobody_critical"
+	PageConsentReachUnknown       Key = "page_consent_reach_unknown"
+	PageAdmitted                  Key = "page_admitted"
+	PagePairTitle                 Key = "page_pair_title"
+	PagePairIntro                 Key = "page_pair_intro"
+	PagePairCode                  Key = "page_pair_code"
+	PagePairSubmit                Key = "page_pair_submit"
+	PagePairInvalid               Key = "page_pair_invalid"
+	PagePairLocked                Key = "page_pair_locked"
 )
 
 // actions are the vocabulary actions of SPEC-v0 section 5; their display names have the
@@ -120,6 +133,9 @@ var Keys = append([]Key{
 	TemplateVoiceCautiousTitle, TemplateVoiceCautiousDescription,
 	SummaryAllow, SummaryAsk, SummaryDeny, SummaryRest, SummaryAnyDevice, SummaryDevice, SummaryArea, SummaryInArea,
 	SummaryAllActions, SummaryConditions, SummaryCritical, SummaryLine, PageConsentBase,
+	PageConsentApprovers, PageConsentApproversHint, PageConsentApproverUnnamed, PageConsentApproverSelf, PageConsentApproverNone,
+	PageConsentApproverNoCritical, PageConsentApproverUI, PageConsentApproverUnknown, PageConsentApproverService,
+	PageConsentNobody, PageConsentNobodyCritical, PageConsentReachUnknown,
 }, append(actionKeys(), categoryKeys()...)...)
 
 // categories are the vocabulary categories of SPEC-v0 section 5; their display names

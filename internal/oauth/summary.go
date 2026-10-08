@@ -18,6 +18,7 @@ type consentTemplate struct {
 	Digest                   string // bound to the choice: the human approves what they saw
 	Base                     bool
 	Allow, Ask, Deny         []string
+	Approvers                *consentApprovers // who may approve; nil when not known here
 }
 
 // consentTemplates lists the templates a human may choose at admission: hidden base
