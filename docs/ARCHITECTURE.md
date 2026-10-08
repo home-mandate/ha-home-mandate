@@ -540,6 +540,16 @@ code and at most a JSON pointer, never internal details or the value sent. There
   template and a pairing approval need the separate confirmation too when the template
   allows critical actions without approval. Applying a template answers `updated` or
   `unchanged` and may rename the mandate in the same transaction.
+- **Changed templates:** `api/templates/{name}/usage` lists the active mandates whose
+  rules were last taken from a template (whether edited since, whether up to date);
+  `POST api/templates/{name}/apply` takes the template as the human saw it (its digest)
+  and at most 100 mandates, each with the version the human saw. Every mandate changes
+  through the same path as applying a template to one, in its own transaction, with a
+  `mandate.updated` entry for the human; the answer names the result per mandate
+  (`updated`, `unchanged`, `conflict`, `revoked`, `not_found`, `failed`), so a refused
+  one does not hold back the others and can be retried. One separate confirmation covers
+  every mandate that would gain a rule allowing critical actions without approval;
+  without it no mandate changes. Nothing is applied in the background.
 - **Approvers:** the list carries a version (a hash over all approvers and their channels);
   every change and removal names the version it is based on and is checked in the same
   transaction. The first change wins; one on an older version is refused (conflict), the UI
