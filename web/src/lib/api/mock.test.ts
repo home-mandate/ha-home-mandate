@@ -351,6 +351,14 @@ describe('createMockClient: mandates and templates', () => {
     expect((await api.applyTemplateToMandates('voice-assistant', { template_digest: saved.digest, targets: claudeTarget })).results[0]?.result).toBe('revoked');
   });
 
+  it('edits a mandate as another administrator would (control for the browser tests)', async () => {
+    const api = createMockClient();
+    api.control.editMandate('mandate-voice', 4);
+    const { summary, versions } = await api.mandate('mandate-voice');
+    expect(summary.max_actions_per_hour).toBe(4);
+    expect(versions[0]?.origin).toBe('edit');
+  });
+
   it('applies a template with critical rules to mandates only after one confirmation (#18)', async () => {
     const api = createMockClient();
     const seen = await api.template('voice-assistant');

@@ -49,6 +49,10 @@ const text = {
     updatedOne: 'Aktualisiert: 1 · Nicht aktualisiert: 0',
     close: 'Schließen',
     rateOfMandate: /1 von 20 Aktionen/,
+    conflict: 'Nicht aktualisiert: inzwischen geändert',
+    loadAgain: /^.?Sprachassistent.? neu laden$/,
+    reloaded: 'Inzwischen geändert – prüfe es und wähle es erneut aus',
+    updated: 'Aktualisiert',
   },
   en: {
     mandates: 'Mandates',
@@ -91,6 +95,10 @@ const text = {
     updatedOne: 'Updated: 1 · Not updated: 0',
     close: 'Close',
     rateOfMandate: /1 of 20 actions/,
+    conflict: 'Not updated: changed in the meantime',
+    loadAgain: /^Load .?Sprachassistent.? again$/,
+    reloaded: 'Changed in the meantime – check it and choose it again',
+    updated: 'Updated',
   },
 } as const;
 
@@ -236,6 +244,30 @@ test('“only the template” leaves the mandates as they are (#18)', async ({ p
   await expect(dialog).toHaveCount(0);
   await go(page, `#/agents/id/${VOICE}`);
   await expect(page.getByText(t.rateOfMandate)).toHaveCount(0);
+});
+
+test('a mandate changed meanwhile is loaded again and must be chosen again before it is sent (#18)', async ({ page }, info) => {
+  const t = texts(info.project.name);
+  await page.goto('./#/templates/voice-assistant');
+  await saveRate(page, t, '20');
+  const dialog = page.getByRole('dialog', { name: t.rollout });
+  await expect(dialog.getByRole('checkbox', { name: 'Sprachassistent' })).toBeChecked();
+  // Another administrator edits the mandate after the list was shown.
+  await page.evaluate(() => (window as unknown as { hmMock: { editMandate(id: string, n: number): void } }).hmMock.editMandate('mandate-voice', 3));
+  await dialog.getByRole('button', { name: t.takeOverOne }).click();
+  await expect(dialog.getByText(t.conflict)).toBeVisible();
+  await dialog.getByRole('button', { name: t.loadAgain }).click();
+  const voice = dialog.getByRole('checkbox', { name: 'Sprachassistent' });
+  await expect(voice).toBeFocused();
+  await expect(voice).not.toBeChecked();
+  await expect(dialog.getByText(t.reloaded)).toBeVisible();
+  await expect(dialog.getByRole('button', { name: t.takeOverNone })).toHaveAttribute('aria-disabled', 'true');
+  await page.keyboard.press('Space');
+  await dialog.getByRole('button', { name: t.takeOverOne }).click();
+  await expect(dialog.getByText(t.updated, { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: t.close }).click();
+  await go(page, `#/agents/id/${VOICE}`);
+  await expect(page.getByText(t.rateOfMandate)).toBeVisible();
 });
 
 test('saving a template no mandate uses asks nothing (#18)', async ({ page }, info) => {

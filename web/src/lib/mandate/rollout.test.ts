@@ -36,7 +36,7 @@ describe('rollout', () => {
   });
 
   it('names every result and tells which can be tried again', () => {
-    const all: RolloutResult[] = ['updated', 'unchanged', 'conflict', 'revoked', 'not_found', 'failed'];
+    const all: RolloutResult[] = ['updated', 'unchanged', 'conflict', 'revoked', 'not_found', 'failed', 'skipped'];
     expect(all.map(resultText)).toEqual([
       'Updated',
       'No change needed',
@@ -44,8 +44,10 @@ describe('rollout', () => {
       'Not updated: revoked',
       'Not updated: no longer exists',
       'Not updated: something went wrong',
+      'Not updated: not attempted, time ran out',
     ]);
-    expect(all.filter(retryable)).toEqual(['conflict', 'failed']);
+    // A retry loads the mandate again first; revoked and removed ones have nothing to load.
+    expect(all.filter(retryable)).toEqual(['conflict', 'failed', 'skipped']);
     expect(refusedCount({ a: 'updated', b: 'conflict', c: 'revoked', d: 'unchanged' })).toBe(2);
   });
 

@@ -624,9 +624,10 @@ export interface TemplateRolloutRequest {
 /**
  * Result per mandate: updated; unchanged (already equal, no version); conflict (changed
  * since it was seen); revoked (the mandate or its agent); not_found; failed (anything
- * else). Each mandate changed alone: one refused holds back no other.
+ * else); skipped (not attempted: the request neared its time limit, nothing stored). Each
+ * mandate changed alone: one refused holds back no other.
  */
-export type RolloutResult = 'updated' | 'unchanged' | 'conflict' | 'revoked' | 'not_found' | 'failed';
+export type RolloutResult = 'updated' | 'unchanged' | 'conflict' | 'revoked' | 'not_found' | 'failed' | 'skipped';
 
 export interface TemplateRollout {
   /** In the order of the targets. digest: the mandate's current version, null if unknown. */
