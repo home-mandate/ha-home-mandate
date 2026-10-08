@@ -2,8 +2,8 @@
 
 ## Reporting vulnerabilities
 
-Please do **not** use public issues. Report to: security@home-mandate.com
-(until that address is set up: privately via GitHub Security Advisories of this repository).
+Please do **not** use public issues. Report to security@home-mandate.org, or privately
+through GitHub Security Advisories of this repository.
 We acknowledge within 72 hours and disclose in a coordinated manner.
 
 ## Threat model v0.1

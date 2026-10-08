@@ -1,0 +1,30 @@
+configuration:
+  tls_certfile:
+    name: TLS-Zertifikat
+    description: >-
+      Datei in /ssl mit der Zertifikatskette für den MCP-Endpunkt, z. B. fullchain.pem. Sie
+      muss den Host der öffentlichen URL abdecken. Ohne sie antwortet der Endpunkt nur auf localhost.
+  tls_keyfile:
+    name: Privater TLS-Schlüssel
+    description: Datei in /ssl mit dem privaten Schlüssel des Zertifikats, z. B. privkey.pem.
+  approval_timeout_seconds:
+    name: Wartezeit auf Freigaben
+    description: >-
+      Wie lange eine Aktion auf eine Freigabe wartet, in Sekunden (30–600). Ein Mandat darf
+      sie nur verkürzen.
+  log_level:
+    name: Protokollstufe
+    description: debug, info, warning oder error.
+  public_url:
+    name: Öffentliche URL
+    description: >-
+      Die Adresse, unter der Agenten und Browser Home-Mandate erreichen, z. B.
+      https://hm.example.org:8765. Ohne sie kann kein Agent zugelassen werden.
+  ha_browser_url:
+    name: Home-Assistant-URL für deinen Browser
+    description: >-
+      Home Assistant, wie dein Browser es erreicht, z. B. https://ha.example.org:8123. Nötig
+      zusammen mit der öffentlichen URL: Die Anmeldung zum Zulassen eines Agenten läuft über
+      Home Assistant.
+network:
+  8765/tcp: MCP-Endpunkt für KI-Agenten (HTTPS)

@@ -1,0 +1,29 @@
+configuration:
+  tls_certfile:
+    name: TLS certificate
+    description: >-
+      File in /ssl with the certificate chain for the MCP endpoint, e.g. fullchain.pem. It
+      must cover the host of the public URL. Without it, the endpoint answers on localhost only.
+  tls_keyfile:
+    name: TLS private key
+    description: File in /ssl with the certificate's private key, e.g. privkey.pem.
+  approval_timeout_seconds:
+    name: Approval timeout
+    description: >-
+      How long an action waits for an approval, in seconds (30–600). A mandate may only
+      shorten it.
+  log_level:
+    name: Log level
+    description: debug, info, warning or error.
+  public_url:
+    name: Public URL
+    description: >-
+      The address agents and browsers reach Home-Mandate at, e.g.
+      https://hm.example.org:8765. Without it, no agent can be admitted.
+  ha_browser_url:
+    name: Home Assistant URL for your browser
+    description: >-
+      Home Assistant as your browser reaches it, e.g. https://ha.example.org:8123. Needed
+      with the public URL: signing in to admit an agent goes through Home Assistant.
+network:
+  8765/tcp: MCP endpoint for AI agents (HTTPS)

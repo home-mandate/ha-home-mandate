@@ -181,9 +181,13 @@ A template is a mandate whose `id`, `principal`, `agent`, `created_by`, `created
   although the specification allows up to one hour: the agent's request waits for the answer.
 - Open approval requests live in memory: after a restart they are gone and their requests
   have ended without execution.
-- In app mode (Home Assistant OS), admitting agents is not available yet.
-- In container mode, the UI needs a certificate and an `https://` public URL (direct mode);
-  without them, only the command line manages Home-Mandate.
+- In app mode (Home Assistant OS), admitting agents needs a certificate in `/ssl` and the
+  options `public_url` and `ha_browser_url` (`app/DOCS.md`); a reverse proxy that ends TLS
+  (`HM_PROXY`) is not available there yet. This path is first tested on Home Assistant OS
+  with the release candidate.
+- In container mode, the UI needs a certificate or a reverse proxy (`HM_PROXY`), and an
+  `https://` public URL (direct mode); without them, only the command line manages
+  Home-Mandate.
 - There is no test clock: time windows are tested against the real household time (E2E
   scenario 9) and at their boundaries by unit tests.
 
