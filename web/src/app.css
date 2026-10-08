@@ -33,6 +33,14 @@ body {
   }
 }
 
+/* While an editor shows its save bar (issue #20, UnsavedBar.svelte) the app takes exactly
+   the viewport: the page scrolls in its own frame and the bar sits in the dock below it
+   (App.svelte), so it never covers the page, a focused field or the end of the page. */
+:root.hm-savebar #app {
+  block-size: 100dvh;
+  min-block-size: 0;
+}
+
 /* Visible focus on every interactive element (design README section 4). */
 :focus-visible {
   outline: var(--hm-focus-width) solid var(--hm-color-focus);

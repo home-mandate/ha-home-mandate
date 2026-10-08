@@ -555,19 +555,6 @@ describe('saving', () => {
     expect(within(dialog).getByText(/The effect can’t be computed right now/)).toBeTruthy();
     expect(within(dialog).queryByText('No effect on permissions.')).toBeNull();
   });
-
-  it('asks before leaving the page with unsaved changes', async () => {
-    await start();
-    await rulesRegion();
-    const clean = new Event('beforeunload', { cancelable: true });
-    window.dispatchEvent(clean);
-    expect(clean.defaultPrevented).toBe(false);
-    const first = await open(1);
-    await fireEvent.click(first.getByRole('radio', { name: 'Ask' }));
-    const dirty = new Event('beforeunload', { cancelable: true });
-    window.dispatchEvent(dirty);
-    expect(dirty.defaultPrevented).toBe(true);
-  });
 });
 
 describe('changes from elsewhere', () => {
@@ -737,6 +724,121 @@ describe('changes from elsewhere', () => {
     await fireEvent.click(first.getByRole('radio', { name: 'Allow' }));
     await tick();
     expect(app.unsaved.has(ID)).toBe(false);
+  });
+});
+
+describe('unsaved changes (issue #20)', () => {
+  const HINT = 'Rule 1 changed – not saved yet. It applies to the agent only after saving.';
+  const bar = () => screen.queryByRole('region', { name: /unsaved change/ });
+
+  async function askFirst() {
+    const first = await open(1);
+    await fireEvent.click(first.getByRole('radio', { name: 'Ask' }));
+    return first;
+  }
+
+  it('says after "Done" that a changed rule is not saved yet, and only then', async () => {
+    await start();
+    const first = await open(1);
+    await fireEvent.click(first.getByRole('button', { name: 'Done' }));
+    expect((await card(1)).queryByText(HINT)).toBeNull();
+    expect(live()).not.toContain(HINT);
+
+    await fireEvent.click((await askFirst()).getByRole('button', { name: 'Done' }));
+    expect((await card(1)).getByText(HINT)).toBeTruthy();
+    await waitFor(() => expect(live()).toBe(HINT));
+    // The focus stays on the rule; the hint offers the way to saving.
+    expect(document.activeElement).toBe((await card(1)).getByRole('button', { name: 'Edit: Rule 1' }));
+    await fireEvent.click((await card(1)).getByRole('button', { name: 'Save now …' }));
+    expect(await screen.findByRole('dialog', { name: 'Save changes?' })).toBeTruthy();
+  });
+
+  it('drops the hint when the rule is opened again or the change is undone', async () => {
+    await start();
+    const first = await askFirst();
+    await fireEvent.click(first.getByRole('button', { name: 'Done' }));
+    expect((await card(1)).getByText(HINT)).toBeTruthy();
+    const again = await open(1);
+    expect(again.queryByText(HINT)).toBeNull();
+    await fireEvent.click(again.getByRole('radio', { name: 'Allow' }));
+    await fireEvent.click(again.getByRole('button', { name: 'Done' }));
+    expect((await card(1)).queryByText(HINT)).toBeNull();
+  });
+
+  it('shows the save bar only while there are unsaved changes, with their count', async () => {
+    await start();
+    await rulesRegion();
+    expect(bar()).toBeNull();
+    await askFirst();
+    expect(bar()?.textContent).toContain('They apply to the agent only after saving.');
+    expect(screen.getByRole('region', { name: '1 unsaved change' })).toBeTruthy();
+    await fireEvent.input(screen.getByLabelText('Rate limit'), { target: { value: '20' } });
+    expect(screen.getByRole('region', { name: '2 unsaved changes' })).toBeTruthy();
+  });
+
+  it('saves from the bar: summary, new version, bar and hint gone', async () => {
+    const { api } = await start();
+    await fireEvent.click((await askFirst()).getByRole('button', { name: 'Done' }));
+    await fireEvent.click(within(bar() as HTMLElement).getByRole('button', { name: 'Save changes …' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Save changes?' });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Save as version 2' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(bar()).toBeNull();
+    expect((await card(1)).queryByText(HINT)).toBeNull();
+    expect((await api.mandate(ID)).versions).toHaveLength(2);
+  });
+
+  it('discards from the bar with an undo, and moves the focus to the heading', async () => {
+    const { app } = await start();
+    await askFirst();
+    await fireEvent.click(within(bar() as HTMLElement).getByRole('button', { name: 'Discard changes' }));
+    expect(status()).toBe('All saved');
+    expect(bar()).toBeNull();
+    expect((await card(1)).getByText('Allowed')).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1 }));
+    await tick();
+    expect(app.unsaved.has(ID)).toBe(false);
+
+    const undo = toasts.list().find((t) => t.text === 'Changes discarded.');
+    expect(undo?.action?.label).toBe('Undo');
+    toasts.act(undo?.id ?? -1);
+    await tick();
+    expect(status()).toBe('1 unsaved change');
+    expect((await card(1)).getByText('Ask first')).toBeTruthy();
+  });
+
+  it('does not let an undo of a discard reach into a newer version', async () => {
+    const { api } = await start();
+    await askFirst();
+    await fireEvent.click(within(bar() as HTMLElement).getByRole('button', { name: 'Discard changes' }));
+    await store(api, (d) => ({ ...d, rules: d.rules.slice(0, 4) }));
+    await waitFor(async () => expect(await cards()).toHaveLength(5));
+    const undo = toasts.list().find((t) => t.text === 'Changes discarded.');
+    if (undo) toasts.act(undo.id);
+    await tick();
+    expect(status()).toBe('All saved');
+  });
+
+  it('warns that an edit left earlier is not in force yet, only for such an edit', async () => {
+    const { app, view } = await start();
+    await rulesRegion();
+    expect(screen.queryByText('Unsaved changes from earlier')).toBeNull();
+    await askFirst();
+    await tick();
+    view.unmount();
+    render(MandateEditor, { app, id: ID, now: Date.parse(NOW) });
+    const banner = (await screen.findByText('Unsaved changes from earlier')).closest('[role="alert"]') as HTMLElement;
+    expect(banner.textContent).toContain('They are not in force yet. Save or discard them.');
+    expect(bar()).toBeTruthy();
+
+    await fireEvent.click(within(bar() as HTMLElement).getByRole('button', { name: 'Discard changes' }));
+    expect(screen.queryByText('Unsaved changes from earlier')).toBeNull();
+  });
+
+  it('never shows the bar for a revoked mandate', async () => {
+    await start({}, async (api) => void (await api.revokeMandate(ID)));
+    await rulesRegion();
+    expect(bar()).toBeNull();
   });
 });
 

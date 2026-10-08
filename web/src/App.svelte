@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
+  import { LeaveGuard } from './lib/app/leave.ts';
   import { BrowserNotifier } from './lib/app/notifier.svelte.ts';
   import type { AppState } from './lib/app/state.svelte.ts';
   import BannerStack from './lib/components/BannerStack.svelte';
@@ -34,6 +35,7 @@
   import { signInError } from './lib/app/signin.ts';
   import { getLocale } from './lib/paraglide/runtime.js';
   import { href, parseHash, sectionOf, type Route, type Section } from './lib/router.ts';
+  import { DOCK_ID, SCROLL_ID } from './lib/ui/portal.ts';
   import { toasts } from './lib/ui/toasts.ts';
 
   interface Props {
@@ -78,9 +80,15 @@
     ),
   );
 
+  // Reloading, closing the tab or leaving the page asks first while any mandate or template
+  // has unsaved changes, kept by its editor also after leaving it (issue #20).
+  const leave = new LeaveGuard(window);
+  $effect(() => leave.set(app.unsaved.size > 0 || app.unsavedTemplates.size > 0));
+
   const timer = setInterval(() => (now = Date.now()), TICK_MS);
   onDestroy(() => {
     clearInterval(timer);
+    leave.set(false);
     app.stop();
   });
 
@@ -189,76 +197,103 @@
 
 <svelte:window onhashchange={navigated} />
 
-<a class="skip" href="#main" onclick={skip}>{m.skip_to_content()}</a>
-<Header
-  {section}
-  {estopActive}
-  showNav={app.phase !== 'forbidden' && app.phase !== 'signed_out'}
-  onestop={estop}
-  onsignout={app.phase === 'ready' && app.session?.sign_out ? signOut : undefined}
-/>
-{#if app.system && app.phase === 'ready'}
-  <BannerStack
-    system={app.system}
-    downSince={app.downSince}
-    {now}
-    locale={getLocale()}
-    {timeZone}
-    onliftestop={() => go({ name: 'settings', section: 'estop' })}
-    onchain={(seq) => go({ name: 'audit_entry', seq })}
+<!-- The page scrolls in the window; while an editor shows its save bar, it scrolls in this
+     frame instead and the bar sits in the dock below it, never over the page (issue #20). -->
+<div id={SCROLL_ID} class="page">
+  <a class="skip" href="#main" onclick={skip}>{m.skip_to_content()}</a>
+  <Header
+    {section}
+    {estopActive}
+    showNav={app.phase !== 'forbidden' && app.phase !== 'signed_out'}
+    onestop={estop}
+    onsignout={app.phase === 'ready' && app.session?.sign_out ? signOut : undefined}
   />
-{/if}
-<main id="main" bind:this={main} tabindex="-1" aria-busy={app.phase === 'loading'}>
-  {#if app.phase === 'loading'}
-    <Skeleton lines={['30%', '70%', '50%']} />
-  {:else if app.phase === 'signed_out'}
-    <SignIn error={signInFailure} />
-  {:else if app.phase === 'forbidden'}
-    <FullPageState icon="lock" badge="person" title={m.noaccess_title()} body={m.noaccess_body()} note={m.noaccess_approver()} />
-  {:else if app.phase === 'error'}
-    <ErrorState title={m.app_error_title()} body={m.overview_error_body()} onretry={() => window.location.reload()} />
-  {:else if route.name === 'not_found' || section === null}
-    <FullPageState
-      icon="search"
-      badge="info"
-      title={m.notfound_title()}
-      body={m.notfound_body()}
-      cta={{ href: '#/', label: m.notfound_back() }}
+  {#if app.system && app.phase === 'ready'}
+    <BannerStack
+      system={app.system}
+      downSince={app.downSince}
+      {now}
+      locale={getLocale()}
+      {timeZone}
+      onliftestop={() => go({ name: 'settings', section: 'estop' })}
+      onchain={(seq) => go({ name: 'audit_entry', seq })}
     />
-  {:else if route.name === 'overview'}
-    <Overview {app} {now} />
-  {:else if route.name === 'audit'}
-    {#key visits}<AuditLog {app} {now} query={route.query} />{/key}
-  {:else if route.name === 'requests'}
-    <Requests {app} />
-  {:else if route.name === 'audit_entry'}
-    {#key route.seq}<AuditEntry {app} seq={route.seq} />{/key}
-  {:else if route.name === 'agents'}
-    <Agents {app} {now} add={route.add === true} />
-  {:else if route.name === 'pair'}
-    <AgentPair {app} {now} />
-  {:else if route.name === 'agent'}
-    {#key route.id}<AgentDetail {app} id={route.id} {now} />{/key}
-  {:else if route.name === 'connect'}
-    <AgentConnect {app} />
-  {:else if route.name === 'settings'}
-    <Settings {app} {notifier} section={route.section} onestop={openSheet} storage={storage()} />
-  {:else if route.name === 'mandates'}
-    <MandateList {app} {now} />
-  {:else if route.name === 'mandate'}
-    {#key route.id}<MandateEditor {app} id={route.id} {now} />{/key}
-  {:else if route.name === 'mandate_versions'}
-    {#key route.id}<MandateVersions {app} id={route.id} />{/key}
-  {:else if route.name === 'templates'}
-    <TemplateList {app} />
-  {:else if route.name === 'template'}
-    {#key route.template}<TemplateEditor {app} template={route.template} {now} />{/key}
   {/if}
-</main>
-<ToastHost />
+  <main id="main" bind:this={main} tabindex="-1" aria-busy={app.phase === 'loading'}>
+    {#if app.phase === 'loading'}
+      <Skeleton lines={['30%', '70%', '50%']} />
+    {:else if app.phase === 'signed_out'}
+      <SignIn error={signInFailure} />
+    {:else if app.phase === 'forbidden'}
+      <FullPageState icon="lock" badge="person" title={m.noaccess_title()} body={m.noaccess_body()} note={m.noaccess_approver()} />
+    {:else if app.phase === 'error'}
+      <ErrorState title={m.app_error_title()} body={m.overview_error_body()} onretry={() => window.location.reload()} />
+    {:else if route.name === 'not_found' || section === null}
+      <FullPageState
+        icon="search"
+        badge="info"
+        title={m.notfound_title()}
+        body={m.notfound_body()}
+        cta={{ href: '#/', label: m.notfound_back() }}
+      />
+    {:else if route.name === 'overview'}
+      <Overview {app} {now} />
+    {:else if route.name === 'audit'}
+      {#key visits}<AuditLog {app} {now} query={route.query} />{/key}
+    {:else if route.name === 'requests'}
+      <Requests {app} />
+    {:else if route.name === 'audit_entry'}
+      {#key route.seq}<AuditEntry {app} seq={route.seq} />{/key}
+    {:else if route.name === 'agents'}
+      <Agents {app} {now} add={route.add === true} />
+    {:else if route.name === 'pair'}
+      <AgentPair {app} {now} />
+    {:else if route.name === 'agent'}
+      {#key route.id}<AgentDetail {app} id={route.id} {now} />{/key}
+    {:else if route.name === 'connect'}
+      <AgentConnect {app} />
+    {:else if route.name === 'settings'}
+      <Settings {app} {notifier} section={route.section} onestop={openSheet} storage={storage()} />
+    {:else if route.name === 'mandates'}
+      <MandateList {app} {now} />
+    {:else if route.name === 'mandate'}
+      {#key route.id}<MandateEditor {app} id={route.id} {now} />{/key}
+    {:else if route.name === 'mandate_versions'}
+      {#key route.id}<MandateVersions {app} id={route.id} />{/key}
+    {:else if route.name === 'templates'}
+      <TemplateList {app} />
+    {:else if route.name === 'template'}
+      {#key route.template}<TemplateEditor {app} template={route.template} {now} />{/key}
+    {/if}
+  </main>
+</div>
+<div id={DOCK_ID} class="dock">
+  <ToastHost />
+</div>
 <EstopSheet open={sheet} onclose={() => (sheet = false)} onfire={fire} busy={firing} error={estopError} />
 
 <style>
+  .page {
+    display: flex;
+    flex-direction: column;
+    flex: 1 0 auto;
+  }
+  :global(:root.hm-savebar) .page {
+    flex: 1 1 0;
+    min-block-size: 0;
+    overflow-x: clip;
+    overflow-y: auto;
+    /* The editor's sticky preview measures itself against this frame (100cqb). */
+    container-type: size;
+  }
+  /* In a frame of fixed height nothing may shrink: the frame scrolls instead. */
+  :global(:root.hm-savebar) .page > :global(*) {
+    flex-shrink: 0;
+  }
+  .dock {
+    position: relative;
+    flex: none;
+  }
   main {
     display: flex;
     flex-direction: column;
