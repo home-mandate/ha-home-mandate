@@ -142,8 +142,8 @@ test('a base template in the editor: placeholder kept, saved as a new template, 
   await expect(page.getByRole('button', { name: t.save, exact: true })).toHaveCount(0);
 
   await page.getByLabel(t.rate).fill('30');
-  await expect(page.getByText(t.unsaved)).toBeVisible();
-  await page.getByRole('button', { name: t.saveAs }).click();
+  await expect(page.locator('main').getByText(t.unsaved)).toBeVisible();
+  await page.getByRole('button', { name: t.saveAs, exact: true }).click();
   const dialog = page.getByRole('dialog', { name: t.saveAsTitle });
   await expect(dialog.getByLabel(t.name)).toBeFocused();
   await page.keyboard.type('hm-meine');

@@ -95,11 +95,11 @@ test('from the list into the editor: change a rule, read the summary, save a ver
 
   await page.getByRole('button', { name: t.edit(1) }).click();
   await page.getByRole('radio', { name: t.ask, exact: true }).click();
-  await expect(page.getByText(t.unsaved)).toBeVisible();
+  await expect(page.locator('main').getByText(t.unsaved)).toBeVisible();
   // The preview follows the draft at once.
   await expect(page.getByRole('gridcell', { name: /Küchenlicht/ }).first()).toContainText(info.project.name === 'de' ? 'Nachfragen' : 'Ask first');
 
-  await page.getByRole('button', { name: t.save }).click();
+  await page.getByRole('button', { name: t.save, exact: true }).click();
   const dialog = page.getByRole('dialog', { name: t.summary });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('button', { name: t.keep })).toBeFocused();
@@ -155,7 +155,7 @@ test('critical actions without approval need the separate confirmation, with the
   await expect(dialog.getByText(t.criticalFlag)).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
-  await expect(page.getByText(t.unsaved)).toBeVisible();
+  await expect(page.locator('main').getByText(t.unsaved)).toBeVisible();
 });
 
 test('the preview matrix is a grid: arrow keys move, the selection follows and is explained', async ({ page }, info) => {
@@ -181,7 +181,7 @@ test('a save attempt with errors lists them instead of saving', async ({ page },
   await page.getByRole('button', { name: t.addRule }).click();
   // The new rule starts with "read"; without any action it is invalid.
   await page.getByRole('button', { name: info.project.name === 'de' ? 'lesen' : 'read', exact: true }).click();
-  await page.getByRole('button', { name: t.save }).click();
+  await page.getByRole('button', { name: t.save, exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   // The list of problems takes the focus; its count is announced once.
   await expect(page.getByRole('group').filter({ hasText: t.errors })).toBeFocused();
