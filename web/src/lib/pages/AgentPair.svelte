@@ -273,6 +273,7 @@
         {busy}
         {error}
         templateError={templateProblem}
+        approvers={(t) => app.api.templateApprovers(t)}
         onback={() => {
           critical = null;
           void go('verify');

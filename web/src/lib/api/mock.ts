@@ -13,6 +13,7 @@ import { canonical, needsCriticalConfirmation } from '../engine/vocabulary.ts';
 import { withApprovers } from '../mandate/placeholder.ts';
 import { RESERVED_PREFIX, TEMPLATE_NAME } from '../mandate/template.ts';
 import { ApiError, type ApiClient, type EventHandlers } from './client.ts';
+import { previewApprovers } from './mock-approvers.ts';
 import type { EventsConnection, EventsState } from './events.ts';
 import {
   agentsFixture,
@@ -155,6 +156,8 @@ export interface MockOptions {
   hostile?: boolean;
   /** Direct mode: signed in through Home-Mandate, so the session offers to sign out. */
   direct?: boolean;
+  /** Starts without any approver set up: nobody but the admitting human, without a channel. */
+  noApprovers?: boolean;
   now?: () => Date;
 }
 
@@ -350,7 +353,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
   const pairingCandidate: PairingCandidate = options.hostile ? { ...pairingFixture, claimed_name: WORST_NAME } : pairingFixture;
   const initial: State = {
     session: sessionFixture,
-    system: systemFixture,
+    system: options.noApprovers ? { ...systemFixture, approvers_configured: 0 } : systemFixture,
     defaults: defaultsFixture,
     devices: devicesFixture,
     renames: {},
@@ -359,7 +362,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     templates: templatesFixture.map(storedTemplate),
     audit: options.empty ? [] : auditFixture,
     approvals: options.empty ? { open: [], history: [] } : { open: approvalsOpenFixture, history: approvalsHistoryFixture },
-    approvers: approversFixture,
+    approvers: options.noApprovers ? { ...approversFixture, approvers: [] } : approversFixture,
     approversVersion: 1,
     pairing: { codes: { [normalizeCode(MOCK_PAIRING_CODE)]: 'open', [normalizeCode(MOCK_EXPIRED_CODE)]: 'expired' }, wrong: 0, lockedUntil: 0 },
   };
@@ -840,6 +843,20 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       if (!state.templates.some((t) => t.name === name && t.builtin)) fail('not_found');
       state = { ...state, templates: state.templates.map((t) => (t.name === name ? { ...t, hidden } : t)) };
       emit({ type: 'templates.changed' });
+    },
+    async templateApprovers(name) {
+      const t = state.templates.find((x) => x.name === name && !x.hidden) ?? fail('not_found');
+      const { approvers, candidates } = state.approvers;
+      const names = Object.fromEntries([...candidates.people, ...approvers].map((p) => [p.user_id, p.name]));
+      return previewApprovers({
+        draft: t.draft,
+        placeholder: [user().id, ...approvers.map((a) => a.user_id)],
+        approvers,
+        names: { ...names, [user().id]: user().name },
+        self: user().id,
+        serviceUser: '',
+        haDown: !state.system.ha.connected,
+      });
     },
 
     async settings() {

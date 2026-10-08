@@ -292,6 +292,35 @@ describe('AgentPair', () => {
     expect((screen.getByRole('radio', { name: 'Voice assistant (cautious)' }) as HTMLInputElement).checked).toBe(true);
   });
 
+  it('shows who may approve with the chosen template, and warns without blocking when nobody can', async () => {
+    const { api } = await start();
+    await toMandate();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Voice assistant (cautious)' }));
+    const region = await screen.findByRole('region', { name: 'Who may approve' });
+    await waitFor(() => expect(region.textContent).toContain('Markus'));
+    expect(region.textContent).toContain('(you)');
+    expect(region.textContent).not.toContain('Nobody can answer');
+
+    // Without any approver set up, the human who admits has no channel.
+    await api.deleteApprover('u-admin', (await api.approvers()).version);
+    await fireEvent.click(screen.getByRole('radio', { name: 'Read only' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Voice assistant (cautious)' }));
+    await waitFor(() => expect(alerts()).toContain('Nobody can answer approval requests for critical actions'));
+    expect(screen.getByRole('link', { name: 'Set up approvers' }).getAttribute('href')).toBe('#/settings/approvers');
+    expect(screen.getByRole('region', { name: 'Who may approve' }).textContent).toContain('no channel for approval requests');
+    await fireEvent.click(screen.getByRole('button', { name: 'Approve agent' }));
+    await screen.findByRole('heading', { name: /is connected/ });
+  });
+
+  it('says unknown, never reachable, when the approvers cannot be checked', async () => {
+    await start((api) => {
+      api.templateApprovers = async () => Promise.reject(new ApiError('unavailable', 503));
+    });
+    await toMandate();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Voice assistant (cautious)' }));
+    await waitFor(() => expect(alerts()).toContain('Could not check whether anyone can answer approval requests'));
+  });
+
   it('does not offer hidden base templates; one hidden meanwhile is no choice any more, said at the choice', async () => {
     const { api } = await start((a) => void a.setTemplateHidden('hm-light-climate', true));
     await toMandate();

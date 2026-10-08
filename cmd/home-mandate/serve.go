@@ -260,6 +260,10 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		apiCfg.MCPURL = s.cfg.PublicURL + mcp.Path
 	}
 	g.api = api.New(apiCfg)
+	if as != nil {
+		// The consent page shows who may approve, as the pairing in the UI does.
+		as.SetApprovers(g.api)
+	}
 	if h := g.api.DirectHandler(); h != nil {
 		g.direct = h
 		logger.Info("UI in direct mode", "url", s.cfg.PublicURL+api.DirectPrefix+"/")

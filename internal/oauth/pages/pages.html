@@ -45,7 +45,14 @@
 {{if $t.Ask}}<p class="group">{{$.T "summary_ask"}}</p><ul>{{range $t.Ask}}<li>{{.}}</li>{{end}}</ul>{{end}}
 {{if $t.Deny}}<p class="group">{{$.T "summary_deny"}}</p><ul>{{range $t.Deny}}<li>{{.}}</li>{{end}}</ul>{{end}}
 <p class="rest">{{$.T "summary_rest"}}</p>
-</div>
+{{with $t.Approvers}}<p class="group">{{$.T "page_consent_approvers"}}</p>
+{{if .People}}<p>{{$.T "page_consent_approvers_hint"}}</p>
+<ul class="approvers">{{range .People}}<li>{{if .Name}}{{.Name}}{{else}}{{$.T "page_consent_approver_unnamed"}}{{end}}{{if .Self}} {{$.T "page_consent_approver_self"}}{{end}}{{range .Notes}}<span class="note"> – {{$.T .}}</span>{{end}}</li>
+{{end}}</ul>{{end}}
+{{if .Nobody}}<p class="warn">{{$.T "page_consent_nobody"}}</p>{{end}}
+{{if .NobodyCritical}}<p class="warn">{{$.T "page_consent_nobody_critical"}}</p>{{end}}
+{{if .Unknown}}<p class="warn">{{$.T "page_consent_reach_unknown"}}</p>{{end}}
+{{end}}</div>
 </div>
 {{end}}</fieldset>
 <div class="actions">

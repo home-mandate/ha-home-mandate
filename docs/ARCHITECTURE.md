@@ -203,6 +203,15 @@ validity; admission fills them in.
   mandate never contains a value starting with `$`: storing one is refused, so no mandate
   can exist that nobody may approve. The placeholder is Home-Mandate's for now; a template
   format of the specification is planned to take it over unchanged.
+- **Who may approve, shown at admission.** The consent page and the pairing step in the UI
+  (`GET api/templates/{name}/approvers`) list, for each template, the people its approvers
+  will be (the placeholder expanded for the signed-in human, and approvers named in the
+  template) with names from Home Assistant, mark who has no channel, and warn when nobody
+  can answer the ordinary or the critical requests the template's rules can lead to
+  (critical per the vocabulary; resources the household marks as critical are not known
+  at that point). Home-Mandate's own Home Assistant user never counts; when Home Assistant
+  cannot be asked, reach is shown as unknown, never as reachable. The warning never blocks
+  the admission.
 - Templates of the household are edited in the UI (Mandates → Templates) with the mandate
   editor and its preview; changing one names the version it started from, as for
   mandates.

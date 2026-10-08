@@ -219,6 +219,7 @@ func (s *Server) renderConsent(w http.ResponseWriter, r *http.Request, st consen
 	if selected == "" {
 		selected = templates[0].Name // the most cautious comes first
 	}
+	templates = s.withApprovers(r.Context(), templates, st.user.ID)
 	p := page{Lang: language(r), Title: i18n.PageConsentTitle, User: st.user.Name, CSRF: st.csrf, Claimed: st.client.Name,
 		ClientID: st.client.ID, Verified: st.client.Verified, Name: name, Selected: selected, Templates: templates, Error: errKey}
 	formTarget := ""
