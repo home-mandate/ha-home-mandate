@@ -106,6 +106,7 @@ e2e:
 	cd e2e && go test -tags e2e -count=1 -timeout 25m -v .
 
 ## e2e-ui: the E2E scenarios plus Playwright (de, en) against the release image behind the
-## Ingress stand-in (needs make web-install and Playwright's Chromium)
+## Ingress stand-in, and on the sign-in, consent and pairing pages (needs make web-install
+## and Playwright's Chromium)
 e2e-ui:
 	cd e2e && E2E_PLAYWRIGHT=1 go test -tags e2e -count=1 -timeout 30m -v .
