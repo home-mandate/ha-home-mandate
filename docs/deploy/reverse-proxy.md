@@ -111,6 +111,13 @@ If the address is wrong, every request gets a 403 and Home-Mandate logs
 minute). That is the value for `HM_PROXY` only if the proxy connects directly, without
 a published port or NAT in between.
 
+If your proxy runs in Docker and clients reach it over IPv6, check that its network has
+IPv6 enabled (`docker network create --ipv6 …`, or `enable_ipv6: true` in Compose).
+Otherwise Docker's `docker-proxy` accepts IPv6 connections on the published port and
+hands them on from the bridge's own address, so the proxy logs every IPv6 client as, for
+example, `172.18.0.1`. All of them then share one sender, in Home-Mandate and in Home
+Assistant's IP ban alike.
+
 If another proxy or a CDN stands in front of yours, the last `X-Forwarded-For` entry is
 that one's address, and all clients share one sender and its limits: a single client can
 then use up the pairing and sign-in limits for everyone. Let your proxy take the client

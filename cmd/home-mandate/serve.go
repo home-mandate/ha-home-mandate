@@ -138,6 +138,9 @@ type gateway struct {
 	haVersion string
 	units     map[string]string
 	bellClean sync.Once
+	// background holds announcements started by Home Assistant's callbacks; they read the
+	// database, so run waits for them before it returns.
+	background sync.WaitGroup
 
 	server   *http.Server
 	listener net.Listener
@@ -493,7 +496,7 @@ func (g *gateway) onDisconnect() {
 	g.haSince = time.Now()
 	g.mu.Unlock()
 	if g.api != nil {
-		go g.api.SystemChanged()
+		g.background.Go(g.api.SystemChanged)
 	}
 }
 
@@ -505,7 +508,7 @@ func (g *gateway) onConnect(ctx context.Context) {
 	g.catalog.RequestRefresh()
 	defer func() {
 		if g.api != nil {
-			go g.api.SystemChanged()
+			g.background.Go(g.api.SystemChanged)
 		}
 	}()
 	cfg, err := g.client.GetConfig(ctx)
@@ -580,7 +583,8 @@ func (g *gateway) run(ctx context.Context) int {
 		_ = g.ingress.Shutdown(shutdownCtx)
 		_ = g.ingress.Close() // event streams are hijacked connections; Shutdown does not wait for them
 	}
-	wg.Wait() // nothing may use the database after this returns
+	wg.Wait()           // nothing may use the database after this returns
+	g.background.Wait() // Home Assistant's client has stopped, no callback starts more
 	switch {
 	case errors.Is(err, ha.ErrAuthInvalid):
 		g.logger.Error("Home Assistant rejected the access token")

@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -392,4 +393,45 @@ func TestGatewayBehindAProxy(t *testing.T) {
 			}
 		}
 	})
+}
+
+// Announcements started by Home Assistant's callbacks read the database; run returns only
+// after they ended, so that nothing reads it once it is closed.
+func TestRunWaitsForBackgroundAnnouncements(t *testing.T) {
+	fake := &fakeHomeAssistant{t: t}
+	haSrv := httptest.NewServer(http.HandlerFunc(fake.serve))
+	defer haSrv.Close()
+	c := newCLI(t)
+	s, err := openStore(context.Background(), c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.store.Close()
+	s.cfg = config.Config{Mode: config.ModeContainer, HAURL: "ws" + strings.TrimPrefix(haSrv.URL, "http") + "/api/websocket", HAToken: "t",
+		MCPAddr: "127.0.0.1:0", ApprovalTimeout: 2 * time.Minute}
+	ctx, cancel := context.WithCancel(context.Background())
+	g, err := newGateway(ctx, s, slog.New(slog.DiscardHandler))
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	done := make(chan int, 1)
+	go func() { done <- g.run(ctx) }()
+	var finished atomic.Bool
+	release := make(chan struct{})
+	g.background.Go(func() {
+		<-release
+		finished.Store(true)
+	})
+	cancel()
+	select {
+	case <-done:
+		t.Fatal("run returned while an announcement was still running")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	<-done
+	if !finished.Load() {
+		t.Error("announcement did not finish")
+	}
 }
