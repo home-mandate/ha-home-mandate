@@ -54,6 +54,19 @@ protection class, expired, not yet valid) needs its own named test.
 - **UI:** Playwright against the UI (mandate editor, emergency stop, revoke agent), every UI
   scenario in German **and** English, embedded under a random Ingress path so that relative
   paths and hash routing are verified.
+- **Sign-in, consent and pairing pages in a real browser** (`web/e2e-live/oauth.spec.ts`,
+  started by `e2e/oauth_test.go`, `make e2e-ui`): Chromium drives the authorization server's
+  pages against the release image in German and English, with Home Assistant's real login
+  page; Go HTTP clients set request headers themselves and miss what browsers do. The spec
+  also plays the agent: it reads the metadata, starts the Authorization Code flow with PKCE
+  and a loopback redirect, exchanges the code and calls the MCP endpoint; and it pairs by
+  code, entered in the browser, and polls for the tokens. The client ID metadata document
+  comes from a test-only server (`tools/cimdserver`) on port 443 in an internal test network
+  of its own, in a subnet the gateway's address rules do not reserve, with a certificate of
+  the test CA that the gateway trusts through `SSL_CERT_FILE` in the test run only: the
+  release image keeps refusing private addresses and is not changed for the test. Every
+  test fails on a CSP violation, a console or page error on the gateway's pages, or a page
+  of ours without its policy.
 - **UI screen sweep** (`web/e2e/sweep.spec.ts`): every screen and state (empty household, all
   banners, emergency stop sheet, no access, start-up error, long and bidi names) in light and
   dark, left-to-right and right-to-left (`dir=rtl` forced, no RTL language yet), at 375 and
@@ -260,6 +273,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - Device IDs, areas and names in a template's summary containing markup → shown as text
 
 **Sign-in, consent and pairing pages**
+- In a real browser (`web/e2e-live/oauth.spec.ts`): approving sends the code to the agent's loopback redirect, which the consent page's `form-action` allows, and only the PKCE verifier redeems it, once; denying sends `access_denied` without a code; someone who is no administrator is refused after Home Assistant's sign-in and the agent hears nothing; a hidden base template is not offered; exactly the approved agents are admitted, by the human who approved them
 - Referrer policy `no-referrer` on these pages → a browser sends `Origin: null` with the consent and pairing forms, which the same-origin check refuses: the pages keep `same-origin` (header and meta), which sends the real origin to themselves and no referrer to other origins; a form post with `Origin: null` or another origin stays refused
 
 **UI in direct mode (container mode without Ingress)**
