@@ -320,6 +320,13 @@ Every line is at least one test. New attack ideas are added here before they are
 - Renewed certificate and key → the next handshake uses them, without a restart, also when size and modification time stayed the same (compared by content); a key that does not belong to the certificate, a half-written, unreadable or oversized file, or a renewal not valid now (expired, not yet valid) → previous pair stays, retried at the next look (at most once a minute); the UI's status looks at the files too, without a handshake
 - Certificate valid for less than 14 days → warning in the log and in the UI
 
+**Behind a reverse proxy (`HM_PROXY`)**
+- `HM_PROXY` as a range, a list, a host name, with a zone, unspecified or multicast → start refused; without an https `HM_PUBLIC_URL` → start refused; without `HM_PROXY` plaintext beyond loopback stays refused
+- `HM_PROXY` in app mode → start refused (not available there yet)
+- Request from any address but the proxy (also one whose `X-Forwarded-For` names the proxy) → empty 403, on every path; logged at most once a minute
+- Sender: the last entry of the last `X-Forwarded-For` line; client-written earlier entries ignored; missing, empty, with a port or no address → the proxy itself
+- Without a certificate of its own: UI in direct mode, sign-in redirect and OAuth issuer from the public URL, MCP address shown in the UI
+
 ## 5. Checking internationalization
 
 Every commit automatically checks:

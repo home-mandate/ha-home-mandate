@@ -311,3 +311,63 @@ func TestIngressProxy(t *testing.T) {
 		}
 	}
 }
+
+// Behind a reverse proxy (HM_PROXY) the proxy ends TLS: the listener may then serve
+// plaintext beyond loopback, but only to that one address, and the public URL is https.
+func TestProxy(t *testing.T) {
+	base := map[string]string{"HM_HA_URL": "ws://localhost:8123/api/websocket", "HM_HA_TOKEN": "t",
+		"HM_PUBLIC_URL": "https://hm.example.org"}
+	for _, tc := range []struct {
+		name               string
+		set                map[string]string
+		wantProxy, wantMCP string
+		ok                 bool
+	}{
+		{"default address", map[string]string{"HM_PROXY": "192.0.2.10"}, "192.0.2.10", ":8765", true},
+		{"plaintext on the lan", map[string]string{"HM_PROXY": "192.0.2.10", "HM_MCP_ADDR": "0.0.0.0:8765"}, "192.0.2.10", "0.0.0.0:8765", true},
+		{"ipv4-mapped", map[string]string{"HM_PROXY": "::ffff:192.0.2.10"}, "192.0.2.10", ":8765", true},
+		{"ipv6", map[string]string{"HM_PROXY": "2001:db8::10"}, "2001:db8::10", ":8765", true},
+		{"with a certificate too", map[string]string{"HM_PROXY": "192.0.2.10", "HM_TLS_CERT": "/c.pem", "HM_TLS_KEY": "/k.pem"}, "192.0.2.10", ":8765", true},
+		{"no proxy", nil, "", "127.0.0.1:8765", true},
+		{"range", map[string]string{"HM_PROXY": "192.0.2.0/24"}, "", "", false},
+		{"two addresses", map[string]string{"HM_PROXY": "192.0.2.10,192.0.2.11"}, "", "", false},
+		{"unspecified", map[string]string{"HM_PROXY": "0.0.0.0"}, "", "", false},
+		{"zone", map[string]string{"HM_PROXY": "fe80::1%eth0"}, "", "", false},
+		{"multicast", map[string]string{"HM_PROXY": "224.0.0.1"}, "", "", false},
+		{"mapped unspecified", map[string]string{"HM_PROXY": "::ffff:0.0.0.0"}, "", "", false},
+		{"mapped multicast", map[string]string{"HM_PROXY": "::ffff:224.0.0.1"}, "", "", false},
+		{"host name", map[string]string{"HM_PROXY": "traefik"}, "", "", false},
+		{"no public url", map[string]string{"HM_PROXY": "192.0.2.10", "HM_PUBLIC_URL": ""}, "", "", false},
+		{"plaintext public url", map[string]string{"HM_PROXY": "127.0.0.1", "HM_PUBLIC_URL": "http://localhost:8765"}, "", "", false},
+		{"bad address", map[string]string{"HM_PROXY": "192.0.2.10", "HM_MCP_ADDR": "nonsense"}, "", "", false},
+	} {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for k, v := range tc.set {
+			m[k] = v
+		}
+		cfg, err := Load(env(m), files(nil))
+		if (err == nil) != tc.ok || !tc.ok && !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		got := ""
+		if cfg.Proxy.IsValid() {
+			got = cfg.Proxy.String()
+		}
+		if tc.ok && (got != tc.wantProxy || cfg.MCPAddr != tc.wantMCP) {
+			t.Errorf("%s: proxy %v, mcp %q", tc.name, cfg.Proxy, cfg.MCPAddr)
+		}
+	}
+}
+
+// HM_PROXY is not available in app mode yet; set there, it stops the start rather than
+// being ignored.
+func TestProxyRefusedInAppMode(t *testing.T) {
+	_, err := Load(env(map[string]string{"SUPERVISOR_TOKEN": "s", "HM_PROXY": "192.0.2.10"}), files(map[string]string{appOptions: options}))
+	if !errors.Is(err, ErrInvalid) {
+		t.Errorf("Load = %v, want ErrInvalid", err)
+	}
+}

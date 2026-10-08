@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -292,4 +293,96 @@ func TestTrustedProxy(t *testing.T) {
 	if addrs, err := lookupHost(context.Background(), "localhost"); err != nil || len(addrs) == 0 {
 		t.Errorf("lookupHost(localhost) = %v, %v", addrs, err)
 	}
+}
+
+// startBehindProxy runs a gateway in container mode behind the reverse proxy at proxy,
+// without a certificate of its own, until the test ends.
+func startBehindProxy(t *testing.T, haURL, proxy string) *gateway {
+	t.Helper()
+	c := newCLI(t)
+	s, err := openStore(context.Background(), c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.store.Close() })
+	s.cfg = config.Config{Mode: config.ModeContainer, HAURL: "ws" + strings.TrimPrefix(haURL, "http") + "/api/websocket", HAToken: "t",
+		MCPAddr: "127.0.0.1:0", Proxy: netip.MustParseAddr(proxy), PublicURL: "https://hm.example.org",
+		HABrowserURL: "https://ha.example.org", HAHTTPURL: "https://ha.example.org", IngressAddr: "127.0.0.1:0",
+		IngressProxy: config.SupervisorAddr, ApprovalTimeout: 2 * time.Minute}
+	ctx, cancel := context.WithCancel(context.Background())
+	g, err := newGateway(ctx, s, slog.New(slog.DiscardHandler))
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	done := make(chan int, 1)
+	go func() { done <- g.run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	return g
+}
+
+// Behind a reverse proxy (HM_PROXY) the MCP listener speaks plaintext to the proxy only:
+// the UI runs in direct mode without a certificate of its own, the UI shows the MCP
+// address, and any other sender gets an empty 403.
+func TestGatewayBehindAProxy(t *testing.T) {
+	fake := &fakeHomeAssistant{t: t}
+	haSrv := httptest.NewServer(http.HandlerFunc(fake.serve))
+	defer haSrv.Close()
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+	t.Run("served to the proxy", func(t *testing.T) {
+		g := startBehindProxy(t, haSrv.URL, "127.0.0.1")
+		if g.certs != nil || g.direct == nil {
+			t.Fatalf("certificate %v, direct mode %v", g.certs, g.direct != nil)
+		}
+		base := "http://" + g.listener.Addr().String()
+		resp, err := noRedirect.Get(base + "/ui/signin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if loc := resp.Header.Get("Location"); resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(loc, "https://ha.example.org/auth/authorize?") ||
+			!strings.Contains(loc, "redirect_uri=https%3A%2F%2Fhm.example.org%2Fui%2Fsignin%2Fcallback") {
+			t.Errorf("sign-in = %d %q", resp.StatusCode, loc)
+		}
+		resp, err = http.Get(base + "/.well-known/oauth-authorization-server")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var meta struct{ Issuer string }
+		err = json.NewDecoder(resp.Body).Decode(&meta)
+		resp.Body.Close()
+		if err != nil || meta.Issuer != "https://hm.example.org" {
+			t.Errorf("issuer %q, %v", meta.Issuer, err)
+		}
+		req := httptest.NewRequest(http.MethodGet, "/api/system", nil)
+		req.RemoteAddr = "172.30.32.2:1234"
+		req.Header.Set("X-Remote-User-Id", ownerID)
+		rec := httptest.NewRecorder()
+		g.ingress.Handler.ServeHTTP(rec, req)
+		var sys struct {
+			MCPURL *string `json:"mcp_url"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &sys); err != nil || sys.MCPURL == nil || *sys.MCPURL != "https://hm.example.org/mcp" {
+			t.Errorf("system = %d %s", rec.Code, rec.Body)
+		}
+	})
+
+	t.Run("refused to anyone else", func(t *testing.T) {
+		g := startBehindProxy(t, haSrv.URL, "192.0.2.10")
+		for _, path := range []string{"/ui/signin", "/mcp", "/.well-known/oauth-authorization-server"} {
+			resp, err := noRedirect.Get("http://" + g.listener.Addr().String() + path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusForbidden || len(body) != 0 {
+				t.Errorf("%s from 127.0.0.1 with another proxy = %d %q", path, resp.StatusCode, body)
+			}
+		}
+	})
 }

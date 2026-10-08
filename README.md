@@ -48,7 +48,8 @@ from Playwright's CDN, for tests only.
 | `HM_HA_CA_FILE` | Optional PEM file with a CA to trust for `wss://` (self-signed Home Assistant certificate) |
 | `HM_DATA_DIR` | Data directory, default `/data` |
 | `HM_TLS_CERT`, `HM_TLS_KEY` | Certificate for the MCP endpoint and the UI (TLS 1.3); without it, MCP listens on localhost only. Renewed files are taken over without a restart; the certificate must cover the host of `HM_PUBLIC_URL` |
-| `HM_MCP_ADDR` | Listen address of the MCP endpoint, default `:8765` with TLS, `127.0.0.1:8765` without |
+| `HM_MCP_ADDR` | Listen address of the MCP endpoint, default `:8765` with TLS or `HM_PROXY`, `127.0.0.1:8765` without |
+| `HM_PROXY` | The one IP address of a reverse proxy that ends TLS in front of Home-Mandate. Only that address is served (plaintext allowed beyond loopback), the sender is the last entry of its `X-Forwarded-For`; needs an `https://` `HM_PUBLIC_URL`. See [docs/deploy/reverse-proxy.md](docs/deploy/reverse-proxy.md) |
 | `HM_PDP_ADDR` | Optional loopback address for the AuthZEN evaluation endpoint, for other gateways on the same host |
 | `HM_PUBLIC_URL` | Origin agents and browsers reach Home-Mandate at, e.g. `https://hm.example.org:8765` (`http://` only for `localhost`). Without it, OAuth is off and no agent can be admitted |
 | `HM_HA_BROWSER_URL` | Home Assistant as the human's browser reaches it, for signing in; default: the origin of `HM_HA_URL` |
@@ -72,11 +73,15 @@ must come from the Supervisor, and the user must be a Home Assistant administrat
 moment (asked every 30 seconds; if Home Assistant cannot answer, nobody is let in). See
 `docs/ARCHITECTURE.md`, sections 8 and 12.
 
-In container mode with a certificate and `HM_PUBLIC_URL`, the UI is at
-`https://<host>:8765/ui/` (direct mode). You sign in with your Home Assistant account;
+In container mode with a certificate or `HM_PROXY`, and `HM_PUBLIC_URL`, the UI is at
+`<HM_PUBLIC_URL>/ui/` (direct mode). You sign in with your Home Assistant account;
 only administrators get in, and the check is repeated on every request. A session ends
 after 30 minutes without use, after 12 hours, on sign-out and with every restart. Without
-a certificate there is no UI in container mode, only the command line.
+a certificate or a proxy there is no UI in container mode, only the command line.
+
+To reach Home-Mandate from the internet (agents in the cloud, your phone away from home),
+put it behind the reverse proxy you already use, Traefik, nginx, Nginx Proxy Manager or
+Caddy: [docs/deploy/reverse-proxy.md](docs/deploy/reverse-proxy.md).
 
 ## Admitting agents
 

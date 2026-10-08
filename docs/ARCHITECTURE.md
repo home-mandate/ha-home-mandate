@@ -283,7 +283,7 @@ checked on every request.
 |---|---|---|
 | Start | App from its own repository | `docker run` / Podman Quadlet with the same image |
 | Access to HA | `SUPERVISOR_TOKEN`, API via `http://supervisor/core/…` | Long-lived token of a dedicated HA user, URL via variable |
-| UI | Ingress on port 8099 (sign-in handled by HA) | On the MCP listener under `/ui/`, signed in through Home Assistant, when a certificate and `HM_PUBLIC_URL` are configured (direct mode, section 12); otherwise none, only the command line. `HM_INGRESS_ADDR` additionally opens the Ingress listener behind an own proxy that acts as the Supervisor, at the one address `HM_INGRESS_PROXY` (E2E) |
+| UI | Ingress on port 8099 (sign-in handled by HA) | On the MCP listener under `/ui/`, signed in through Home Assistant, when a certificate or a reverse proxy (`HM_PROXY`) and `HM_PUBLIC_URL` are configured (direct mode, section 12); otherwise none, only the command line. `HM_INGRESS_ADDR` additionally opens the Ingress listener behind an own proxy that acts as the Supervisor, at the one address `HM_INGRESS_PROXY` (E2E) |
 | Data | `/data` | Mounted volume |
 
 One image, two configuration sources. Architectures: `amd64`, `aarch64`.
@@ -359,6 +359,18 @@ Decided by Markus on 2026-10-01.
    **Decision: as proposed.** Use an existing certificate from `/ssl` (common on HA OS
    installations with Let's Encrypt/DuckDNS); otherwise only `localhost` without TLS. No
    plaintext on the LAN.
+
+   **Addition (2026-10-08): reachable from outside behind the operator's reverse proxy.**
+   Self-hosters want Home-Mandate away from home and agents in the cloud must reach it, so
+   "LAN only" is no goal. Home-Mandate brings no proxy of its own; it runs behind the
+   operator's (Traefik, nginx, Caddy …), configured per `docs/deploy/reverse-proxy.md`.
+   Either the proxy passes TLS through (nothing changes here), or it ends TLS: then
+   `HM_PROXY` names its one IP address (no range, no host name), the MCP listener may
+   serve plaintext beyond loopback but answers only that address (empty 403 otherwise),
+   `HM_PUBLIC_URL` must be https, the UI runs in direct mode, and the sender for per-sender
+   limits and the log is the last `X-Forwarded-For` entry, never a basis for access. The
+   proxy may run on another machine; the plaintext leg is the operator's choice and
+   documented. Not yet in app mode.
 
    **Addition: certificates are renewed without a restart.** The listener takes the
    certificate for each handshake from memory and looks at the files at most once a

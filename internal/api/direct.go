@@ -110,7 +110,8 @@ func stripPrefix(r *http.Request) *http.Request {
 	return out
 }
 
-// peer is the address the request came from; in direct mode no proxy stands between.
+// peer is the address the request came from: the connection's, or behind the reverse
+// proxy of HM_PROXY the sender it named (cmd/home-mandate, onlyProxy).
 func peer(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

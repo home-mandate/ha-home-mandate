@@ -60,9 +60,13 @@ type Config struct {
 	HARootCAs *x509.CertPool
 	// TLSCert and TLSKey are absolute paths, both set or both empty.
 	TLSCert, TLSKey string
-	// MCPAddr is the listen address of the MCP endpoint; without TLS it is a loopback
-	// address (decision 1: no plaintext on the LAN).
+	// MCPAddr is the listen address of the MCP endpoint; without TLS and without Proxy it
+	// is a loopback address (decision 1).
 	MCPAddr string
+	// Proxy is the one address of the reverse proxy in front of the MCP listener
+	// (HM_PROXY, decision 1, addition of 2026-10-08): the proxy ends TLS, only it is served,
+	// and only its X-Forwarded-For is read. Invalid means no proxy.
+	Proxy netip.Addr
 	// PDPAddr, if set, serves the AuthZEN endpoint for other gateways; loopback only.
 	PDPAddr string
 	// IngressAddr is the listen address of the local UI behind Home Assistant Ingress:
@@ -91,8 +95,12 @@ type Config struct {
 
 // String omits nothing but the token, which Secret redacts.
 func (c Config) String() string {
-	return fmt.Sprintf("mode=%s data=%s ha=%s token=%s tls=%t mcp=%s ingress=%s public=%s approval=%s log=%s",
-		c.Mode, c.DataDir, c.HAURL, c.HAToken, c.TLSCert != "", c.MCPAddr, c.IngressAddr, c.PublicURL, c.ApprovalTimeout, c.LogLevel)
+	proxy := ""
+	if c.Proxy.IsValid() {
+		proxy = c.Proxy.String()
+	}
+	return fmt.Sprintf("mode=%s data=%s ha=%s token=%s tls=%t mcp=%s proxy=%s ingress=%s public=%s approval=%s log=%s",
+		c.Mode, c.DataDir, c.HAURL, c.HAToken, c.TLSCert != "", c.MCPAddr, proxy, c.IngressAddr, c.PublicURL, c.ApprovalTimeout, c.LogLevel)
 }
 
 // DataDir returns the data directory without reading the rest of the configuration, so
@@ -115,6 +123,9 @@ func DataDir(getenv func(string) string) (string, error) {
 // production.
 func Load(getenv func(string) string, readFile func(string) ([]byte, error)) (Config, error) {
 	if token := getenv("SUPERVISOR_TOKEN"); token != "" {
+		if getenv("HM_PROXY") != "" {
+			return Config{}, fmt.Errorf("%w: HM_PROXY is not available in app mode", ErrInvalid)
+		}
 		return loadApp(ha.Secret(token), readFile)
 	}
 	return loadContainer(getenv, readFile)
@@ -206,7 +217,12 @@ func loadContainer(getenv func(string) string, readFile func(string) ([]byte, er
 		cfg.TLSCert != "" && (!filepath.IsAbs(cfg.TLSCert) || !filepath.IsAbs(cfg.TLSKey)) {
 		return Config{}, fmt.Errorf("%w: HM_TLS_CERT and HM_TLS_KEY must both be absolute paths or both be unset", ErrInvalid)
 	}
-	if cfg.MCPAddr, err = mcpAddr(getenv("HM_MCP_ADDR"), cfg.TLSCert != ""); err != nil {
+	if s := getenv("HM_PROXY"); s != "" {
+		if cfg.Proxy, err = oneAddr("HM_PROXY", s); err != nil {
+			return Config{}, err
+		}
+	}
+	if cfg.MCPAddr, err = mcpAddr(getenv("HM_MCP_ADDR"), cfg.TLSCert != "" || cfg.Proxy.IsValid()); err != nil {
 		return Config{}, err
 	}
 	if cfg.PDPAddr = getenv("HM_PDP_ADDR"); cfg.PDPAddr != "" {
@@ -235,6 +251,9 @@ func loadContainer(getenv func(string) string, readFile func(string) ([]byte, er
 	}
 	if cfg.PublicURL, err = publicURL(getenv("HM_PUBLIC_URL")); err != nil {
 		return Config{}, err
+	}
+	if cfg.Proxy.IsValid() && !strings.HasPrefix(cfg.PublicURL, "https://") {
+		return Config{}, fmt.Errorf("%w: HM_PROXY needs an https HM_PUBLIC_URL, the address the proxy serves", ErrInvalid)
 	}
 	cfg.HAHTTPURL = httpOrigin(cfg.HAURL)
 	cfg.HABrowserURL = cfg.HAHTTPURL
@@ -283,10 +302,11 @@ func caPool(file string, readFile func(string) ([]byte, error)) (*x509.CertPool,
 	return pool, nil
 }
 
-// mcpAddr refuses a plaintext listener outside loopback (decision 1).
-func mcpAddr(addr string, tls bool) (string, error) {
+// mcpAddr refuses a plaintext listener outside loopback (decision 1) unless secured: TLS
+// of its own, or a proxy that ends TLS and is the only one served.
+func mcpAddr(addr string, secured bool) (string, error) {
 	if addr == "" {
-		if tls {
+		if secured {
 			return ":" + mcpPort, nil
 		}
 		return net.JoinHostPort("127.0.0.1", mcpPort), nil
@@ -295,10 +315,10 @@ func mcpAddr(addr string, tls bool) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: HM_MCP_ADDR: %w", ErrInvalid, err)
 	}
-	if !tls {
+	if !secured {
 		ip := net.ParseIP(host)
 		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
-			return "", fmt.Errorf("%w: without TLS the MCP endpoint may only listen on loopback", ErrInvalid)
+			return "", fmt.Errorf("%w: without TLS or HM_PROXY the MCP endpoint may only listen on loopback", ErrInvalid)
 		}
 	}
 	return addr, nil
@@ -319,11 +339,20 @@ func ingressProxy(value string, listening bool) (netip.Addr, error) {
 	case !listening:
 		return netip.Addr{}, fmt.Errorf("%w: HM_INGRESS_PROXY without HM_INGRESS_ADDR", ErrInvalid)
 	}
+	return oneAddr("HM_INGRESS_PROXY", value)
+}
+
+// oneAddr reads the one IP address of a proxy: no range, list, host name, zone,
+// unspecified or multicast address.
+func oneAddr(name, value string) (netip.Addr, error) {
 	ip, err := netip.ParseAddr(value)
-	if err != nil || ip.Zone() != "" || ip.IsUnspecified() || ip.IsMulticast() {
-		return netip.Addr{}, fmt.Errorf("%w: HM_INGRESS_PROXY must be one IP address", ErrInvalid)
+	if err == nil {
+		ip = ip.Unmap() // IsUnspecified does not look into ::ffff:0.0.0.0
 	}
-	return ip.Unmap(), nil
+	if err != nil || ip.Zone() != "" || ip.IsUnspecified() || ip.IsMulticast() {
+		return netip.Addr{}, fmt.Errorf("%w: %s must be one IP address", ErrInvalid, name)
+	}
+	return ip, nil
 }
 
 // ingressAddr accepts host:port with a numeric port, or nothing (no UI listener).

@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -287,7 +288,7 @@ func TestPublicHostNeverTurnsTheCheckOff(t *testing.T) {
 	}
 }
 
-func TestDirectModeNeedsContainerModeACertificateAndHTTPS(t *testing.T) {
+func TestDirectModeNeedsContainerModeTLSAndHTTPS(t *testing.T) {
 	certFile, keyFile := selfSigned(t, t.TempDir())
 	certs, err := tlscert.New(tlscert.Config{CertFile: certFile, KeyFile: keyFile})
 	if err != nil {
@@ -304,6 +305,10 @@ func TestDirectModeNeedsContainerModeACertificateAndHTTPS(t *testing.T) {
 		{"plaintext public URL", config.Config{Mode: config.ModeContainer, PublicURL: "http://localhost:8765"}, certs, false},
 		{"no public URL", config.Config{Mode: config.ModeContainer}, certs, false},
 		{"app mode: Ingress", config.Config{Mode: config.ModeApp, PublicURL: "https://hm.example.org:8765"}, certs, false},
+		{"behind a proxy, no certificate", config.Config{Mode: config.ModeContainer, PublicURL: "https://hm.example.org",
+			Proxy: netip.MustParseAddr("192.0.2.10")}, nil, true},
+		{"app mode behind a proxy", config.Config{Mode: config.ModeApp, PublicURL: "https://hm.example.org",
+			Proxy: netip.MustParseAddr("192.0.2.10")}, nil, false},
 	} {
 		if got := directMode(tc.cfg, tc.certs); got != tc.want {
 			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)

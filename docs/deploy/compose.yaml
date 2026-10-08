@@ -10,6 +10,9 @@
 # - A certificate for hm.example.org lies in ./certs (renewed in place, e.g. by your ACME
 #   client); Home-Mandate takes renewed files over without a restart.
 # - hm.example.org resolves to this host in your network.
+#
+# Behind a reverse proxy (Traefik, nginx, Caddy) for access from the internet, see
+# docs/deploy/reverse-proxy.md.
 
 services:
   home-mandate:

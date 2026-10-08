@@ -233,6 +233,9 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	if err != nil {
 		return nil, err
 	}
+	if s.cfg.Proxy.IsValid() {
+		handler = onlyProxy(s.cfg.Proxy, handler, time.Now, logger)
+	}
 	g.server = &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: writeTimeout(s.cfg.ApprovalTimeout), IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10,
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelWarn)}
@@ -256,7 +259,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		apiCfg.Direct, apiCfg.DirectUI, apiCfg.PublicURL = signIn, webui.DirectHandler(), s.cfg.PublicURL
 	}
 	// The MCP address is taken from the configuration only, never from a request header.
-	if g.server.TLSConfig != nil && s.cfg.PublicURL != "" {
+	if (g.server.TLSConfig != nil || s.cfg.Proxy.IsValid()) && s.cfg.PublicURL != "" {
 		apiCfg.MCPURL = s.cfg.PublicURL + mcp.Path
 	}
 	g.api = api.New(apiCfg)
@@ -352,10 +355,11 @@ func (g *gateway) tlsStatus() api.TLSStatus {
 }
 
 // directMode tells whether the UI is served on the MCP listener with Home-Mandate's own
-// sign-in (ARCHITECTURE section 12): in container mode with a certificate and an https
-// public URL, which secure cookies and Sec-Fetch-Site need.
+// sign-in (ARCHITECTURE section 12): in container mode with TLS, of its own or ended by
+// the reverse proxy (HM_PROXY), and an https public URL, which secure cookies and
+// Sec-Fetch-Site need.
 func directMode(cfg config.Config, certs *tlscert.Loader) bool {
-	return cfg.Mode == config.ModeContainer && certs != nil && strings.HasPrefix(cfg.PublicURL, "https://")
+	return cfg.Mode == config.ModeContainer && (certs != nil || cfg.Proxy.IsValid()) && strings.HasPrefix(cfg.PublicURL, "https://")
 }
 
 // serveDirect serves direct mode once the API exists; 404 while it is off.
@@ -390,10 +394,10 @@ func withOAuth(s *state, mcpHandler, ui http.Handler, resource string, logger *s
 	return as, mux, nil
 }
 
-// listen opens the MCP listener: TLS 1.3 when a certificate is configured, otherwise
-// loopback only (decision 1). In app mode a missing certificate falls back to loopback.
-// The certificate must cover the host of the public URL; renewed files are taken over
-// without a restart.
+// listen opens the MCP listener: TLS 1.3 when a certificate is configured, plaintext to
+// the reverse proxy alone with HM_PROXY, otherwise loopback only (decision 1). In app
+// mode a missing certificate falls back to loopback. The certificate must cover the host
+// of the public URL; renewed files are taken over without a restart.
 func listen(cfg config.Config, srv *http.Server, now func() time.Time, logger *slog.Logger) (net.Listener, *tlscert.Loader, error) {
 	addr := cfg.MCPAddr
 	var certs *tlscert.Loader
@@ -421,7 +425,11 @@ func listen(cfg config.Config, srv *http.Server, now func() time.Time, logger *s
 	if srv.TLSConfig != nil {
 		ln = tls.NewListener(ln, srv.TLSConfig)
 	}
-	logger.Info("MCP endpoint listening", "addr", ln.Addr().String(), "tls", srv.TLSConfig != nil, "path", mcp.Path)
+	attrs := []any{"addr", ln.Addr().String(), "tls", srv.TLSConfig != nil, "path", mcp.Path}
+	if cfg.Proxy.IsValid() {
+		attrs = append(attrs, "proxy", cfg.Proxy)
+	}
+	logger.Info("MCP endpoint listening", attrs...)
 	return ln, certs, nil
 }
 
