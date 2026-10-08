@@ -546,8 +546,10 @@ code and at most a JSON pointer, never internal details or the value sent. There
   and at most 100 mandates, each with the version the human saw. Every mandate changes
   through the same path as applying a template to one, in its own transaction, with a
   `mandate.updated` entry for the human; the answer names the result per mandate
-  (`updated`, `unchanged`, `conflict`, `revoked`, `not_found`, `failed`), so a refused
-  one does not hold back the others and can be retried. One separate confirmation covers
+  (`updated`, `unchanged`, `conflict`, `revoked`, `not_found`, `failed`, and `skipped`
+  for mandates not started because the request neared its time limit), so a refused one
+  does not hold back the others. A retry reloads the list and needs a new choice: it never
+  sends a version the human has not seen. One separate confirmation covers
   every mandate that would gain a rule allowing critical actions without approval;
   without it no mandate changes. Nothing is applied in the background.
 - **Approvers:** the list carries a version (a hash over all approvers and their channels);

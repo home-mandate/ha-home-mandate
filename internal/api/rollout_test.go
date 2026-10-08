@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/home-mandate/ha-home-mandate/internal/agent"
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
@@ -393,5 +394,67 @@ func TestApplyATemplateReportsAChangeMeanwhile(t *testing.T) {
 	}}, &res)
 	if got := outcomes(res); got[ma.ID] != rolloutUpdated || got[mb.ID] != rolloutConflict {
 		t.Errorf("results = %+v", res.Results)
+	}
+}
+
+// Close to the request's deadline no further mandate is started: the ones done are
+// reported, the rest as skipped (nothing stored for them), and they can be sent again.
+func TestApplyATemplateSkipsMandatesNearTheDeadline(t *testing.T) {
+	h := newHarness(t)
+	a, b, c := h.admit("Anna"), h.admit("Bob"), h.admit("Carl")
+	digest := h.saveTemplate(limitTo(7), false)
+	ma, mb, mc := h.mandateOf(a.ClientID), h.mandateOf(b.ClientID), h.mandateOf(c.ClientID)
+	// The clock jumps close to the deadline once the first mandate is done.
+	calls := 0
+	restore := rolloutNow
+	t.Cleanup(func() { rolloutNow = restore })
+	rolloutNow = func() time.Time {
+		calls++
+		if calls > 1 {
+			return time.Now().Add(handlerTimeout - rolloutReserve/2)
+		}
+		return time.Now()
+	}
+	var res wireRollout
+	h.ok(http.MethodPost, "/api/templates/voice-assistant/apply", map[string]any{"template_digest": digest, "targets": []any{
+		map[string]any{"mandate_id": ma.ID, "base_digest": ma.Digest},
+		map[string]any{"mandate_id": mb.ID, "base_digest": mb.Digest},
+		map[string]any{"mandate_id": mc.ID, "base_digest": mc.Digest},
+	}}, &res)
+	got := outcomes(res)
+	if got[ma.ID] != rolloutUpdated || got[mb.ID] != rolloutSkipped || got[mc.ID] != rolloutSkipped {
+		t.Fatalf("results = %+v", res.Results)
+	}
+	if h.versions(mb.ID) != 1 || h.versions(mc.ID) != 1 {
+		t.Error("a skipped mandate changed")
+	}
+	rolloutNow = restore
+	h.ok(http.MethodPost, "/api/templates/voice-assistant/apply", map[string]any{"template_digest": digest, "targets": []any{
+		map[string]any{"mandate_id": mb.ID, "base_digest": mb.Digest},
+	}}, &res)
+	if outcomes(res)[mb.ID] != rolloutUpdated {
+		t.Errorf("skipped mandate sent again = %+v", res.Results)
+	}
+}
+
+func TestNearDeadline(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	soon, stop := context.WithTimeout(context.Background(), rolloutReserve/2)
+	defer stop()
+	later, stopLater := context.WithTimeout(context.Background(), time.Minute)
+	defer stopLater()
+	for name, tc := range map[string]struct {
+		ctx  context.Context
+		want bool
+	}{
+		"no deadline": {context.Background(), false},
+		"cancelled":   {cancelled, true},
+		"soon":        {soon, true},
+		"later":       {later, false},
+	} {
+		if got := nearDeadline(tc.ctx); got != tc.want {
+			t.Errorf("%s: nearDeadline = %v, want %v", name, got, tc.want)
+		}
 	}
 }

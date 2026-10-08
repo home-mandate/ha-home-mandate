@@ -7,6 +7,7 @@ import (
 	"errors"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/home-mandate/ha-home-mandate/internal/admission"
 	"github.com/home-mandate/ha-home-mandate/internal/agent"
@@ -28,7 +29,26 @@ const (
 	rolloutNotFound = "not_found"
 	// rolloutFailed: anything else; the server log says why.
 	rolloutFailed = "failed"
+	// rolloutSkipped: not attempted, the request ran out of time; nothing was stored.
+	rolloutSkipped = "skipped"
 )
+
+// rolloutReserve is the time left before the request's deadline below which no further
+// mandate is started: the answer must still reach the client, so that it learns which
+// mandates changed.
+const rolloutReserve = 3 * time.Second
+
+// rolloutNow is the clock the deadline is compared with; tests move it.
+var rolloutNow = time.Now
+
+// nearDeadline tells whether no further mandate may be started.
+func nearDeadline(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	deadline, ok := ctx.Deadline()
+	return ok && deadline.Sub(rolloutNow()) < rolloutReserve
+}
 
 // wireTemplateUsage lists the active mandates whose rules were last taken from a template.
 type wireTemplateUsage struct {
@@ -155,7 +175,8 @@ func checkTargets(targets []rolloutTarget) error {
 // the same path as applying it to one. Each mandate changes in its own transaction, so a
 // refused one does not hold back the others. One separate confirmation covers every
 // target that would gain a rule allowing critical actions without approval; without it,
-// no mandate changes.
+// no mandate changes. Close to the request's deadline no further mandate is started; those
+// are answered as skipped, so the answer still says which mandates changed.
 func (s *Server) applyTemplateToMandates(r *request) (any, error) {
 	name, err := templateName(r)
 	if err != nil {
@@ -196,7 +217,11 @@ func (s *Server) applyTemplateToMandates(r *request) (any, error) {
 	origin := mandate.Origin{Kind: mandate.OriginTemplate, Template: name, TemplateDigest: tdigest}
 	out := wireRollout{Results: make([]wireRolloutResult, 0, len(plans))}
 	for _, p := range plans {
-		if p.result == "" {
+		switch {
+		case p.result != "":
+		case nearDeadline(r.Context()):
+			p.result = rolloutSkipped
+		default:
 			p.result, p.digest = s.rollOut(r, p, in.ConfirmCritical, origin)
 		}
 		res := wireRolloutResult{MandateID: p.target.MandateID, Result: p.result}
