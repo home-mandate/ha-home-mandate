@@ -30,15 +30,19 @@ const TEXTS: Record<RolloutResult, () => string> = {
   revoked: () => m.rollout_result_revoked(),
   not_found: () => m.rollout_result_not_found(),
   failed: () => m.rollout_result_failed(),
+  skipped: () => m.rollout_result_skipped(),
 };
 
 export function resultText(result: RolloutResult): string {
   return TEXTS[result]();
 }
 
-/** retryable: a mandate changed meantime or a failure can be tried again; a revoked or removed one cannot. */
+/**
+ * retryable: a mandate changed meantime, a failure or a skipped one can be loaded again
+ * and chosen anew; a revoked or removed one cannot.
+ */
 export function retryable(result: RolloutResult): boolean {
-  return result === 'conflict' || result === 'failed';
+  return result === 'conflict' || result === 'failed' || result === 'skipped';
 }
 
 /** refusedCount counts the mandates that did not take the change. */

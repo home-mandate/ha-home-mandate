@@ -6,11 +6,13 @@
   stay). Mandates edited since are not chosen at first and are marked: taking over
   replaces their edits. One separate confirmation covers every chosen mandate when the
   template allows critical actions without approval, naming their agents; without it
-  nothing changes. Afterwards the result per mandate is shown; refused ones can be tried
-  again one by one. Nothing happens in the background.
+  nothing changes. Afterwards the result per mandate is shown. A refused one is never sent
+  again as it is: "Load again" reloads the list, shows the mandate as it is now, unchosen,
+  and only a new choice sends it, with the version just loaded (nobody overwrites a
+  version they have not seen). Nothing happens in the background.
 -->
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { ApiError, type ApiClient } from '../../api/client.ts';
   import type { DeviceCatalog, Template, TemplateUser } from '../../api/types.ts';
@@ -26,7 +28,7 @@
 
   interface Props {
     open: boolean;
-    api: Pick<ApiClient, 'applyTemplateToMandates'>;
+    api: Pick<ApiClient, 'applyTemplateToMandates' | 'templateUsage'>;
     /** The template as saved: its digest is what the mandates take over. */
     template: Template;
     /** The mandates whose rules came from it (GET api/templates/{name}/usage). */
@@ -40,8 +42,12 @@
 
   const id = $props.id();
   const chosen = new SvelteSet<string>();
-  /** The latest version of each mandate the server named; a retry starts from it. */
-  let digests = $state<Record<string, string>>({});
+  /** The mandates as last loaded; a mandate loaded again replaces its entry. */
+  let list = $state.raw<readonly TemplateUser[]>([]);
+  /** Mandates loaded again after a refusal: shown as they are now, to be chosen anew. */
+  const reloaded = new SvelteSet<string>();
+  /** Refused mandates that no longer use the template: nothing to load again. */
+  const gone = new SvelteSet<string>();
   let results = $state<Results>({});
   let confirming = $state<readonly TemplateUser[] | null>(null);
   /** The human confirmed critical actions without approval for the chosen mandates. */
@@ -55,7 +61,9 @@
     untrack(() => {
       chosen.clear();
       for (const mandateId of preselected(users)) chosen.add(mandateId);
-      digests = {};
+      list = users;
+      reloaded.clear();
+      gone.clear();
       results = {};
       confirming = null;
       confirmed = false;
@@ -65,8 +73,10 @@
   });
 
   const done = $derived(Object.keys(results).length > 0);
-  const current = $derived(users.map((u) => ({ ...u, digest: digests[u.mandate_id] ?? u.digest })));
-  const shown = $derived(done ? current.filter((u) => results[u.mandate_id] !== undefined) : current);
+  const shown = $derived(done ? list.filter((u) => results[u.mandate_id] !== undefined || reloaded.has(u.mandate_id)) : list);
+  /** The mandates that can be chosen: all at first, afterwards those loaded again. */
+  const pending = $derived(shown.filter((u) => results[u.mandate_id] === undefined));
+  const chosenCount = $derived(pending.filter((u) => chosen.has(u.mandate_id)).length);
   const criticalRules = $derived(template.draft.rules.filter((r) => r.allow_critical === true));
   const title = $derived(templateTitle(template));
   const updated = $derived(Object.values(results).filter((r) => r === 'updated' || r === 'unchanged').length);
@@ -77,14 +87,14 @@
   }
 
   function all(on: boolean) {
-    for (const u of users) toggle(u.mandate_id, on && !u.up_to_date);
+    for (const u of pending) toggle(u.mandate_id, on && !u.up_to_date);
   }
 
   /** apply takes the change over into the given mandates; the separate confirmation first when needed. */
-  async function apply(list: readonly TemplateUser[]) {
-    if (busy || list.length === 0) return;
+  async function apply(targets: readonly TemplateUser[]) {
+    if (busy || targets.length === 0) return;
     if (!confirmed && grantsCritical(template.draft)) {
-      confirming = list;
+      confirming = targets;
       return;
     }
     busy = true;
@@ -92,15 +102,15 @@
     try {
       const answer = await api.applyTemplateToMandates(template.name, {
         template_digest: template.digest,
-        targets: targetsOf(list, new Set(list.map((u) => u.mandate_id))),
+        targets: targetsOf(targets, new Set(targets.map((u) => u.mandate_id))),
         ...(confirmed ? { confirm_critical: true } : {}),
       });
       results = merged(results, answer.results);
-      digests = { ...digests, ...Object.fromEntries(answer.results.flatMap((r) => (r.digest === null ? [] : [[r.mandate_id, r.digest]]))) };
+      for (const u of targets) reloaded.delete(u.mandate_id);
       confirming = null;
     } catch (err) {
       const code = err instanceof ApiError ? err.code : 'internal';
-      if (code === 'critical_confirmation_required' && !confirmed) confirming = list;
+      if (code === 'critical_confirmation_required' && !confirmed) confirming = targets;
       else error = code === 'conflict' ? m.rollout_template_changed() : m.rollout_failed();
     } finally {
       busy = false;
@@ -114,13 +124,40 @@
   }
 
   /**
-   * retry tries one refused mandate again, from the version the server named. A rule
-   * allowing critical actions without approval is confirmed anew: the confirmation was
-   * for the versions the human saw.
+   * reload loads the list again for a refused mandate and shows it as it is now, unchosen:
+   * only a new choice sends it, with the version just loaded. Never the version the
+   * server named in its refusal, which nobody here has seen. A rule allowing critical
+   * actions without approval is confirmed anew.
    */
-  function retry(u: TemplateUser) {
-    confirmed = false;
-    void apply([u]);
+  async function reload(u: TemplateUser) {
+    if (busy) return;
+    busy = true;
+    error = '';
+    try {
+      const usage = await api.templateUsage(template.name);
+      if (usage.digest !== template.digest) {
+        error = m.rollout_template_changed();
+        return;
+      }
+      const fresh = usage.mandates.find((x) => x.mandate_id === u.mandate_id);
+      if (!fresh) {
+        gone.add(u.mandate_id); // revoked or no longer from this template: its result stays
+        return;
+      }
+      list = list.map((x) => (x.mandate_id === fresh.mandate_id ? fresh : x));
+      const { [fresh.mandate_id]: _old, ...rest } = results;
+      void _old;
+      results = rest;
+      chosen.delete(fresh.mandate_id);
+      reloaded.add(fresh.mandate_id);
+      confirmed = false;
+    } catch {
+      error = m.rollout_reload_failed();
+    } finally {
+      busy = false;
+    }
+    await tick();
+    document.getElementById(`${id}-${u.mandate_id}`)?.focus();
   }
 
   function cancelCritical() {
@@ -128,7 +165,7 @@
     applyButton?.focus();
   }
 
-  const chosenUsers = () => current.filter((u) => chosen.has(u.mandate_id));
+  const chosenUsers = () => pending.filter((u) => chosen.has(u.mandate_id));
 </script>
 
 <Dialog {open} labelledby="{id}-title" describedby="{id}-body" size="lg" {onclose}>
@@ -136,20 +173,21 @@
     <h2 id="{id}-title">{m.rollout_title()}</h2>
     <p id="{id}-body" class="body">{m.rollout_body()}</p>
 
-    {#if !done}
+    {#if done}
+      <p class="status" role="status">{m.rollout_status({ updated, refused: refusedCount(results) })}</p>
+    {/if}
+    {#if pending.length > 0}
       <div class="bulk">
         <Button size="md" disabled={busy} onclick={() => all(true)}>{m.rollout_select_all()}</Button>
         <Button size="md" disabled={busy} onclick={() => all(false)}>{m.rollout_select_none()}</Button>
       </div>
-    {:else}
-      <p class="status" role="status">{m.rollout_status({ updated, refused: refusedCount(results) })}</p>
     {/if}
 
     <ul role="list" aria-label={m.rollout_list_label()}>
       {#each shown as u (u.mandate_id)}
         {@const result = results[u.mandate_id]}
         <li class:edited={u.edited_since}>
-          {#if !done}
+          {#if !result}
             <input
               id="{id}-{u.mandate_id}"
               type="checkbox"
@@ -160,7 +198,7 @@
             />
           {/if}
           <div class="text">
-            {#if done}
+            {#if result}
               <span class="agent"><bdi>{cleanUntrusted(u.agent_display_name)}</bdi></span>
             {:else}
               <label for="{id}-{u.mandate_id}" class="agent"><bdi>{cleanUntrusted(u.agent_display_name)}</bdi></label>
@@ -169,15 +207,16 @@
               <span>{m.rollout_mandate({ mandate: isolate(u.mandate_name) })}</span>
               <span>{m.rollout_taken({ date: formatDateTime(new Date(u.taken_at), ctx) })}</span>
               {#if u.up_to_date}<span>{m.rollout_up_to_date()}</span>{/if}
+              {#if !result && reloaded.has(u.mandate_id)}<span class="warn"><Icon name="info" size={16} />{m.rollout_reloaded()}</span>{/if}
               {#if u.edited_since}<span class="warn"><Icon name="warning" size={16} />{m.rollout_edited()}</span>{/if}
             </span>
             {#if result}
               <span class="result" class:refused={result !== 'updated' && result !== 'unchanged'}>{resultText(result)}</span>
             {/if}
           </div>
-          {#if result && retryable(result)}
-            <Button size="md" disabled={busy} onclick={() => retry(u)} aria-label={m.rollout_retry({ agent: isolate(u.agent_display_name) })}>
-              {m.common_retry()}
+          {#if result && retryable(result) && !gone.has(u.mandate_id)}
+            <Button size="md" disabled={busy} onclick={() => void reload(u)} aria-label={m.rollout_reload_for({ agent: isolate(u.agent_display_name) })}>
+              {m.rollout_reload()}
             </Button>
           {/if}
         </li>
@@ -199,19 +238,19 @@
 
     <p class="error" role="alert">{#if error}<Icon name="warning" size={16} />{error}{/if}</p>
     <div class="actions">
-      {#if done}
-        <Button size="lg" variant="primary" disabled={busy} onclick={onclose}>{m.common_close()}</Button>
-      {:else}
-        <Button size="lg" disabled={busy} onclick={onclose}>{m.rollout_only_template()}</Button>
+      <Button size="lg" variant={pending.length > 0 ? 'secondary' : 'primary'} disabled={busy} onclick={onclose}>
+        {done ? m.common_close() : m.rollout_only_template()}
+      </Button>
+      {#if pending.length > 0}
         <Button
           bind:element={applyButton}
           size="lg"
           variant="primary"
           {busy}
-          disabled={chosen.size === 0 || confirming !== null}
+          disabled={chosenCount === 0 || confirming !== null}
           onclick={() => void apply(chosenUsers())}
         >
-          {m.rollout_apply({ count: chosen.size })}
+          {m.rollout_apply({ count: chosenCount })}
         </Button>
       {/if}
     </div>

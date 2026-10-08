@@ -144,6 +144,8 @@ export interface MockControls {
   renameDevice(from: string, to: string): void;
   breakChain(seq: number): void;
   setEmergencyStop(active: boolean): Promise<void>;
+  /** As another administrator's edit of a mandate: a new version with this rate limit. */
+  editMandate(id: string, maxActionsPerHour: number): void;
 }
 
 export type MockClient = ApiClient & { control: MockControls };
@@ -666,6 +668,10 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     },
     async setEmergencyStop(active) {
       await api.setEmergencyStop(active);
+    },
+    editMandate(id, maxActionsPerHour) {
+      const { document: doc, summary } = detail(id);
+      storeVersion(id, summary.digest, { ...draftOf(doc), limits: { max_actions_per_hour: maxActionsPerHour } }, true);
     },
   };
 
