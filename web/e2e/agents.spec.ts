@@ -3,15 +3,20 @@
 // Agents against the mock build: the list with hostile names, pairing by code with the
 // keyboard only, revoking with the safe default, and the mobile views without sideways
 // scrolling.
+import type { Page } from '@playwright/test';
 import { expect, pageScroll, test } from './support.ts';
 
 const text = {
   de: { agents: 'Agenten', add: 'Agent hinzufügen', code: /Mit Kopplungscode/, field: 'Kopplungscode', verify: 'Ist das der richtige Agent?',
     voice: /Sprachassistent/, done: /ist verbunden/, open: 'Zum Agenten', revoke: 'Zugriff entziehen', cancel: 'Abbrechen',
-    identity: 'Identität', revoked: /Entzogen am/ },
+    identity: 'Identität', revoked: /Entzogen am/, approvers: 'Wer Rückfragen beantworten darf', you: '(du)',
+    noChannel: 'kein Weg für Rückfragen eingerichtet', nobodyCritical: /Niemand kann Rückfragen zu kritischen Aktionen/,
+    setup: 'Freigebende einrichten', unknown: /Es ließ sich nicht prüfen/ },
   en: { agents: 'Agents', add: 'Add agent', code: /With a pairing code/, field: 'Pairing code', verify: 'Is this the right agent?',
     voice: /Voice assistant/, done: /is connected/, open: 'Go to agent', revoke: 'Revoke access', cancel: 'Cancel',
-    identity: 'Identity', revoked: /Revoked on/ },
+    identity: 'Identity', revoked: /Revoked on/, approvers: 'Who may approve', you: '(you)',
+    noChannel: 'no channel for approval requests', nobodyCritical: /Nobody can answer approval requests for critical actions/,
+    setup: 'Set up approvers', unknown: /Could not check whether anyone/ },
 } as const;
 
 type Lang = keyof typeof text;
@@ -59,6 +64,50 @@ test('pairs an agent by code with the keyboard only', async ({ page }, info) => 
   await expect(page.getByRole('heading', { name: t.done })).toBeFocused();
   await page.getByRole('link', { name: t.open }).click();
   await expect(page.getByRole('group', { name: t.identity })).toBeVisible();
+});
+
+/** toTemplates goes through the pairing to the choice of template, with mock options. */
+async function toTemplates(page: Page, options: Record<string, unknown>, lang: Lang) {
+  await page.addInitScript((o) => {
+    (window as unknown as { hmMockOptions: unknown }).hmMockOptions = o;
+  }, options);
+  await page.goto('./#/agents/pair');
+  await page.getByLabel(text[lang].field).fill('bcdf ghjk');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: text[lang].verify })).toBeFocused();
+  await page.keyboard.press('Tab'); // "This isn't my agent"
+  await page.keyboard.press('Tab'); // Continue
+  await page.keyboard.press('Enter');
+  await page.getByRole('radio', { name: text[lang].voice }).check();
+}
+
+test('pairing shows who may approve and warns, without blocking, when nobody can', async ({ page }, info) => {
+  const lang = info.project.name as Lang;
+  const t = text[lang];
+  await toTemplates(page, { noApprovers: true }, lang);
+  const region = page.getByRole('region', { name: t.approvers });
+  await expect(region.getByRole('listitem')).toHaveCount(1);
+  await expect(region.getByRole('listitem')).toContainText('Markus');
+  await expect(region.getByRole('listitem')).toContainText(t.you);
+  await expect(region.getByRole('listitem')).toContainText(t.noChannel);
+  await expect(region.getByRole('alert')).toContainText(t.nobodyCritical);
+  await expect(region.getByRole('link', { name: t.setup })).toHaveAttribute('href', '#/settings/approvers');
+  // The human decides: approving still works.
+  await page.getByRole('button', { name: lang === 'de' ? 'Agent zulassen' : 'Approve agent' }).click();
+  await expect(page.getByRole('heading', { name: t.done })).toBeFocused();
+});
+
+test('pairing names a reachable approver without a warning, and says unknown when it cannot check', async ({ page }, info) => {
+  const lang = info.project.name as Lang;
+  const t = text[lang];
+  await toTemplates(page, {}, lang);
+  const region = page.getByRole('region', { name: t.approvers });
+  await expect(region.getByRole('listitem')).toContainText('Markus');
+  await expect(region.getByRole('alert')).toHaveCount(0);
+
+  await toTemplates(page, { failures: { templateApprovers: 'unavailable' } }, lang);
+  await expect(page.getByRole('region', { name: t.approvers }).getByRole('alert')).toContainText(t.unknown);
+  await expect(page.getByRole('region', { name: t.approvers }).getByRole('listitem')).toHaveCount(0);
 });
 
 test('revokes an agent after the confirmation that starts on Cancel', async ({ page }, info) => {

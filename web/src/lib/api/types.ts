@@ -496,6 +496,36 @@ export interface Template extends TemplateSummary {
 }
 
 /**
+ * GET api/templates/{name}/approvers: who may approve if the signed-in human admits an agent
+ * with the template now – the people the approvers placeholder stands for (the human
+ * first, then the approvers set up) and those the template names, each once – and how
+ * requests reach each of them. Hidden or unknown templates are not_found.
+ * name comes from Home Assistant (untrusted text; null if unknown); unknown: Home
+ * Assistant could not be asked, never counted as reachable; service: Home-Mandate's own
+ * user, never asked.
+ * normal / critical: whether every approver list the template's rules can ask for ordinary
+ * or critical actions has someone reachable (not_needed: the template asks for none).
+ */
+export type ApproverReach = ReachChannel | 'unknown';
+
+export type ApprovalCoverage = 'not_needed' | 'reachable' | 'nobody' | 'unknown';
+
+export interface TemplateApprover {
+  user_id: string;
+  name: string | null;
+  normal: ApproverReach;
+  critical: ApproverReach;
+  self: boolean;
+  service: boolean;
+}
+
+export interface TemplateApprovers {
+  people: TemplateApprover[];
+  normal: ApprovalCoverage;
+  critical: ApprovalCoverage;
+}
+
+/**
  * PUT api/templates/{name}. base_digest: null for a new template, otherwise the digest the
  * edit started from; an outdated one, or null for a name that exists, is "conflict" and
  * stores nothing. A bad or reserved name ("hm-…") is invalid_input /name, a base template

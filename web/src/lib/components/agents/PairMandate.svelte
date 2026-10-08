@@ -4,11 +4,12 @@
   template, never none and never another agent's. Each option is a card: a base
   template's title and description, and in plain words what the template allows, asks and
   never allows (the rest is forbidden). Hidden base templates are not offered. The display
-  name is chosen here; the agent's own name is only the suggestion.
+  name is chosen here; the agent's own name is only the suggestion. Below the choice: who
+  may approve with the chosen template, and a warning when nobody can (never blocking).
 -->
 <script lang="ts">
   import { tick } from 'svelte';
-  import type { DeviceCatalog, Template } from '../../api/types.ts';
+  import type { DeviceCatalog, Template, TemplateApprovers } from '../../api/types.ts';
   import { m } from '../../i18n.ts';
   import { NAME_MAX } from '../../mandate/problems.ts';
   import { templateDescription, templateTitle } from '../../mandate/template.ts';
@@ -16,6 +17,7 @@
   import { cleanUntrusted, hasVisibleText } from '../../untrusted.ts';
   import Button from '../Button.svelte';
   import Icon from '../Icon.svelte';
+  import PairApprovers from './PairApprovers.svelte';
   import TextField from '../TextField.svelte';
   import PlainWords from '../mandate/PlainWords.svelte';
   import TemplateBadges from '../mandate/TemplateBadges.svelte';
@@ -35,6 +37,8 @@
     error: string;
     /** Why the chosen template could not be used (changed or gone meanwhile); shown at the choice. */
     templateError: string;
+    /** Who may approve if the agent is admitted with a template now. */
+    approvers: (template: string) => Promise<TemplateApprovers>;
     onback: () => void;
     onconfirm: (template: string, displayName: string) => void;
   }
@@ -50,6 +54,7 @@
     busy,
     error,
     templateError,
+    approvers,
     onback,
     onconfirm,
   }: Props = $props();
@@ -128,6 +133,7 @@
       {/each}
     </div>
   </fieldset>
+  {#if valid}<PairApprovers template={chosen} load={approvers} />{/if}
   <p class="error" role="alert">{#if error || noTemplates}<Icon name="warning" size={16} />{error || m.pair_failed()}{/if}</p>
   <div class="actions">
     <Button size="lg" icon="back" disabled={busy} onclick={onback}>{m.common_back()}</Button>

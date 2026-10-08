@@ -35,6 +35,7 @@ import type {
   Session,
   SystemStatus,
   Template,
+  TemplateApprovers,
   TemplateSummary,
   TemplateUpdate,
 } from './types.ts';
@@ -85,6 +86,8 @@ export interface ApiClient {
   deleteTemplate(name: string): Promise<void>;
   /** Hides a base template from admission, or shows it again. */
   setTemplateHidden(name: string, hidden: boolean): Promise<void>;
+  /** Who may approve if the signed-in human admits an agent with the template now. */
+  templateApprovers(name: string): Promise<TemplateApprovers>;
 
   settings(): Promise<Defaults>;
   putSettings(defaults: Defaults): Promise<Defaults>;
@@ -359,6 +362,7 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
     putTemplate: async (name, update) => request('PUT', `templates/${segment(name)}`, update),
     deleteTemplate: async (name) => request('DELETE', `templates/${segment(name)}`),
     setTemplateHidden: async (name, hidden) => request('PUT', `templates/${segment(name)}/hidden`, { hidden }),
+    templateApprovers: async (name) => get(`templates/${segment(name)}/approvers`),
 
     settings: () => get('settings'),
     putSettings: (defaults) => request('PUT', 'settings', defaults),

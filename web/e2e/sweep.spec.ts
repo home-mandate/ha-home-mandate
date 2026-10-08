@@ -78,6 +78,21 @@ const SCREENS: Screen[] = [
       await expect(page.getByRole('radio').first()).toBeVisible();
     },
   },
+  {
+    name: 'pairing, nobody can approve',
+    path: './#/agents/pair',
+    mock: { noApprovers: true },
+    setup: async (page) => {
+      await page.getByRole('textbox').first().fill('bcdf ghjk');
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('heading', { level: 2 })).toBeFocused();
+      await page.keyboard.press('Tab'); // "This isn't my agent"
+      await page.keyboard.press('Tab'); // Continue
+      await page.keyboard.press('Enter');
+      await page.locator('input[type="radio"][value="hm-voice-cautious"]').check();
+      await expect(page.locator('a[href="#/settings/approvers"]')).toBeVisible();
+    },
+  },
   { name: 'browser sign-in', path: './#/agents/browser' },
   { name: 'settings', path: './#/settings' },
   { name: 'not found', path: './#/does-not-exist' },
