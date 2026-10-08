@@ -15,13 +15,13 @@ import (
 	"testing"
 	"time"
 
-	mandatespec "github.com/mandate-spec/mandate-spec"
+	"github.com/home-mandate/spec"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/mandate"
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 const (
@@ -58,10 +58,10 @@ func newEnv(t *testing.T) env {
 	return env{adm: adm, agents: agents, mandates: mandates, log: log, db: st.DB()}
 }
 
-// template is the voice assistant example of mandate-spec, edited by edit.
+// template is the voice assistant example of the specification, edited by edit.
 func template(t *testing.T, edit func(map[string]any)) []byte {
 	t.Helper()
-	data, err := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
 		t.Fatal(err)
 	}

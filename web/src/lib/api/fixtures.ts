@@ -128,7 +128,7 @@ export const voiceAssistantDraft: MandateDraft = {
 
 export const voiceAssistantMandate: MandateDocument = {
   ...voiceAssistantDraft,
-  type: 'https://mandate-spec.org/mandate/v0',
+  type: 'https://home-mandate.org/mandate/v0',
   id: 'mandate-voice',
   principal: 'household:home',
   agent: { client_id: 'pair:voice-assistant', display_name: 'Sprachassistent' },

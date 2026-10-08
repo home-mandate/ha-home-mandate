@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
 // CallbackPath is where Home Assistant sends the human back after signing in.

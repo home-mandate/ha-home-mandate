@@ -14,9 +14,9 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
-	"github.com/home-mandate/home-mandate/internal/approval"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 )
 
 func criticalRule() map[string]any {

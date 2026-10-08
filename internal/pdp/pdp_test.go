@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	mandatespec "github.com/mandate-spec/mandate-spec"
-	"github.com/mandate-spec/mandate-spec/evaluator"
+	"github.com/home-mandate/spec"
+	"github.com/home-mandate/spec/evaluator"
 
-	"github.com/home-mandate/home-mandate/internal/catalog"
-	"github.com/home-mandate/home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 )
 
 // fakeMandates returns the same candidates for every agent.
@@ -70,7 +70,7 @@ type conformanceCase struct {
 
 func loadCases(t *testing.T) []conformanceCase {
 	t.Helper()
-	data, err := fs.ReadFile(mandatespec.FS(), mandatespec.CasesPath)
+	data, err := fs.ReadFile(spec.FS(), spec.CasesPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func pdpFor(t *testing.T, c conformanceCase) (*PDP, string) {
 	doc := []byte(c.MandateInline)
 	if c.Mandate != "" {
 		var err error
-		if doc, err = fs.ReadFile(mandatespec.FS(), c.Mandate); err != nil {
+		if doc, err = fs.ReadFile(spec.FS(), c.Mandate); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -142,7 +142,7 @@ func post(t *testing.T, url string, body any) (*http.Response, Response) {
 	return resp, out
 }
 
-// Every conformance case of mandate-spec runs against the AuthZEN endpoint over HTTP.
+// Every conformance case of the specification runs against the AuthZEN endpoint over HTTP.
 // A revoked mandate is never a candidate of the selection (SPEC-v0 section 4.3); those
 // cases belong to the evaluator class, the selection cases cover them for the PDP.
 func TestConformanceCasesOverHTTP(t *testing.T) {
@@ -182,7 +182,7 @@ func TestConformanceCasesOverHTTP(t *testing.T) {
 
 func voice(t *testing.T) (Config, string) {
 	t.Helper()
-	doc, _ := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+	doc, _ := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	m, err := evaluator.Parse(doc)
 	if err != nil {
 		t.Fatal(err)
@@ -405,11 +405,11 @@ func TestCriticalEntityNeedsConfirmation(t *testing.T) {
 	}
 }
 
-// Every selection case of mandate-spec (SPEC-v0 section 4.3) runs against the AuthZEN
+// Every selection case of the specification (SPEC-v0 section 4.3) runs against the AuthZEN
 // endpoint: the store returns all mandates of the case, revoked ones included, and the
 // PDP selects. A revoked mandate alone is no_mandate, two current ones are ambiguous.
 func TestSelectionCasesOverHTTP(t *testing.T) {
-	data, err := fs.ReadFile(mandatespec.FS(), mandatespec.SelectionCasesPath)
+	data, err := fs.ReadFile(spec.FS(), spec.SelectionCasesPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +462,7 @@ func TestSelectionCasesOverHTTP(t *testing.T) {
 // The rate limit is known before a mandate is selected: the strictest of the candidates.
 func TestRateLimitOfTheCandidates(t *testing.T) {
 	cfg, clientID := voice(t)
-	doc, _ := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+	doc, _ := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	cfg.Mandates = fakeMandates{candidates: []mandate.Candidate{
 		stored(doc, mandate.Info{MaxActionsPerHour: 60}), stored(doc, mandate.Info{MaxActionsPerHour: 0}), stored(doc, mandate.Info{MaxActionsPerHour: 20}),
 	}}
@@ -509,7 +509,7 @@ func TestRateKeyIsTheMandate(t *testing.T) {
 // the stricter evaluation wins (fail closed).
 func TestRulesOnAFormerIDKeepApplying(t *testing.T) {
 	doc := func(rules ...map[string]any) []byte {
-		data, _ := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+		data, _ := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 		var d map[string]any
 		_ = json.Unmarshal(data, &d)
 		list := make([]any, len(rules))

@@ -16,7 +16,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/home-mandate/home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
 const publicURL = "https://hm.example.org:8765"

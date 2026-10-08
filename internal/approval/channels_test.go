@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
 // Tests for decision F2 (answering on a phone or in the Home-Mandate UI) and F1

@@ -9,13 +9,13 @@ import (
 	"testing"
 	"testing/fstest"
 
-	mandatespec "github.com/mandate-spec/mandate-spec"
+	"github.com/home-mandate/spec"
 )
 
-// TestWebCopyMatchesMandateSpec keeps the UI's copy of the cases equal to the pinned
-// mandate-spec version. Fix with: go run ./tools/webconformance
-func TestWebCopyMatchesMandateSpec(t *testing.T) {
-	want, err := files(mandatespec.FS())
+// TestWebCopyMatchesSpec keeps the UI's copy of the cases equal to the pinned
+// version of the specification. Fix with: go run ./tools/webconformance
+func TestWebCopyMatchesSpec(t *testing.T) {
+	want, err := files(spec.FS())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,13 +29,13 @@ func TestWebCopyMatchesMandateSpec(t *testing.T) {
 }
 
 func TestFilesReferencesEveryMandateOnce(t *testing.T) {
-	spec := fstest.MapFS{
+	specFS := fstest.MapFS{
 		"conformance/cases-v0.json":         {Data: []byte(`{"cases":[{"mandate":"a.json"},{"mandate":"a.json"},{"mandate_inline":{}}]}`)},
 		"a.json":                            {Data: []byte(`{}`)},
 		"vocabulary/v0.json":                {Data: []byte(`{}`)},
 		"data/forbidden-codepoints-v0.json": {Data: []byte(`{}`)},
 	}
-	got, err := files(spec)
+	got, err := files(specFS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,14 +52,14 @@ func TestFilesErrors(t *testing.T) {
 			"data/forbidden-codepoints-v0.json": {Data: []byte(`{}`)},
 		}
 	}
-	for name, spec := range map[string]fstest.MapFS{
+	for name, specFS := range map[string]fstest.MapFS{
 		"no cases":      {},
 		"no vocabulary": {"conformance/cases-v0.json": {Data: []byte(`{"cases":[]}`)}},
 		"broken json":   normative(`{`),
 		"missing file":  normative(`{"cases":[{"mandate":"nope.json"}]}`),
 		"bad path":      normative(`{"cases":[{"mandate":"../x.json"}]}`),
 	} {
-		if _, err := files(spec); err == nil {
+		if _, err := files(specFS); err == nil {
 			t.Errorf("%s: no error", name)
 		}
 	}
@@ -106,13 +106,13 @@ func TestDiffMissingDirectory(t *testing.T) {
 
 func TestRun(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "conformance")
-	if err := run([]string{"-out", dir}, mandatespec.FS()); err != nil {
+	if err := run([]string{"-out", dir}, spec.FS()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "conformance", "cases-v0.json")); err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"-unknown"}, mandatespec.FS()); err == nil {
+	if err := run([]string{"-unknown"}, spec.FS()); err == nil {
 		t.Error("unknown flag accepted")
 	}
 	if err := run([]string{"-out", dir}, fstest.MapFS{}); err == nil {
@@ -130,7 +130,7 @@ func TestRunRefusesOtherDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, out := range []string{keep, ".", ""} {
-		if err := run([]string{"-out", out}, mandatespec.FS()); err == nil {
+		if err := run([]string{"-out", out}, spec.FS()); err == nil {
 			t.Errorf("-out %q accepted", out)
 		}
 	}

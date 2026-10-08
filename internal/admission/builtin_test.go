@@ -9,9 +9,9 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 )
 
 var baseNames = []string{"hm-read-only", "hm-light-climate", "hm-voice-cautious"}

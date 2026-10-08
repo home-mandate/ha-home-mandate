@@ -25,11 +25,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/config"
-	"github.com/home-mandate/home-mandate/internal/pdp"
-	"github.com/home-mandate/home-mandate/internal/store"
-	"github.com/home-mandate/home-mandate/internal/tlscert"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/config"
+	"github.com/home-mandate/ha-home-mandate/internal/pdp"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/tlscert"
 )
 
 // selfSigned writes a certificate for 127.0.0.1 and hm.example.org and its key into dir.

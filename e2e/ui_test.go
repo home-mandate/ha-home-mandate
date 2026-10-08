@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	mandatespec "github.com/mandate-spec/mandate-spec"
+	"github.com/home-mandate/spec"
 )
 
 // uiClient is a person signed in through the Ingress stand-in (Home Assistant's real
@@ -321,7 +321,7 @@ func haService(t *testing.T, domain, service, entityID string) {
 // approver.
 func agentWithApprover(t *testing.T, name, approver string) string {
 	t.Helper()
-	data, err := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
 		t.Fatal(err)
 	}

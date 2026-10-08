@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/catalog"
-	"github.com/home-mandate/home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
 const timeFormat = "2006-01-02T15:04:05.000Z07:00"

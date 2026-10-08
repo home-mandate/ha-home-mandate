@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 func newApprovers(t *testing.T) (*Approvers, func() error) {

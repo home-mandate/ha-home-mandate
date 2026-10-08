@@ -23,14 +23,14 @@ import (
 	"testing"
 	"time"
 
-	mandatespec "github.com/mandate-spec/mandate-spec"
+	"github.com/home-mandate/spec"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/ha"
-	"github.com/home-mandate/home-mandate/internal/mandate"
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 const (
@@ -113,7 +113,7 @@ func newHarness(t *testing.T) *harness {
 	agents := agent.New(st.DB(), log)
 	mandates := mandate.New(st.DB(), log, testHousehold, "urn:uuid:5b0c9f4e-8f1a-4c2e-9d3b-7a6e5f4d3c2b")
 	adm := admission.New(st.DB(), agents, mandates, testHousehold)
-	data, err := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
 		t.Fatal(err)
 	}

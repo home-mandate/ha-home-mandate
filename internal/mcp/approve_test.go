@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mandate-spec/mandate-spec/evaluator"
+	"github.com/home-mandate/spec/evaluator"
 
-	"github.com/home-mandate/home-mandate/internal/approval"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/ha"
-	"github.com/home-mandate/home-mandate/internal/pdp"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/pdp"
 )
 
 // fakeApprover answers with result, after running during (e.g. to change the world

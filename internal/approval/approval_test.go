@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/ha"
-	"github.com/home-mandate/home-mandate/internal/i18n"
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/i18n"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 var update = flag.Bool("update", false, "rewrite the reference notifications in testdata")

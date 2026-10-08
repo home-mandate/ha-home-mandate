@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/mandate-spec/mandate-spec/jws"
+	"github.com/home-mandate/spec/jws"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,15 +14,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mandate-spec/mandate-spec/evaluator"
+	"github.com/home-mandate/spec/evaluator"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/approval"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/config"
-	"github.com/home-mandate/home-mandate/internal/mandate"
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/config"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 const databaseFile = "home-mandate.db"

@@ -20,8 +20,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/untrusted"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/untrusted"
 )
 
 var (

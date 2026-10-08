@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
 // fakeSource is a scriptable Home Assistant.

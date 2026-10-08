@@ -14,9 +14,9 @@ import (
 	"strings"
 	"testing"
 
-	mandatespec "github.com/mandate-spec/mandate-spec"
+	"github.com/home-mandate/spec"
 
-	"github.com/home-mandate/home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
 )
 
 // cli runs commands against one temporary data directory in container mode.
@@ -93,7 +93,7 @@ func field(t *testing.T, out, key string) string {
 
 func mandateFor(t *testing.T, household, clientID string) string {
 	t.Helper()
-	data, err := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
 		t.Fatal(err)
 	}

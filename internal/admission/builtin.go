@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/i18n"
+	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
 
 // Base templates (ARCHITECTURE section 6) ship with Home-Mandate, so that a new

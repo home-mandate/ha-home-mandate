@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/ha"
-	"github.com/home-mandate/home-mandate/internal/i18n"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
 
 // Device Authorization Grant (RFC 8628): the pairing code.

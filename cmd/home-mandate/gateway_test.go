@@ -20,7 +20,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/home-mandate/home-mandate/internal/config"
+	"github.com/home-mandate/ha-home-mandate/internal/config"
 )
 
 const (

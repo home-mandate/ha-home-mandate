@@ -11,7 +11,7 @@ import (
 	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/home-mandate/home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
 )
 
 func (h *harness) post(authorization string) *http.Response {

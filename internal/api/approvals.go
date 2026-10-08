@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/approval"
-	"github.com/home-mandate/home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 )
 
 // requestIDPattern is the form of an approval request ID in the UI (128 bits in hex).

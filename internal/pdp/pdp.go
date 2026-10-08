@@ -17,10 +17,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mandate-spec/mandate-spec/evaluator"
+	"github.com/home-mandate/spec/evaluator"
 
-	"github.com/home-mandate/home-mandate/internal/catalog"
-	"github.com/home-mandate/home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 )
 
 const (

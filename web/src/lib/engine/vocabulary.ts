@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Vocabulary v0 (mandate-spec SPEC-v0 section 5): which actions a category has, which are
+// Vocabulary v0 (SPEC-v0 section 5): which actions a category has, which are
 // critical, and the safe defaults for new rules. Used by the UI's own evaluation
 // (./evaluate.ts) and the editor; the server stays the authority for every decision.
 
@@ -19,7 +19,7 @@ interface VocabularyFile {
   categories: Record<string, { actions: Record<string, { critical?: boolean; parameters?: Record<string, unknown> }> }>;
 }
 
-// The normative vocabulary of the pinned mandate-spec version, copied by
+// The normative vocabulary of the pinned version of the specification, copied by
 // tools/webconformance; nothing about categories and actions is kept in code.
 const VOCABULARY = Object.fromEntries(
   Object.entries(categories as VocabularyFile['categories']).map(([category, { actions }]) => [

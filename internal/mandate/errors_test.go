@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mandate-spec/mandate-spec/evaluator"
+	"github.com/home-mandate/spec/evaluator"
 
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/mandate"
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 func newEnvWithDB(t *testing.T) (env, *sql.DB) {
@@ -87,7 +87,7 @@ func TestDatabaseErrorsAreReported(t *testing.T) {
 
 func TestPutRejectsMalformedJSON(t *testing.T) {
 	e, _ := newEnvWithDB(t)
-	for _, doc := range []string{``, `{`, `[]`, `{"type":"https://mandate-spec.org/mandate/v0"}`} {
+	for _, doc := range []string{``, `{`, `[]`, `{"type":"https://home-mandate.org/mandate/v0"}`} {
 		if _, err := e.mandates.Put(context.Background(), []byte(doc), admin); !errors.Is(err, mandate.ErrInvalid) {
 			t.Errorf("Put(%q) = %v, want ErrInvalid", doc, err)
 		}

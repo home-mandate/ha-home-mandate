@@ -14,12 +14,12 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 )
 
-const mandateType = "https://mandate-spec.org/mandate/v0"
+const mandateType = "https://home-mandate.org/mandate/v0"
 
 var (
 	mandateIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{4,64}$`)

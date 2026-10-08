@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/untrusted"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/untrusted"
 )
 
 // clocked returns a log whose clock moves one minute per entry from start.

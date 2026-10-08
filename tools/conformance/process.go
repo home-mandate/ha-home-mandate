@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	specaudit "github.com/mandate-spec/mandate-spec/audit"
-	"github.com/mandate-spec/mandate-spec/evaluator"
-	"github.com/mandate-spec/mandate-spec/jws"
+	specaudit "github.com/home-mandate/spec/audit"
+	"github.com/home-mandate/spec/evaluator"
+	"github.com/home-mandate/spec/jws"
 )
 
 // maxLineBytes bounds one request: several mandates of 256 KiB inside JSON strings.

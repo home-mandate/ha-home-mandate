@@ -9,8 +9,8 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 )
 
 var templateNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)

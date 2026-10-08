@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/mandate"
-	"github.com/home-mandate/home-mandate/internal/untrusted"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/untrusted"
 )
 
 const (

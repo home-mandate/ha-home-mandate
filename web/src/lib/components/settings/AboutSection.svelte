@@ -14,7 +14,7 @@
 
   let { version, commit }: Props = $props();
 
-  const SOURCE_URL = 'https://github.com/home-mandate/home-mandate';
+  const SOURCE_URL = 'https://github.com/home-mandate/ha-home-mandate';
   const LICENSE = 'AGPL-3.0-or-later';
 </script>
 

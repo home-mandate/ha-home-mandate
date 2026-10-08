@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Command webconformance copies the evaluation cases of mandate-spec, with the mandates
+// Command webconformance copies the evaluation cases of the specification, with the mandates
 // they reference, into the UI so that its own evaluation (web/src/lib/engine) is tested
-// against exactly the cases of the pinned mandate-spec version. The test of this package
+// against exactly the cases of the pinned version of the specification. The test of this package
 // fails if the copy differs. It is a development tool, not part of the binary.
 //
 // Usage:
@@ -21,7 +21,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	mandatespec "github.com/mandate-spec/mandate-spec"
+	"github.com/home-mandate/spec"
 )
 
 // normativeFiles are the vocabulary and the code points of displayed text
@@ -30,8 +30,8 @@ var normativeFiles = []string{"vocabulary/v0.json", "data/forbidden-codepoints-v
 
 // files returns the case file, every mandate file it references and the normative data
 // files, path → content.
-func files(spec fs.FS) (map[string][]byte, error) {
-	cases, err := fs.ReadFile(spec, mandatespec.CasesPath)
+func files(specFS fs.FS) (map[string][]byte, error) {
+	cases, err := fs.ReadFile(specFS, spec.CasesPath)
 	if err != nil {
 		return nil, err
 	}
@@ -41,12 +41,12 @@ func files(spec fs.FS) (map[string][]byte, error) {
 		} `json:"cases"`
 	}
 	if err := json.Unmarshal(cases, &doc); err != nil {
-		return nil, fmt.Errorf("%s: %w", mandatespec.CasesPath, err)
+		return nil, fmt.Errorf("%s: %w", spec.CasesPath, err)
 	}
-	out := map[string][]byte{mandatespec.CasesPath: cases}
+	out := map[string][]byte{spec.CasesPath: cases}
 	// The normative data the web engine reads instead of keeping its own copy in code.
 	for _, path := range normativeFiles {
-		data, err := fs.ReadFile(spec, path)
+		data, err := fs.ReadFile(specFS, path)
 		if err != nil {
 			return nil, err
 		}
@@ -59,7 +59,7 @@ func files(spec fs.FS) (map[string][]byte, error) {
 		if !fs.ValidPath(c.Mandate) {
 			return nil, fmt.Errorf("case references invalid path %q", c.Mandate)
 		}
-		data, err := fs.ReadFile(spec, c.Mandate)
+		data, err := fs.ReadFile(specFS, c.Mandate)
 		if err != nil {
 			return nil, err
 		}
@@ -123,8 +123,8 @@ func diff(dir string, want map[string][]byte) ([]string, error) {
 	return problems, nil
 }
 
-// run writes the cases of spec to the directory given by -out in args.
-func run(args []string, spec fs.FS) error {
+// run writes the cases of specFS to the directory given by -out in args.
+func run(args []string, specFS fs.FS) error {
 	flags := flag.NewFlagSet("webconformance", flag.ContinueOnError)
 	out := flags.String("out", "web/src/lib/engine/conformance", "target directory")
 	if err := flags.Parse(args); err != nil {
@@ -134,7 +134,7 @@ func run(args []string, spec fs.FS) error {
 	if filepath.Base(filepath.Clean(*out)) != "conformance" {
 		return fmt.Errorf("-out %q: the target directory must be named conformance", *out)
 	}
-	want, err := files(spec)
+	want, err := files(specFS)
 	if err != nil {
 		return err
 	}
@@ -142,7 +142,7 @@ func run(args []string, spec fs.FS) error {
 }
 
 func main() {
-	if err := run(os.Args[1:], mandatespec.FS()); err != nil {
+	if err := run(os.Args[1:], spec.FS()); err != nil {
 		fmt.Fprintln(os.Stderr, "webconformance:", err)
 		os.Exit(1)
 	}

@@ -3,8 +3,8 @@
 package api
 
 import (
-	"github.com/home-mandate/home-mandate/internal/catalog"
-	"github.com/home-mandate/home-mandate/internal/mcp"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/mcp"
 )
 
 type wireArea struct {

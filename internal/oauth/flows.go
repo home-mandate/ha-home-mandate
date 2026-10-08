@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/ha"
-	"github.com/home-mandate/home-mandate/internal/i18n"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
 
 const (

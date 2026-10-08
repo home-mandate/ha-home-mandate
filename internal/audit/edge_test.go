@@ -11,7 +11,7 @@ import (
 	"testing/iotest"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 )
 
 func TestApprovedAskIsRecordedWithApproval(t *testing.T) {

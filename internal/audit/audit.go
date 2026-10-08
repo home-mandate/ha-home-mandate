@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Package audit writes the hash-chained audit log of SPEC-v0 section 9 into the store
-// and verifies it with the reference implementation from mandate-spec. Entries never
+// and verifies it with the reference implementation from the specification. Entries never
 // contain tokens, nonces, credentials or the content of a mandate.
 package audit
 
@@ -21,11 +21,11 @@ import (
 	"sync"
 	"time"
 
-	specaudit "github.com/mandate-spec/mandate-spec/audit"
-	"github.com/mandate-spec/mandate-spec/jcs"
-	"github.com/mandate-spec/mandate-spec/jws"
+	specaudit "github.com/home-mandate/spec/audit"
+	"github.com/home-mandate/spec/jcs"
+	"github.com/home-mandate/spec/jws"
 
-	"github.com/home-mandate/home-mandate/internal/untrusted"
+	"github.com/home-mandate/ha-home-mandate/internal/untrusted"
 )
 
 // ErrInvalidEntry means an entry does not conform to the audit schema; it is not written.
@@ -57,7 +57,7 @@ const (
 )
 
 const (
-	entryType  = "https://mandate-spec.org/audit/v0"
+	entryType  = "https://home-mandate.org/audit/v0"
 	timeFormat = "2006-01-02T15:04:05.000Z07:00"
 )
 
@@ -441,7 +441,7 @@ func searchText(a *Agent, r *Request) string {
 }
 
 // encode returns the canonical form (RFC 8785) and digest of w after checking it
-// against the audit schema of mandate-spec.
+// against the audit schema of the specification.
 func encode(w wire) ([]byte, string, error) {
 	canonical, err := canonicalJSON(w)
 	if err == nil {
@@ -454,7 +454,7 @@ func encode(w wire) ([]byte, string, error) {
 	return canonical, "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-// canonicalJSON encodes v and canonicalizes it with mandate-spec/jcs, the same code
+// canonicalJSON encodes v and canonicalizes it with spec/jcs, the same code
 // that computes digests during verification.
 func canonicalJSON(v any) ([]byte, error) {
 	data, err := json.Marshal(v)
@@ -496,7 +496,7 @@ func validate(w wire) error {
 	return nil
 }
 
-// Verify checks the whole stored log with mandate-spec (SPEC-v0 section 9.4).
+// Verify checks the whole stored log with the specification (SPEC-v0 section 9.4).
 func (l *Log) Verify(ctx context.Context) (specaudit.Result, error) {
 	r, _, err := l.Check(ctx)
 	return r, err

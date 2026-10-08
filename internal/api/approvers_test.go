@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/approval"
-	"github.com/home-mandate/home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
 func TestApproverCandidates(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 )
 
 // Change says what an edit by a human is based on. The administration API passes it on

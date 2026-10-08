@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	mandatespec "github.com/mandate-spec/mandate-spec"
+	"github.com/home-mandate/spec"
 )
 
 // e2eClient is the client ID of the test agent: a free identifier, so the pairing code
@@ -184,13 +184,13 @@ func admit(t *testing.T, name, template string) string {
 
 var approverOnce sync.Once
 
-// newAgent admits an agent with the voice assistant mandate of mandate-spec (edited by
+// newAgent admits an agent with the voice assistant mandate of the specification (edited by
 // edit): admin-approver approves, within 10 seconds.
 func newAgent(t *testing.T, name string, edit func(map[string]any)) string {
 	t.Helper()
 	approver := env.users[adminApprover].id
 	approverOnce.Do(func() { cli(t, "", "approver", "add", approver, "persistent_notification") })
-	data, err := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
 		t.Fatal(err)
 	}

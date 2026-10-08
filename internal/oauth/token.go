@@ -10,9 +10,9 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 )
 
 // verifierPattern is a PKCE code verifier (RFC 7636 section 4.1).

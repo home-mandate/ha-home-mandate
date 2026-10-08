@@ -255,7 +255,7 @@ export interface DeviceCatalog {
 }
 
 // ---------------------------------------------------------------------------
-// Mandates (mandate-spec schema/mandate-v0.schema.json)
+// Mandates (specification schema/mandate-v0.schema.json)
 
 export type Decision = 'allow' | 'ask' | 'deny';
 /** Stored status; "not yet valid" and "expired" follow from the dates and the server time. */
@@ -314,7 +314,7 @@ export interface MandateDraft {
 
 /** A stored mandate version, as in the schema. */
 export interface MandateDocument extends MandateDraft {
-  type: 'https://mandate-spec.org/mandate/v0';
+  type: 'https://home-mandate.org/mandate/v0';
   id: string;
   principal: string;
   agent: { client_id: string; display_name: string };
@@ -593,7 +593,7 @@ export interface ApprovalAnswer {
 }
 
 // ---------------------------------------------------------------------------
-// Audit log: GET api/audit, POST api/audit/verify (mandate-spec audit-v0)
+// Audit log: GET api/audit, POST api/audit/verify (specification audit-v0)
 
 export type AuditEvent =
   | 'decision'

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-mandate/home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
 )
 
 // A rename in Home Assistant: rules on the former ID keep applying until a human takes

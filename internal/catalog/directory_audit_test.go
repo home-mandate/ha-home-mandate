@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/catalog"
-	"github.com/home-mandate/home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
 // directoryEntries returns "actor-kind change entity<-former" of every directory.changed entry.

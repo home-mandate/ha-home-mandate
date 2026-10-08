@@ -6,9 +6,9 @@ import (
 	"context"
 	"strings"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/i18n"
-	"github.com/home-mandate/home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/i18n"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 )
 
 // consentTemplate is a template as the consent page shows it: what the human chooses

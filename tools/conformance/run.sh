@@ -1,12 +1,12 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Runs mandate-conformance of the pinned mandate-spec version against Home-Mandate over
+# Runs mandate-conformance of the pinned version of the specification against Home-Mandate over
 # both bindings of the test interface (SPEC-v0 section 10): the process binding for the
 # classes Home-Mandate claims, the HTTP binding for the class pdp. Reports go to bin/.
 set -eu
 
 classes=evaluator,selection,audit,audit-anchored
-tool=github.com/mandate-spec/mandate-spec/cmd/mandate-conformance
+tool=github.com/home-mandate/spec/cmd/mandate-conformance
 mkdir -p bin
 go build -o bin/hm-conformance ./tools/conformance
 go build -o bin/mandate-conformance "$tool"

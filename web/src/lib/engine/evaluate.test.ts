@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { MandateDraft } from '../api/types.ts';
 import { evaluate, type EvalRequest } from './evaluate.ts';
 
-// The cases of the pinned mandate-spec version, copied by tools/webconformance (a Go test
+// The cases of the pinned version of the specification, copied by tools/webconformance (a Go test
 // fails if the copy differs).
 const files = import.meta.glob<unknown>('./conformance/**/*.json', { eager: true, import: 'default' });
 
@@ -33,7 +33,7 @@ function mandateOf(c: ConformanceCase): MandateDraft {
   return m as MandateDraft;
 }
 
-describe('evaluate: mandate-spec conformance cases', () => {
+describe('evaluate: conformance cases of the specification', () => {
   it('has all cases of the pinned version', () => {
     expect(casesFile.cases.length).toBeGreaterThanOrEqual(132);
   });

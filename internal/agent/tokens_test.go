@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 )
 
 const resource = "https://hm.example.org/mcp"

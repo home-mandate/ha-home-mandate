@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 
-	specaudit "github.com/mandate-spec/mandate-spec/audit"
+	specaudit "github.com/home-mandate/spec/audit"
 )
 
 // ErrNoSigner means the log has no key to sign checkpoints with.

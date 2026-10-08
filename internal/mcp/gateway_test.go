@@ -19,16 +19,16 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	mandatespec "github.com/mandate-spec/mandate-spec"
+	"github.com/home-mandate/spec"
 
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/catalog"
-	"github.com/home-mandate/home-mandate/internal/ha"
-	"github.com/home-mandate/home-mandate/internal/mandate"
-	"github.com/home-mandate/home-mandate/internal/pdp"
-	"github.com/home-mandate/home-mandate/internal/store"
-	"github.com/mandate-spec/mandate-spec/ratelimit"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/pdp"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
+	"github.com/home-mandate/spec/ratelimit"
 )
 
 const (
@@ -162,7 +162,7 @@ func (h *harness) timeZone() string {
 }
 
 // newHarness runs the gateway on real stores with the voice assistant mandate of
-// mandate-spec, edited by edit.
+// the specification, edited by edit.
 func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 	t.Helper()
 	ctx := context.Background()
@@ -227,7 +227,7 @@ func (h *harness) issue(clientID string) string {
 
 func mandateDoc(t *testing.T, clientID string, edit func(map[string]any)) []byte {
 	t.Helper()
-	data, err := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
 		t.Fatal(err)
 	}

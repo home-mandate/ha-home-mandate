@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/home-mandate/home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
 var (

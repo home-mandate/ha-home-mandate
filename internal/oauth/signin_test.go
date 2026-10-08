@@ -13,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/home-mandate/home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
 // fakeHAAuth is Home Assistant's /auth/token and /auth/revoke.

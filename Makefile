@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# Checks run against the pinned mandate-spec version from go.mod, as in CI.
-# For local development against ../mandate-spec: make test GOWORK=$(CURDIR)/go.work
+# Checks run against the pinned version of the specification from go.mod, as in CI.
+# For local development against ../spec: make test GOWORK=$(CURDIR)/go.work
 # (go.work is not checked in; a command-line value overrides this, an exported
 # GOWORK in the shell does not). This also keeps a go.work in a parent directory out.
 export GOWORK := off
@@ -91,8 +91,8 @@ web-install:
 web-check:
 	cd web && pnpm lint && pnpm typecheck && pnpm test && pnpm i18n:check && pnpm build && pnpm audit
 
-## web-conformance: copy the mandate-spec evaluation cases into the UI (a Go test fails
-## if the copy differs from the pinned mandate-spec version)
+## web-conformance: copy the evaluation cases of the specification into the UI (a Go test fails
+## if the copy differs from the pinned version of the specification)
 web-conformance:
 	go run ./tools/webconformance
 

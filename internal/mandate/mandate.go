@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Package mandate stores and versions mandates. A mandate is accepted only if the
-// reference evaluator of mandate-spec accepts it (SPEC-v0 section 3.1), it belongs to
+// reference evaluator of the specification accepts it (SPEC-v0 section 3.1), it belongs to
 // this household and to an active agent. Every version is kept unchanged; changes are
 // written to the audit log in the same transaction, by digest only.
 package mandate
@@ -18,9 +18,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mandate-spec/mandate-spec/evaluator"
+	"github.com/home-mandate/spec/evaluator"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 )
 
 var (

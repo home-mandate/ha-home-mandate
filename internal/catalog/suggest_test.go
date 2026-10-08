@@ -5,7 +5,7 @@ package catalog_test
 import (
 	"testing"
 
-	"github.com/home-mandate/home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
 )
 
 func TestSuggestCritical(t *testing.T) {

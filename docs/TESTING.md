@@ -8,14 +8,14 @@ a negative test, no release without green end-to-end tests.**
 | Level | Tool | Runs | Purpose |
 |---|---|---|---|
 | Unit | `go test`, table-driven | every push to a branch | Every function, every branch |
-| Conformance | Cases from `mandate-spec` (embedded in the Go module) against our own PDP; `mandate-conformance` against `tools/conformance` (process binding: classes evaluator, selection, audit, audit-anchored; HTTP binding: class pdp), `make conformance` | every pull request (Go cases: every push) | Evaluation and selection exactly per specification, through Home-Mandate's own decision path |
+| Conformance | Cases from `home-mandate/spec` (embedded in the Go module) against our own PDP; `mandate-conformance` against `tools/conformance` (process binding: classes evaluator, selection, audit, audit-anchored; HTTP binding: class pdp), `make conformance` | every pull request (Go cases: every push) | Evaluation and selection exactly per specification, through Home-Mandate's own decision path |
 | Negative | Own test cases per package, catalog in section 4 | every push to a branch | Attacks and invalid input are rejected |
 | Fuzzing | `go test -fuzz`, `make fuzz` | every pull request 60 s per target; 1st and 15th of every month 60 min | No panic, unknown input becomes `deny` |
 | Integration | Real HA instance in a container | every pull request | HA client, catalog, service calls |
 | End to end | MCP client + OAuth + HA container, UI with Playwright | every pull request | Complete flows from the perspective of agent and human |
 | UI unit | Vitest + Svelte Testing Library | every push to a branch | Components, form logic, formatting |
 | i18n | Own checks in CI (section 5) | every push to a branch | No missing, orphaned or broken translations |
-| Mutation | Mutation tests on `mandate-spec/evaluator` | before every release | Tests detect deliberately injected faults |
+| Mutation | Mutation tests on `home-mandate/spec/evaluator` | before every release | Tests detect deliberately injected faults |
 
 All Go tests run with `-race`.
 
@@ -30,10 +30,10 @@ an issue.
 
 | Scope | Line coverage |
 |---|---|
-| `mandate-spec/evaluator`, `internal/pdp`, `internal/oauth`, `internal/approval`, `internal/audit`, `internal/api` | ≥ 95 % |
+| `home-mandate/spec/evaluator`, `internal/pdp`, `internal/oauth`, `internal/approval`, `internal/audit`, `internal/api` | ≥ 95 % |
 | Other Go packages | ≥ 85 % |
 | `web/src/lib` (logic, excluding pure presentation) | ≥ 85 % |
-| Mutation score `mandate-spec/evaluator` | ≥ 90 % killed mutants |
+| Mutation score `home-mandate/spec/evaluator` | ≥ 90 % killed mutants |
 
 Coverage is a lower bound, not a goal. Every decision branch (`allow`, `ask`, `deny`,
 protection class, expired, not yet valid) needs its own named test.
@@ -79,7 +79,7 @@ protection class, expired, not yet valid) needs its own named test.
    the release image (it would be a security-relevant switch, decision U5): the test computes
    the household's local time and sets a window that does not hold now (now + 2 h to + 3 h,
    across midnight handled). The boundaries (midnight, DST change) are unit tests of
-   `mandate-spec` and `internal/pdp`.
+   `home-mandate/spec` and `internal/pdp`.
 10. `user-plain` tries to admit an agent → denied.
 11. Restart Home-Mandate → mandates, agents and audit log unchanged, audit chain valid.
 12. HA unreachable → requests denied with a clear error, no queue that executes later.
@@ -244,7 +244,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - Database directory writable by group or others, or not owned by the service user; database file readable by others, a symlink or hard link → start aborted
 
 **Test interface (SPEC-v0 section 10.1)**
-- The release binary depends on `tools/conformance` or the harness of mandate-spec → a test fails (`go list -deps ./cmd/home-mandate`)
+- The release binary depends on `tools/conformance` or the harness of the specification → a test fails (`go list -deps ./cmd/home-mandate`)
 - HTTP binding without or with a wrong bearer token → 401; a token shorter than 32 characters or an address other than loopback → refused at start
 
 **Mandate templates**
@@ -337,12 +337,12 @@ How Home-Mandate meets each obligation and which tests show it. Gaps are listed,
 
 | Item | How | Tests | Gap |
 |---|---|---|---|
-| N in every 3600 s | `mandate-spec/ratelimit` keeps the timestamps of the last hour | `mcp.TestRateLimit`; in mandate-spec `TestNoBurstAfterAnIdlePeriod`, `TestWindowBoundaryIsExact` | |
+| N in every 3600 s | `home-mandate/spec/ratelimit` keeps the timestamps of the last hour | `mcp.TestRateLimit`; in the specification `TestNoBurstAfterAnIdlePeriod`, `TestWindowBoundaryIsExact` | |
 | Counted per mandate | Key `mandate:<id>`; without a mandate the agent is counted on its own; restored per mandate | `pdp.TestRateLimitOfTheCandidates`, `pdp.TestRateKeyIsTheMandate`, `audit.TestRequestsSince` | |
 | Every request counts | The limiter runs before every decision and before lists | `mcp.TestRateLimit`, `mcp.TestAgentsWithoutMandateAreRateLimited` | |
-| Refusals by the limit or the stop do not count | The stop is checked first; the limiter does not count its own refusals | `mcp.TestEmergencyStopIsEnforcedByThePEP`; in mandate-spec `TestDeniedRequestsDoNotCount` | |
+| Refusals by the limit or the stop do not count | The stop is checked first; the limiter does not count its own refusals | `mcp.TestEmergencyStopIsEnforcedByThePEP`; in the specification `TestDeniedRequestsDoNotCount` | |
 | Survives a restart | Restored from the decisions of the last hour in the audit log | `cmd/home-mandate.TestRestoredLimiterCountsTheLastHour`, `audit.TestRequestsSince` | Lists leave no audit entry and are not restored |
-| Change of N | Read from the candidates for every request | `pdp.TestRateLimitOfTheCandidates`; in mandate-spec `TestLoweredLimitAppliesAtOnce` | |
+| Change of N | Read from the candidates for every request | `pdp.TestRateLimitOfTheCandidates`; in the specification `TestLoweredLimitAppliesAtOnce` | |
 | Compaction | At most one rate-limit entry per agent and interval | `mcp.TestRateLimitRefusalsAreLoggedOncePerInterval` | |
 
 ### 11.3 Revocation and emergency stop

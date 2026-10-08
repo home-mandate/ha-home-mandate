@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 func openTemp(t *testing.T) (*store.Store, string) {

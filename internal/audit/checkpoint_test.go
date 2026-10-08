@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 )
 
 const testLogID = "0198f1c2-7c3a-7000-8000-0000000000aa"

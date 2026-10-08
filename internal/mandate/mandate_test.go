@@ -12,13 +12,13 @@ import (
 	"testing"
 	"time"
 
-	mandatespec "github.com/mandate-spec/mandate-spec"
-	"github.com/mandate-spec/mandate-spec/evaluator"
+	"github.com/home-mandate/spec"
+	"github.com/home-mandate/spec/evaluator"
 
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/mandate"
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 const (
@@ -54,11 +54,11 @@ func (e env) agent(t *testing.T, name string) agent.Agent {
 	return a
 }
 
-// voiceAssistant returns the example mandate of mandate-spec for clientID, with edit
+// voiceAssistant returns the example mandate of the specification for clientID, with edit
 // applied to the decoded document.
 func voiceAssistant(t *testing.T, clientID string, edit func(map[string]any)) []byte {
 	t.Helper()
-	data, err := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestPutStoresAValidMandate(t *testing.T) {
 
 func TestPutRejectsEveryInvalidConformanceCase(t *testing.T) {
 	e := newEnv(t)
-	data, err := fs.ReadFile(mandatespec.FS(), mandatespec.InvalidCasesPath)
+	data, err := fs.ReadFile(spec.FS(), spec.InvalidCasesPath)
 	if err != nil {
 		t.Fatal(err)
 	}

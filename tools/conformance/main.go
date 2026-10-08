@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Command conformance is Home-Mandate's side of the test interface of mandate-spec
+// Command conformance is Home-Mandate's side of the test interface of the specification
 // (SPEC-v0 section 10), so that the test tool mandate-conformance checks Home-Mandate's
 // own decision path: the AuthZEN request handling, the conversion of parameters, the
 // resource directory and the selection of the mandate in internal/pdp.

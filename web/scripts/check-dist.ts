@@ -18,7 +18,7 @@ const ALLOWED_ORIGINS: { origin: string; path: string }[] = [
   { origin: 'https://paraglidejs.com', path: '/errors' },
   { origin: 'http://www.w3.org', path: '/' },
   // The source code link under "About" (AGPL section 13); a link the person may follow, nothing loads it.
-  { origin: 'https://github.com', path: '/home-mandate/home-mandate' },
+  { origin: 'https://github.com', path: '/home-mandate/ha-home-mandate' },
 ];
 /** Origins whose path must match exactly (not as a prefix): a repository, not every repository starting with its name. */
 const EXACT_PATHS = new Set(['https://github.com']);
@@ -43,7 +43,7 @@ export function isAllowedUrl(raw: string): boolean {
 }
 
 /** The mock client (test builds only) holds example data with these hosts; nothing loads them. */
-const FIXTURE_ORIGINS = new Set(['https://home.example:8765', 'https://claude.ai', 'https://mandate-spec.org', 'https://agent.example']);
+const FIXTURE_ORIGINS = new Set(['https://home.example:8765', 'https://claude.ai', 'https://home-mandate.org', 'https://agent.example']);
 const MOCK_CHUNK = /(^|[\\/])mock-[\w-]+\.js$/;
 /** Strings only the mock client and its fixtures contain, wherever a bundler puts them. */
 const MOCK_MARKERS = ['hmMock', 'csrf-fixture-token'];

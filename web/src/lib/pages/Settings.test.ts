@@ -476,7 +476,7 @@ describe('Settings: system sections', () => {
   it('names version, commit, license with the source code and the package licenses', async () => {
     await start();
     const about = region('About');
-    expect(within(about).getByRole('link', { name: /^Source code/ }).getAttribute('href')).toBe('https://github.com/home-mandate/home-mandate');
+    expect(within(about).getByRole('link', { name: /^Source code/ }).getAttribute('href')).toBe('https://github.com/home-mandate/ha-home-mandate');
     expect(within(about).getByRole('link', { name: /^Licenses of the included packages/ }).getAttribute('href')).toBe('./licenses.txt');
     expect(about.textContent).toContain('AGPL-3.0-or-later');
   });

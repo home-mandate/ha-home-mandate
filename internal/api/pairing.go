@@ -8,11 +8,11 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/mandate"
-	"github.com/home-mandate/home-mandate/internal/oauth"
-	"github.com/home-mandate/home-mandate/internal/untrusted"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/oauth"
+	"github.com/home-mandate/ha-home-mandate/internal/untrusted"
 )
 
 // maxCode bounds the typed code; the server ignores case, spaces and the dash.

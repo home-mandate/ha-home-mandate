@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 var admin = audit.Actor{Kind: audit.ActorUser, ID: "user-1"}

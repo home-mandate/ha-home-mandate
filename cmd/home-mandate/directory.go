@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
 )
 
 // directoryTimeout bounds the work after one catalog refresh.

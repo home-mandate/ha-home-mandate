@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	specaudit "github.com/mandate-spec/mandate-spec/audit"
+	specaudit "github.com/home-mandate/spec/audit"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 const principal = "household:hm-0123456789ab"
@@ -35,7 +35,7 @@ func newLog(t *testing.T) (*audit.Log, *sql.DB) {
 func str(s string) *string { return &s }
 
 // samples covers every event this implementation writes, so that each shape is
-// checked against the schema of mandate-spec.
+// checked against the schema of the specification.
 func samples() []audit.Entry {
 	agent := &audit.Agent{ClientID: "hm-client:voice-7c21e9a4", DisplayName: "Voice assistant"}
 	user := &audit.Actor{Kind: audit.ActorUser, ID: "user-1"}
@@ -121,7 +121,7 @@ func TestEntriesHaveTheSpecShape(t *testing.T) {
 	}
 }
 
-func TestExportIsVerifiableWithMandateSpec(t *testing.T) {
+func TestExportIsVerifiableWithSpec(t *testing.T) {
 	l, _ := newLog(t)
 	appendAll(t, l, samples())
 	var buf bytes.Buffer

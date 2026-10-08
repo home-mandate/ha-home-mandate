@@ -1,4 +1,4 @@
-# Home-Mandate
+# Home-Mandate for Home Assistant
 
 Mandates for AI agents in Home Assistant: every agent gets its own identity and clear limits.
 Actions are allowed, sent to your phone for confirmation, or forbidden, and every request is
@@ -30,8 +30,8 @@ make web-e2e                # Playwright in German and English under a random In
 make webui build            # binary with the embedded UI (without webui: a placeholder page)
 ```
 
-Checks run against the `mandate-spec` version pinned in `go.mod`. To develop against a
-local checkout, create an untracked `go.work` (`go work init . ../mandate-spec`) and pass
+Checks run against the version of the specification pinned in `go.mod`. To develop against a
+local checkout, create an untracked `go.work` (`go work init . ../spec`) and pass
 `GOWORK=$PWD/go.work` to `make`.
 
 UI dependencies are installed from the lockfile without install scripts and only in
@@ -155,7 +155,7 @@ home-mandate household                       # principal to use in mandates
 home-mandate mandate template import NAME template.json   # templates humans pick when admitting
 home-mandate mandate template list | remove NAME
 home-mandate agent list | revoke CLIENT_ID   # revoking takes effect with the next request
-home-mandate mandate import mandate.json     # or - for stdin; validated against mandate-spec
+home-mandate mandate import mandate.json     # or - for stdin; validated against the specification
 home-mandate mandate list | revoke ID
 home-mandate mandate check                   # lists stored mandates and templates the evaluator rejects, e.g. after an update
 home-mandate approver add USER_ID NOTIFY_SERVICE[:no-critical][,…] [de|en] | list | remove USER_ID
@@ -196,8 +196,8 @@ for admins. Home-Mandate sends only a fixed, allowlisted set of WebSocket comman
 
 | Repository | Contents | License |
 |---|---|---|
-| `mandate-spec` | Vendor-neutral specification, schema, conformance cases, reference evaluation, test tool | CC BY 4.0 / Apache 2.0 |
+| `spec` | Home-Mandate Specification: vendor-neutral specification, schema, conformance cases, reference evaluation, test tool | CC BY 4.0 / Apache 2.0 |
 | `home-mandate` (this one) | Gateway, local UI, Home Assistant app, relay | AGPL-3.0 |
 
-Home-Mandate embeds the reference evaluation from `mandate-spec` as a Go module and must pass
+Home-Mandate embeds the reference evaluation from `home-mandate/spec` as a Go module and must pass
 all conformance cases.

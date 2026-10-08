@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
 // Direct mode (ARCHITECTURE section 12): in container mode without Ingress, the UI is
