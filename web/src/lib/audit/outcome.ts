@@ -31,6 +31,8 @@ const EVENTS: Record<AuditEvent, () => string> = {
   'log.truncated': () => m.event_log_pruned(),
   'log.checkpoint': () => m.event_log_checkpoint(),
   'directory.changed': () => m.event_directory_changed(),
+  'template.changed': () => m.event_template_changed(),
+  'approver.changed': () => m.event_approver_changed(),
 };
 
 const REASONS: Record<Reason, () => string> = {

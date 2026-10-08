@@ -903,7 +903,10 @@ export function createMockClient(options: MockOptions = {}): MockClient {
         description: {},
         digest: '',
       });
+      if (existing?.digest === t.digest) return copy(existing); // unchanged: nothing stored, nothing recorded
       state = { ...state, templates: templateOrder([...state.templates.filter((x) => x.name !== name), t]) };
+      // As the server: every change of a template is an audit entry, the human as actor.
+      log('template.changed', { template: { change: 'stored', name, digest: t.digest, ...(existing ? { previous_digest: existing.digest } : {}) } });
       emit({ type: 'templates.changed' });
       return copy(t);
     },
@@ -911,6 +914,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       const existing = state.templates.find((t) => t.name === name) ?? fail('not_found');
       if (existing.builtin) fail('builtin_template');
       state = { ...state, templates: state.templates.filter((t) => t.name !== name) };
+      log('template.changed', { template: { change: 'removed', name, digest: existing.digest } });
       emit({ type: 'templates.changed' });
     },
     async templateUsage(name) {
@@ -981,7 +985,9 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       if (typeof hidden !== 'boolean') fail('invalid_input', '/hidden');
       // Only base templates can be hidden; anything else is not found.
       if (!state.templates.some((t) => t.name === name && t.builtin)) fail('not_found');
+      if (state.templates.some((t) => t.name === name && t.hidden === hidden)) return; // already so: nothing recorded
       state = { ...state, templates: state.templates.map((t) => (t.name === name ? { ...t, hidden } : t)) };
+      log('template.changed', { template: { change: hidden ? 'hidden' : 'shown', name } });
       emit({ type: 'templates.changed' });
     },
     async templateApprovers(name) {
@@ -1049,6 +1055,8 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       const index = approvers.findIndex((a) => a.user_id === userId);
       const next = index < 0 ? [...approvers, approver] : approvers.map((a, i) => (i === index ? approver : a));
       state = { ...state, approvers: { candidates, approvers: next }, approversVersion: state.approversVersion + 1 };
+      // As the server: adding someone is an audit entry; other channels are not.
+      if (index < 0) log('approver.changed', { approver: { change: 'added', id: userId, name: person.name } });
       emit({ type: 'approvers.changed' });
       setSystem({ ...state.system, approvers_configured: state.approvers.approvers.length });
       return copy(approverList());
@@ -1058,8 +1066,9 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     },
     async deleteApprover(userId, baseVersion) {
       checkVersion(baseVersion);
-      if (!state.approvers.approvers.some((a) => a.user_id === userId)) fail('not_found');
+      const removed = state.approvers.approvers.find((a) => a.user_id === userId) ?? fail('not_found');
       const approvers = state.approvers.approvers.filter((a) => a.user_id !== userId);
+      log('approver.changed', { approver: { change: 'removed', id: userId, name: removed.name } });
       state = { ...state, approvers: { ...state.approvers, approvers }, approversVersion: state.approversVersion + 1 };
       emit({ type: 'approvers.changed' });
       setSystem({ ...state.system, approvers_configured: approvers.length });

@@ -5,7 +5,7 @@
 // critical, and the name of the device. Overview, audit log, approvals and agent details
 // all show entries through these functions, so they say the same everywhere.
 
-import type { AuditEntry, Category, DecisionFilter, DeviceCatalog, DirectoryChange } from '../api/types.ts';
+import type { ApproverChange, AuditEntry, Category, DecisionFilter, DeviceCatalog, DirectoryChange, TemplateChange } from '../api/types.ts';
 import { isCritical } from '../engine/vocabulary.ts';
 import { m } from '../i18n.ts';
 import { cleanUntrusted, isolate } from '../untrusted.ts';
@@ -52,6 +52,35 @@ export function directoryText(entry: AuditEntry, catalog: DeviceCatalog | null):
   const id = cleanUntrusted(d.entity_id);
   const device = name === id ? isolate(id) : `${isolate(name)} (${isolate(id)})`;
   return text({ device, former: isolate(cleanUntrusted(d.previous_entity_id ?? '')) });
+}
+
+// stored without previous_digest is a new template.
+const TEMPLATE: Record<TemplateChange | 'created', (v: { name: string }) => string> = {
+  created: (v) => m.template_change_created(v),
+  stored: (v) => m.template_change_stored(v),
+  removed: (v) => m.template_change_removed(v),
+  hidden: (v) => m.template_change_hidden(v),
+  shown: (v) => m.template_change_shown(v),
+};
+
+/** templateText says how a template changed; empty for other entries. */
+export function templateText(entry: AuditEntry): string {
+  const t = entry.template;
+  if (!t || !Object.hasOwn(TEMPLATE, t.change)) return '';
+  const change = t.change === 'stored' && !t.previous_digest ? 'created' : t.change;
+  return TEMPLATE[change]({ name: isolate(cleanUntrusted(t.name)) });
+}
+
+const APPROVER: Record<ApproverChange, (v: { person: string }) => string> = {
+  added: (v) => m.approver_change_added(v),
+  removed: (v) => m.approver_change_removed(v),
+};
+
+/** approverText says who was added to or removed from the approvers; empty for other entries. */
+export function approverText(entry: AuditEntry): string {
+  const a = entry.approver;
+  if (!a || !Object.hasOwn(APPROVER, a.change)) return '';
+  return APPROVER[a.change]({ person: isolate(cleanUntrusted(a.name ?? a.id)) });
 }
 
 /** deviceName is the device's name from Home Assistant, else its entity ID, both cleaned. */

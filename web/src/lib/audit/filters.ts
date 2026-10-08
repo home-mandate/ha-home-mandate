@@ -43,6 +43,8 @@ export const EVENTS: readonly AuditEvent[] = [
   'log.truncated',
   'log.checkpoint',
   'directory.changed',
+  'template.changed',
+  'approver.changed',
 ];
 
 const HOUR_MS = 3_600_000;

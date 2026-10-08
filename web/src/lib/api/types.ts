@@ -734,10 +734,18 @@ export type AuditEvent =
   | 'auth.rejected'
   | 'log.truncated'
   | 'log.checkpoint'
-  | 'directory.changed';
+  | 'directory.changed'
+  | 'template.changed'
+  | 'approver.changed';
 
 /** A change of the resource directory (SPEC-v0 section 11.4). */
 export type DirectoryChange = 'critical_marked' | 'critical_unmarked' | 'renamed' | 'rename_applied' | 'rename_dismissed';
+
+/** A change of a template (SPEC-v0 section 9.1): stored without previous_digest is a new one. */
+export type TemplateChange = 'stored' | 'removed' | 'hidden' | 'shown';
+
+/** A change of the approvers (SPEC-v0 section 11.1). */
+export type ApproverChange = 'added' | 'removed';
 
 export type ResultStatus = 'executed' | 'denied' | 'failed';
 export type DeniedBy = 'mandate' | 'approval' | 'rate_limit' | 'emergency_stop' | 'authentication';
@@ -765,6 +773,10 @@ export interface AuditEntry {
   truncated?: { up_to_seq: number; last_digest: string };
   /** directory.changed: the device, and for a rename its former ID. */
   directory?: { change: DirectoryChange; entity_id: string; previous_entity_id?: string };
+  /** template.changed: the template's name and digests, never its content. */
+  template?: { change: TemplateChange; name: string; digest?: string; previous_digest?: string };
+  /** approver.changed: the person's user ID; name added by the API, not part of the chain. */
+  approver?: { change: ApproverChange; id: string; name?: string };
   /** Digest of this entry and of the one before (technical details). */
   digest: string;
   prev: string | null;

@@ -177,8 +177,6 @@ A template is a mandate whose `id`, `principal`, `agent`, `created_by`, `created
 - Open approval requests live in memory: after a restart they are gone and their requests
   have ended without execution.
 - In app mode (Home Assistant OS), admitting agents is not available yet.
-- Changes to mandate templates and approvers are local settings: the specification has no
-  audit event for them, so they do not appear in the audit log.
 - In container mode, the UI needs a certificate and an `https://` public URL (direct mode);
   without them, only the command line manages Home-Mandate.
 - There is no test clock: time windows are tested against the real household time (E2E
