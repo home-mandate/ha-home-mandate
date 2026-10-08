@@ -2,7 +2,7 @@
 <!--
   MCP endpoint (design README 6.11 section 4): the address agents connect to, to copy, and
   the TLS certificate. A missing certificate is amber with exact instructions, not red:
-  agents on this machine still work.
+  agents on this machine still work. Behind a reverse proxy (HM_PROXY) the proxy holds it.
 -->
 <script lang="ts">
   import type { SystemStatus } from '../../api/types.ts';
@@ -29,6 +29,8 @@
     <StatusPill tone="positive"
       >{system.tls.valid_until ? m.set_tls_ok({ date: formatDate(new Date(system.tls.valid_until), ctx) }) : m.status_active()}</StatusPill
     >
+  {:else if system.tls.proxy}
+    <StatusPill tone="positive">{m.set_tls_proxy()}</StatusPill>
   {:else}
     <Banner kind="warning" body={m.set_tls_missing()} />
   {/if}

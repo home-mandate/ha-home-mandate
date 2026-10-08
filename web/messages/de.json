@@ -577,6 +577,7 @@
   "set_tls": "TLS-Zertifikat",
   "set_tls_missing": "Kein Zertifikat gefunden. Lege fullchain.pem und privkey.pem in /ssl ab. Ohne TLS können sich Agenten außerhalb deines Heimnetzes nicht sicher verbinden.",
   "set_tls_ok": "Gültig bis {date} · aus /ssl/fullchain.pem",
+  "set_tls_proxy": "Am Reverse Proxy: Verbindungen sind verschlüsselt, dein Proxy verwaltet das Zertifikat.",
   "set_ui_lang": "Sprache der Oberfläche",
   "set_ui_lang_auto": "Automatisch (Browser: {lang})",
   "set_version": "Version",

@@ -95,6 +95,11 @@ func TestSystem(t *testing.T) {
 	if !sys.TLS.Present || !sys.TLS.RenewalFailed {
 		t.Errorf("renewal failure not reported: %+v", sys.TLS)
 	}
+	h.srv.cfg.TLS = func() TLSStatus { return TLSStatus{Proxy: true} }
+	h.ok(http.MethodGet, "/api/system", nil, &sys)
+	if sys.TLS.Present || !sys.TLS.Proxy || sys.TLS.ValidUntil != nil {
+		t.Errorf("TLS at the reverse proxy not reported: %+v", sys.TLS)
+	}
 	h.srv.cfg.TLS = func() TLSStatus { return TLSStatus{} }
 	h.srv.cfg.MCPURL = ""
 	h.status.HAConnected, h.status.HAVersion = false, ""

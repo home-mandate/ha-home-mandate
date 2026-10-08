@@ -577,6 +577,7 @@
   "set_tls": "TLS certificate",
   "set_tls_missing": "No certificate found. Place fullchain.pem and privkey.pem in /ssl. Without TLS, agents outside your home network can’t connect securely.",
   "set_tls_ok": "Valid until {date} · from /ssl/fullchain.pem",
+  "set_tls_proxy": "At your reverse proxy: connections are encrypted, your proxy manages the certificate.",
   "set_ui_lang": "Interface language",
   "set_ui_lang_auto": "Automatic (browser: {lang})",
   "set_version": "Version",

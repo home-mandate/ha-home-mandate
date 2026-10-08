@@ -139,6 +139,8 @@ type TLSStatus struct {
 	ValidUntil time.Time
 	// RenewalFailed: renewed files could not be taken over; the previous pair is in use.
 	RenewalFailed bool
+	// Proxy: TLS ends at the reverse proxy in front (HM_PROXY), which holds the certificate.
+	Proxy bool
 }
 
 // Server is the API.

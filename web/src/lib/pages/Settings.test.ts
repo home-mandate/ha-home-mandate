@@ -450,12 +450,24 @@ describe('Settings: system sections', () => {
     await start({
       prepare: (api) => {
         const system = api.system.bind(api);
-        api.system = async () => ({ ...(await system()), tls: { present: false, valid_until: null, renewal_failed: false } });
+        api.system = async () => ({ ...(await system()), tls: { present: false, valid_until: null, renewal_failed: false, proxy: false } });
       },
     });
     const mcp = region('MCP endpoint');
     expect((within(mcp).getByLabelText('MCP endpoint address') as HTMLInputElement).value).toBe('https://home.example:8765/mcp');
     expect(within(mcp).getByText(/No certificate found/)).toBeTruthy();
+  });
+
+  it('says that the reverse proxy holds the certificate, without a warning', async () => {
+    await start({
+      prepare: (api) => {
+        const system = api.system.bind(api);
+        api.system = async () => ({ ...(await system()), tls: { present: false, valid_until: null, renewal_failed: false, proxy: true } });
+      },
+    });
+    const mcp = region('MCP endpoint');
+    expect(within(mcp).getByText(/At your reverse proxy/)).toBeTruthy();
+    expect(within(mcp).queryByText(/No certificate found/)).toBeNull();
   });
 
   it('triggers the emergency stop through the frame and lifts it after an inline confirmation', async () => {

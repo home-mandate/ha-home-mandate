@@ -325,7 +325,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - `HM_PROXY` in app mode → start refused (not available there yet)
 - Request from any address but the proxy (also one whose `X-Forwarded-For` names the proxy) → empty 403, on every path; logged at most once a minute
 - Sender: the last entry of the last `X-Forwarded-For` line; client-written earlier entries ignored; missing, empty, with a port or no address → the proxy itself
-- Without a certificate of its own: UI in direct mode, sign-in redirect and OAuth issuer from the public URL, MCP address shown in the UI
+- Without a certificate of its own: UI in direct mode, sign-in redirect and OAuth issuer from the public URL, MCP address shown in the UI; the UI says TLS ends at the proxy instead of warning about a missing certificate
 
 ## 5. Checking internationalization
 

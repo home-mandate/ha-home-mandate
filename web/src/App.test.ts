@@ -275,7 +275,7 @@ describe('App frame', () => {
     const api = createMockClient();
     const system = api.system.bind(api);
     const soon = new Date(Date.now() + 3 * 24 * 3_600_000).toISOString();
-    api.system = async () => ({ ...(await system()), tls: { present: true, valid_until: soon, renewal_failed: true } });
+    api.system = async () => ({ ...(await system()), tls: { present: true, valid_until: soon, renewal_failed: true, proxy: false } });
     const app = new AppState(api);
     render(App, { app });
     await app.start();
@@ -289,7 +289,7 @@ describe('App frame', () => {
     const api = createMockClient();
     const system = api.system.bind(api);
     const past = new Date(Date.now() - 24 * 3_600_000).toISOString();
-    api.system = async () => ({ ...(await system()), tls: { present: true, valid_until: past, renewal_failed: false } });
+    api.system = async () => ({ ...(await system()), tls: { present: true, valid_until: past, renewal_failed: false, proxy: false } });
     const app = new AppState(api);
     render(App, { app });
     await app.start();
@@ -299,11 +299,23 @@ describe('App frame', () => {
     expect(titles).not.toContain('TLS certificate expires soon');
   });
 
+  it('does not warn about a missing certificate when the reverse proxy holds it', async () => {
+    const api = createMockClient();
+    const system = api.system.bind(api);
+    api.system = async () => ({ ...(await system()), tls: { present: false, valid_until: null, renewal_failed: false, proxy: true } });
+    const app = new AppState(api);
+    render(App, { app });
+    await app.start();
+    await tick();
+    const titles = screen.queryAllByRole('alert').map((a) => a.querySelector('strong')?.textContent);
+    expect(titles).not.toContain('No TLS certificate');
+  });
+
   it('does not warn about a certificate valid for longer than 14 days', async () => {
     const api = createMockClient();
     const system = api.system.bind(api);
     const later = new Date(Date.now() + 30 * 24 * 3_600_000).toISOString();
-    api.system = async () => ({ ...(await system()), tls: { present: true, valid_until: later, renewal_failed: false } });
+    api.system = async () => ({ ...(await system()), tls: { present: true, valid_until: later, renewal_failed: false, proxy: false } });
     const app = new AppState(api);
     render(App, { app });
     await app.start();

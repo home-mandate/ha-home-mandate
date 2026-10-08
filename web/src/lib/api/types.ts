@@ -90,7 +90,8 @@ export interface SystemStatus {
   /** URL agents connect to; null without TLS (MCP only on localhost then). */
   mcp_url: string | null;
   /** renewal_failed: renewed files could not be taken over; the previous certificate is in use. */
-  tls: { present: boolean; valid_until: string | null; renewal_failed: boolean };
+  /** proxy: TLS ends at the reverse proxy in front (HM_PROXY), which holds the certificate. */
+  tls: { present: boolean; valid_until: string | null; renewal_failed: boolean; proxy: boolean };
   emergency_stop: EmergencyStop;
   /** The server clock lies behind the newest audit entry: no request is decided (SPEC-v0 section 11.4). */
   clock_behind: boolean;

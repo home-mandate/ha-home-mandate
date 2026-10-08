@@ -141,6 +141,7 @@ type gateway struct {
 
 	server   *http.Server
 	listener net.Listener
+	proxied  bool         // TLS ends at the reverse proxy in front (HM_PROXY)
 	ingress  *http.Server // the UI behind Ingress; nil without HM_INGRESS_ADDR in container mode
 	ingressL net.Listener
 	certs    *tlscert.Loader // the MCP certificate; nil without TLS
@@ -234,7 +235,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		return nil, err
 	}
 	if s.cfg.Proxy.IsValid() {
-		handler = onlyProxy(s.cfg.Proxy, handler, time.Now, logger)
+		handler, g.proxied = onlyProxy(s.cfg.Proxy, handler, time.Now, logger), true
 	}
 	g.server = &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: writeTimeout(s.cfg.ApprovalTimeout), IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10,
@@ -345,13 +346,14 @@ func trustedProxy(ctx context.Context, cfg config.Config, lookup func(context.Co
 	return netip.Addr{}
 }
 
-// tlsStatus reports the MCP endpoint's certificate for the UI.
+// tlsStatus reports the MCP endpoint's certificate for the UI, and whether TLS ends at
+// the reverse proxy in front.
 func (g *gateway) tlsStatus() api.TLSStatus {
 	if g.certs == nil {
-		return api.TLSStatus{}
+		return api.TLSStatus{Proxy: g.proxied}
 	}
 	until, err := g.certs.Status()
-	return api.TLSStatus{Present: true, ValidUntil: until, RenewalFailed: err != nil}
+	return api.TLSStatus{Present: true, ValidUntil: until, RenewalFailed: err != nil, Proxy: g.proxied}
 }
 
 // directMode tells whether the UI is served on the MCP listener with Home-Mandate's own

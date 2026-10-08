@@ -79,7 +79,7 @@
   {#if !system.ha.connected}
     <Banner flush kind="warning" title={m.banner_ha_title()} body={m.banner_ha_body({ time: at(system.ha.since) })} />
   {/if}
-  {#if !system.tls.present}
+  {#if !system.tls.present && !system.tls.proxy}
     <Banner flush kind="warning" title={m.banner_tls_title()} body={m.set_tls_missing()} />
   {/if}
   {#if system.tls.present && system.tls.renewal_failed}

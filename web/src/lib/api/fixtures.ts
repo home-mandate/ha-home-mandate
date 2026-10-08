@@ -80,7 +80,7 @@ export const systemFixture: SystemStatus = {
     ],
   },
   mcp_url: 'https://home.example:8765/mcp',
-  tls: { present: true, valid_until: '2026-12-24T10:00:00Z', renewal_failed: false },
+  tls: { present: true, valid_until: '2026-12-24T10:00:00Z', renewal_failed: false, proxy: false },
   emergency_stop: { active: false, since: null, by_name: null },
   chain: { valid: true, broken_at_seq: null, checked_at: '2026-10-02T17:38:00Z' },
   approvers_configured: 1,

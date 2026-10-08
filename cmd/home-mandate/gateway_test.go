@@ -208,8 +208,11 @@ func TestIngressListenerNeedsAFreeAddress(t *testing.T) {
 }
 
 func TestTLSStatusWithoutCertificate(t *testing.T) {
-	if st := (&gateway{}).tlsStatus(); st.Present || !st.ValidUntil.IsZero() || st.RenewalFailed {
+	if st := (&gateway{}).tlsStatus(); st.Present || !st.ValidUntil.IsZero() || st.RenewalFailed || st.Proxy {
 		t.Errorf("status = %+v", st)
+	}
+	if st := (&gateway{proxied: true}).tlsStatus(); st.Present || !st.Proxy {
+		t.Errorf("behind a proxy: status = %+v", st)
 	}
 }
 
@@ -365,8 +368,12 @@ func TestGatewayBehindAProxy(t *testing.T) {
 		g.ingress.Handler.ServeHTTP(rec, req)
 		var sys struct {
 			MCPURL *string `json:"mcp_url"`
+			TLS    struct {
+				Present, Proxy bool
+			} `json:"tls"`
 		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &sys); err != nil || sys.MCPURL == nil || *sys.MCPURL != "https://hm.example.org/mcp" {
+		if err := json.Unmarshal(rec.Body.Bytes(), &sys); err != nil || sys.MCPURL == nil || *sys.MCPURL != "https://hm.example.org/mcp" ||
+			sys.TLS.Present || !sys.TLS.Proxy {
 			t.Errorf("system = %d %s", rec.Code, rec.Body)
 		}
 	})

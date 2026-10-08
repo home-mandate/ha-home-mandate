@@ -35,6 +35,8 @@ type wireTLS struct {
 	ValidUntil *string `json:"valid_until"`
 	// RenewalFailed: renewed files were found but not taken over (the previous pair stays).
 	RenewalFailed bool `json:"renewal_failed"`
+	// Proxy: TLS ends at the reverse proxy in front (HM_PROXY).
+	Proxy bool `json:"proxy"`
 }
 
 type wireStop struct {
@@ -112,8 +114,9 @@ func (s *Server) system(ctx context.Context) (wireSystem, error) {
 		RetentionDays: int(s.cfg.Retention / (24 * time.Hour)),
 		HA: wireHA{Connected: st.HAConnected, Since: formatTime(st.HASince), Version: optional(st.HAVersion),
 			UserName: s.users.name(ctx, st.ServiceUser), Commands: ha.AllowedCommands()},
-		MCPURL:              optional(s.cfg.MCPURL),
-		TLS:                 wireTLS{Present: tls.Present, ValidUntil: formatTime(tls.ValidUntil), RenewalFailed: tls.RenewalFailed},
+		MCPURL: optional(s.cfg.MCPURL),
+		TLS: wireTLS{Present: tls.Present, ValidUntil: formatTime(tls.ValidUntil), RenewalFailed: tls.RenewalFailed,
+			Proxy: tls.Proxy},
 		EmergencyStop:       stop,
 		Chain:               s.chain.get(),
 		ApproversConfigured: len(approvers),
