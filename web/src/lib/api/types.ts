@@ -550,6 +550,59 @@ export interface TemplateUpdate {
   confirm_critical?: boolean;
 }
 
+/**
+ * GET api/templates/{name}/usage (#18): the active mandates of active agents whose rules
+ * were last taken from the template. digest: the template's now.
+ */
+export interface TemplateUsage {
+  name: string;
+  digest: string;
+  mandates: TemplateUser[];
+}
+
+export interface TemplateUser {
+  mandate_id: string;
+  /** Untrusted text, rendered escaped. */
+  mandate_name: string;
+  client_id: string;
+  /** Untrusted text, rendered escaped. */
+  agent_display_name: string;
+  /** The mandate's current version: the base of taking the template over. */
+  digest: string;
+  /** When the rules were last taken from the template, and its digest then. */
+  taken_at: string;
+  template_digest: string;
+  /** A later version came from an edit; taking the template over replaces it. */
+  edited_since: boolean;
+  /** The rules are the template's as it is now. */
+  up_to_date: boolean;
+}
+
+/**
+ * POST api/templates/{name}/apply (#18): the template as the human saw it (its digest;
+ * another one is "conflict") becomes a new version of each target, at most 100, each with
+ * the version the human saw. One confirm_critical covers every target that would gain a
+ * rule allowing critical actions without approval; without it the answer is
+ * critical_confirmation_required and no mandate changes.
+ */
+export interface TemplateRolloutRequest {
+  template_digest: string;
+  targets: { mandate_id: string; base_digest: string }[];
+  confirm_critical?: boolean;
+}
+
+/**
+ * Result per mandate: updated; unchanged (already equal, no version); conflict (changed
+ * since it was seen); revoked (the mandate or its agent); not_found; failed (anything
+ * else). Each mandate changed alone: one refused holds back no other.
+ */
+export type RolloutResult = 'updated' | 'unchanged' | 'conflict' | 'revoked' | 'not_found' | 'failed';
+
+export interface TemplateRollout {
+  /** In the order of the targets. digest: the mandate's current version, null if unknown. */
+  results: { mandate_id: string; result: RolloutResult; digest: string | null }[];
+}
+
 // ---------------------------------------------------------------------------
 // Settings: GET|PUT api/settings – defaults for new templates and mandates
 

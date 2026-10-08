@@ -59,7 +59,10 @@ import type {
   Session,
   SystemStatus,
   Template,
+  TemplateRollout,
+  TemplateRolloutRequest,
   TemplateSummary,
+  TemplateUser,
 } from './types.ts';
 
 const STATUS: Record<ApiErrorCode, number> = {
@@ -277,6 +280,15 @@ function templateOrder(list: readonly Template[]): Template[] {
 }
 
 const MAX_DEVICES = 5;
+/** internal/api maxRolloutTargets and mandateIDPattern. */
+const MAX_ROLLOUT_TARGETS = 100;
+const MANDATE_ID = /^[A-Za-z0-9_-]{4,64}$/;
+/** Digests of mandate versions in the mock are made up ("sha256:mock-3"), not hex. */
+const VERSION_DIGEST = /^sha256:[\w-]+$/;
+
+type RolloutPlan =
+  | { target: TemplateRolloutRequest['targets'][number]; result: 'not_found' | 'revoked' | 'conflict' }
+  | { target: TemplateRolloutRequest['targets'][number]; next: MandateDraft; critical: boolean };
 const SERVICE = /^[a-z0-9_]{1,64}$/;
 
 /** checkApprover applies the server's rules for saving an approver (decision F2). */
@@ -517,9 +529,9 @@ export function createMockClient(options: MockOptions = {}): MockClient {
   }
 
   /** A template to make a mandate from: hidden base templates are refused, as at admission. */
-  function template(name: string, field = '/template'): Template {
+  function template(name: string, field = '/template', code: ApiErrorCode = 'invalid_input'): Template {
     const t = state.templates.find((x) => x.name === name);
-    return t && !t.hidden ? t : fail('invalid_input', field);
+    return t && !t.hidden ? t : code === 'invalid_input' ? fail(code, field) : fail(code);
   }
 
   /**
@@ -891,6 +903,61 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       if (existing.builtin) fail('builtin_template');
       state = { ...state, templates: state.templates.filter((t) => t.name !== name) };
       emit({ type: 'templates.changed' });
+    },
+    async templateUsage(name) {
+      const t = state.templates.find((x) => x.name === name) ?? fail('not_found');
+      const mandates: TemplateUser[] = [];
+      for (const [id, m] of Object.entries(state.mandates)) {
+        const from = rulesFrom(m);
+        const current = m.versions[0];
+        const agent = state.agents.find((a) => a.mandate?.id === id);
+        if (!from || from.template !== name || !current || m.status !== 'active' || agent?.status !== 'active') continue;
+        mandates.push({
+          mandate_id: id,
+          mandate_name: m.name,
+          client_id: agent.client_id,
+          agent_display_name: agent.display_name,
+          digest: current.meta.digest,
+          taken_at: from.at,
+          template_digest: from.template_digest,
+          edited_since: from.edited_since,
+          up_to_date: !from.edited_since && from.template_digest === t.digest,
+        });
+      }
+      return copy({ name, digest: t.digest, mandates });
+    },
+    async applyTemplateToMandates(name, request) {
+      if (!DIGEST.test(request.template_digest)) fail('invalid_input', '/template_digest');
+      const targets = request.targets;
+      if (targets.length === 0 || targets.length > MAX_ROLLOUT_TARGETS) fail('invalid_input', '/targets');
+      const seen = new Set<string>();
+      targets.forEach((t, i) => {
+        if (seen.has(t.mandate_id) || !MANDATE_ID.test(t.mandate_id)) fail('invalid_input', `/targets/${i}/mandate_id`);
+        if (!VERSION_DIGEST.test(t.base_digest)) fail('invalid_input', `/targets/${i}/base_digest`);
+        seen.add(t.mandate_id);
+      });
+      const t = template(name, '/name', 'not_found');
+      if (t.digest !== request.template_digest) fail('conflict');
+      const draft = resolved(name);
+      const origin = { origin: 'template' as const, template: name, template_digest: t.digest };
+      const planned = targets.map((target): RolloutPlan => {
+        const m = state.mandates[target.mandate_id];
+        const current = m?.versions[0];
+        if (!m || !current) return { target, result: 'not_found' };
+        const agent = state.agents.find((a) => a.mandate?.id === target.mandate_id);
+        if (m.status !== 'active' || agent?.status !== 'active') return { target, result: 'revoked' };
+        if (current.meta.digest !== target.base_digest) return { target, result: 'conflict' };
+        const next = { ...draftOf(current.document), rules: draft.rules, approval: draft.approval, limits: draft.limits };
+        return { target, next, critical: needsCriticalConfirmation(draftOf(current.document), next) };
+      });
+      if (request.confirm_critical !== true && planned.some((p) => 'next' in p && p.critical)) fail('critical_confirmation_required');
+      const results = planned.map((p): TemplateRollout['results'][number] => {
+        if (!('next' in p)) return { mandate_id: p.target.mandate_id, result: p.result, digest: state.mandates[p.target.mandate_id]?.versions[0]?.meta.digest ?? null };
+        const after = storeVersion(p.target.mandate_id, p.target.base_digest, p.next, true, undefined, origin);
+        const result = after.summary.digest === p.target.base_digest ? 'unchanged' : 'updated';
+        return { mandate_id: p.target.mandate_id, result, digest: after.summary.digest };
+      });
+      return copy({ results });
     },
     async setTemplateHidden(name, hidden) {
       if (typeof hidden !== 'boolean') fail('invalid_input', '/hidden');

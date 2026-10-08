@@ -12,7 +12,7 @@
   import { onMount, tick } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { ApiError } from '../api/client.ts';
-  import type { ApproverList, Defaults, DeviceCatalog, MandateDraft, Template, TemplateSummary } from '../api/types.ts';
+  import type { ApproverList, Defaults, DeviceCatalog, MandateDraft, Template, TemplateSummary, TemplateUser } from '../api/types.ts';
   import { Loader } from '../app/loader.svelte.ts';
   import type { AppState } from '../app/state.svelte.ts';
   import BackLink from '../components/BackLink.svelte';
@@ -27,6 +27,7 @@
   import TemplateHeader from '../components/mandate/TemplateHeader.svelte';
   import TemplateLoadDialog from '../components/mandate/TemplateLoadDialog.svelte';
   import TemplateSaveAsDialog from '../components/mandate/TemplateSaveAsDialog.svelte';
+  import TemplateRolloutDialog from '../components/mandate/TemplateRolloutDialog.svelte';
   import { needsCriticalConfirmation } from '../engine/vocabulary.ts';
   import { m } from '../i18n.ts';
   import { countChanges, type Edited } from '../mandate/changes.ts';
@@ -98,6 +99,8 @@
   const touched = new SvelteSet<string>();
   let saveOpen = $state(false);
   let saving = $state(false);
+  /** After saving: the mandates whose rules came from the template, to take the change over (#18). */
+  let rollout = $state.raw<{ template: Template; users: TemplateUser[] } | null>(null);
   let saveError = $state('');
   let saveAsOpen = $state(false);
   let saveAsError = $state('');
@@ -121,7 +124,7 @@
   const saveable = $derived(own && newer === null);
   /** Where the unsaved edit is kept while the app is open. */
   const key = $derived(name ?? NEW_TEMPLATE_KEY);
-  const dialogOpen = $derived(saveOpen || saveAsOpen || deleteOpen || loadOpen);
+  const dialogOpen = $derived(saveOpen || saveAsOpen || deleteOpen || loadOpen || rollout !== null);
 
   const problems = $derived(draft ? describeProblems(title, draft).filter((p) => p.part !== NAME_PART) : []);
   const ruleKey = (index: number) => `rule:${draft?.rules[index]?.id ?? index}`;
@@ -272,6 +275,7 @@
       adopt(saved, page.data?.defaults ?? FALLBACK_DEFAULTS);
       saveOpen = false;
       toasts.show({ kind: 'success', text: m.template_saved_toast() });
+      await offerRollout(saved);
     } catch (err) {
       // Changed or deleted meanwhile: the reload shows which, and the edit stays.
       conflict = err instanceof ApiError && (err.code === 'conflict' || err.code === 'not_found');
@@ -284,6 +288,19 @@
       saveOpen = false;
       await reload();
       if (!newer) toasts.show({ kind: 'error', text: m.toast_save_failed() });
+    }
+  }
+
+  /**
+   * offerRollout asks what the change should affect when mandates took their rules from
+   * the template; nothing is asked when none did or all are already up to date.
+   */
+  async function offerRollout(saved: Template) {
+    try {
+      const usage = await app.api.templateUsage(saved.name);
+      if (usage.digest === saved.digest && usage.mandates.some((u) => !u.up_to_date)) rollout = { template: saved, users: usage.mandates };
+    } catch {
+      toasts.show({ kind: 'error', text: m.rollout_usage_failed() });
     }
   }
 
@@ -472,6 +489,17 @@
     onclose={() => (saveAsOpen = false)}
     onconfirm={(target) => void saveAs(target)}
   />
+  {#if rollout}
+    <TemplateRolloutDialog
+      open={rollout !== null}
+      api={app.api}
+      template={rollout.template}
+      users={rollout.users}
+      {catalog}
+      {ctx}
+      onclose={() => (rollout = null)}
+    />
+  {/if}
   <TemplateDeleteDialog open={deleteOpen} {title} {busy} error={deleteError} onclose={() => (deleteOpen = false)} ondelete={() => void remove()} />
   <TemplateLoadDialog open={loadOpen} templates={page.data.list} current={name} {changes} onclose={() => (loadOpen = false)} />
 {/if}

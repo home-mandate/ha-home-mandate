@@ -37,8 +37,18 @@ const text = {
     continue: 'Weiter',
     allows: 'Darf',
     startFrom: 'Mit einer Vorlage starten',
-    changeMandate: 'Mandat wechseln',
+    changeMandate: 'Regeln aus einer Vorlage übernehmen',
     rest: 'Alles andere ist verboten.',
+    saveTitle: 'Änderungen speichern?',
+    saveTemplate: 'Vorlage speichern',
+    rollout: 'Änderung auch in Mandate übernehmen?',
+    onlyTemplate: 'Nur die Vorlage',
+    takeOverOne: 'In 1 Mandat übernehmen',
+    selectNone: 'Keine auswählen',
+    takeOverNone: 'In 0 Mandate übernehmen',
+    updatedOne: 'Aktualisiert: 1 · Nicht aktualisiert: 0',
+    close: 'Schließen',
+    rateOfMandate: /1 von 20 Aktionen/,
   },
   en: {
     mandates: 'Mandates',
@@ -69,8 +79,18 @@ const text = {
     continue: 'Continue',
     allows: 'May',
     startFrom: 'Start from a template',
-    changeMandate: 'Change mandate',
+    changeMandate: 'Take over rules from a template',
     rest: 'Everything else is forbidden.',
+    saveTitle: 'Save changes?',
+    saveTemplate: 'Save template',
+    rollout: 'Take the change over into mandates too?',
+    onlyTemplate: 'Only the template',
+    takeOverOne: 'Take over into 1 mandate',
+    selectNone: 'Select none',
+    takeOverNone: 'Take over into 0 mandates',
+    updatedOne: 'Updated: 1 · Not updated: 0',
+    close: 'Close',
+    rateOfMandate: /1 of 20 actions/,
   },
 } as const;
 
@@ -173,6 +193,57 @@ test('a hidden base template is marked, offered nowhere, and offered again once 
   await expect(page.getByRole('region', { name: t.startFrom }).getByRole('heading', { name: t.lightClimate })).toBeVisible();
   await go(page, `#/agents/id/${VOICE}`);
   await expect(page.getByLabel(t.changeMandate).locator('option', { hasText: t.lightClimate })).toHaveCount(1);
+});
+
+/** saveRate changes the rate limit of the open template and saves it in place. */
+async function saveRate(page: Page, t: ReturnType<typeof texts>, value: string) {
+  await page.getByLabel(t.rate).fill(value);
+  await page.getByRole('button', { name: t.save, exact: true }).click();
+  await page.getByRole('dialog', { name: t.saveTitle }).getByRole('button', { name: t.saveTemplate }).click();
+}
+
+test('a changed template is taken over into the chosen mandates, with the keyboard only (#18)', async ({ page }, info) => {
+  const t = texts(info.project.name);
+  await page.goto('./#/templates/voice-assistant');
+  await saveRate(page, t, '20');
+  const dialog = page.getByRole('dialog', { name: t.rollout });
+  await expect(dialog).toBeVisible();
+  const voice = dialog.getByRole('checkbox', { name: 'Sprachassistent' });
+  await expect(voice).toBeChecked();
+  // None, then the one again with the keyboard.
+  await dialog.getByRole('button', { name: t.selectNone }).click();
+  await expect(voice).not.toBeChecked();
+  await expect(dialog.getByRole('button', { name: t.takeOverNone })).toHaveAttribute('aria-disabled', 'true');
+  await voice.focus();
+  await page.keyboard.press('Space');
+  await expect(voice).toBeChecked();
+  await dialog.getByRole('button', { name: t.takeOverOne }).focus();
+  await page.keyboard.press('Enter');
+  await expect(dialog.getByRole('status')).toHaveText(t.updatedOne);
+  await dialog.getByRole('button', { name: t.close }).click();
+  await expect(dialog).toHaveCount(0);
+  // The agent's mandate has the template's new rate limit.
+  await go(page, `#/agents/id/${VOICE}`);
+  await expect(page.getByText(t.rateOfMandate)).toBeVisible();
+});
+
+test('“only the template” leaves the mandates as they are (#18)', async ({ page }, info) => {
+  const t = texts(info.project.name);
+  await page.goto('./#/templates/voice-assistant');
+  await saveRate(page, t, '20');
+  const dialog = page.getByRole('dialog', { name: t.rollout });
+  await dialog.getByRole('button', { name: t.onlyTemplate }).click();
+  await expect(dialog).toHaveCount(0);
+  await go(page, `#/agents/id/${VOICE}`);
+  await expect(page.getByText(t.rateOfMandate)).toHaveCount(0);
+});
+
+test('saving a template no mandate uses asks nothing (#18)', async ({ page }, info) => {
+  const t = texts(info.project.name);
+  await page.goto('./#/templates/empty');
+  await saveRate(page, t, '20');
+  await expect(page.getByText(t.unsaved)).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: t.rollout })).toHaveCount(0);
 });
 
 test('mobile: template list and editor without sideways scrolling', async ({ page }) => {

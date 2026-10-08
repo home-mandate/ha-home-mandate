@@ -37,7 +37,10 @@ import type {
   SystemStatus,
   Template,
   TemplateSummary,
+  TemplateRollout,
+  TemplateRolloutRequest,
   TemplateUpdate,
+  TemplateUsage,
 } from './types.ts';
 
 export interface EventHandlers {
@@ -86,6 +89,10 @@ export interface ApiClient {
   deleteTemplate(name: string): Promise<void>;
   /** Hides a base template from admission, or shows it again. */
   setTemplateHidden(name: string, hidden: boolean): Promise<void>;
+  /** The active mandates whose rules were last taken from the template (#18). */
+  templateUsage(name: string): Promise<TemplateUsage>;
+  /** Takes the template over into the target mandates, each on its own (#18). */
+  applyTemplateToMandates(name: string, request: TemplateRolloutRequest): Promise<TemplateRollout>;
 
   settings(): Promise<Defaults>;
   putSettings(defaults: Defaults): Promise<Defaults>;
@@ -360,6 +367,8 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
     putTemplate: async (name, update) => request('PUT', `templates/${segment(name)}`, update),
     deleteTemplate: async (name) => request('DELETE', `templates/${segment(name)}`),
     setTemplateHidden: async (name, hidden) => request('PUT', `templates/${segment(name)}/hidden`, { hidden }),
+    templateUsage: async (name) => get(`templates/${segment(name)}/usage`),
+    applyTemplateToMandates: async (name, body) => request('POST', `templates/${segment(name)}/apply`, body),
 
     settings: () => get('settings'),
     putSettings: (defaults) => request('PUT', 'settings', defaults),

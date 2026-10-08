@@ -4,7 +4,8 @@
   and its rules allow critical actions without approval: on pairing, for a new mandate and
   when a template replaces the rules of a mandate. The server asks for it (answer
   critical_confirmation_required); this box names the template, the agent and every such
-  rule. It is inline, not a second dialog: the safe choice comes first and gets the focus,
+  rule. Taking a changed template over into several mandates (#18) asks once for all of
+  them and lists their agents. It is inline, not a second dialog: the safe choice comes first and gets the focus,
   only "Allow without approval" sends the confirmation. Escape cancels.
 -->
 <script lang="ts">
@@ -22,7 +23,9 @@
     /** Title of the template, as the list showed it (mandate/template.ts templateTitle). */
     template: string;
     /** Name of the agent; untrusted. */
-    agent: string;
+    agent?: string;
+    /** Names of several agents (untrusted), confirmed at once; replaces agent. */
+    agents?: readonly string[];
     /** The template's rules with allow_critical; null when they could not be loaded. */
     rules: readonly Rule[] | null;
     catalog: DeviceCatalog;
@@ -32,7 +35,7 @@
     onconfirm: () => void;
   }
 
-  let { template, agent, rules, catalog, locale, busy, oncancel, onconfirm }: Props = $props();
+  let { template, agent = '', agents, rules, catalog, locale, busy, oncancel, onconfirm }: Props = $props();
 
   const id = $props.id();
   let cancel: HTMLButtonElement | undefined = $state();
@@ -40,6 +43,7 @@
   // Sentence split around the two names, so each sits in its own <bdi>.
   const parts = $derived(around(m.template_critical_body({ template: MARK, agent: MARK2 })));
   const tail = $derived((parts[1] ?? '').split(MARK2));
+  const many = $derived(around(m.template_critical_body_many({ template: MARK })));
 
   onMount(() => cancel?.focus());
 
@@ -53,9 +57,16 @@
 
 <div class="box" role="alertdialog" tabindex="-1" aria-modal="false" aria-labelledby="{id}-title" aria-describedby="{id}-body" onkeydown={key}>
   <h3 id="{id}-title"><Icon name="critical" size={20} /><span>{m.template_critical_title()}</span></h3>
-  <p id="{id}-body">
-    {parts[0]}<bdi>{template}</bdi>{tail[0]}<bdi>{cleanUntrusted(agent)}</bdi>{tail[1] ?? ''}
-  </p>
+  {#if agents}
+    <p id="{id}-body">{many[0]}<bdi>{template}</bdi>{many[1]}</p>
+    <ul role="list" class="agents" aria-label={m.template_critical_agents()}>
+      {#each agents as name, i (i)}<li><bdi>{cleanUntrusted(name)}</bdi></li>{/each}
+    </ul>
+  {:else}
+    <p id="{id}-body">
+      {parts[0]}<bdi>{template}</bdi>{tail[0]}<bdi>{cleanUntrusted(agent)}</bdi>{tail[1] ?? ''}
+    </p>
+  {/if}
   {#if rules && rules.length > 0}
     <ul role="list">
       {#each rules as rule (rule.id)}
@@ -109,6 +120,13 @@
     margin: 0;
     padding: 0;
     list-style: none;
+  }
+  .agents {
+    gap: var(--hm-space-1);
+    padding-inline-start: var(--hm-space-4);
+    list-style: disc;
+    font-weight: var(--hm-font-weight-semibold);
+    overflow-wrap: anywhere;
   }
   .actions {
     display: flex;
