@@ -1,9 +1,11 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!--
-  The agent's mandate on its detail page (design README 6.2; decisions D3, G7): name with
-  status, the rate limit and how much of it the last hour used, and a change from a
-  template. An active mandate takes the template as a new version (rules only; name and
-  validity stay); an active agent without an active mandate gets a new one. A revoked
+  The agent's mandate on its detail page (design README 6.2; decisions D3, G7; #16): name
+  with status, where its rules came from, the rate limit and how much of it the last hour
+  used, and taking over rules from a template. An active mandate takes the template as a
+  new version (rules only; validity stays, and so does the name unless the human takes
+  the proposed one while the mandate is still named after its previous template); an
+  active agent without an active mandate gets a new one, named after the agent. A revoked
   agent cannot get one: revoking is final.
 -->
 <script lang="ts">
@@ -11,6 +13,7 @@
   import type { Agent, DeviceCatalog, Rule, Template } from '../../api/types.ts';
   import { formatNumber, type FormatContext } from '../../format.ts';
   import { m } from '../../i18n.ts';
+  import { renameProposal, rulesFromText } from '../../mandate/origin.ts';
   import { templateDescription, templateTitle, titleOf } from '../../mandate/template.ts';
   import { currentNumber } from '../../mandate/versions.ts';
   import { href } from '../../router.ts';
@@ -22,6 +25,7 @@
   import CriticalTemplateConfirm from '../mandate/CriticalTemplateConfirm.svelte';
   import MandateStatus from '../mandate/MandateStatus.svelte';
   import PlainWords from '../mandate/PlainWords.svelte';
+  import RenameChoice from './RenameChoice.svelte';
 
   interface Props {
     api: ApiClient;
@@ -42,6 +46,8 @@
   /** The server asked for the separate confirmation (U9): the template and its critical rules. */
   let confirming: { template: string; rules: Rule[] | null } | null = $state(null);
   let apply: HTMLButtonElement | undefined = $state();
+  /** The human takes the proposed name (the default while one is proposed). */
+  let rename = $state(true);
 
   const mandate = $derived(agent.mandate);
   const active = $derived(agent.status === 'active');
@@ -50,6 +56,9 @@
   // A template that is no longer offered falls back to the first one.
   const chosen = $derived(templates.some((t) => t.name === template) ? template : (templates[0]?.name ?? ''));
   const picked = $derived(templates.find((t) => t.name === chosen) ?? null);
+  const origin = $derived(mandate ? rulesFromText(mandate.rules_from, templates, ctx) : '');
+  /** The agent's name, proposed while the mandate is still named after the template its rules came from. */
+  const proposal = $derived(mandate && replaces ? renameProposal(mandate.name, agent.display_name, mandate.rules_from, templates) : null);
   const rate = $derived(
     mandate?.max_actions_per_hour == null
       ? m.agent_detail_rate_none()
@@ -62,12 +71,15 @@
     error = '';
     const extra = confirm ? { confirm_critical: true } : {};
     try {
+      const renamed = proposal !== null && rename ? { name: proposal } : {};
+      // The version shown here is the base: a change by someone else since then is a conflict.
+      // A new mandate is named after the agent by the server.
       const detail = mandate && replaces
-        ? // The version shown here is the base: a change by someone else since then is a conflict.
-          await api.applyTemplate(mandate.id, { template: chosen, base_digest: mandate.digest, ...extra })
-        : await api.createMandate({ client_id: agent.client_id, template: chosen, name: titleOf(chosen, templates), ...extra });
+        ? await api.applyTemplate(mandate.id, { template: chosen, base_digest: mandate.digest, ...renamed, ...extra })
+        : await api.createMandate({ client_id: agent.client_id, template: chosen, ...extra });
       confirming = null;
-      toasts.show({ kind: 'success', text: m.toast_saved({ version: currentNumber(detail.versions) }) });
+      const unchanged = 'result' in detail && detail.result === 'unchanged';
+      toasts.show({ kind: 'success', text: unchanged ? m.agent_detail_change_unchanged() : m.toast_saved({ version: currentNumber(detail.versions) }) });
     } catch (err) {
       if (!confirm && err instanceof ApiError && err.code === 'critical_confirmation_required') {
         confirming = { template: chosen, rules: await criticalRules(chosen) };
@@ -110,10 +122,12 @@
     {#if mandate}
       <a href={href({ name: 'mandate', id: mandate.id })}><bdi>{cleanUntrusted(mandate.name)}</bdi></a>
       <MandateStatus status={mandate.status} compact />
+      {#if mandate.status === 'active'}<a class="rename" href={href({ name: 'mandate', id: mandate.id })}>{m.agent_detail_rename()}</a>{/if}
     {:else}
       <span class="muted">{m.agents_no_mandate()}</span>
     {/if}
   </div>
+  {#if origin}<p class="muted">{origin}</p>{/if}
   {#if mandate}
     <dl>
       <dt>{m.agent_detail_rate()}</dt>
@@ -138,6 +152,9 @@
           {#if templateDescription(picked)}<p class="description">{templateDescription(picked)}</p>{/if}
           <PlainWords draft={picked.draft} {catalog} locale={ctx.locale} />
         </div>
+      {/if}
+      {#if proposal !== null && mandate}
+        <RenameChoice current={mandate.name} proposed={proposal} bind:rename />
       {/if}
       <Button bind:element={apply} {busy} disabled={confirming !== null} onclick={() => change()}>{m.agent_detail_change_apply()}</Button>
     </div>
@@ -178,6 +195,11 @@
   .current a {
     font-weight: var(--hm-font-weight-semibold);
     color: var(--hm-color-accent-text);
+  }
+  .current a.rename {
+    margin-inline-start: auto;
+    font-size: var(--hm-font-size-sm);
+    font-weight: var(--hm-font-weight-medium);
   }
   dl {
     display: grid;

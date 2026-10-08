@@ -21,6 +21,7 @@
   import { formatDate } from '../format.ts';
   import { m } from '../i18n.ts';
   import { effectiveStatus } from '../mandate/dates.ts';
+  import { rulesFromText } from '../mandate/origin.ts';
   import { offeredTemplates } from '../mandate/template.ts';
   import { parseDateTime } from '../engine/check.ts';
   import { getLocale } from '../paraglide/runtime.js';
@@ -167,7 +168,10 @@
         <tbody>
           {#each data.mandates as mandate (mandate.id)}
             <tr>
-              <th scope="row"><a href={href({ name: 'mandate', id: mandate.id })}><bdi>{cleanUntrusted(mandate.name)}</bdi></a></th>
+              <th scope="row">
+                <a href={href({ name: 'mandate', id: mandate.id })}><bdi>{cleanUntrusted(mandate.name)}</bdi></a>
+                {#if mandate.rules_from}<span class="origin">{rulesFromText(mandate.rules_from, data.templates, ctx)}</span>{/if}
+              </th>
               <td><AgentName name={mandate.agent_display_name} /></td>
               <td class="muted">{m.mandates_rules_count({ count: mandate.rule_count })}</td>
               <td class="muted">{until(mandate)}</td>
@@ -189,6 +193,7 @@
           <a href={href({ name: 'mandate', id: mandate.id })}>
             <span class="row"><bdi class="name">{cleanUntrusted(mandate.name)}</bdi><span class="chevron"><Icon name="chevron" /></span></span>
             <span class="agent"><AgentName name={mandate.agent_display_name} /></span>
+            {#if mandate.rules_from}<span class="origin">{rulesFromText(mandate.rules_from, data.templates, ctx)}</span>{/if}
             <span class="facts">
               <MandateStatus status={effectiveStatus(mandate, serverNow)} compact />
               <span>{m.mandates_rules_count({ count: mandate.rule_count })} · {m.mandates_valid_until_date({ date: until(mandate) })}</span>
@@ -206,6 +211,13 @@
 {/if}
 
 <style>
+  .origin {
+    display: block;
+    margin-block-start: var(--hm-space-1);
+    font-size: var(--hm-font-size-sm);
+    font-weight: var(--hm-font-weight-regular);
+    color: var(--hm-color-text-muted);
+  }
   .stale {
     display: flex;
     align-items: flex-start;

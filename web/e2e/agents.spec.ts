@@ -8,10 +8,16 @@ import { expect, pageScroll, test } from './support.ts';
 const text = {
   de: { agents: 'Agenten', add: 'Agent hinzufügen', code: /Mit Kopplungscode/, field: 'Kopplungscode', verify: 'Ist das der richtige Agent?',
     voice: /Sprachassistent/, done: /ist verbunden/, open: 'Zum Agenten', revoke: 'Zugriff entziehen', cancel: 'Abbrechen',
-    identity: 'Identität', revoked: /Entzogen am/ },
+    identity: 'Identität', revoked: /Entzogen am/, takeOver: 'Regeln aus einer Vorlage übernehmen', apply: 'Übernehmen',
+    origin: /Regeln zuletzt aus der Vorlage .*voice-assistant.* übernommen am/, unchanged: 'Keine Änderungen – schon auf dem neuesten Stand',
+    nameGroup: 'Name des Mandats', take: /^Umbenennen in/, keep: /behalten$/, saved: /Mandat gespeichert/, fromTemplate: /Aus der Vorlage .*read-only/,
+    rename: 'Namen ändern', mandateHeading: 'Mandat' },
   en: { agents: 'Agents', add: 'Add agent', code: /With a pairing code/, field: 'Pairing code', verify: 'Is this the right agent?',
     voice: /Voice assistant/, done: /is connected/, open: 'Go to agent', revoke: 'Revoke access', cancel: 'Cancel',
-    identity: 'Identity', revoked: /Revoked on/ },
+    identity: 'Identity', revoked: /Revoked on/, takeOver: 'Take over rules from a template', apply: 'Apply',
+    origin: /Rules last taken from the template .*voice-assistant.* on/, unchanged: 'No changes — already up to date',
+    nameGroup: 'Name of the mandate', take: /^Rename to/, keep: /^Keep/, saved: /Mandate saved/, fromTemplate: /From the template .*read-only/,
+    rename: 'Change name', mandateHeading: 'Mandate' },
 } as const;
 
 type Lang = keyof typeof text;
@@ -75,9 +81,37 @@ test('revokes an agent after the confirmation that starts on Cancel', async ({ p
   await expect(page.getByRole('button', { name: t.revoke })).toHaveCount(0);
 });
 
+test('takes over rules from a template: where they came from, and nothing stored when nothing changes (#16)', async ({ page }, info) => {
+  const t = text[info.project.name as Lang];
+  await page.goto('./#/agents/id/pair%3Avoice-assistant');
+  const mandate = page.getByRole('group', { name: t.mandateHeading });
+  await expect(mandate.getByText(t.origin)).toBeVisible();
+  await expect(mandate.getByRole('link', { name: t.rename })).toHaveAttribute('href', /#\/mandates\/mandate-voice$/);
+  // Named by a human: no rename is proposed.
+  await expect(page.getByRole('group', { name: t.nameGroup })).toHaveCount(0);
+  await page.getByLabel(t.takeOver).selectOption('voice-assistant');
+  await page.getByRole('button', { name: t.apply, exact: true }).click();
+  await expect(page.getByText(t.unchanged)).toBeVisible();
+});
+
+test('proposes the agent’s name for a mandate still named after its template (#16)', async ({ page }, info) => {
+  const t = text[info.project.name as Lang];
+  await page.goto('./#/agents/id/pair%3Abidi');
+  const group = page.getByRole('group', { name: t.nameGroup });
+  await expect(group.getByRole('radio', { name: t.take })).toBeChecked();
+  await expect(group.getByRole('radio', { name: t.keep })).not.toBeChecked();
+  await page.getByLabel(t.takeOver).selectOption('read-only');
+  await page.getByRole('button', { name: t.apply, exact: true }).click();
+  await expect(page.getByText(t.saved)).toBeVisible();
+  // Renamed after the agent: nothing to propose any more.
+  await expect(group).toHaveCount(0);
+  await page.goto('./#/mandates/mandate-bidi/versions');
+  await expect(page.getByText(t.fromTemplate)).toBeVisible();
+});
+
 test('mobile: list, pairing and detail without sideways scrolling', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 800 });
-  for (const path of ['./#/agents', './#/agents/pair', './#/agents/browser', `./#/agents/id/${CLAUDE}`, './#/agents/id/pair%3Along']) {
+  for (const path of ['./#/agents', './#/agents/pair', './#/agents/browser', `./#/agents/id/${CLAUDE}`, './#/agents/id/pair%3Along', './#/agents/id/pair%3Abidi']) {
     await page.goto(path);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     expect(await pageScroll(page), path).toBe(0);

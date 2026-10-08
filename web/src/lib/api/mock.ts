@@ -53,6 +53,7 @@ import type {
   MandateDocument,
   MandateDraft,
   MandateVersion,
+  RulesFrom,
   PairingCandidate,
   ServerEvent,
   Session,
@@ -199,14 +200,20 @@ function hostileState(state: State): State {
   return { ...renamed, approvals: { ...renamed.approvals, open: [...renamed.approvals.open, request] } };
 }
 
-function initialMandates(): Record<string, StoredMandate> {
+/** The fixture mandates; the voice assistant's rules came from the template of that name, the others' are of before origins. */
+function initialMandates(templates: readonly Template[]): Record<string, StoredMandate> {
+  const voice = templates.find((t) => t.name === 'voice-assistant');
   return Object.fromEntries(
     agentsFixture
       .filter((a) => a.mandate !== null)
       .map((a, i): [string, StoredMandate] => {
         const id = a.mandate?.id ?? '';
         const document: MandateDocument = { ...voiceAssistantMandate, id, agent: { client_id: a.client_id, display_name: a.display_name } };
-        const meta = { number: 1, digest: `sha256:fixture-${i}`, created_at: document.created_at, created_by: 'u-admin', created_by_name: 'Markus' };
+        const origin: Pick<MandateVersion, 'origin' | 'template' | 'template_digest'> =
+          id === 'mandate-voice' && voice
+            ? { origin: 'template', template: voice.name, template_digest: voice.digest }
+            : { origin: 'unknown', template: null, template_digest: null };
+        const meta = { number: 1, digest: `sha256:fixture-${i}`, created_at: document.created_at, created_by: 'u-admin', created_by_name: 'Markus', ...origin };
         return [id, { name: a.mandate?.name ?? id, status: 'active', versions: [{ meta, document }] }];
       }),
   );
@@ -219,6 +226,16 @@ const draftOf = (d: MandateDocument): MandateDraft => ({
   valid_from: d.valid_from,
   ...(d.expires === undefined ? {} : { expires: d.expires }),
 });
+
+/** rulesFrom is the template a mandate's rules were last taken from (versions newest first). */
+function rulesFrom(m: StoredMandate): RulesFrom | null {
+  const i = m.versions.findIndex((v) => v.meta.origin === 'template');
+  const v = m.versions[i];
+  if (!v || v.meta.template === null || v.meta.template_digest === null) return null;
+  return { template: v.meta.template, template_digest: v.meta.template_digest, at: v.meta.created_at, edited_since: i > 0 };
+}
+
+const EDITED: Pick<MandateVersion, 'origin' | 'template' | 'template_digest'> = { origin: 'edit', template: null, template_digest: null };
 
 /** validate rejects a draft the server would reject, with the pointer under /draft. */
 function validate(draft: MandateDraft): void {
@@ -355,7 +372,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     devices: devicesFixture,
     renames: {},
     agents: options.empty ? [] : agentsFixture,
-    mandates: options.empty ? {} : initialMandates(),
+    mandates: options.empty ? {} : initialMandates(templatesFixture.map(storedTemplate)),
     templates: templatesFixture.map(storedTemplate),
     audit: options.empty ? [] : auditFixture,
     approvals: options.empty ? { open: [], history: [] } : { open: approvalsOpenFixture, history: approvalsHistoryFixture },
@@ -414,6 +431,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
         max_actions_per_hour: doc.limits.max_actions_per_hour,
         updated_at: current.meta.created_at,
         stale_references: m.status === 'active' ? staleReferences(doc.rules, state.devices, state.renames) : [],
+        rules_from: rulesFrom(m),
       },
       document: doc,
       versions: m.versions.map((v) => v.meta),
@@ -424,13 +442,25 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     state = {
       ...state,
       mandates: { ...state.mandates, [id]: m },
-      agents: state.agents.map((a) => (a.mandate?.id === id ? { ...a, mandate: { id, name: m.name, status: m.status, max_actions_per_hour: null, digest: '' } } : a)),
+      agents: state.agents.map((a) =>
+        a.mandate?.id === id ? { ...a, mandate: { id, name: m.name, status: m.status, max_actions_per_hour: null, digest: '', rules_from: null } } : a,
+      ),
     };
     emit({ type: 'mandates.changed', id });
   }
 
-  /** storeVersion adds a version after the conflict and U9 checks of the server. */
-  function storeVersion(id: string, baseDigest: string, draft: MandateDraft, confirm: boolean | undefined, name?: string) {
+  /**
+   * storeVersion adds a version after the conflict and U9 checks of the server; a draft
+   * equal to the current one stores none (the name is still taken).
+   */
+  function storeVersion(
+    id: string,
+    baseDigest: string,
+    draft: MandateDraft,
+    confirm: boolean | undefined,
+    name?: string,
+    origin: Pick<MandateVersion, 'origin' | 'template' | 'template_digest'> = EDITED,
+  ) {
     const m = stored(id);
     const [current] = m.versions;
     if (!current || m.status !== 'active' || current.meta.digest !== baseDigest) return fail('conflict');
@@ -445,7 +475,14 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     }
     const createdAt = now().toISOString();
     const document: MandateDocument = { ...current.document, ...draft, created_by: user().id, created_at: createdAt };
-    const meta = { number: m.versions.length + 1, digest: `sha256:mock-${++counter}`, created_at: createdAt, created_by: user().id, created_by_name: user().name };
+    const meta = {
+      number: m.versions.length + 1,
+      digest: `sha256:mock-${++counter}`,
+      created_at: createdAt,
+      created_by: user().id,
+      created_by_name: user().name,
+      ...origin,
+    };
     putStored(id, { ...m, name: name ?? m.name, versions: [{ meta, document }, ...m.versions] });
     log('mandate.updated', { agent: document.agent, mandate: { id, digest: meta.digest, previous_digest: current.meta.digest } });
     return detail(id);
@@ -459,11 +496,13 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     const at = now();
     const day = householdDay(at, state.session.household.time_zone);
     const requests = state.audit.filter((e) => e.event === 'decision' && e.agent?.client_id === a.client_id);
-    const current = a.mandate && stored(a.mandate.id).versions[0];
+    const m = a.mandate && stored(a.mandate.id);
+    const current = m?.versions[0];
     const mandate = a.mandate && {
       ...a.mandate,
       max_actions_per_hour: current?.document.limits?.max_actions_per_hour ?? null,
       digest: current?.meta.digest ?? '',
+      rules_from: m ? rulesFrom(m) : null,
     };
     return {
       ...a,
@@ -511,9 +550,24 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       created_by: user().id,
       created_at: createdAt,
     };
-    const meta = { number: 1, digest: `sha256:mock-${counter}`, created_at: createdAt, created_by: user().id, created_by_name: user().name };
-    state = { ...state, agents: state.agents.map((a) => (a.client_id === clientId ? { ...a, mandate: { id, name: '', status: 'active' as const, max_actions_per_hour: null, digest: '' } } : a)) };
-    putStored(id, { name: mandateName ?? name, status: 'active', versions: [{ meta, document }] });
+    const meta = {
+      number: 1,
+      digest: `sha256:mock-${counter}`,
+      created_at: createdAt,
+      created_by: user().id,
+      created_by_name: user().name,
+      origin: 'template' as const,
+      template: name,
+      template_digest: template(name).digest,
+    };
+    state = {
+      ...state,
+      agents: state.agents.map((a) =>
+        a.client_id === clientId ? { ...a, mandate: { id, name: '', status: 'active' as const, max_actions_per_hour: null, digest: '', rules_from: null } } : a,
+      ),
+    };
+    // As admission: named after the agent unless the human gave a name.
+    putStored(id, { name: mandateName?.trim() || agent.display_name, status: 'active', versions: [{ meta, document }] });
     log('mandate.created', { agent: document.agent, mandate: { id, digest: meta.digest } });
     return id;
   }
@@ -777,10 +831,14 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       return storeVersion(id, update.base_digest, update.draft, update.confirm_critical, name);
     },
     async applyTemplate(id, apply) {
+      const name = apply.name?.trim();
+      if (name !== undefined && (name.length < 1 || name.length > 80)) fail('invalid_input', '/name');
       const current = detail(id).document;
       const t = resolved(apply.template);
       const draft = { ...draftOf(current), rules: t.rules, approval: t.approval, limits: t.limits };
-      return storeVersion(id, apply.base_digest, draft, apply.confirm_critical);
+      const origin = { origin: 'template' as const, template: apply.template, template_digest: template(apply.template).digest };
+      const after = storeVersion(id, apply.base_digest, draft, apply.confirm_critical, name, origin);
+      return { ...after, result: after.summary.digest === apply.base_digest ? ('unchanged' as const) : ('updated' as const) };
     },
     async revokeMandate(id) {
       setMandateStatus(id, 'revoked');

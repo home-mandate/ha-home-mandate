@@ -11,6 +11,7 @@ import type {
   ApiErrorCode,
   Rename,
   ApplyTemplate,
+  ApplyTemplateResult,
   ApprovalAnswer,
   ApprovalHistoryEntry,
   Approvals,
@@ -75,7 +76,7 @@ export interface ApiClient {
   /** The document of one version, by its number within the mandate. */
   mandateVersion(id: string, number: number): Promise<MandateDocument>;
   putMandate(id: string, update: MandateUpdate): Promise<MandateDetail>;
-  applyTemplate(id: string, apply: ApplyTemplate): Promise<MandateDetail>;
+  applyTemplate(id: string, apply: ApplyTemplate): Promise<ApplyTemplateResult>;
   revokeMandate(id: string): Promise<MandateSummary>;
 
   templates(): Promise<TemplateSummary[]>;
