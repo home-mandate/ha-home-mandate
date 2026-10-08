@@ -124,7 +124,7 @@ func TestRefusedApproverChangesAreNotAudited(t *testing.T) {
 	if err := a.Put(ctx, Approver{UserID: u1, UI: true}, ui); err != nil {
 		t.Fatal(err)
 	}
-	unrecordable := audit.Actor{Kind: audit.ActorUser, ID: "user‮x"}
+	unrecordable := audit.Actor{Kind: audit.ActorUser, ID: "user\u202Ex"}
 	for name, change := range map[string]func() error{
 		"invalid approver":    func() error { return a.Put(ctx, Approver{UserID: u2}, ui) },
 		"stale version":       func() error { return a.PutIf(ctx, Approver{UserID: u2, UI: true}, "stale", ui) },

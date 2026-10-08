@@ -109,8 +109,8 @@ describe('templateText', () => {
     expect(templateText(entry({ change: 'shown', name: 'hm-read-only' }))).toMatch(/^Template .hm-read-only. offered again when admitting agents$/);
   });
   it('shows the name as text without hidden characters and is empty for other entries', () => {
-    const text = templateText(entry({ change: 'removed', name: 'evil‮eman', digest: D1 }));
-    expect(text).not.toContain('‮');
+    const text = templateText(entry({ change: 'removed', name: 'evil\u202Eeman', digest: D1 }));
+    expect(text).not.toContain('\u202E');
     expect(text).toContain('evileman');
     expect(templateText({ ...entry(undefined), event: 'decision' })).toBe('');
     expect(templateText(entry({ change: 'renamed' as 'stored', name: 'x' }))).toBe('');
@@ -127,7 +127,7 @@ describe('approverText', () => {
     expect(approverText(entry({ change: 'removed', id: 'u2' }))).toMatch(/^.u2. no longer answers approval requests$/);
   });
   it('never shows hidden characters of a name and is empty for other entries', () => {
-    expect(approverText(entry({ change: 'added', id: 'u2', name: 'An‮na' }))).not.toContain('‮');
+    expect(approverText(entry({ change: 'added', id: 'u2', name: 'An\u202Ena' }))).not.toContain('\u202E');
     expect(approverText({ ...entry(undefined), event: 'decision' })).toBe('');
     expect(approverText(entry({ change: 'changed' as 'added', id: 'u2' }))).toBe('');
   });

@@ -169,7 +169,7 @@ func TestRefusedTemplateChangesAreNotAudited(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := digestOf(t, e, "mine")
-	unrecordable := audit.Actor{Kind: audit.ActorUser, ID: "user‮x"}
+	unrecordable := audit.Actor{Kind: audit.ActorUser, ID: "user\u202Ex"}
 	edited := template(t, func(d map[string]any) { d["limits"] = map[string]any{"max_actions_per_hour": 10} })
 	refused := map[string]func() error{
 		"invalid document":   func() error { return e.adm.PutTemplate(ctx, "mine", []byte(`{}`), admin) },

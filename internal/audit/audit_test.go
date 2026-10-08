@@ -393,7 +393,7 @@ func TestTemplateAndApproverChanges(t *testing.T) {
 		"template on another event":  {Event: audit.EventEmergencyStopActivated, Actor: user, Template: &audit.Template{Change: audit.TemplateShown, Name: "a"}},
 		"approver by an agent":       {Event: audit.EventApproverChanged, Actor: agentActor, Approver: &audit.Approver{Change: audit.ApproverAdded, ID: "u1"}},
 		"approver without member":    {Event: audit.EventApproverChanged, Actor: user},
-		"approver with hidden chars": {Event: audit.EventApproverChanged, Actor: user, Approver: &audit.Approver{Change: audit.ApproverAdded, ID: "u‮1"}},
+		"approver with hidden chars": {Event: audit.EventApproverChanged, Actor: user, Approver: &audit.Approver{Change: audit.ApproverAdded, ID: "u\u202E1"}},
 		"approver on another event":  {Event: audit.EventEmergencyStopActivated, Actor: user, Approver: &audit.Approver{Change: audit.ApproverAdded, ID: "u1"}},
 	} {
 		if _, err := l.Append(ctx, e); !errors.Is(err, audit.ErrInvalidEntry) {
