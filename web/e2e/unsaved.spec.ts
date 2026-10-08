@@ -52,19 +52,12 @@ for (const width of [1280, 375] as const) {
     await expect(bar(page)).toBeVisible();
     const box = await bar(page).boundingBox();
     expect(box).not.toBeNull();
-    // At the bottom of the viewport, below the frame the page scrolls in: it covers nothing.
+    // At the bottom of the viewport, nothing below it; the page keeps scrolling in the window.
     expect(Math.round(box!.y + box!.height)).toBe(800);
-    const frame = await page.evaluate(() => {
-      const el = document.getElementById('hm-scroll')!;
-      return { bottom: el.getBoundingClientRect().bottom, sideways: el.scrollWidth - el.clientWidth, scrolls: el.scrollHeight > el.clientHeight };
-    });
-    expect(frame.bottom).toBeLessThanOrEqual(box!.y + 1);
-    expect(frame.sideways).toBe(0);
-    expect(frame.scrolls).toBe(true);
     expect(await pageScroll(page)).toBe(0);
 
     // The end of the page can be reached and lies above the bar.
-    await page.locator('main ol + span + .add .btn').first().scrollIntoViewIfNeeded();
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     const add = await page.locator('main ol + span + .add .btn').first().boundingBox();
     expect(add!.y + add!.height).toBeLessThanOrEqual(box!.y);
 

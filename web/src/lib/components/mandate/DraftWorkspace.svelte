@@ -444,11 +444,13 @@
   .wide .right {
     position: sticky;
     inset-block-start: var(--hm-space-4);
-    /* The frame the page scrolls in: the viewport, or less while the save bar is docked
-       (App.svelte); without a container, 100cqb is the viewport's height. */
-    max-block-size: calc(100cqb - 2 * var(--hm-space-4));
+    max-block-size: calc(100dvh - 2 * var(--hm-space-4));
     overflow-y: auto;
     border-radius: var(--hm-radius-lg);
+  }
+  /* The end of the preview stays above the save bar. */
+  :global(:root.hm-savebar) .wide .right {
+    max-block-size: calc(100dvh - 2 * var(--hm-space-4) - var(--hm-savebar-size, 0px));
   }
   .left {
     display: flex;

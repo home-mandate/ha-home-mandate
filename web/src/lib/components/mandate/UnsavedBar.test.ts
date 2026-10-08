@@ -3,8 +3,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { setLocale } from '../../paraglide/runtime.js';
-import { SCROLL_ID } from '../../ui/portal.ts';
-import UnsavedBar, { SAVEBAR_CLASS } from './UnsavedBar.svelte';
+import { SAVEBAR_CLASS, SAVEBAR_SIZE } from '../../ui/savebar.ts';
+import UnsavedBar from './UnsavedBar.svelte';
 
 beforeEach(() => setLocale('en', { reload: false }));
 afterEach(() => {
@@ -41,17 +41,13 @@ describe('UnsavedBar', () => {
     expect(document.documentElement.classList.contains(SAVEBAR_CLASS)).toBe(false);
   });
 
-  it('moves the page from the window into its frame and back, keeping the scroll position', () => {
-    const frame = document.createElement('div');
-    frame.id = SCROLL_ID;
-    document.body.append(frame);
+  it('keeps its height on the page while it is shown, without moving the page', () => {
     document.documentElement.scrollTop = 0;
     const { view } = show();
-    expect(frame.scrollTop).toBe(0);
-    frame.scrollTop = 0;
+    expect(document.documentElement.style.getPropertyValue(SAVEBAR_SIZE)).toMatch(/^\d+px$/);
     view.unmount();
+    expect(document.documentElement.style.getPropertyValue(SAVEBAR_SIZE)).toBe('');
     expect(document.documentElement.scrollTop).toBe(0);
-    frame.remove();
   });
 
   it('follows the count', async () => {

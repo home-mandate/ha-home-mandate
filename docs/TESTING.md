@@ -78,11 +78,16 @@ protection class, expired, not yet valid) needs its own named test.
   (`web/e2e/sweep-helpers.spec.ts`), so a green sweep cannot come from a check that finds nothing.
 - **Unsaved changes in the editors** (`web/e2e/unsaved.spec.ts`, de, en and pseudo): after
   "Done" a changed rule says that it is not saved yet and the live region says it too; the
-  save bar sits at the bottom of the viewport at 375 and 1280 px below the frame the page
-  scrolls in, so it covers nothing; an edit left earlier comes back with a warning; saving
+  save bar sits at the bottom of the viewport at 375 and 1280 px and the end of the page
+  stays reachable above it; an edit left earlier comes back with a warning; saving
   ends bar and hint with a new version; reloading with unsaved changes (mandate and
   template) brings up the browser's prompt, after saving it does not. The sweep has these
   states as screens of their own.
+- **Save bar on scrolled pages** (`web/e2e/savebar.spec.ts`, de, en and pseudo, at 1280×800,
+  1440×900 and 375×812, mandate and template editor): scrolled to the middle, a change makes
+  the bar appear without moving the page or the focus; the bar's bottom is the viewport's
+  bottom; the focused element and every keyboard stop stay uncovered; at the very end the
+  last rule lies above the bar; saving removes it without a jump.
 - **Colour scheme switch** (`web/e2e/theme.spec.ts`, de, en and pseudo): the header switch
   changes the scheme at once and the choice survives a reload; blocked storage or an unknown
   stored value falls back to the system scheme; at 375 px the compact switch sits next to the
