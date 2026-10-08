@@ -332,3 +332,188 @@ describe('TemplateEditor: new and loading', () => {
     expect(await screen.findByText('This template doesn’t exist')).toBeTruthy();
   });
 });
+
+describe('TemplateEditor: a changed template and the mandates that use it (#18)', () => {
+  const ROLLOUT = 'Take the change over into mandates too?';
+
+  async function saveRate(value: string) {
+    await changeRate(value);
+    await fireEvent.click(button('Save …'));
+    const dialog = await screen.findByRole('dialog', { name: 'Save changes?' });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Save template' }));
+    await waitFor(() => expect(status()).toBe('All saved'));
+  }
+
+  /** Claude's mandate takes its rules from voice-assistant too, then is edited. */
+  async function claudeUsesVoiceEdited(api: MockClient) {
+    const claude = await api.mandate('mandate-claude');
+    const other = await api.applyTemplate('mandate-claude', { template: 'read-only', base_digest: claude.summary.digest });
+    const applied = await api.applyTemplate('mandate-claude', { template: 'voice-assistant', base_digest: other.summary.digest });
+    const d = applied.document;
+    await api.putMandate('mandate-claude', {
+      name: 'Claude Code',
+      draft: { rules: d.rules, approval: d.approval, limits: { max_actions_per_hour: 2 }, valid_from: d.valid_from },
+      base_digest: applied.summary.digest,
+    });
+  }
+
+  const checkbox = (dialog: HTMLElement, agent: string) => within(dialog).getByRole('checkbox', { name: agent }) as HTMLInputElement;
+
+  it('asks nothing when no mandate took its rules from the template', async () => {
+    const { api } = await start('empty');
+    const usage = vi.spyOn(api, 'templateUsage');
+    await saveRate('20');
+    await waitFor(() => expect(usage).toHaveBeenCalledWith('empty'));
+    expect(screen.queryByRole('dialog', { name: ROLLOUT })).toBeNull();
+  });
+
+  it('changes no mandate for “only the template”', async () => {
+    const { api } = await start('voice-assistant');
+    const apply = vi.spyOn(api, 'applyTemplateToMandates');
+    await saveRate('20');
+    const dialog = await screen.findByRole('dialog', { name: ROLLOUT });
+    expect(checkbox(dialog, 'Sprachassistent').checked).toBe(true);
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Only the template' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: ROLLOUT })).toBeNull());
+    expect(apply).not.toHaveBeenCalled();
+    expect((await api.mandate('mandate-voice')).versions).toHaveLength(1);
+  });
+
+  it('takes the change over into the chosen mandates; mandates edited since start unchosen and marked', async () => {
+    const { api } = await start('voice-assistant', claudeUsesVoiceEdited);
+    await saveRate('20');
+    const dialog = await screen.findByRole('dialog', { name: ROLLOUT });
+    const voice = checkbox(dialog, 'Sprachassistent');
+    const claude = checkbox(dialog, 'Claude Code');
+    expect(voice.checked).toBe(true);
+    expect(claude.checked).toBe(false);
+    expect(document.getElementById(claude.getAttribute('aria-describedby') ?? '')?.textContent).toContain('Edited since – taking the change over replaces those edits');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Select none' }));
+    expect(voice.checked || claude.checked).toBe(false);
+    expect(within(dialog).getByRole('button', { name: 'Take over into 0 mandates' }).getAttribute('aria-disabled')).toBe('true');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Select all' }));
+    expect(voice.checked && claude.checked).toBe(true);
+    await fireEvent.click(claude);
+    const apply = vi.spyOn(api, 'applyTemplateToMandates');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Take over into 1 mandate' }));
+    await waitFor(() => expect(within(dialog).getByRole('status').textContent).toBe('Updated: 1 · Not updated: 0'));
+    const saved = await api.template('voice-assistant');
+    expect(apply).toHaveBeenCalledWith('voice-assistant', { template_digest: saved.digest, targets: [expect.objectContaining({ mandate_id: 'mandate-voice' })] });
+    expect(within(dialog).getByText('Updated')).toBeTruthy();
+    expect((await api.mandate('mandate-voice')).summary.max_actions_per_hour).toBe(20);
+    expect((await api.mandate('mandate-claude')).summary.max_actions_per_hour).toBe(2);
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: ROLLOUT })).toBeNull());
+  });
+
+  it('shows a refused mandate and tries it again on request', async () => {
+    const { api } = await start('voice-assistant');
+    await saveRate('20');
+    const dialog = await screen.findByRole('dialog', { name: ROLLOUT });
+    // Someone changes the mandate after the list was shown.
+    const { summary, document: d } = await api.mandate('mandate-voice');
+    await api.putMandate('mandate-voice', {
+      name: summary.name,
+      draft: { rules: d.rules, approval: d.approval, limits: { max_actions_per_hour: 3 }, valid_from: d.valid_from },
+      base_digest: summary.digest,
+    });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Take over into 1 mandate' }));
+    await waitFor(() => expect(within(dialog).getByText('Not updated: changed in the meantime')).toBeTruthy());
+    expect(within(dialog).getByRole('status').textContent).toBe('Updated: 0 · Not updated: 1');
+    await fireEvent.click(within(dialog).getByRole('button', { name: /^Try again for .?Sprachassistent.?$/ }));
+    await waitFor(() => expect(within(dialog).getByText('Updated')).toBeTruthy());
+    expect((await api.mandate('mandate-voice')).summary.max_actions_per_hour).toBe(20);
+  });
+
+  it('says so when the template changed again or the change cannot be taken over', async () => {
+    const { api } = await start('voice-assistant');
+    await saveRate('20');
+    const dialog = await screen.findByRole('dialog', { name: ROLLOUT });
+    api.applyTemplateToMandates = async () => Promise.reject(new ApiError('conflict', 409));
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Take over into 1 mandate' }));
+    await waitFor(() => expect(within(dialog).getByRole('alert').textContent).toContain('The template was changed again in the meantime'));
+    api.applyTemplateToMandates = async () => Promise.reject(new ApiError('unavailable', 0));
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Take over into 1 mandate' }));
+    await waitFor(() => expect(within(dialog).getByRole('alert').textContent).toContain('Nothing was changed'));
+  });
+
+  it('says so when the mandates using the template cannot be loaded', async () => {
+    const { api } = await start('voice-assistant');
+    api.templateUsage = async () => Promise.reject(new ApiError('unavailable', 0));
+    await saveRate('20');
+    await waitFor(() => expect(toastTexts()).toContain(
+      'The template is saved, but the mandates that use it couldn’t be loaded. Open the template again to take the change over into them.',
+    ));
+    expect(screen.queryByRole('dialog', { name: ROLLOUT })).toBeNull();
+  });
+
+  it('asks one separate confirmation for all chosen mandates, naming their agents, before changing any (U9)', async () => {
+    const { api } = await start('voice-assistant', async (a) => {
+      await claudeUsesVoiceEdited(a);
+      const t = await a.template('voice-assistant');
+      const rule = { id: 'r-unlock', resource: { category: 'lock' as const }, actions: ['unlock'], decision: 'allow' as const, allow_critical: true as const };
+      await a.putTemplate('voice-assistant', { draft: { ...t.draft, rules: [...t.draft.rules, rule] }, base_digest: t.digest, confirm_critical: true });
+    });
+    await saveRate('20');
+    const dialog = await screen.findByRole('dialog', { name: ROLLOUT });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Select all' }));
+    const apply = vi.spyOn(api, 'applyTemplateToMandates');
+    const take = within(dialog).getByRole('button', { name: 'Take over into 2 mandates' });
+    await fireEvent.click(take);
+    const box = await within(dialog).findByRole('alertdialog', { name: 'Critical actions without approval' });
+    expect(apply).not.toHaveBeenCalled();
+    const agents = within(box).getByRole('list', { name: 'Affected agents' });
+    expect(within(agents).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Sprachassistent', 'Claude Code']);
+    await fireEvent.click(within(box).getByRole('button', { name: 'Cancel' }));
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull();
+    expect((await api.mandate('mandate-voice')).versions).toHaveLength(1);
+    await fireEvent.click(take);
+    const again = await within(dialog).findByRole('alertdialog');
+    await fireEvent.click(within(again).getByRole('button', { name: 'Allow without approval' }));
+    await waitFor(() => expect(apply).toHaveBeenCalledWith('voice-assistant', expect.objectContaining({ confirm_critical: true })));
+    await waitFor(() => expect(within(dialog).getByRole('status').textContent).toBe('Updated: 2 · Not updated: 0'));
+  });
+
+  it('asks the separate confirmation again for a retry', async () => {
+    const { api } = await start('voice-assistant', async (a) => {
+      const t = await a.template('voice-assistant');
+      const rule = { id: 'r-unlock', resource: { category: 'lock' as const }, actions: ['unlock'], decision: 'allow' as const, allow_critical: true as const };
+      await a.putTemplate('voice-assistant', { draft: { ...t.draft, rules: [...t.draft.rules, rule] }, base_digest: t.digest, confirm_critical: true });
+    });
+    await saveRate('20');
+    const dialog = await screen.findByRole('dialog', { name: ROLLOUT });
+    const { summary, document: d } = await api.mandate('mandate-voice');
+    await api.putMandate('mandate-voice', {
+      name: summary.name,
+      draft: { rules: d.rules, approval: d.approval, limits: { max_actions_per_hour: 3 }, valid_from: d.valid_from },
+      base_digest: summary.digest,
+    });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Take over into 1 mandate' }));
+    await fireEvent.click(within(await within(dialog).findByRole('alertdialog')).getByRole('button', { name: 'Allow without approval' }));
+    await waitFor(() => expect(within(dialog).getByText('Not updated: changed in the meantime')).toBeTruthy());
+    const apply = vi.spyOn(api, 'applyTemplateToMandates');
+    await fireEvent.click(within(dialog).getByRole('button', { name: /^Try again for .?Sprachassistent.?$/ }));
+    const box = await within(dialog).findByRole('alertdialog');
+    expect(apply).not.toHaveBeenCalled();
+    await fireEvent.click(within(box).getByRole('button', { name: 'Allow without approval' }));
+    await waitFor(() => expect(within(dialog).getByText('Updated')).toBeTruthy());
+  });
+
+  it('asks the confirmation when the server does, though the template showed no such rule', async () => {
+    const { api } = await start('voice-assistant');
+    await saveRate('20');
+    const dialog = await screen.findByRole('dialog', { name: ROLLOUT });
+    const apply = api.applyTemplateToMandates.bind(api);
+    let calls = 0;
+    api.applyTemplateToMandates = async (name, request) => {
+      calls += 1;
+      if (request.confirm_critical !== true) throw new ApiError('critical_confirmation_required', 422);
+      return apply(name, request);
+    };
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Take over into 1 mandate' }));
+    const box = await within(dialog).findByRole('alertdialog');
+    await fireEvent.click(within(box).getByRole('button', { name: 'Allow without approval' }));
+    await waitFor(() => expect(within(dialog).getByRole('status').textContent).toBe('Updated: 1 · Not updated: 0'));
+    expect(calls).toBe(2);
+  });
+});

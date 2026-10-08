@@ -9,7 +9,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { ApiError } from '../api/client.ts';
-  import type { ApproverList, DeviceCatalog, MandateDetail, MandateDocument, MandateVersion, Rule } from '../api/types.ts';
+  import type { ApproverList, DeviceCatalog, MandateDetail, MandateDocument, MandateVersion, Rule, TemplateSummary } from '../api/types.ts';
   import { Loader } from '../app/loader.svelte.ts';
   import type { AppState } from '../app/state.svelte.ts';
   import Button from '../components/Button.svelte';
@@ -25,6 +25,7 @@
   import { formatDateTime } from '../format.ts';
   import { m } from '../i18n.ts';
   import { ruleChanges, type Edited, type RuleChangeKind } from '../mandate/changes.ts';
+  import { versionOriginText } from '../mandate/origin.ts';
   import { settingLines } from '../mandate/summary.ts';
   import { ruleText } from '../mandate/text.ts';
   import { currentNumber, draftOf, restoredDraft, shortDigest, versionAt } from '../mandate/versions.ts';
@@ -43,6 +44,8 @@
     /** null: the device list could not be loaded. */
     catalog: DeviceCatalog | null;
     approvers: ApproverList;
+    /** For the titles of base templates the versions came from; empty if they could not be loaded. */
+    templates: TemplateSummary[];
   }
 
   let { app, id }: Props = $props();
@@ -58,8 +61,13 @@
 
   const page = new Loader<Data>(async () => {
     const api = app.api;
-    const [detail, catalog, approvers] = await Promise.all([api.mandate(id), api.devices().catch(() => null), api.approvers().catch(() => NO_APPROVERS)]);
-    return { detail, catalog, approvers };
+    const [detail, catalog, approvers, templates] = await Promise.all([
+      api.mandate(id),
+      api.devices().catch(() => null),
+      api.approvers().catch(() => NO_APPROVERS),
+      api.templates().catch((): TemplateSummary[] => []),
+    ]);
+    return { detail, catalog, approvers, templates };
   });
 
   /**
@@ -94,6 +102,7 @@
 
   const author = (v: MandateVersion) => cleanUntrusted(v.created_by_name) || m.versions_unknown_author();
   const when = (v: MandateVersion) => formatDateTime(new Date(v.created_at), ctx);
+  const originOf = (v: MandateVersion) => versionOriginText(v, page.data?.templates ?? []);
 
   /** pick loads an earlier version for the compare; picking it again retries a failed load. */
   function pick(number: number) {
@@ -199,6 +208,7 @@
             <div class="version current">
               <span class="line"><strong>{label(n)}</strong><code title={v.digest}>{shortDigest(v.digest)}</code><span class="pill">{m.version_current()}</span></span>
               <span class="by"><bdi>{author(v)}</bdi> · {when(v)}</span>
+              {#if originOf(v)}<span class="origin">{originOf(v)}</span>{/if}
             </div>
           {:else}
             <button type="button" class="version" aria-current={picked === n ? CURRENT : undefined} onclick={() => pick(n)}>
@@ -207,6 +217,7 @@
                 {#if picked === n}<span class="pill compare">{m.version_compare()}</span>{/if}
               </span>
               <span class="by"><bdi>{author(v)}</bdi> · {when(v)}</span>
+              {#if originOf(v)}<span class="origin">{originOf(v)}</span>{/if}
             </button>
           {/if}
         </li>
@@ -285,6 +296,12 @@
 {/if}
 
 <style>
+  .origin {
+    display: block;
+    font-size: var(--hm-font-size-xs);
+    color: var(--hm-color-text-muted);
+    overflow-wrap: anywhere;
+  }
   .head {
     display: flex;
     flex-direction: column;

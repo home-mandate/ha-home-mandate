@@ -27,7 +27,7 @@ func newEnvWithDB(t *testing.T) (env, *sql.DB) {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	log := audit.New(s.DB(), household)
-	return env{mandates: mandate.New(s.DB(), log, household, issuer), agents: agent.New(s.DB(), log), log: log}, s.DB()
+	return env{db: s.DB(), mandates: mandate.New(s.DB(), log, household, issuer), agents: agent.New(s.DB(), log), log: log}, s.DB()
 }
 
 func TestTamperedStoredVersionIsNotEvaluated(t *testing.T) {

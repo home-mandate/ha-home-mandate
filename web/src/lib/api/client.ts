@@ -11,6 +11,7 @@ import type {
   ApiErrorCode,
   Rename,
   ApplyTemplate,
+  ApplyTemplateResult,
   ApprovalAnswer,
   ApprovalHistoryEntry,
   Approvals,
@@ -37,7 +38,10 @@ import type {
   Template,
   TemplateApprovers,
   TemplateSummary,
+  TemplateRollout,
+  TemplateRolloutRequest,
   TemplateUpdate,
+  TemplateUsage,
 } from './types.ts';
 
 export interface EventHandlers {
@@ -76,7 +80,7 @@ export interface ApiClient {
   /** The document of one version, by its number within the mandate. */
   mandateVersion(id: string, number: number): Promise<MandateDocument>;
   putMandate(id: string, update: MandateUpdate): Promise<MandateDetail>;
-  applyTemplate(id: string, apply: ApplyTemplate): Promise<MandateDetail>;
+  applyTemplate(id: string, apply: ApplyTemplate): Promise<ApplyTemplateResult>;
   revokeMandate(id: string): Promise<MandateSummary>;
 
   templates(): Promise<TemplateSummary[]>;
@@ -88,6 +92,10 @@ export interface ApiClient {
   setTemplateHidden(name: string, hidden: boolean): Promise<void>;
   /** Who may approve if the signed-in human admits an agent with the template now. */
   templateApprovers(name: string): Promise<TemplateApprovers>;
+  /** The active mandates whose rules were last taken from the template (#18). */
+  templateUsage(name: string): Promise<TemplateUsage>;
+  /** Takes the template over into the target mandates, each on its own (#18). */
+  applyTemplateToMandates(name: string, request: TemplateRolloutRequest): Promise<TemplateRollout>;
 
   settings(): Promise<Defaults>;
   putSettings(defaults: Defaults): Promise<Defaults>;
@@ -363,6 +371,8 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
     deleteTemplate: async (name) => request('DELETE', `templates/${segment(name)}`),
     setTemplateHidden: async (name, hidden) => request('PUT', `templates/${segment(name)}/hidden`, { hidden }),
     templateApprovers: async (name) => get(`templates/${segment(name)}/approvers`),
+    templateUsage: async (name) => get(`templates/${segment(name)}/usage`),
+    applyTemplateToMandates: async (name, body) => request('POST', `templates/${segment(name)}/apply`, body),
 
     settings: () => get('settings'),
     putSettings: (defaults) => request('PUT', 'settings', defaults),

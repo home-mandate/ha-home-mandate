@@ -4,6 +4,7 @@ package mandate_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -29,6 +30,7 @@ const (
 var admin = audit.Actor{Kind: audit.ActorUser, ID: "user-1"}
 
 type env struct {
+	db       *sql.DB
 	mandates *mandate.Store
 	agents   *agent.Store
 	log      *audit.Log
@@ -42,7 +44,7 @@ func newEnv(t *testing.T) env {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	log := audit.New(s.DB(), household)
-	return env{mandates: mandate.New(s.DB(), log, household, issuer), agents: agent.New(s.DB(), log), log: log}
+	return env{db: s.DB(), mandates: mandate.New(s.DB(), log, household, issuer), agents: agent.New(s.DB(), log), log: log}
 }
 
 func (e env) agent(t *testing.T, name string) agent.Agent {

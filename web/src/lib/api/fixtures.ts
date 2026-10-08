@@ -150,7 +150,7 @@ const agent = ({ mandate, ...a }: AgentInput): Agent => ({
   revoked_by_name: null,
   requests_today: 0,
   actions_last_hour: 0,
-  mandate: mandate && { ...mandate, max_actions_per_hour: null, digest: '' },
+  mandate: mandate && { ...mandate, max_actions_per_hour: null, digest: '', rules_from: null },
   ...a,
 });
 
@@ -202,7 +202,8 @@ export const agentsFixture: Agent[] = [
     created_at: '2026-10-02T07:30:00Z',
     last_active_at: null,
     oauth_client: 'bidi',
-    mandate: { id: 'mandate-bidi', name: 'Bidi', status: 'active' },
+    // Stored before mandates were named after their agent: it still carries the template's name (#16).
+    mandate: { id: 'mandate-bidi', name: 'hm-voice-cautious', status: 'active' },
   }),
 ];
 

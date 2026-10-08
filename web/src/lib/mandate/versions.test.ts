@@ -5,7 +5,7 @@ import { voiceAssistantDraft, voiceAssistantMandate } from '../api/fixtures.ts';
 import type { MandateVersion } from '../api/types.ts';
 import { currentNumber, draftOf, restoredDraft, shortDigest, versionAt } from './versions.ts';
 
-const version = (number: number, digest: string): MandateVersion => ({ number, digest, created_at: '2026-10-01T08:00:00Z', created_by: 'u-admin', created_by_name: 'Markus' });
+const version = (number: number, digest: string): MandateVersion => ({ number, digest, created_at: '2026-10-01T08:00:00Z', created_by: 'u-admin', created_by_name: 'Markus', origin: 'edit', template: null, template_digest: null });
 
 describe('versions', () => {
   it('shortens a digest to eight characters without its prefix', () => {

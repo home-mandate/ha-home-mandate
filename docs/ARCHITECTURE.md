@@ -522,6 +522,17 @@ the browser with a port of the evaluation rule that passes the conformance cases
 - Restoring an earlier version stores a new version with that version's rules, approval
   settings and rate limit; the validity (valid from, valid until) and the name stay as they
   are, as when applying a template.
+- A version whose rules, approval settings, rate limit and validity equal the current
+  version is not stored, whatever its metadata (author, time, the order of lists such as
+  actions or approvers): applying the same template twice stores one version.
+- Every version keeps where its rules came from (`mandate_versions.origin`, display only,
+  never evaluated): the template, by name and digest of its content, or an edit (editor,
+  command line, a rename taken over). Versions stored before have no known origin. The
+  UI shows the template the rules were last taken from and whether they were edited since.
+- A new mandate (admission, new mandate for an agent) is named after its agent unless the
+  human gives another name; renaming stores no version. Mandates named after a template
+  before keep their name; applying a template proposes the agent's name while the mandate
+  still carries the name of the template its rules came from.
 
 ### JSON API and live events (`internal/api`, `internal/webui`)
 
@@ -536,7 +547,18 @@ code and at most a JSON pointer, never internal details or the value sent. There
 - **Mandates:** edits go through `Store.Update` (base digest, U9 confirmation); a draft
   with unchanged rules only renames (no version). A new mandate from a template, an applied
   template and a pairing approval need the separate confirmation too when the template
-  allows critical actions without approval.
+  allows critical actions without approval. Applying a template answers `updated` or
+  `unchanged` and may rename the mandate in the same transaction.
+- **Changed templates:** `api/templates/{name}/usage` lists the active mandates whose
+  rules were last taken from a template (whether edited since, whether up to date);
+  `POST api/templates/{name}/apply` takes the template as the human saw it (its digest)
+  and at most 100 mandates, each with the version the human saw. Every mandate changes
+  through the same path as applying a template to one, in its own transaction, with a
+  `mandate.updated` entry for the human; the answer names the result per mandate
+  (`updated`, `unchanged`, `conflict`, `revoked`, `not_found`, `failed`), so a refused
+  one does not hold back the others and can be retried. One separate confirmation covers
+  every mandate that would gain a rule allowing critical actions without approval;
+  without it no mandate changes. Nothing is applied in the background.
 - **Approvers:** the list carries a version (a hash over all approvers and their channels);
   every change and removal names the version it is based on and is checked in the same
   transaction. The first change wins; one on an older version is refused (conflict), the UI

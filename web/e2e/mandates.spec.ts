@@ -116,6 +116,12 @@ test('from the list into the editor: change a rule, read the summary, save a ver
   await expect(page.getByRole('heading', { name: t.compare })).toBeVisible();
 });
 
+test('the list says from which template the rules of a mandate were last taken (#16)', async ({ page }, info) => {
+  await page.goto('./#/mandates');
+  const row = page.getByRole('row').filter({ has: page.getByRole('link', { name: MANDATE }) });
+  await expect(row).toContainText(info.project.name === 'de' ? /Regeln zuletzt aus der Vorlage .*voice-assistant/ : /Rules last taken from the template .*voice-assistant/);
+});
+
 test('critical actions without approval need the separate confirmation, with the keyboard only', async ({ page }, info) => {
   const t = texts(info.project.name);
   await openEditor(page);

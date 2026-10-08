@@ -89,8 +89,9 @@ describe('AgentPair', () => {
       display_name: 'Tablet Küche',
       template: 'hm-read-only',
       template_digest: (await api.template('hm-read-only')).digest,
-      mandate_name: 'Read only',
     });
+    // The mandate is named after the agent (#16).
+    expect((await api.agents()).at(-1)?.mandate?.name).toBe('Tablet Küche');
     expect(approve).toHaveBeenCalledTimes(1);
     const agent = (await api.agents()).at(-1);
     expect(screen.getByRole('link', { name: 'Go to agent' }).getAttribute('href')).toBe(`#/agents/id/${encodeURIComponent(agent?.client_id ?? '')}`);

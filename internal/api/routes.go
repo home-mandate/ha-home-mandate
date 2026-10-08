@@ -78,6 +78,8 @@ func (s *Server) routes() *http.ServeMux {
 	route("DELETE /api/templates/{name}", noBody, s.deleteTemplate)
 	route("PUT /api/templates/{name}/hidden", jsonBody, s.putTemplateHidden)
 	route("GET /api/templates/{name}/approvers", noBody, s.getTemplateApprovers)
+	route("GET /api/templates/{name}/usage", noBody, s.getTemplateUsage)
+	route("POST /api/templates/{name}/apply", jsonBody, s.applyTemplateToMandates)
 
 	route("GET /api/settings", noBody, s.getSettings)
 	route("PUT /api/settings", jsonBody, s.putSettings)

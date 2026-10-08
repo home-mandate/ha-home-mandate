@@ -59,6 +59,19 @@ describe('MandateVersions', () => {
     expect(screen.getByRole('link', { name: /^Back: .?Sprachassistent Küche.?$/ }).getAttribute('href')).toBe('#/mandates/mandate-voice');
   });
 
+  it('says where the rules of each version came from (#16)', async () => {
+    await start(async (api) => {
+      await store(api, withoutCameras);
+      const { summary } = await api.mandate(ID);
+      await api.applyTemplate(ID, { template: 'hm-read-only', base_digest: summary.digest });
+    });
+    const items = within(await list()).getAllByRole('listitem');
+    const plain = (el: Element | undefined) => (el?.textContent ?? '').replace(/[\u2068\u2069]/g, '');
+    expect(plain(items[0])).toContain('From the template Read only');
+    expect(plain(items[1])).toContain('Edited');
+    expect(plain(items[2])).toContain('From the template voice-assistant');
+  });
+
   it('compares the version before the current one at first', async () => {
     await start(three);
     expect(await screen.findByRole('heading', { name: 'Compare version v2 with v3' })).toBeTruthy();

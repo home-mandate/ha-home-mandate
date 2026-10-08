@@ -5,6 +5,7 @@ import { ApiError } from './client.ts';
 import { approvalsOpenFixture, voiceAssistantDraft, WORST_NAME, WORST_REASON } from './fixtures.ts';
 import { createMockClient, MOCK_EXPIRED_CODE, MOCK_PAIRING_CODE, MOCK_APPROVERS_VERSION } from './mock.ts';
 import type { ApprovalRequest, Rule, ServerEvent } from './types.ts';
+import { draftOf } from '../mandate/versions.ts';
 
 const criticalRule: Rule = {
   id: 'door-open',
@@ -136,7 +137,7 @@ describe('createMockClient: agents and pairing', () => {
     const admitted = await api.pairingApprove({ code: MOCK_PAIRING_CODE, pairing_id: PAIRING_ID, display_name: ' Tablet Küche ', template: 'read-only' });
     const agent = (await api.agents()).at(-1);
     expect(admitted).toEqual(agent);
-    expect(agent).toMatchObject({ display_name: 'Tablet Küche', status: 'active', mandate: { name: 'read-only', status: 'active' } });
+    expect(agent).toMatchObject({ display_name: 'Tablet Küche', status: 'active', mandate: { name: 'Tablet Küche', status: 'active' } });
     expect(types(events)).toContain('agents.changed');
     await expect(api.pairingApprove({ code: MOCK_PAIRING_CODE, pairing_id: PAIRING_ID, display_name: 'x', template: 'read-only' })).rejects.toMatchObject({
       code: 'pairing_code_expired',
@@ -268,6 +269,119 @@ describe('createMockClient: mandates and templates', () => {
     });
   });
 
+  it('keeps where the rules came from and stores nothing for the same template twice (#16)', async () => {
+    const api = createMockClient();
+    const { summary } = await api.mandate('mandate-voice');
+    const template = await api.template('read-only');
+    const first = await api.applyTemplate('mandate-voice', { template: 'read-only', base_digest: summary.digest });
+    expect(first.result).toBe('updated');
+    expect(first.versions[0]).toMatchObject({ origin: 'template', template: 'read-only', template_digest: template.digest });
+    expect(first.summary.rules_from).toMatchObject({ template: 'read-only', template_digest: template.digest, edited_since: false });
+    const again = await api.applyTemplate('mandate-voice', { template: 'read-only', base_digest: first.summary.digest });
+    expect(again.result).toBe('unchanged');
+    expect(again.versions).toHaveLength(first.versions.length);
+    // An edit is one, and the rules were edited since the template.
+    const draft = { ...again.document, limits: { max_actions_per_hour: 3 } };
+    const edited = await api.putMandate('mandate-voice', {
+      name: again.summary.name,
+      draft: { rules: draft.rules, approval: draft.approval, limits: draft.limits, valid_from: draft.valid_from },
+      base_digest: again.summary.digest,
+    });
+    expect(edited.versions[0]).toMatchObject({ origin: 'edit', template: null, template_digest: null });
+    expect(edited.summary.rules_from).toMatchObject({ template: 'read-only', edited_since: true });
+    expect((await api.agents()).find((a) => a.client_id === 'pair:voice-assistant')?.mandate?.rules_from).toMatchObject({ edited_since: true });
+  });
+
+  it('renames a mandate when applying a template, also when nothing else changes', async () => {
+    const api = createMockClient();
+    const { summary } = await api.mandate('mandate-voice');
+    await expect(api.applyTemplate('mandate-voice', { template: 'read-only', base_digest: summary.digest, name: ' ' })).rejects.toMatchObject({
+      code: 'invalid_input',
+      field: '/name',
+    });
+    const applied = await api.applyTemplate('mandate-voice', { template: 'read-only', base_digest: summary.digest, name: ' Küche ' });
+    expect(applied.summary.name).toBe('Küche');
+    const renamed = await api.applyTemplate('mandate-voice', { template: 'read-only', base_digest: applied.summary.digest, name: 'Wohnzimmer' });
+    expect(renamed).toMatchObject({ result: 'unchanged', summary: { name: 'Wohnzimmer' } });
+  });
+
+  it('names a new mandate after its agent (#16)', async () => {
+    const api = createMockClient();
+    await api.revokeMandate('mandate-voice');
+    const created = await api.createMandate({ client_id: 'pair:voice-assistant', template: 'read-only' });
+    expect(created.summary.name).toBe('Sprachassistent');
+    expect(created.versions[0]).toMatchObject({ origin: 'template', template: 'read-only' });
+    const paired = await api.pairingApprove({ code: MOCK_PAIRING_CODE, pairing_id: PAIRING_ID, display_name: 'Tablet', template: 'read-only' });
+    expect(paired.mandate?.name).toBe('Tablet');
+  });
+
+  it('lists the mandates that use a template and applies a changed one to the chosen ones (#18)', async () => {
+    const api = createMockClient();
+    // The Claude mandate takes its rules from voice-assistant too (after another one), then is edited.
+    const claude = await api.mandate('mandate-claude');
+    const other = await api.applyTemplate('mandate-claude', { template: 'read-only', base_digest: claude.summary.digest });
+    const applied = await api.applyTemplate('mandate-claude', { template: 'voice-assistant', base_digest: other.summary.digest });
+    const usage = await api.templateUsage('voice-assistant');
+    expect(usage.mandates.map((u) => u.mandate_id).sort()).toEqual(['mandate-claude', 'mandate-voice']);
+    expect(usage.mandates.every((u) => u.up_to_date && !u.edited_since)).toBe(true);
+    await api.putMandate('mandate-claude', { name: 'Claude Code', draft: { ...draftOf(applied.document), limits: { max_actions_per_hour: 2 } }, base_digest: applied.summary.digest });
+    const seen = await api.template('voice-assistant');
+    const saved = await api.putTemplate('voice-assistant', { draft: { ...seen.draft, limits: { max_actions_per_hour: 9 } }, base_digest: seen.digest });
+    const now = await api.templateUsage('voice-assistant');
+    expect(now.digest).toBe(saved.digest);
+    expect(now.mandates.find((u) => u.mandate_id === 'mandate-claude')).toMatchObject({ edited_since: true, up_to_date: false });
+    expect(now.mandates.find((u) => u.mandate_id === 'mandate-voice')).toMatchObject({ edited_since: false, up_to_date: false });
+    const targets = now.mandates.map((u) => ({ mandate_id: u.mandate_id, base_digest: u.digest }));
+    const rollout = await api.applyTemplateToMandates('voice-assistant', {
+      template_digest: saved.digest,
+      targets: [...targets, { mandate_id: 'mandate-none', base_digest: targets[0]?.base_digest ?? '' }],
+    });
+    expect(rollout.results.map((r) => r.result)).toEqual(['updated', 'updated', 'not_found']);
+    expect((await api.mandate('mandate-voice')).summary.max_actions_per_hour).toBe(9);
+    // The same again: unchanged; on an old version: conflict.
+    const again = await api.applyTemplateToMandates('voice-assistant', { template_digest: saved.digest, targets });
+    expect(again.results.map((r) => r.result)).toEqual(['conflict', 'conflict']);
+    const fresh = (await api.templateUsage('voice-assistant')).mandates.map((u) => ({ mandate_id: u.mandate_id, base_digest: u.digest }));
+    expect((await api.applyTemplateToMandates('voice-assistant', { template_digest: saved.digest, targets: fresh })).results.map((r) => r.result)).toEqual([
+      'unchanged',
+      'unchanged',
+    ]);
+    await api.revokeMandate('mandate-claude');
+    const claudeTarget = fresh.filter((t) => t.mandate_id === 'mandate-claude');
+    expect((await api.applyTemplateToMandates('voice-assistant', { template_digest: saved.digest, targets: claudeTarget })).results[0]?.result).toBe('revoked');
+  });
+
+  it('applies a template with critical rules to mandates only after one confirmation (#18)', async () => {
+    const api = createMockClient();
+    const seen = await api.template('voice-assistant');
+    const saved = await api.putTemplate('voice-assistant', { draft: { ...seen.draft, rules: [...seen.draft.rules, criticalRule] }, base_digest: seen.digest, confirm_critical: true });
+    const { mandates } = await api.templateUsage('voice-assistant');
+    const request = { template_digest: saved.digest, targets: mandates.map((u) => ({ mandate_id: u.mandate_id, base_digest: u.digest })) };
+    await expect(api.applyTemplateToMandates('voice-assistant', request)).rejects.toMatchObject({ code: 'critical_confirmation_required' });
+    expect((await api.mandate('mandate-voice')).versions).toHaveLength(1);
+    const done = await api.applyTemplateToMandates('voice-assistant', { ...request, confirm_critical: true });
+    expect(done.results.map((r) => r.result)).toEqual(['updated']);
+  });
+
+  it('refuses bad requests to apply a template to mandates (#18)', async () => {
+    const api = createMockClient();
+    const { digest, mandates } = await api.templateUsage('voice-assistant');
+    const one = mandates.map((u) => ({ mandate_id: u.mandate_id, base_digest: u.digest }));
+    const many = Array.from({ length: 101 }, (_, i) => ({ mandate_id: `mandate-${i}`, base_digest: digest }));
+    for (const [request, code, field] of [
+      [{ template_digest: digest, targets: [] }, 'invalid_input', '/targets'],
+      [{ template_digest: digest, targets: many }, 'invalid_input', '/targets'],
+      [{ template_digest: digest, targets: [...one, ...one] }, 'invalid_input', '/targets/1/mandate_id'],
+      [{ template_digest: digest, targets: [{ mandate_id: 'mandate-voice', base_digest: 'x' }] }, 'invalid_input', '/targets/0/base_digest'],
+      [{ template_digest: 'x', targets: one }, 'invalid_input', '/template_digest'],
+      [{ template_digest: 'sha256:' + '0'.repeat(64), targets: one }, 'conflict', undefined],
+    ] as const) {
+      await expect(api.applyTemplateToMandates('voice-assistant', { ...request, targets: [...request.targets] })).rejects.toMatchObject({ code, field });
+    }
+    await expect(api.applyTemplateToMandates('nope', { template_digest: digest, targets: one })).rejects.toMatchObject({ code: 'not_found' });
+    await expect(api.templateUsage('nope')).rejects.toMatchObject({ code: 'not_found' });
+  });
+
   it('creates a mandate from a template only for an active agent without an active mandate', async () => {
     const api = createMockClient({ now: () => new Date('2026-10-03T10:00:00Z') });
     await expect(api.createMandate({ client_id: 'pair:voice-assistant', template: 'read-only' })).rejects.toMatchObject({ code: 'conflict' });
@@ -277,7 +391,14 @@ describe('createMockClient: mandates and templates', () => {
     const created = await api.createMandate({ client_id: 'pair:voice-assistant', template: 'read-only', name: 'Neu' });
     expect(created.summary).toMatchObject({ name: 'Neu', client_id: 'pair:voice-assistant', status: 'active' });
     expect(created.document.created_at).toBe('2026-10-03T10:00:00.000Z');
-    expect((await api.agents())[0]?.mandate).toEqual({ id: created.summary.id, name: 'Neu', status: 'active', max_actions_per_hour: 60, digest: created.summary.digest });
+    expect((await api.agents())[0]?.mandate).toEqual({
+      id: created.summary.id,
+      name: 'Neu',
+      status: 'active',
+      max_actions_per_hour: 60,
+      digest: created.summary.digest,
+      rules_from: { template: 'read-only', template_digest: expect.stringMatching(/^sha256:/), at: '2026-10-03T10:00:00.000Z', edited_since: false },
+    });
   });
 
   it('manages templates with U9 and the version the edit started from, and tells listeners', async () => {

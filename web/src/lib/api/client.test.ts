@@ -311,7 +311,7 @@ describe('createHttpClient', () => {
   });
 
   it('calls every endpoint with the method, path and body of the contract', async () => {
-    const answers = Array.from({ length: 34 }, () => json({ ...sessionFixture }));
+    const answers = Array.from({ length: 36 }, () => json({ ...sessionFixture }));
     const { api: c, calls } = await signedIn(...answers);
     await c.setLanguage('de');
     await c.system();
@@ -336,6 +336,8 @@ describe('createHttpClient', () => {
     await c.deleteTemplate('voice');
     await c.setTemplateHidden('hm-read-only', true);
     await c.templateApprovers('my voice');
+    await c.templateUsage('voice');
+    await c.applyTemplateToMandates('voice', { template_digest: 'sha256:cd', targets: [{ mandate_id: 'm 1', base_digest: 'sha256:ab' }], confirm_critical: true });
     await c.settings();
     await c.putSettings({ approval_timeout: 'PT2M', max_actions_per_hour: 60, bell: false });
     await c.approvals();
@@ -371,6 +373,8 @@ describe('createHttpClient', () => {
       'DELETE api/templates/voice',
       'PUT api/templates/hm-read-only/hidden {"hidden":true}',
       'GET api/templates/my%20voice/approvers',
+      'GET api/templates/voice/usage',
+      'POST api/templates/voice/apply {"template_digest":"sha256:cd","targets":[{"mandate_id":"m 1","base_digest":"sha256:ab"}],"confirm_critical":true}',
       'GET api/settings',
       'PUT api/settings {"approval_timeout":"PT2M","max_actions_per_hour":60,"bell":false}',
       'GET api/approvals',

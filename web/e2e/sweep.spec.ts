@@ -56,6 +56,17 @@ const SCREENS: Screen[] = [
   { name: 'template editor, base template', path: './#/templates/hm-voice-cautious' },
   { name: 'template editor, own template', path: './#/templates/voice-assistant' },
   { name: 'template editor, new template', path: './#/templates/_new' },
+  {
+    name: 'template saved, take the change over into mandates',
+    path: './#/templates/voice-assistant',
+    setup: async (page) => {
+      // No texts here: the pseudo build translates them. The rate limit, Save, then the summary's confirmation.
+      await page.locator('main .rate input[type="number"]').fill('20');
+      await page.locator('main button.btn.primary').first().click();
+      await page.getByRole('dialog').locator('button.btn.primary').click();
+      await expect(page.getByRole('dialog').getByRole('checkbox').first()).toBeVisible();
+    },
+  },
   { name: 'audit log', path: './#/audit' },
   { name: 'audit entry', path: './#/audit/8' },
   { name: 'requests', path: './#/audit/requests' },

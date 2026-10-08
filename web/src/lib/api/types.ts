@@ -142,7 +142,15 @@ export interface Agent {
    * new mandate through POST api/mandates. max_actions_per_hour: the mandate's rate limit,
    * null without one; digest: of its current version (base for apply-template).
    */
-  mandate: { id: string; name: string; status: MandateStatus; max_actions_per_hour: number | null; digest: string } | null;
+  mandate: {
+    id: string;
+    name: string;
+    status: MandateStatus;
+    max_actions_per_hour: number | null;
+    digest: string;
+    /** The template the rules were last taken from; null if unknown. */
+    rules_from: RulesFrom | null;
+  } | null;
 }
 
 /** POST api/agents/revoke: revokes the agent, its tokens and its mandate at once. */
@@ -327,6 +335,25 @@ export interface MandateDocument extends MandateDraft {
   version?: number;
 }
 
+/**
+ * Where the rules of a mandate version came from (display only, never evaluated):
+ * "template" (at admission, for a new mandate or applied later), "edit" (editor, command
+ * line, a rename taken over), "unknown" for versions stored before origins were kept.
+ */
+export type VersionOrigin = 'template' | 'edit' | 'unknown';
+
+/** The template whose rules a mandate last took over. */
+export interface RulesFrom {
+  /** Template name (base templates are shown by their title). */
+  template: string;
+  /** Digest of the template's content then (TemplateSummary.digest). */
+  template_digest: string;
+  /** When that version was stored. */
+  at: string;
+  /** A later version came from an edit. */
+  edited_since: boolean;
+}
+
 export interface MandateSummary {
   id: string;
   /**
@@ -350,6 +377,8 @@ export interface MandateSummary {
    * catalog is not loaded.
    */
   stale_references: StaleReference[];
+  /** The template the rules were last taken from; null if unknown or never from one. */
+  rules_from: RulesFrom | null;
 }
 
 export interface StaleReference {
@@ -393,6 +422,10 @@ export interface MandateVersion {
   created_at: string;
   created_by: string;
   created_by_name: string | null;
+  origin: VersionOrigin;
+  /** Name and digest of the template, for origin "template" only. */
+  template: string | null;
+  template_digest: string | null;
 }
 
 /** GET api/mandates/{id}; versions newest first. A single version: GET api/mandates/{id}/versions/{number}. */
@@ -409,7 +442,7 @@ export interface MandateDetail {
 export interface MandateCreate {
   client_id: string;
   template: string;
-  /** Default: the template name. */
+  /** Default: the agent's display name. */
   name?: string;
   /** As for PairingApprove: needed for a template with allow_critical rules (U9). */
   confirm_critical?: boolean;
@@ -440,7 +473,17 @@ export interface MandateUpdate {
 export interface ApplyTemplate {
   template: string;
   base_digest: string;
+  /** Renames the mandate in the same request; without it the name stays. */
+  name?: string;
   confirm_critical?: boolean;
+}
+
+/**
+ * Answer of apply-template: "unchanged" when the template's rules, approval settings and
+ * limits equal the current version, so no version was stored (a name is still taken).
+ */
+export interface ApplyTemplateResult extends MandateDetail {
+  result: 'updated' | 'unchanged';
 }
 
 /** Reason codes of SPEC-v0 section 4.1. */
@@ -535,6 +578,59 @@ export interface TemplateUpdate {
   draft: MandateDraft;
   base_digest: string | null;
   confirm_critical?: boolean;
+}
+
+/**
+ * GET api/templates/{name}/usage (#18): the active mandates of active agents whose rules
+ * were last taken from the template. digest: the template's now.
+ */
+export interface TemplateUsage {
+  name: string;
+  digest: string;
+  mandates: TemplateUser[];
+}
+
+export interface TemplateUser {
+  mandate_id: string;
+  /** Untrusted text, rendered escaped. */
+  mandate_name: string;
+  client_id: string;
+  /** Untrusted text, rendered escaped. */
+  agent_display_name: string;
+  /** The mandate's current version: the base of taking the template over. */
+  digest: string;
+  /** When the rules were last taken from the template, and its digest then. */
+  taken_at: string;
+  template_digest: string;
+  /** A later version came from an edit; taking the template over replaces it. */
+  edited_since: boolean;
+  /** Taking the template over as it is now would change nothing. */
+  up_to_date: boolean;
+}
+
+/**
+ * POST api/templates/{name}/apply (#18): the template as the human saw it (its digest;
+ * another one is "conflict") becomes a new version of each target, at most 100, each with
+ * the version the human saw. One confirm_critical covers every target that would gain a
+ * rule allowing critical actions without approval; without it the answer is
+ * critical_confirmation_required and no mandate changes.
+ */
+export interface TemplateRolloutRequest {
+  template_digest: string;
+  targets: { mandate_id: string; base_digest: string }[];
+  confirm_critical?: boolean;
+}
+
+/**
+ * Result per mandate: updated; unchanged (already equal, no version); conflict (changed
+ * since it was seen); revoked (the mandate or its agent); not_found; failed (anything
+ * else). Each mandate changed alone: one refused holds back no other.
+ */
+export type RolloutResult = 'updated' | 'unchanged' | 'conflict' | 'revoked' | 'not_found' | 'failed';
+
+export interface TemplateRollout {
+  /** In the order of the targets. digest: the mandate's current version, null if unknown. */
+  results: { mandate_id: string; result: RolloutResult; digest: string | null }[];
 }
 
 // ---------------------------------------------------------------------------

@@ -315,10 +315,16 @@ func TestAdmitNeedsConfirmationForCriticalTemplates(t *testing.T) {
 	}
 }
 
-func TestAdmitNamesTheMandateAfterTheTemplate(t *testing.T) {
+// A new mandate is named after its agent unless the human gives another name; its first
+// version names the template and the digest of its content.
+func TestAdmitNamesTheMandateAfterTheAgent(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	if err := e.adm.PutTemplate(ctx, "voice-assistant", template(t, nil), admin); err != nil {
+		t.Fatal(err)
+	}
+	_, tmpl, err := e.adm.TemplateDocument(ctx, "voice-assistant")
+	if err != nil {
 		t.Fatal(err)
 	}
 	req := request()
@@ -328,11 +334,30 @@ func TestAdmitNamesTheMandateAfterTheTemplate(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, _ := e.mandates.List(ctx)
-	if len(list) != 1 || list[0].Name != "voice-assistant" {
+	if len(list) != 1 || list[0].Name != "Claude" {
 		t.Errorf("mandates = %+v", list)
 	}
 	if got, _ := e.agents.Get(ctx, a.ClientID); len(got.RedirectURIs) != 1 {
 		t.Errorf("redirect URIs = %v", got.RedirectURIs)
+	}
+	want := mandate.Origin{Kind: mandate.OriginTemplate, Template: "voice-assistant", TemplateDigest: tmpl.Digest}
+	if v, err := e.mandates.Versions(ctx, list[0].ID); err != nil || len(v) != 1 || v[0].Origin != want {
+		t.Errorf("versions = %+v, %v; want origin %+v", v, err, want)
+	}
+	// A name the human gives wins, for a base template too.
+	named := request()
+	named.DisplayName, named.OAuthClient, named.Template, named.MandateName = "Garten", "garden", "hm-read-only", "  Nur lesen  "
+	b, _, err := e.adm.Admit(ctx, named)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ := e.mandates.ForAgent(ctx, b.ClientID)
+	_, base, _ := e.adm.TemplateDocument(ctx, "hm-read-only")
+	if got, _ := e.mandates.Get(ctx, m.Info.ID); got.Name != "Nur lesen" {
+		t.Errorf("named mandate = %+v", got)
+	}
+	if v, _ := e.mandates.Versions(ctx, m.Info.ID); len(v) != 1 || v[0].Origin != (mandate.Origin{Kind: mandate.OriginTemplate, Template: "hm-read-only", TemplateDigest: base.Digest}) {
+		t.Errorf("origin from a base template = %+v", v)
 	}
 }
 
@@ -370,12 +395,22 @@ func TestNewMandate(t *testing.T) {
 	if info.ID == first.Info.ID || !strings.HasPrefix(info.ID, first.Info.ID+"-") || info.Name != "Zweites" {
 		t.Errorf("new mandate = %+v (first %s)", info, first.Info.ID)
 	}
+	if v, _ := e.mandates.Versions(ctx, info.ID); len(v) != 1 || v[0].Origin.Kind != mandate.OriginTemplate || v[0].Origin.Template != "voice-assistant" {
+		t.Errorf("origin of the new mandate = %+v", v)
+	}
 	now, _ := e.mandates.ForAgent(ctx, a.ClientID)
 	if now.Info.ID != info.ID || now.Info.Status != mandate.StatusActive {
 		t.Errorf("ForAgent = %+v, want the new mandate", now.Info)
 	}
 	if _, err := e.adm.NewMandate(ctx, a.ClientID, "voice-assistant", "", false, admin); !errors.Is(err, mandate.ErrConflict) {
 		t.Errorf("third mandate = %v", err)
+	}
+	// Without a name, the new mandate is named after the agent.
+	if err := e.mandates.Revoke(ctx, info.ID, admin); err != nil {
+		t.Fatal(err)
+	}
+	if third, err := e.adm.NewMandate(ctx, a.ClientID, "voice-assistant", " ", false, admin); err != nil || third.Name != a.DisplayName {
+		t.Errorf("new mandate without a name = %+v, %v; want the name %q", third, err, a.DisplayName)
 	}
 	if err := e.agents.Revoke(ctx, a.ClientID, admin); err != nil {
 		t.Fatal(err)

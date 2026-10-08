@@ -172,11 +172,11 @@
     busy = true;
     error = '';
     templateProblem = '';
-    const mandate = titleOf(template, choices.data?.templates ?? []);
-    // Binds the admission to the template as shown: a change meanwhile is a conflict.
+    // Binds the admission to the template as shown: a change meanwhile is a conflict. The
+    // server names the mandate after the agent (#16).
     const shown = choices.data?.templates.find((t) => t.name === template)?.digest;
     try {
-      admitted = await app.api.pairingApprove({ code, pairing_id: c.pairing_id, display_name: name, template, mandate_name: mandate,
+      admitted = await app.api.pairingApprove({ code, pairing_id: c.pairing_id, display_name: name, template,
         ...(shown ? { template_digest: shown } : {}),
         ...(confirmCritical ? { confirm_critical: true } : {}) });
       critical = null;
@@ -201,7 +201,7 @@
         return;
       }
     }
-    mandateName = admitted.mandate?.name ?? mandate;
+    mandateName = admitted.mandate?.name ?? name;
     busy = false;
     await go('done');
   }

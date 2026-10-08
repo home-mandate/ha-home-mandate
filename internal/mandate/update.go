@@ -25,13 +25,17 @@ type Change struct {
 	ConfirmCritical bool
 	// Name, if not empty, becomes the display name in the same transaction.
 	Name string
+	// Origin says where the rules of the new version came from; the zero value is an edit.
+	Origin Origin
 }
 
 // Update stores document as a new version of the mandate id that a human edited. It is
 // refused with ErrConflict if change.BaseDigest is not the current version or the mandate
 // is revoked, and with ErrCriticalConfirmation if a rule carries allow_critical that the
 // current version does not have in exactly this form (a changed or renamed rule is a new
-// grant) and change.ConfirmCritical is not set. Unchanged content creates no version.
+// grant) and change.ConfirmCritical is not set. A document with the rules, approval
+// settings, limits and validity of the current version (SameEditable) creates no
+// version, whatever its metadata: the returned digest is then change.BaseDigest.
 func (s *Store) Update(ctx context.Context, id string, document []byte, change Change, by audit.Actor) (Info, error) {
 	err := s.inTx(ctx, func(tx *sql.Tx) error { return s.UpdateTx(ctx, tx, id, document, change, by) })
 	if err != nil {
@@ -66,6 +70,13 @@ func (s *Store) UpdateTx(ctx context.Context, tx *sql.Tx, id string, document []
 	if change.BaseDigest != digest {
 		return fmt.Errorf("%w: another version was stored meanwhile", ErrConflict)
 	}
+	origin := change.Origin.orEdit()
+	if err := origin.check(); err != nil {
+		return err
+	}
+	if SameEditable([]byte(current), document) {
+		return s.renameTx(ctx, tx, id, change.Name)
+	}
 	if !change.ConfirmCritical {
 		granted, err := newCriticalGrant([]byte(current), document)
 		if err != nil {
@@ -75,13 +86,18 @@ func (s *Store) UpdateTx(ctx context.Context, tx *sql.Tx, id string, document []
 			return ErrCriticalConfirmation
 		}
 	}
-	if err := s.put(ctx, tx, info, document, by); err != nil {
+	if err := s.put(ctx, tx, info, document, origin, by); err != nil {
 		return err
 	}
-	if change.Name != "" {
-		return s.SetNameTx(ctx, tx, id, change.Name)
+	return s.renameTx(ctx, tx, id, change.Name)
+}
+
+// renameTx sets the display name of mandate id unless name is empty.
+func (s *Store) renameTx(ctx context.Context, tx *sql.Tx, id, name string) error {
+	if name == "" {
+		return nil
 	}
-	return nil
+	return s.SetNameTx(ctx, tx, id, name)
 }
 
 // NewCriticalGrant tells whether the document next has a rule with allow_critical that
