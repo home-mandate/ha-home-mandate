@@ -36,6 +36,8 @@
     onshow: (problem: FieldProblem) => void;
     /** The problem list, for the editor to move the focus to. */
     summary?: HTMLElement;
+    /** The page heading, for the editor to move the focus to (after discarding). */
+    heading?: HTMLElement;
   }
 
   let {
@@ -54,6 +56,7 @@
     onhidden,
     onshow,
     summary = $bindable(),
+    heading = $bindable(),
   }: Props = $props();
 
   const uid = $props.id();
@@ -65,7 +68,7 @@
 <div class="head">
   <BackLink href={backHref} label={m.templates_title()} />
   <div class="title">
-    <h1><bdi>{title}</bdi></h1>
+    <h1 bind:this={heading} tabindex="-1"><bdi>{title}</bdi></h1>
     {#if template}<TemplateBadges {template} />{/if}
   </div>
   {#if description}<p class="description">{description}</p>{/if}

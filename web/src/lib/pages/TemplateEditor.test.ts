@@ -288,6 +288,68 @@ describe('TemplateEditor: own templates', () => {
   });
 });
 
+describe('TemplateEditor: unsaved changes (issue #20)', () => {
+  const HINT = 'Rule 1 changed – not saved yet. The template changes only after saving.';
+  const bar = () => screen.queryByRole('region', { name: /unsaved change/ });
+  const rulesRegion = () => screen.getByRole('region', { name: /^Rules/ });
+
+  it('says after "Done" that a changed rule is not saved yet', async () => {
+    await start('voice-assistant');
+    const first = within(within(rulesRegion()).getAllByRole('listitem')[0] as HTMLElement);
+    await fireEvent.click(first.getByRole('button', { name: 'Edit: Rule 1' }));
+    await fireEvent.click(first.getByRole('radio', { name: 'Ask' }));
+    await fireEvent.click(first.getByRole('button', { name: 'Done' }));
+    expect(first.getByText(HINT)).toBeTruthy();
+    await fireEvent.click(first.getByRole('button', { name: 'Save now …' }));
+    expect(await screen.findByRole('dialog', { name: 'Save changes?' })).toBeTruthy();
+  });
+
+  it('saves an own template from the bar; the bar is gone afterwards', async () => {
+    const { api } = await start('voice-assistant');
+    expect(bar()).toBeNull();
+    await changeRate('20');
+    expect(bar()?.textContent).toContain('The template keeps its stored rules until you save.');
+    await fireEvent.click(within(bar() as HTMLElement).getByRole('button', { name: 'Save changes …' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Save changes?' });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Save template' }));
+    await waitFor(() => expect(status()).toBe('All saved'));
+    expect(bar()).toBeNull();
+    expect((await api.template('voice-assistant')).draft.limits.max_actions_per_hour).toBe(20);
+  });
+
+  it('offers to save a base template’s changes as a new template', async () => {
+    await start('hm-voice-cautious');
+    await changeRate('20');
+    await fireEvent.click(within(bar() as HTMLElement).getByRole('button', { name: 'Save changes as a new template …' }));
+    expect(await screen.findByRole('dialog', { name: 'Save as new template' })).toBeTruthy();
+  });
+
+  it('discards from the bar with an undo, a new template back to empty', async () => {
+    const { app } = await start(null);
+    await changeRate('7');
+    await fireEvent.click(within(bar() as HTMLElement).getByRole('button', { name: 'Discard changes' }));
+    expect(rate().value).toBe('60');
+    expect(bar()).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1 })));
+    expect(app.unsavedTemplates.has('_new')).toBe(false);
+    const undo = toasts.list().find((t) => t.text === 'Changes discarded.');
+    toasts.act(undo?.id ?? -1);
+    await waitFor(() => expect(rate().value).toBe('7'));
+  });
+
+  it('warns that an edit left earlier is not saved yet, only for such an edit', async () => {
+    const { app, view } = await start('voice-assistant');
+    expect(screen.queryByText('Unsaved changes from earlier')).toBeNull();
+    await changeRate('20');
+    view.unmount();
+    render(TemplateEditor, { app, template: 'voice-assistant', now: Date.parse(NOW) });
+    const banner = (await screen.findByText('Unsaved changes from earlier')).closest('[role="alert"]') as HTMLElement;
+    expect(banner.textContent).toContain('The template keeps its stored rules until you save. Save or discard them.');
+    await changeRate('60');
+    expect(screen.queryByText('Unsaved changes from earlier')).toBeNull();
+  });
+});
+
 describe('TemplateEditor: new and loading', () => {
   it('starts a new template empty, asking the placeholder, with the household’s defaults', async () => {
     const { api } = await start(null);

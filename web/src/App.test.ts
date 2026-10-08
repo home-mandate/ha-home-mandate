@@ -366,3 +366,44 @@ describe('App frame', () => {
     expect(window.location.hash).toBe('');
   });
 });
+
+describe('leaving the app with unsaved changes (issue #20)', () => {
+  /** leave fires beforeunload as a reload or closing the tab would; true if the browser would ask. */
+  function leave(): boolean {
+    const event = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  }
+
+  it('asks while any mandate has unsaved changes, also after leaving its editor, and no longer once they are discarded', async () => {
+    await start({}, '#/mandates/mandate-voice');
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit: Rule 1' }));
+    expect(leave()).toBe(false);
+    await fireEvent.click(screen.getByRole('radio', { name: 'Ask' }));
+    await tick();
+    expect(leave()).toBe(true);
+
+    await navigate('#/mandates');
+    await screen.findByRole('heading', { level: 1, name: 'Mandates' });
+    expect(leave()).toBe(true);
+
+    await navigate('#/mandates/mandate-voice');
+    const bar = await screen.findByRole('region', { name: '1 unsaved change' });
+    await fireEvent.click(within(bar).getByRole('button', { name: 'Discard changes' }));
+    await tick();
+    expect(leave()).toBe(false);
+  });
+
+  it('asks while a template has unsaved changes, and no longer once they are saved', async () => {
+    await start({}, '#/templates/voice-assistant');
+    const field = (await screen.findByLabelText('Rate limit')) as HTMLInputElement;
+    expect(leave()).toBe(false);
+    await fireEvent.input(field, { target: { value: '20' } });
+    await tick();
+    expect(leave()).toBe(true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Save …' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Save changes?' });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Save template' }));
+    await vi.waitFor(() => expect(leave()).toBe(false));
+  });
+});

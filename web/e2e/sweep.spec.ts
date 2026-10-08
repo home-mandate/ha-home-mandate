@@ -51,11 +51,41 @@ const SCREENS: Screen[] = [
   { name: 'mandates', path: './#/mandates' },
   { name: 'mandate editor', path: './#/mandates/mandate-voice' },
   { name: 'mandate editor, long names', path: './#/mandates/mandate-long' },
+  {
+    name: 'mandate editor, a rule changed and not saved (issue #20)',
+    path: './#/mandates/mandate-voice',
+    setup: async (page) => {
+      // No texts here: the pseudo build translates them. Rule 1 to "ask", then "Done".
+      await page.locator('main ol > li .head .btn.text').first().click();
+      await page.locator('main li.editing [role="radiogroup"]').first().getByRole('radio').nth(1).click();
+      await page.locator('main li.editing .btn.primary').click();
+      await expect(page.locator('main li p.unsaved')).toBeVisible();
+      await expect(page.locator('section.savebar')).toBeVisible();
+    },
+  },
+  {
+    name: 'mandate editor, unsaved changes from earlier (issue #20)',
+    path: './#/mandates/mandate-voice',
+    setup: async (page) => {
+      await page.locator('main .rate input[type="number"]').fill('20');
+      await page.locator('main a[href="#/mandates"]').first().click();
+      await page.locator('main a[href="#/mandates/mandate-voice"]').first().click();
+      await expect(page.locator('main .banner.warning')).toBeVisible();
+    },
+  },
   { name: 'mandate versions', path: './#/mandates/mandate-voice/versions' },
   { name: 'templates', path: './#/templates' },
   { name: 'template editor, base template', path: './#/templates/hm-voice-cautious' },
   { name: 'template editor, own template', path: './#/templates/voice-assistant' },
   { name: 'template editor, new template', path: './#/templates/_new' },
+  {
+    name: 'template editor, unsaved changes (issue #20)',
+    path: './#/templates/hm-voice-cautious',
+    setup: async (page) => {
+      await page.locator('main .rate input[type="number"]').fill('20');
+      await expect(page.locator('section.savebar')).toBeVisible();
+    },
+  },
   {
     name: 'template saved, take the change over into mandates',
     path: './#/templates/voice-assistant',

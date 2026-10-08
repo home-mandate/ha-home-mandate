@@ -96,6 +96,11 @@
     z-index: 100;
     pointer-events: none;
   }
+  /* Docked above the save bar of the editors (App.svelte), never over its buttons. */
+  :global(:root.hm-savebar) .host {
+    position: absolute;
+    inset-block-end: calc(100% + var(--hm-space-2));
+  }
   .region {
     inline-size: 100%;
   }

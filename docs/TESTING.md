@@ -76,6 +76,13 @@ protection class, expired, not yet valid) needs its own named test.
   with the Tab key only: every stop needs a visible focus indicator and must not be hidden,
   covered or inside inert content. The helpers have their own tests
   (`web/e2e/sweep-helpers.spec.ts`), so a green sweep cannot come from a check that finds nothing.
+- **Unsaved changes in the editors** (`web/e2e/unsaved.spec.ts`, de, en and pseudo): after
+  "Done" a changed rule says that it is not saved yet and the live region says it too; the
+  save bar sits at the bottom of the viewport at 375 and 1280 px below the frame the page
+  scrolls in, so it covers nothing; an edit left earlier comes back with a warning; saving
+  ends bar and hint with a new version; reloading with unsaved changes (mandate and
+  template) brings up the browser's prompt, after saving it does not. The sweep has these
+  states as screens of their own.
 - **Colour scheme switch** (`web/e2e/theme.spec.ts`, de, en and pseudo): the header switch
   changes the scheme at once and the choice survives a reload; blocked storage or an unknown
   stored value falls back to the system scheme; at 375 px the compact switch sits next to the
