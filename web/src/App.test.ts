@@ -342,6 +342,23 @@ describe('App frame', () => {
     expect(document.title).toBe('Agents – Home-Mandate');
   });
 
+  it('opens the ways to add an agent with the focus on their heading, not the page heading (issue #15)', async () => {
+    await start();
+    await navigate('#/agents?add');
+    const heading = await screen.findByRole('heading', { level: 2, name: 'How does your agent sign in?' });
+    await vi.waitFor(() => expect(document.activeElement).toBe(heading));
+    expect(screen.getByRole('link', { name: /With a pairing code/ }).getAttribute('href')).toBe('#/agents/pair');
+    expect(screen.getByRole('link', { name: /With browser sign-in/ }).getAttribute('href')).toBe('#/agents/browser');
+  });
+
+  it('opens the ways when going from the agents page to add an agent (issue #15)', async () => {
+    await start({}, '#/agents');
+    await screen.findByRole('button', { name: 'Add agent' });
+    await navigate('#/agents?add');
+    const heading = await screen.findByRole('heading', { level: 2, name: 'How does your agent sign in?' });
+    await vi.waitFor(() => expect(document.activeElement).toBe(heading));
+  });
+
   it('moves focus to the content with the skip link', async () => {
     await start();
     await fireEvent.click(screen.getByRole('link', { name: 'Skip to content' }));

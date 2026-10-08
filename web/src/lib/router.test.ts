@@ -10,11 +10,20 @@ describe('parseHash', () => {
     }
   });
 
+  it('opens the choice of ways only when asked for (issue #15)', () => {
+    expect(Object.hasOwn(parseHash('#/agents'), 'add')).toBe(false);
+    expect(Object.hasOwn(parseHash('#/agents?other=1'), 'add')).toBe(false);
+  });
+
   it.each<[string, Route]>([
     ['', { name: 'overview' }],
     ['#', { name: 'overview' }],
     ['#/', { name: 'overview' }],
     ['#/agents', { name: 'agents' }],
+    // The way to connect an agent: the agents page with the choice of both ways open (issue #15).
+    ['#/agents?add', { name: 'agents', add: true }],
+    ['#/agents?add=1', { name: 'agents', add: true }],
+    ['#/agents?other=1', { name: 'agents' }],
     ['#/agents/pair', { name: 'pair' }],
     ['#/agents/browser', { name: 'connect' }],
     ['#/agents/id/pair%3Avoice-assistant', { name: 'agent', id: 'pair:voice-assistant' }],
@@ -87,6 +96,7 @@ describe('href', () => {
     [{ name: 'pair' }, '#/agents/pair'],
     [{ name: 'connect' }, '#/agents/browser'],
     [{ name: 'agents' }, '#/agents'],
+    [{ name: 'agents', add: true }, '#/agents?add'],
     [{ name: 'mandates' }, '#/mandates'],
     [{ name: 'templates' }, '#/templates'],
     [{ name: 'template', template: 'guest-room' }, '#/templates/guest-room'],
@@ -106,6 +116,7 @@ describe('sectionOf', () => {
     [{ name: 'overview' }, 'overview'],
     [{ name: 'agent', id: 'x' }, 'agents'],
     [{ name: 'pair' }, 'agents'],
+    [{ name: 'agents', add: true }, 'agents'],
     [{ name: 'mandate', id: 'm-1234' }, 'mandates'],
     [{ name: 'mandate_versions', id: 'm-1234' }, 'mandates'],
     [{ name: 'templates' }, 'mandates'],

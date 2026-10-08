@@ -11,7 +11,8 @@ export type SettingsSection = 'approvers' | 'critical' | 'defaults' | 'ha' | 'mc
 
 export type Route =
   | { name: 'overview' }
-  | { name: 'agents' }
+  /** add: the choice of ways to connect an agent is open on arrival; every entry point to connect one leads here. */
+  | { name: 'agents'; add?: true }
   | { name: 'pair' }
   | { name: 'connect' }
   | { name: 'agent'; id: string }
@@ -73,7 +74,7 @@ export function parseHash(hash: string): Route {
       case '':
         return { name: 'overview' };
       case 'agents':
-        return { name: 'agents' };
+        return new URLSearchParams(query).has('add') ? { name: 'agents', add: true } : { name: 'agents' };
       case 'mandates':
         return { name: 'mandates' };
       case 'templates':
@@ -113,7 +114,7 @@ export function href(route: Route): string {
     case 'not_found':
       return '#/';
     case 'agents':
-      return '#/agents';
+      return route.add ? '#/agents?add' : '#/agents';
     case 'pair':
       return '#/agents/pair';
     case 'connect':

@@ -109,7 +109,7 @@ describe('Overview', () => {
     });
     const welcome = await screen.findByRole('region', { name: 'Welcome to Home-Mandate' });
     expect(within(welcome).getByText('0 of 2 done')).toBeTruthy();
-    expect(within(welcome).getByRole('link', { name: 'Connect agent' }).getAttribute('href')).toBe('#/agents/pair');
+    expect(within(welcome).getByRole('link', { name: 'Connect agent' }).getAttribute('href')).toBe('#/agents?add');
     const locked = within(welcome).getByRole('button', { name: 'Create mandate' });
     expect(locked.getAttribute('aria-disabled')).toBe('true');
     expect(locked.getAttribute('aria-describedby')).toBeTruthy();
