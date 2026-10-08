@@ -279,7 +279,7 @@ describe('new mandate', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'New mandate' }));
     const dialog = await screen.findByRole('dialog', { name: 'New mandate' });
     expect(within(dialog).getByText(/Every active agent already has a mandate/)).toBeTruthy();
-    expect(within(dialog).getByRole('link', { name: 'Go to agents' }).getAttribute('href')).toBe('#/agents');
+    expect(within(dialog).getByRole('link', { name: 'Go to agents' }).getAttribute('href')).toBe('#/agents?add');
     expect(within(dialog).queryByRole('button', { name: 'Create mandate' })).toBeNull();
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());

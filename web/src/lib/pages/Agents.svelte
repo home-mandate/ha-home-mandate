@@ -3,6 +3,8 @@
   Agents (design README 6.2): every admitted agent with its claimed name, client identity,
   mandate, last activity and status; a table on desktop and cards on mobile. Active agents
   come first. "Add agent" shows the two ways to sign in; without agents they show at once.
+  Arriving to add an agent (#/agents?add, every entry point to connect one) opens the ways and
+  moves the focus to their heading, also when agents exist.
   A load error says that admitted agents keep working under their mandates.
 -->
 <script lang="ts">
@@ -33,9 +35,11 @@
     app: AppState;
     /** Browser clock, ticking; relative times follow the server's time. */
     now: number;
+    /** The choice of ways is open on arrival, with the focus on its heading. */
+    add?: boolean;
   }
 
-  let { app, now }: Props = $props();
+  let { app, now, add = false }: Props = $props();
 
   const SKELETON_ROWS = ['60%', '80%', '50%'];
 
@@ -45,6 +49,9 @@
 
   let adding = $state(false);
   let ways: HTMLElement | undefined = $state();
+  /** The ways' heading takes the focus once they show after arriving to add an agent. */
+  let focusWays = $state(false);
+  let title: HTMLElement | undefined = $state();
 
   /** What screen readers hear when the list changes live (review 5d). */
   const live = new Announcer();
@@ -72,7 +79,27 @@
   const agents = $derived(list.data ? [...list.data].sort((a, b) => Number(a.status === 'revoked') - Number(b.status === 'revoked')) : null);
   const showWays = $derived(adding || agents?.length === 0);
 
-  async function add() {
+  // On arrival to add an agent (also when the request comes while the page is open).
+  $effect(() => {
+    if (!add) return;
+    adding = true;
+    focusWays = true;
+  });
+  // Once, after the list has loaded; later reloads leave the focus alone.
+  // Without a list to add to, the page heading takes it as on any other arrival.
+  $effect(() => {
+    if (!focusWays) return;
+    if (list.status === 'error') {
+      focusWays = false;
+      void tick().then(() => title?.focus());
+      return;
+    }
+    if (!showWays || !agents) return;
+    focusWays = false;
+    void tick().then(() => document.getElementById(`${id}-ways-heading`)?.focus());
+  });
+
+  async function toggleWays() {
     adding = !adding;
     if (!adding) return;
     await tick();
@@ -90,9 +117,9 @@
 <p class="hm-visually-hidden" role="status">{live.text}</p>
 
 <div class="head">
-  <h1>{m.agents_title()}</h1>
+  <h1 bind:this={title} tabindex="-1">{m.agents_title()}</h1>
   {#if agents && agents.length > 0}
-    <Button variant="primary" size="lg" icon="plus" aria-expanded={adding} aria-controls="{id}-ways" onclick={add}>{m.agents_add()}</Button>
+    <Button variant="primary" size="lg" icon="plus" aria-expanded={adding} aria-controls="{id}-ways" onclick={toggleWays}>{m.agents_add()}</Button>
   {/if}
 </div>
 

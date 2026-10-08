@@ -106,6 +106,8 @@
   async function focusPage() {
     await tick();
     if (sheet) return;
+    // Arriving to add an agent, the agents page moves the focus to the ways itself once loaded (issue #15).
+    if (route.name === 'agents' && route.add) return;
     const heading = main?.querySelector<HTMLElement>('h1');
     if (!heading) {
       main?.focus();
@@ -232,7 +234,7 @@
   {:else if route.name === 'audit_entry'}
     {#key route.seq}<AuditEntry {app} seq={route.seq} />{/key}
   {:else if route.name === 'agents'}
-    <Agents {app} {now} />
+    <Agents {app} {now} add={route.add === true} />
   {:else if route.name === 'pair'}
     <AgentPair {app} {now} />
   {:else if route.name === 'agent'}

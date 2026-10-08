@@ -19,13 +19,13 @@ afterEach(() => {
 const desktop = () => vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
 const mobile = () => vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }));
 
-async function start(options: MockOptions = {}, prepare?: (api: MockClient) => Promise<void> | void) {
+async function start(options: MockOptions = {}, prepare?: (api: MockClient) => Promise<void> | void, add = false) {
   const api = createMockClient({ now: () => new Date(NOW), ...options });
   await prepare?.(api);
   const app = new AppState(api, () => Date.parse(NOW));
   await app.start();
-  render(Agents, { app, now: Date.parse(NOW) });
-  return { api, app };
+  const view = render(Agents, { app, now: Date.parse(NOW), add });
+  return { api, app, view };
 }
 
 describe('Agents', () => {
@@ -80,6 +80,52 @@ describe('Agents', () => {
     expect(code.getAttribute('href')).toBe('#/agents/pair');
     expect(screen.getByRole('link', { name: /With browser sign-in/ }).getAttribute('href')).toBe('#/agents/browser');
     expect(document.activeElement).toBe(code);
+  });
+
+  it('opens the ways on arrival to add an agent, with the focus on their heading, also with agents (issue #15)', async () => {
+    await start({}, undefined, true);
+    const heading = await screen.findByRole('heading', { level: 2, name: 'How does your agent sign in?' });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    expect(screen.getByRole('table', { name: 'Agents' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add agent' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('link', { name: /With a pairing code/ }).getAttribute('href')).toBe('#/agents/pair');
+    expect(screen.getByRole('link', { name: /With browser sign-in/ }).getAttribute('href')).toBe('#/agents/browser');
+  });
+
+  it('opens the ways with the focus on their heading when there is no agent yet (issue #15)', async () => {
+    await start({}, (api) => {
+      api.agents = async () => [];
+    }, true);
+    const heading = await screen.findByRole('heading', { level: 2, name: 'How does your agent sign in?' });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    expect(screen.getByRole('link', { name: /With browser sign-in/ })).toBeTruthy();
+  });
+
+  it('opens the ways when asked for while the list is shown, and does not take the focus again on reloads (issue #15)', async () => {
+    const { api, view } = await start();
+    await screen.findByRole('table', { name: 'Agents' });
+    expect(screen.queryByRole('heading', { level: 2, name: 'How does your agent sign in?' })).toBeNull();
+    await view.rerender({ add: true });
+    const heading = await screen.findByRole('heading', { level: 2, name: 'How does your agent sign in?' });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    const add = screen.getByRole('button', { name: 'Add agent' });
+    add.focus();
+    await api.revokeAgent('https://claude.ai/oauth/claude-code-client-metadata');
+    await waitFor(() => expect(within(screen.getByRole('table', { name: 'Agents' })).getAllByText('Revoked')).toHaveLength(2));
+    expect(document.activeElement).toBe(add);
+  });
+
+  it('moves the focus to the page heading when the agents cannot be loaded on arrival to add one (issue #15)', async () => {
+    await start({ failures: { agents: 'unavailable' } }, undefined, true);
+    expect(await screen.findByText('Couldn’t load agents')).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1, name: 'Agents' })));
+  });
+
+  it('keeps the ways closed without the request to add', async () => {
+    await start();
+    await screen.findByRole('table', { name: 'Agents' });
+    expect(screen.queryByRole('link', { name: /With browser sign-in/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Add agent' }).getAttribute('aria-expanded')).toBe('false');
   });
 
   it('offers the ways at once when there is no agent yet', async () => {

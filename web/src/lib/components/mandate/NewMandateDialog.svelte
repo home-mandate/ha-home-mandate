@@ -142,7 +142,7 @@
       <TextField label={m.editor_name()} bind:value={name} bind:element={nameField} error={nameError} maxlength={NAME_MAX} oninput={() => (named = true)} />
     {:else}
       <p id="{id}-body">{m.mandates_new_none()}</p>
-      <a href={href({ name: 'agents' })} onclick={onclose}>{m.mandates_agents_link()}</a>
+      <a href={href({ name: 'agents', add: true })} onclick={onclose}>{m.mandates_agents_link()}</a>
     {/if}
     {#if confirming}
       <CriticalTemplateConfirm
