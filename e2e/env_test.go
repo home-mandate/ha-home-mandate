@@ -70,6 +70,8 @@ var env struct {
 	uiPath   string // /api/hassio_ingress/<token>
 	uiDirect string // http://127.0.0.1:<port> of the gateway's UI listener, bypassing Ingress
 	network  string
+	cimdNet  string // internal network of the client metadata server (tools/cimdserver)
+	cimd     string // its container
 	volume   string
 	secrets  []string // must never appear in logs
 	teardown []func()
@@ -105,8 +107,10 @@ func setUp() error {
 	env.id = hex.EncodeToString(b[:])
 	env.ha, env.hm = "hm-e2e-ha-"+env.id, "hm-e2e-gw-"+env.id
 	env.network, env.volume = "hm-e2e-net-"+env.id, "hm-e2e-data-"+env.id
+	env.cimdNet, env.cimd = "hm-e2e-cimd-net-"+env.id, "hm-e2e-cimd-"+env.id
 
-	for _, step := range []func() error{prepareImage, makeCertificates, createNetwork, startHA, onboard, createUsers, startGateway, startIngress} {
+	for _, step := range []func() error{prepareImage, makeCertificates, createNetwork, startHA, onboard, createUsers, startCIMD,
+		startGateway, startIngress} {
 		if err := step(); err != nil {
 			return err
 		}
@@ -139,8 +143,9 @@ func prepareImage() error {
 	return err
 }
 
-// makeCertificates creates a test CA and one server certificate for Home Assistant
-// ("homeassistant") and the MCP endpoint ("localhost", 127.0.0.1).
+// makeCertificates creates a test CA, one server certificate for Home Assistant
+// ("homeassistant") and the MCP endpoint ("localhost", 127.0.0.1), and one for the client
+// metadata server (cimdHost).
 func makeCertificates() error {
 	dir, err := os.MkdirTemp("", "hm-e2e-certs-")
 	if err != nil {
@@ -158,34 +163,34 @@ func makeCertificates() error {
 		return err
 	}
 	caCert, _ := x509.ParseCertificate(caDER)
+	env.ca, env.caKey = caCert, caKey
+	env.roots = x509.NewCertPool()
+	env.roots.AddCert(caCert)
+	if err := os.WriteFile(filepath.Join(dir, "ca.pem"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}), 0o644); err != nil {
+		return err
+	}
+	if err := issueCertificate(2, "", []string{"homeassistant", "localhost"}, []net.IP{net.ParseIP("127.0.0.1")}); err != nil {
+		return err
+	}
+	return issueCertificate(3, "cimd-", []string{cimdHost}, nil)
+}
+
+// issueCertificate writes <prefix>cert.pem and <prefix>key.pem, issued by the test CA.
+func issueCertificate(serial int64, prefix string, names []string, ips []net.IP) error {
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	tmpl := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "homeassistant"},
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
-		DNSNames: []string{"homeassistant", "localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: names[0]},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour), DNSNames: names, IPAddresses: ips,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, KeyUsage: x509.KeyUsageDigitalSignature}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, env.ca, &key.PublicKey, env.caKey)
 	if err != nil {
 		return err
 	}
 	keyDER, _ := x509.MarshalPKCS8PrivateKey(key)
-	files := map[string][]byte{
-		"ca.pem":   pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}),
-		"cert.pem": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
-		"key.pem":  pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
+	if err := os.WriteFile(filepath.Join(env.certs, prefix+"cert.pem"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644); err != nil {
+		return err
 	}
-	for name, data := range files {
-		mode := os.FileMode(0o644)
-		if name == "key.pem" {
-			mode = 0o600 // the containers run as root (rootless: mapped to this user)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), data, mode); err != nil {
-			return err
-		}
-	}
-	env.roots = x509.NewCertPool()
-	env.roots.AddCert(caCert)
-	env.ca, env.caKey = caCert, caKey
-	return nil
+	// The containers run as root (rootless: mapped to this user).
+	return os.WriteFile(filepath.Join(env.certs, prefix+"key.pem"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600)
 }
 
 // supervisorSubnet is the hassio network of Home Assistant OS. The Ingress stand-in gets
@@ -198,11 +203,30 @@ const (
 	ingressIP        = "172.30.32.50"
 )
 
+// The client metadata server (tools/cimdserver) of the browser test of the sign-in pages
+// (oauth_test.go). The release image fetches client metadata only from public addresses
+// on port 443 (decision W6), and it stays unchanged for the test: the server gets its
+// own internal network, without a route anywhere else, in a subnet the gateway's rules do
+// not reserve, the former 6to4 relay anycast prefix (RFC 7526), which nothing uses. Its
+// certificate comes from the test CA, which the gateway trusts through SSL_CERT_FILE in
+// the test run only.
+const (
+	cimdSubnet   = "192.88.99.0/24"
+	cimdIP       = "192.88.99.10"
+	cimdHost     = "cimd.home-mandate.test"
+	cimdClientID = "https://" + cimdHost + "/agent.json"
+	cimdRedirect = "http://127.0.0.1/callback" // loopback: any port (RFC 8252 section 7.3)
+)
+
 func createNetwork() error {
 	if _, err := run("network", "create", "--subnet", supervisorSubnet, "--ip-range", dynamicRange, env.network); err != nil {
 		return err
 	}
 	env.teardown = append(env.teardown, func() { _, _ = run("network", "rm", "-f", env.network) })
+	if _, err := run("network", "create", "--internal", "--subnet", cimdSubnet, env.cimdNet); err != nil {
+		return err
+	}
+	env.teardown = append(env.teardown, func() { _, _ = run("network", "rm", "-f", env.cimdNet) })
 	return nil
 }
 
@@ -353,12 +377,15 @@ func startGateway() error {
 		return err
 	}
 	env.public = "https://localhost:" + port
-	if _, err := run("run", "-d", "--name", env.hm, "--network", env.network, "-p", "127.0.0.1:"+port+":8765", "-p", "127.0.0.1::8099",
+	if _, err := run("run", "-d", "--name", env.hm, "--network", env.network, "--network", env.cimdNet,
+		"--add-host", cimdHost+":"+cimdIP, "-p", "127.0.0.1:"+port+":8765", "-p", "127.0.0.1::8099",
 		"-e", "HM_INGRESS_ADDR=:8099", "-e", "HM_INGRESS_PROXY="+ingressIP,
 		"-v", env.volume+":/data", "-v", env.certs+":/certs:ro",
 		"-e", "HM_HA_URL=wss://homeassistant:8123/api/websocket",
 		"-e", "HM_HA_TOKEN_FILE=/certs/ha-token",
 		"-e", "HM_HA_CA_FILE=/certs/ca.pem",
+		"-e", "HM_HA_BROWSER_URL="+env.haURL,
+		"-e", "SSL_CERT_FILE=/certs/ca.pem", // the client metadata server's CA, for the test run only
 		"-e", "HM_TLS_CERT=/certs/cert.pem", "-e", "HM_TLS_KEY=/certs/key.pem",
 		"-e", "HM_LOG_LEVEL=debug",
 		"-e", "HM_PUBLIC_URL="+env.public,
@@ -379,28 +406,53 @@ func startGateway() error {
 	return nil
 }
 
-// startIngress builds the Ingress stand-in from tools/ingressproxy and runs it at
-// ingressIP, in front of the gateway's UI listener.
-func startIngress() error {
-	dir, err := os.MkdirTemp("", "hm-e2e-ingress-")
+// buildTool builds a command of tools/ into an image of its own.
+func buildTool(name string) (string, error) {
+	dir, err := os.MkdirTemp("", "hm-e2e-"+name+"-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(dir)
+	build := exec.Command("go", "build", "-trimpath", "-o", filepath.Join(dir, name), "../tools/"+name)
+	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOWORK=off")
+	if out, err := build.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("build %s: %w: %s", name, err, out)
+	}
+	containerfile := "FROM scratch\nCOPY " + name + " /" + name + "\nENTRYPOINT [\"/" + name + "\"]\n"
+	if err := os.WriteFile(filepath.Join(dir, "Containerfile"), []byte(containerfile), 0o644); err != nil {
+		return "", err
+	}
+	image := "localhost/hm-e2e-" + name + ":" + env.id
+	if _, err := run("build", "-q", "-f", filepath.Join(dir, "Containerfile"), "-t", image, dir); err != nil {
+		return "", err
+	}
+	env.teardown = append(env.teardown, func() { _, _ = run("rmi", "-f", image) })
+	return image, nil
+}
+
+// startCIMD runs the client metadata server (tools/cimdserver) at cimdIP on its own
+// network; the gateway joins that network too.
+func startCIMD() error {
+	image, err := buildTool("cimdserver")
 	if err != nil {
 		return err
 	}
-	env.teardown = append(env.teardown, func() { _ = os.RemoveAll(dir) })
-	build := exec.Command("go", "build", "-trimpath", "-o", filepath.Join(dir, "ingressproxy"), "../tools/ingressproxy")
-	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOWORK=off")
-	if out, err := build.CombinedOutput(); err != nil {
-		return fmt.Errorf("build ingressproxy: %w: %s", err, out)
-	}
-	containerfile := "FROM scratch\nCOPY ingressproxy /ingressproxy\nENTRYPOINT [\"/ingressproxy\"]\n"
-	if err := os.WriteFile(filepath.Join(dir, "Containerfile"), []byte(containerfile), 0o644); err != nil {
+	if _, err := run("run", "-d", "--name", env.cimd, "--network", env.cimdNet, "--ip", cimdIP, "-v", env.certs+":/certs:ro",
+		image, "-listen", ":443", "-cert", "/certs/cimd-cert.pem", "-key", "/certs/cimd-key.pem",
+		"-client-id", cimdClientID, "-name", "Browser agent", "-redirect-uri", cimdRedirect); err != nil {
 		return err
 	}
-	image := "localhost/hm-e2e-ingress:" + env.id
-	if _, err := run("build", "-q", "-f", filepath.Join(dir, "Containerfile"), "-t", image, dir); err != nil {
+	env.teardown = append(env.teardown, func() { _, _ = run("rm", "-f", env.cimd) })
+	return nil
+}
+
+// startIngress builds the Ingress stand-in from tools/ingressproxy and runs it at
+// ingressIP, in front of the gateway's UI listener.
+func startIngress() error {
+	image, err := buildTool("ingressproxy")
+	if err != nil {
 		return err
 	}
-	env.teardown = append(env.teardown, func() { _, _ = run("rmi", "-f", image) })
 	env.ingress = "hm-e2e-ingress-" + env.id
 	token := randomHex(32)
 	env.uiPath = "/api/hassio_ingress/" + token
@@ -471,7 +523,7 @@ func eventually(t *testing.T, what string, limit time.Duration, cond func() bool
 }
 
 func dumpLogs() {
-	for _, c := range []string{env.hm, env.ha, env.ingress} {
+	for _, c := range []string{env.hm, env.ha, env.ingress, env.cimd} {
 		if c == "" {
 			continue
 		}
