@@ -57,7 +57,7 @@ func TestAgents(t *testing.T) {
 	if a.ClientID != voice.ClientID || a.Status != "active" || a.CreatedByName == nil || *a.CreatedByName != "Markus" ||
 		a.OAuthClient != "n8n-voice" || a.ClientVerified || a.RedirectURIs == nil || len(a.RedirectURIs) != 0 ||
 		a.RequestsToday != 3 || a.ActionsLastHour != 1 || a.LastActiveAt == nil || *a.LastActiveAt != "2026-10-03T09:50:00.000Z" ||
-		a.RevokedAt != nil || a.Mandate == nil || a.Mandate.Status != "active" || a.Mandate.Name != "voice-assistant" ||
+		a.RevokedAt != nil || a.Mandate == nil || a.Mandate.Status != "active" || a.Mandate.Name != "Voice" || a.Mandate.RulesFrom == nil ||
 		*a.Mandate.MaxActionsPerHour != 60 || !strings.HasPrefix(a.Mandate.Digest, "sha256:") {
 		t.Errorf("agent = %+v, mandate %+v", a, a.Mandate)
 	}

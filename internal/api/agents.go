@@ -19,6 +19,8 @@ type wireAgentMandate struct {
 	Status            string `json:"status"`
 	MaxActionsPerHour *int   `json:"max_actions_per_hour"`
 	Digest            string `json:"digest"`
+	// RulesFrom is the template the rules were last taken from; nil if unknown.
+	RulesFrom *wireRulesFrom `json:"rules_from"`
 }
 
 type wireAgent struct {
@@ -70,6 +72,10 @@ func (s *Server) presentAgents(ctx context.Context, list []agent.Agent) ([]wireA
 	if err != nil {
 		return nil, err
 	}
+	uses, err := s.cfg.Mandates.TemplateUses(ctx)
+	if err != nil {
+		return nil, err
+	}
 	// The current mandate per agent: the active one, else the newest (List is in creation order).
 	current := map[string]mandate.Info{}
 	for _, m := range mandates {
@@ -93,7 +99,8 @@ func (s *Server) presentAgents(ctx context.Context, list []agent.Agent) ([]wireA
 		}
 		if m, ok := current[a.ClientID]; ok {
 			limit := m.MaxActionsPerHour
-			w.Mandate = &wireAgentMandate{ID: m.ID, Name: nameOf(m), Status: m.Status, MaxActionsPerHour: &limit, Digest: m.Digest}
+			w.Mandate = &wireAgentMandate{ID: m.ID, Name: nameOf(m), Status: m.Status, MaxActionsPerHour: &limit, Digest: m.Digest,
+				RulesFrom: rulesFrom(uses, m.ID)}
 		}
 		out = append(out, w)
 	}

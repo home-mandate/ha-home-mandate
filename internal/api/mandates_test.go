@@ -30,7 +30,7 @@ func TestMandateListAndDetail(t *testing.T) {
 	m := h.mandateOf(voice.ClientID)
 	var list []wireMandateSummary
 	h.ok(http.MethodGet, "/api/mandates", nil, &list)
-	if len(list) != 1 || list[0].ID != m.ID || list[0].Name != "voice-assistant" || list[0].ClientID != voice.ClientID ||
+	if len(list) != 1 || list[0].ID != m.ID || list[0].Name != "Voice" || list[0].ClientID != voice.ClientID ||
 		list[0].AgentDisplayName != "Voice" || list[0].Status != "active" || list[0].RuleCount == 0 || list[0].ValidFrom == "" ||
 		list[0].Expires != nil || list[0].MaxActionsPerHour != 60 || list[0].Digest != m.Digest {
 		t.Errorf("list = %+v", list)

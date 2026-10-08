@@ -232,23 +232,27 @@ func TestNewMandateFromABaseTemplate(t *testing.T) {
 func TestResolvedTemplateForAnExistingMandate(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	doc, err := e.adm.Resolved(ctx, "hm-voice-cautious", admin)
+	doc, digest, err := e.adm.Resolved(ctx, "hm-voice-cautious", admin)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := approversIn(t, doc); !slices.Equal(got, []string{admin.ID}) {
 		t.Errorf("approvers = %v", got)
 	}
+	// The digest is the template's as listed, not the resolved document's.
+	if _, info, err := e.adm.TemplateDocument(ctx, "hm-voice-cautious"); err != nil || digest != info.Digest {
+		t.Errorf("digest = %s, want %s (%v)", digest, info.Digest, err)
+	}
 	if err := e.adm.SetHidden(ctx, "hm-voice-cautious", true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.adm.Resolved(ctx, "hm-voice-cautious", admin); !errors.Is(err, admission.ErrTemplateNotFound) {
+	if _, _, err := e.adm.Resolved(ctx, "hm-voice-cautious", admin); !errors.Is(err, admission.ErrTemplateNotFound) {
 		t.Errorf("hidden template = %v", err)
 	}
-	if _, err := e.adm.Resolved(ctx, "hm-read-only", audit.Actor{Kind: audit.ActorUser, ID: "local-admin"}); !errors.Is(err, mandate.ErrNoApprovers) {
+	if _, _, err := e.adm.Resolved(ctx, "hm-read-only", audit.Actor{Kind: audit.ActorUser, ID: "local-admin"}); !errors.Is(err, mandate.ErrNoApprovers) {
 		t.Errorf("nobody to approve = %v", err)
 	}
-	if _, err := e.adm.Resolved(ctx, "unknown", admin); !errors.Is(err, admission.ErrTemplateNotFound) {
+	if _, _, err := e.adm.Resolved(ctx, "unknown", admin); !errors.Is(err, admission.ErrTemplateNotFound) {
 		t.Errorf("unknown template = %v", err)
 	}
 }

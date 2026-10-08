@@ -71,7 +71,8 @@ type Request struct {
 	ClientVerified bool   // OAuthClient is a fetched Client ID Metadata Document
 	RedirectURIs   []string
 	Resource       string // the tokens' resource
-	// MandateName is the display name of the new mandate; empty means the template name.
+	// MandateName is the display name of the new mandate; empty means the agent's
+	// display name.
 	MandateName string
 	// ConfirmCritical is the human's separate confirmation that the template's rules may
 	// allow critical actions without approval (decision U9): without it, a template with
@@ -227,7 +228,7 @@ func (s *Store) Admit(ctx context.Context, req Request) (agent.Agent, agent.Toke
 	if err != nil {
 		return agent.Agent{}, agent.TokenPair{}, err
 	}
-	if _, err := s.mandateFor(ctx, tx, document, a, mandateName(req.MandateName, req.Template), "", req.By); err != nil {
+	if _, err := s.mandateFor(ctx, tx, req.Template, document, a, mandateName(req.MandateName, a.DisplayName), "", req.By); err != nil {
 		return agent.Agent{}, agent.TokenPair{}, err
 	}
 	tokens, err := s.agents.IssueTokensTx(ctx, tx, a.ClientID, req.Resource)
@@ -274,9 +275,10 @@ func (s *Store) templateTx(ctx context.Context, tx *sql.Tx, name string, confirm
 	return []byte(document), nil
 }
 
-// mandateFor stores the mandate of a from a template inside tx, under a new ID when
-// suffix is set (a later mandate of an agent whose first one was revoked).
-func (s *Store) mandateFor(ctx context.Context, tx *sql.Tx, template []byte, a agent.Agent, name, suffix string, by audit.Actor) (mandate.Info, error) {
+// mandateFor stores the mandate of a from the template named templateName inside tx,
+// under a new ID when suffix is set (a later mandate of an agent whose first one was
+// revoked). Its first version names the template as its origin.
+func (s *Store) mandateFor(ctx context.Context, tx *sql.Tx, templateName string, template []byte, a agent.Agent, name, suffix string, by audit.Actor) (mandate.Info, error) {
 	instance, err := s.instantiate(template, a, by.ID, suffix)
 	if err != nil {
 		return mandate.Info{}, err
@@ -288,7 +290,8 @@ func (s *Store) mandateFor(ctx context.Context, tx *sql.Tx, template []byte, a a
 	if instance, err = mandate.ReplaceApprovers(instance, people); err != nil {
 		return mandate.Info{}, err
 	}
-	info, err := s.mandates.PutTx(ctx, tx, instance, by)
+	origin := mandate.Origin{Kind: mandate.OriginTemplate, Template: templateName, TemplateDigest: digest(template)}
+	info, err := s.mandates.PutOriginTx(ctx, tx, instance, origin, by)
 	if err != nil {
 		return mandate.Info{}, err
 	}
@@ -325,11 +328,12 @@ func digest(document []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func mandateName(name, template string) string {
+// mandateName is the name a human gave, or else the agent's display name.
+func mandateName(name, agentName string) string {
 	if name = strings.TrimSpace(name); name != "" {
 		return name
 	}
-	return template
+	return agentName
 }
 
 // NewMandate gives an active agent without an active mandate a new one from a template
@@ -363,7 +367,7 @@ func (s *Store) NewMandate(ctx context.Context, clientID, template, name string,
 	}
 	var suffix [4]byte
 	_, _ = rand.Read(suffix[:]) // crypto/rand.Read never fails (Go ≥ 1.24)
-	info, err := s.mandateFor(ctx, tx, document, a, mandateName(name, template), hex.EncodeToString(suffix[:]), by)
+	info, err := s.mandateFor(ctx, tx, template, document, a, mandateName(name, a.DisplayName), hex.EncodeToString(suffix[:]), by)
 	if err != nil {
 		return mandate.Info{}, err
 	}
@@ -401,29 +405,30 @@ func (s *Store) TemplateDocument(ctx context.Context, name string) ([]byte, Temp
 }
 
 // Resolved returns a template ready to become part of a mandate (applying it to an
-// existing one): hidden base templates are refused as at admission, and the approvers
-// placeholder stands for by, if a person, and every approver set up.
-func (s *Store) Resolved(ctx context.Context, name string, by audit.Actor) ([]byte, error) {
+// existing one) and the digest of the template as stored: hidden base templates are
+// refused as at admission, and the approvers placeholder stands for by, if a person, and
+// every approver set up.
+func (s *Store) Resolved(ctx context.Context, name string, by audit.Actor) ([]byte, string, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, fmt.Errorf("admission: begin: %w", err)
+		return nil, "", fmt.Errorf("admission: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	// The separate confirmation of critical rules is the mandate update's to ask for.
 	document, err := s.templateTx(ctx, tx, name, true)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	people, err := s.people(ctx, by)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	out, err := mandate.ReplaceApprovers(document, people)
 	if err != nil && !errors.Is(err, mandate.ErrNoApprovers) {
 		// Stored templates were checked when stored: this is a damaged store, no bad input.
-		return nil, fmt.Errorf("admission: stored template %s: %v", name, err)
+		return nil, "", fmt.Errorf("admission: stored template %s: %v", name, err)
 	}
-	return out, err
+	return out, digest(document), err
 }
 
 // UpdateTemplate stores a template edited by a human (PUT api/templates/{name}): like

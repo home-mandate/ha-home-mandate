@@ -319,3 +319,56 @@ func TestUIMigrationKeepsMandates(t *testing.T) {
 		t.Error("search row without its entry accepted")
 	}
 }
+
+// Migration 14 keeps where the rules of a version came from: versions stored before have
+// no known origin; a version from a template names it and its digest, an edit names none.
+func TestMandateVersionOriginMigration(t *testing.T) {
+	ctx := context.Background()
+	db := openRaw(t)
+	if err := migrate(ctx, db, upTo(t, 13)); err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO agents (client_id, display_name, status, created_at, created_by) VALUES ('hm-client:a', 'A', 'active', 't', 'u')`,
+		`INSERT INTO mandates (id, client_id, status, current_digest, max_actions_per_hour, created_at, updated_at)
+			VALUES ('m-a', 'hm-client:a', 'active', 'sha256:1', 60, 't1', 't2')`,
+		`INSERT INTO mandate_versions (mandate_id, digest, document, created_at, created_by) VALUES ('m-a', 'sha256:1', '{}', 't1', 'u')`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrate(ctx, db, embeddedMigrations()); err != nil {
+		t.Fatal(err)
+	}
+	var origin, name, digest string
+	if err := db.QueryRow(`SELECT origin, template_name, template_digest FROM mandate_versions`).Scan(&origin, &name, &digest); err != nil {
+		t.Fatal(err)
+	}
+	if origin != "unknown" || name != "" || digest != "" {
+		t.Errorf("old version after migration: origin %q, template %q %q", origin, name, digest)
+	}
+	insert := func(origin, name, digest string) error {
+		_, err := db.Exec(`INSERT INTO mandate_versions (mandate_id, digest, document, created_at, created_by, origin, template_name, template_digest)
+			VALUES ('m-a', 'sha256:2', '{}', 't', 'u', ?, ?, ?)`, origin, name, digest)
+		return err
+	}
+	for _, tc := range []struct {
+		origin, name, digest string
+		ok                   bool
+	}{
+		{"template", "voice", "sha256:abc", true},
+		{"edit", "", "", true},
+		{"unknown", "", "", true},
+		{"template", "", "", false},
+		{"template", "voice", "", false},
+		{"edit", "voice", "sha256:abc", false},
+		{"edit", "", "sha256:abc", false},
+		{"unknown", "voice", "sha256:abc", false},
+		{"other", "", "", false},
+	} {
+		if err := insert(tc.origin, tc.name, tc.digest); (err == nil) != tc.ok {
+			t.Errorf("origin %q template %q digest %q: err = %v, want ok %v", tc.origin, tc.name, tc.digest, err, tc.ok)
+		}
+	}
+}
