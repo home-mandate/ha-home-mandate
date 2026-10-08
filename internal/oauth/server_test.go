@@ -112,7 +112,7 @@ func newHarness(t *testing.T) *harness {
 	log := audit.New(st.DB(), testHousehold)
 	agents := agent.New(st.DB(), log)
 	mandates := mandate.New(st.DB(), log, testHousehold, "urn:uuid:5b0c9f4e-8f1a-4c2e-9d3b-7a6e5f4d3c2b")
-	adm := admission.New(st.DB(), agents, mandates, testHousehold)
+	adm := admission.New(st.DB(), log, agents, mandates, testHousehold)
 	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
 		t.Fatal(err)
@@ -636,11 +636,11 @@ func TestConsentRejects(t *testing.T) {
 
 func TestConsentWithoutTemplates(t *testing.T) {
 	h := newHarness(t)
-	if err := h.adm.RemoveTemplate(context.Background(), "voice-assistant"); err != nil {
+	if err := h.adm.RemoveTemplate(context.Background(), "voice-assistant", audit.Actor{Kind: audit.ActorUser, ID: "local-admin"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"hm-read-only", "hm-light-climate", "hm-voice-cautious"} {
-		if err := h.adm.SetHidden(context.Background(), name, true); err != nil {
+		if err := h.adm.SetHidden(context.Background(), name, true, audit.Actor{Kind: audit.ActorUser, ID: "local-admin"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -752,7 +752,7 @@ func TestConcurrentConsentDecidesOnce(t *testing.T) {
 func TestConsentShowsTemplatesInPlainWords(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
-	if err := h.adm.SetHidden(ctx, "hm-light-climate", true); err != nil {
+	if err := h.adm.SetHidden(ctx, "hm-light-climate", true, audit.Actor{Kind: audit.ActorUser, ID: "local-admin"}); err != nil {
 		t.Fatal(err)
 	}
 	_, challenge := pkce()

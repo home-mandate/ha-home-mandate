@@ -2,7 +2,7 @@
 
 // Package audit writes the hash-chained audit log of SPEC-v0 section 9 into the store
 // and verifies it with the reference implementation from the specification. Entries never
-// contain tokens, nonces, credentials or the content of a mandate.
+// contain tokens, nonces, credentials or the content of a mandate or a template.
 package audit
 
 import (
@@ -45,6 +45,8 @@ const (
 	EventLogTruncated           = "log.truncated"
 	EventLogCheckpoint          = "log.checkpoint"
 	EventDirectoryChanged       = "directory.changed"
+	EventTemplateChanged        = "template.changed"
+	EventApproverChanged        = "approver.changed"
 )
 
 // Changes of the resource directory (SPEC-v0 sections 9.1 and 11.4).
@@ -54,6 +56,20 @@ const (
 	DirectoryRenamed          = "renamed"
 	DirectoryRenameApplied    = "rename_applied"
 	DirectoryRenameDismissed  = "rename_dismissed"
+)
+
+// Changes of a template (SPEC-v0 section 9.1).
+const (
+	TemplateStored  = "stored"
+	TemplateRemoved = "removed"
+	TemplateHidden  = "hidden"
+	TemplateShown   = "shown"
+)
+
+// Changes of the approvers (SPEC-v0 sections 9.1 and 11.1).
+const (
+	ApproverAdded   = "added"
+	ApproverRemoved = "removed"
 )
 
 const (
@@ -94,6 +110,8 @@ type Entry struct {
 	Result     *Result
 	Truncated  *Truncated
 	Directory  *Directory
+	Template   *Template
+	Approver   *Approver
 	// checkpoint marks an entry of Checkpoint; its signature is made when the entry
 	// gets its place in the chain.
 	checkpoint bool
@@ -200,6 +218,24 @@ type Directory struct {
 	PreviousEntityID string `json:"previous_entity_id,omitempty"`
 }
 
+// Template is a change of a mandate template: stored (created or changed), removed,
+// hidden or shown again. Digest is that of the new content for stored, of the last
+// content for removed, and optionally of the current content otherwise; PreviousDigest
+// only for stored, when the template had other content before. Never the content itself.
+type Template struct {
+	Change         string `json:"change"`
+	Name           string `json:"name"`
+	Digest         string `json:"digest,omitempty"`
+	PreviousDigest string `json:"previous_digest,omitempty"`
+}
+
+// Approver is a person added to or removed from those who answer approval requests;
+// ID is their user ID in Home Assistant, as in approval.by.
+type Approver struct {
+	Change string `json:"change"`
+	ID     string `json:"id"`
+}
+
 // Truncated marks deleted entries (SPEC-v0 section 9.4).
 type Truncated struct {
 	UpToSeq    int64  `json:"up_to_seq"`
@@ -222,6 +258,8 @@ type wire struct {
 	Result     *Result     `json:"result,omitempty"`
 	Truncated  *Truncated  `json:"truncated,omitempty"`
 	Directory  *Directory  `json:"directory,omitempty"`
+	Template   *Template   `json:"template,omitempty"`
+	Approver   *Approver   `json:"approver,omitempty"`
 	Checkpoint *checkpoint `json:"checkpoint,omitempty"`
 	Prev       *string     `json:"prev"`
 }
@@ -399,6 +437,7 @@ func (l *Log) AppendTx(ctx context.Context, tx *sql.Tx, e Entry) (int64, error) 
 		Type: entryType, ID: newUUIDv7(now), Seq: lastSeq + 1, RecordedAt: now.UTC().Format(timeFormat),
 		Event: e.Event, Principal: l.principal, Actor: e.Actor, Agent: e.Agent, Request: e.Request,
 		Mandate: e.Mandate, Evaluation: e.Evaluation, Approval: e.Approval, Result: e.Result, Truncated: e.Truncated, Directory: e.Directory,
+		Template: e.Template, Approver: e.Approver,
 	}
 	if lastSeq > 0 {
 		w.Prev = &lastDigest

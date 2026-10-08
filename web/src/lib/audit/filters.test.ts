@@ -62,7 +62,8 @@ describe('parseFilters', () => {
 
   it('accepts every administrative event type', () => {
     for (const type of ['agent.registered', 'agent.revoked', 'mandate.created', 'mandate.updated', 'mandate.revoked',
-      'emergency_stop.activated', 'emergency_stop.released', 'auth.rejected', 'log.truncated', 'log.checkpoint']) {
+      'emergency_stop.activated', 'emergency_stop.released', 'auth.rejected', 'log.truncated', 'log.checkpoint', 'directory.changed',
+      'template.changed', 'approver.changed']) {
       expect(parseFilters({ type: [type] }).type).toBe(type);
     }
     expect(parseFilters({ type: ['decision'] }).type).toBe('decision');
@@ -87,6 +88,8 @@ describe('toAuditQuery', () => {
   it('maps the type to group or event, and passes agent, device and decisions on', () => {
     expect(toAuditQuery({ ...DEFAULT_FILTERS, type: 'decision' }, NOW)).toMatchObject({ group: 'decision' });
     expect(toAuditQuery({ ...DEFAULT_FILTERS, type: 'emergency_stop.activated' }, NOW)).toMatchObject({ event: 'emergency_stop.activated' });
+    expect(toAuditQuery({ ...DEFAULT_FILTERS, type: 'template.changed' }, NOW)).toMatchObject({ event: 'template.changed' });
+    expect(toAuditQuery({ ...DEFAULT_FILTERS, type: 'approver.changed' }, NOW)).toMatchObject({ event: 'approver.changed' });
     const q = toAuditQuery({ ...DEFAULT_FILTERS, agent: 'pair:x', device: 'lock.front_door', decisions: ['ask'] }, NOW);
     expect(q).toMatchObject({ agent: 'pair:x', device: 'lock.front_door', decisions: ['ask'] });
     expect(q.group).toBeUndefined();

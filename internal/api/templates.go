@@ -199,7 +199,7 @@ func (s *Server) deleteTemplate(r *request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch err := s.cfg.Admission.RemoveTemplate(r.Context(), name); {
+	switch err := s.cfg.Admission.RemoveTemplate(r.Context(), name, s.actor(r)); {
 	case errors.Is(err, admission.ErrTemplateNotFound):
 		return nil, fail(codeNotFound)
 	case errors.Is(err, admission.ErrBuiltinTemplate):
@@ -226,7 +226,7 @@ func (s *Server) putTemplateHidden(r *request) (any, error) {
 	if in.Hidden == nil {
 		return nil, failField(codeInvalidInput, "/hidden")
 	}
-	if err := s.cfg.Admission.SetHidden(r.Context(), name, *in.Hidden); errors.Is(err, admission.ErrInvalidTemplate) {
+	if err := s.cfg.Admission.SetHidden(r.Context(), name, *in.Hidden, s.actor(r)); errors.Is(err, admission.ErrInvalidTemplate) {
 		return nil, fail(codeNotFound) // only base templates can be hidden
 	} else if err != nil {
 		return nil, err

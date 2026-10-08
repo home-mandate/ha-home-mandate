@@ -53,7 +53,7 @@ func newEnv(t *testing.T) env {
 	log := audit.New(st.DB(), household)
 	agents := agent.New(st.DB(), log)
 	mandates := mandate.New(st.DB(), log, household, "urn:uuid:5b0c9f4e-8f1a-4c2e-9d3b-7a6e5f4d3c2b")
-	adm := admission.New(st.DB(), agents, mandates, household)
+	adm := admission.New(st.DB(), log, agents, mandates, household)
 	adm.SetClock(func() time.Time { return now })
 	return env{adm: adm, agents: agents, mandates: mandates, log: log, db: st.DB()}
 }
@@ -108,10 +108,10 @@ func TestTemplates(t *testing.T) {
 	if err := e.adm.PutTemplate(ctx, "voice-assistant", template(t, nil), admin); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.adm.RemoveTemplate(ctx, "lights-only"); err != nil {
+	if err := e.adm.RemoveTemplate(ctx, "lights-only", admin); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.adm.RemoveTemplate(ctx, "lights-only"); !errors.Is(err, admission.ErrTemplateNotFound) {
+	if err := e.adm.RemoveTemplate(ctx, "lights-only", admin); !errors.Is(err, admission.ErrTemplateNotFound) {
 		t.Errorf("second remove = %v", err)
 	}
 	if list, _ := e.adm.Templates(ctx); len(own(list)) != 1 {
@@ -201,7 +201,7 @@ func TestAdmit(t *testing.T) {
 	_ = e.log.Export(ctx, &buf)
 	out := buf.String()
 	if !strings.Contains(out, `"event":"agent.registered"`) || !strings.Contains(out, `"event":"mandate.created"`) ||
-		strings.Count(out, `"id":"`+admin.ID+`"`) != 2 {
+		strings.Count(out, `"id":"`+admin.ID+`"`) != 3 { // the template stored, the agent and its mandate
 		t.Errorf("audit log:\n%s", out)
 	}
 }
@@ -269,7 +269,7 @@ func TestAdmissionReportsDatabaseErrors(t *testing.T) {
 	if _, err := e.adm.Templates(ctx); err == nil {
 		t.Error("Templates succeeded")
 	}
-	if err := e.adm.RemoveTemplate(ctx, "x"); err == nil || errors.Is(err, admission.ErrTemplateNotFound) {
+	if err := e.adm.RemoveTemplate(ctx, "x", admin); err == nil || errors.Is(err, admission.ErrTemplateNotFound) {
 		t.Errorf("RemoveTemplate = %v", err)
 	}
 	if _, _, err := e.adm.Admit(ctx, request()); err == nil {
@@ -474,7 +474,7 @@ func TestUpdateTemplateNeedsTheVersionTheEditStartedFrom(t *testing.T) {
 	if err := e.adm.UpdateTemplate(ctx, "mine", template(t, nil), first.Digest, false, admin); !errors.Is(err, mandate.ErrConflict) {
 		t.Errorf("edit of an outdated version = %v", err)
 	}
-	if err := e.adm.RemoveTemplate(ctx, "mine"); err != nil {
+	if err := e.adm.RemoveTemplate(ctx, "mine", admin); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.adm.UpdateTemplate(ctx, "mine", edited, first.Digest, false, admin); !errors.Is(err, mandate.ErrConflict) {

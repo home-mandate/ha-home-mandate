@@ -43,7 +43,7 @@ type consentPerson struct {
 // Home Assistant could not be asked (never shown as reachable). Nothing blocks the
 // admission; the human decides.
 type consentApprovers struct {
-	People                         []consentPerson
+	People                          []consentPerson
 	Nobody, NobodyCritical, Unknown bool
 }
 

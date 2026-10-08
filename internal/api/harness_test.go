@@ -254,8 +254,11 @@ func newHarness(t *testing.T) *harness {
 	log := audit.New(st.DB(), household)
 	agents := agent.New(st.DB(), log)
 	mandates := mandate.New(st.DB(), log, household, "urn:uuid:5b0c9f4e-8f1a-4c2e-9d3b-7a6e5f4d3c2b")
-	adm := admission.New(st.DB(), agents, mandates, household)
-	if err := adm.PutTemplate(ctx, "voice-assistant", voiceTemplate(t, nil), audit.Actor{Kind: audit.ActorUser, ID: adminID}); err != nil {
+	adm := admission.New(st.DB(), log, agents, mandates, household)
+	// The template is part of the household the tests start with: stored directly, so
+	// that the audit log starts empty.
+	if _, err := st.DB().ExecContext(ctx, `INSERT INTO mandate_templates (name, document, created_at, created_by) VALUES (?, ?, ?, ?)`,
+		"voice-assistant", string(voiceTemplate(t, nil)), testStart.Format(time.RFC3339Nano), adminID); err != nil {
 		t.Fatal(err)
 	}
 	renames, err := catalog.LoadRenames(ctx, st.DB())
@@ -263,7 +266,7 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	h := &harness{t: t, ha: fakeHousehold(), cat: house(), marks: &fakeMarks{set: map[string]string{}}, renames: renames, st: st, log: log, agents: agents, mandates: mandates, adm: adm,
-		approvers: approval.NewApprovers(st.DB()), notifier: &recordingNotifier{}, now: &clock{t: testStart},
+		approvers: approval.NewApprovers(st.DB(), log), notifier: &recordingNotifier{}, now: &clock{t: testStart},
 		status: Status{HAConnected: true, HASince: testStart.Add(-time.Hour), HAVersion: "2026.9.4", ServiceUser: serviceID,
 			TimeZone: "Europe/Berlin", Language: "de", Units: map[string]string{"temperature": "°C", "length": "km", "extra": "x"}}}
 	h.build()
@@ -426,7 +429,7 @@ func (h *harness) mandateOf(clientID string) mandate.Info {
 // putApprover stores an approver directly.
 func (h *harness) putApprover(ap approval.Approver) {
 	h.t.Helper()
-	if err := h.approvers.Put(context.Background(), ap); err != nil {
+	if err := h.approvers.Put(context.Background(), ap, audit.Actor{Kind: audit.ActorUser, ID: adminID}); err != nil {
 		h.t.Fatal(err)
 	}
 }

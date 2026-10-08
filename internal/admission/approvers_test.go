@@ -139,7 +139,7 @@ func TestApproversForRefuses(t *testing.T) {
 	if _, err := e.adm.ApproversFor(ctx, "missing", admin); !errors.Is(err, admission.ErrTemplateNotFound) {
 		t.Errorf("unknown template: %v", err)
 	}
-	if err := e.adm.SetHidden(ctx, "hm-read-only", true); err != nil {
+	if err := e.adm.SetHidden(ctx, "hm-read-only", true, admin); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.adm.ApproversFor(ctx, "hm-read-only", admin); !errors.Is(err, admission.ErrTemplateNotFound) {

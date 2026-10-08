@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
 
@@ -108,21 +109,35 @@ func hidden(ctx context.Context, q interface {
 
 // SetHidden hides a base template from admission, or shows it again. Hidden, it is neither
 // offered nor accepted; the editor can still load it. Only base templates can be hidden.
-func (s *Store) SetHidden(ctx context.Context, name string, hide bool) error {
+// A change is a template.changed audit entry with by as actor; hiding a hidden template
+// or showing a shown one changes and records nothing.
+func (s *Store) SetHidden(ctx context.Context, name string, hide bool, by audit.Actor) error {
 	if _, ok := builtinNamed(name); !ok {
 		return fmt.Errorf("%w: only base templates can be hidden", ErrInvalidTemplate)
 	}
-	var err error
-	if hide {
-		_, err = s.db.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at) VALUES (?, '1', ?)
-			ON CONFLICT (key) DO UPDATE SET updated_at = excluded.updated_at`, hiddenKey+name, s.clock().Format(time.RFC3339Nano))
-	} else {
-		_, err = s.db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, hiddenKey+name)
-	}
-	if err != nil {
-		return fmt.Errorf("admission: hide template: %w", err)
-	}
-	return nil
+	change := audit.Template{Change: audit.TemplateShown, Name: name, Digest: digest(builtinDocument(name))}
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		var res sql.Result
+		var err error
+		if hide {
+			change.Change = audit.TemplateHidden
+			res, err = tx.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at) VALUES (?, '1', ?)
+				ON CONFLICT (key) DO NOTHING`, hiddenKey+name, s.clock().Format(time.RFC3339Nano))
+		} else {
+			res, err = tx.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, hiddenKey+name)
+		}
+		if err != nil {
+			return fmt.Errorf("admission: hide template: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("admission: hide template: %w", err)
+		}
+		if n == 0 {
+			return nil // already so
+		}
+		return s.record(ctx, tx, by, change)
+	})
 }
 
 // humanUser is the form of a Home Assistant user ID: the admitting human becomes an

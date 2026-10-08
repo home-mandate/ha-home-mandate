@@ -101,7 +101,7 @@ func newChannelEnv(t *testing.T, maxTimeout time.Duration) *channelEnv {
 
 func (e *channelEnv) put(t *testing.T, ap Approver) {
 	t.Helper()
-	if err := e.approvers.Put(context.Background(), ap); err != nil {
+	if err := e.approvers.Put(context.Background(), ap, changer); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -232,7 +232,7 @@ func TestUIAnswerChecksTheCurrentState(t *testing.T) {
 			e.put(t, Approver{UserID: u2, Devices: phones("mobile_app_anna")})
 		},
 		"approver removed": func(e *channelEnv, t *testing.T) {
-			if err := e.approvers.Remove(context.Background(), u2); err != nil {
+			if err := e.approvers.Remove(context.Background(), u2, changer); err != nil {
 				t.Fatal(err)
 			}
 		},
@@ -680,7 +680,7 @@ func TestOpenRequest(t *testing.T) {
 // only the UI channel cannot be reached.
 func TestWithoutAdminCheckNoUI(t *testing.T) {
 	e := newEnv(t, time.Minute)
-	if err := e.approvers.Put(context.Background(), Approver{UserID: u2, UI: true, UICritical: true}); err != nil {
+	if err := e.approvers.Put(context.Background(), Approver{UserID: u2, UI: true, UICritical: true}, changer); err != nil {
 		t.Fatal(err)
 	}
 	req := request()

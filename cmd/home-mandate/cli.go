@@ -94,8 +94,8 @@ func openStore(ctx context.Context, dataDir string) (*state, error) {
 	}
 	log := audit.New(st.DB(), household)
 	agents, mandates := agent.New(st.DB(), log), mandate.New(st.DB(), log, household, issuer)
-	approvers := approval.NewApprovers(st.DB())
-	adm := admission.New(st.DB(), agents, mandates, household)
+	approvers := approval.NewApprovers(st.DB(), log)
+	adm := admission.New(st.DB(), log, agents, mandates, household)
 	// The approvers placeholder of templates stands for them, with the admitting human.
 	adm.SetApprovers(func(ctx context.Context) ([]string, error) {
 		list, err := approvers.List(ctx)
@@ -223,7 +223,7 @@ func approverCommand(ctx context.Context, e env, args []string) int {
 			if i := slices.IndexFunc(list, func(a approval.Approver) bool { return a.UserID == ap.UserID }); i >= 0 {
 				ap.UI, ap.UICritical = list[i].UI, list[i].UICritical
 			}
-			return s.approvers.Put(ctx, ap)
+			return s.approvers.Put(ctx, ap, localAdmin)
 		})
 	case len(args) == 1 && args[0] == "list":
 		return withState(ctx, e, func(s *state) error {
@@ -234,7 +234,7 @@ func approverCommand(ctx context.Context, e env, args []string) int {
 			return err
 		})
 	case len(args) == 2 && args[0] == "remove":
-		return withState(ctx, e, func(s *state) error { return s.approvers.Remove(ctx, args[1]) })
+		return withState(ctx, e, func(s *state) error { return s.approvers.Remove(ctx, args[1], localAdmin) })
 	default:
 		return usageError(e, "approver needs add USER_ID NOTIFY_SERVICE[:no-critical][,…] [de|en], list or remove USER_ID")
 	}
@@ -359,7 +359,7 @@ func templateCommand(ctx context.Context, e env, args []string) int {
 			return err
 		})
 	case len(args) == 2 && args[0] == "remove":
-		return withState(ctx, e, func(s *state) error { return s.admission.RemoveTemplate(ctx, args[1]) })
+		return withState(ctx, e, func(s *state) error { return s.admission.RemoveTemplate(ctx, args[1], localAdmin) })
 	default:
 		return usageError(e, "mandate template needs import NAME FILE|-, list or remove NAME")
 	}

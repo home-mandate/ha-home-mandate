@@ -215,6 +215,14 @@ validity; admission fills them in.
 - Templates of the household are edited in the UI (Mandates → Templates) with the mandate
   editor and its preview; changing one names the version it started from, as for
   mandates.
+- **Audit.** Every template stored (new or changed), removed, hidden or shown again is a
+  `template.changed` audit entry with the human as actor (the UI user, `local-admin` on the
+  command line), the template's name and digest (SPEC-v0 section 3.2, over the stored
+  template) and, for a change, the digest it replaced; never its content. Adding someone
+  to the approvers or removing them is an `approver.changed` entry with their user ID;
+  changing their channels is a local setting. Both are written in the transaction of the
+  change: a change that cannot be recorded is not made, and a save that changes nothing
+  records nothing.
 
 **Tokens:** opaque random values (256 bits), stored in the database only as a hash.
 Access tokens 10 minutes, refresh tokens 30 days with rotation and reuse detection (reusing an

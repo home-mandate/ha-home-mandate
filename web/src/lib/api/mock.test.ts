@@ -426,7 +426,8 @@ describe('createMockClient: mandates and templates', () => {
     expect((await api.templates()).find((t) => t.name === 'guest')).toMatchObject({ rule_count: 1, created_by_name: 'Markus', builtin: false, digest: second.digest });
     await api.deleteTemplate('guest');
     await expect(api.deleteTemplate('guest')).rejects.toMatchObject({ code: 'not_found' });
-    expect(types(events)).toEqual(['templates.changed', 'templates.changed', 'templates.changed']);
+    // Every change is an audit entry as well (template.changed).
+    expect(types(events)).toEqual(['audit.appended', 'templates.changed', 'audit.appended', 'templates.changed', 'audit.appended', 'templates.changed']);
   });
 
   it('lists base templates first, with titles, and the own ones by name', async () => {
@@ -527,6 +528,34 @@ describe('createMockClient: approvals, settings, audit, approvers, emergency sto
     expect((await api.devices()).devices.find((d) => d.entity_id === 'switch.garden_gate')).toMatchObject({ critical: false, suggest_critical: true });
     await expect(api.putDeviceCritical('light.nowhere', true)).rejects.toMatchObject({ code: 'not_found' });
     await expect(api.putDeviceCritical('', true)).rejects.toMatchObject({ field: '/entity_id' });
+  });
+
+  it('records template and approver changes in the audit log, as the server', async () => {
+    const api = createMockClient();
+    const base = await api.template('hm-light-climate');
+    const created = await api.putTemplate('garden', { draft: base.draft, base_digest: null });
+    await api.putTemplate('garden', { draft: base.draft, base_digest: created.digest }); // unchanged
+    await api.deleteTemplate('garden');
+    await api.setTemplateHidden('hm-read-only', true);
+    await api.setTemplateHidden('hm-read-only', true); // already hidden
+    await api.setTemplateHidden('hm-read-only', false);
+    const templates = (await api.audit({ event: 'template.changed' })).entries.toReversed();
+    expect(templates.map((e) => e.template)).toEqual([
+      { change: 'stored', name: 'garden', digest: created.digest },
+      { change: 'removed', name: 'garden', digest: created.digest },
+      { change: 'hidden', name: 'hm-read-only' },
+      { change: 'shown', name: 'hm-read-only' },
+    ]);
+    const device = (critical: boolean) => ({ devices: [{ service: 'mobile_app_iphone', critical }], ui: false, ui_critical: false, language: null });
+    await api.putApprover('u-partner', device(true), (await api.approvers()).version);
+    await api.putApprover('u-partner', device(false), (await api.approvers()).version); // other channels: no entry
+    await api.deleteApprover('u-partner', (await api.approvers()).version);
+    const approvers = (await api.audit({ event: 'approver.changed' })).entries.toReversed();
+    expect(approvers.map((e) => e.approver)).toEqual([
+      { change: 'added', id: 'u-partner', name: 'Alex' },
+      { change: 'removed', id: 'u-partner', name: 'Alex' },
+    ]);
+    expect(approvers.every((e) => e.actor?.kind === 'user')).toBe(true);
   });
 
   it('validates and stores the defaults', async () => {

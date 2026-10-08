@@ -143,7 +143,7 @@ func TestBaseTemplatesCannotBeChanged(t *testing.T) {
 		if err := e.adm.UpdateTemplate(ctx, name, template(t, nil), "", true, admin); !errors.Is(err, admission.ErrBuiltinTemplate) {
 			t.Errorf("update %s = %v", name, err)
 		}
-		if err := e.adm.RemoveTemplate(ctx, name); !errors.Is(err, admission.ErrBuiltinTemplate) {
+		if err := e.adm.RemoveTemplate(ctx, name, admin); !errors.Is(err, admission.ErrBuiltinTemplate) {
 			t.Errorf("remove %s = %v", name, err)
 		}
 		doc, info, err := e.adm.TemplateDocument(ctx, name)
@@ -160,7 +160,7 @@ func TestBaseTemplatesCannotBeChanged(t *testing.T) {
 func TestHiddenBaseTemplatesAreNeitherOfferedNorAccepted(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	if err := e.adm.SetHidden(ctx, "hm-voice-cautious", true); err != nil {
+	if err := e.adm.SetHidden(ctx, "hm-voice-cautious", true, admin); err != nil {
 		t.Fatal(err)
 	}
 	list, _ := e.adm.Templates(ctx)
@@ -176,7 +176,7 @@ func TestHiddenBaseTemplatesAreNeitherOfferedNorAccepted(t *testing.T) {
 	if _, _, err := e.adm.TemplateDocument(ctx, "hm-voice-cautious"); err != nil {
 		t.Errorf("document of a hidden template: %v", err)
 	}
-	if err := e.adm.SetHidden(ctx, "hm-voice-cautious", false); err != nil {
+	if err := e.adm.SetHidden(ctx, "hm-voice-cautious", false, admin); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.adm.Admit(ctx, req); err != nil {
@@ -186,7 +186,7 @@ func TestHiddenBaseTemplatesAreNeitherOfferedNorAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"mine", "hm-unknown", "unknown"} {
-		if err := e.adm.SetHidden(ctx, name, true); !errors.Is(err, admission.ErrInvalidTemplate) {
+		if err := e.adm.SetHidden(ctx, name, true, admin); !errors.Is(err, admission.ErrInvalidTemplate) {
 			t.Errorf("hiding %s = %v", name, err)
 		}
 	}
@@ -243,7 +243,7 @@ func TestResolvedTemplateForAnExistingMandate(t *testing.T) {
 	if _, info, err := e.adm.TemplateDocument(ctx, "hm-voice-cautious"); err != nil || digest != info.Digest {
 		t.Errorf("digest = %s, want %s (%v)", digest, info.Digest, err)
 	}
-	if err := e.adm.SetHidden(ctx, "hm-voice-cautious", true); err != nil {
+	if err := e.adm.SetHidden(ctx, "hm-voice-cautious", true, admin); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.adm.Resolved(ctx, "hm-voice-cautious", admin); !errors.Is(err, admission.ErrTemplateNotFound) {
