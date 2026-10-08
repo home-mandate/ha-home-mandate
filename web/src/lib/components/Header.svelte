@@ -1,13 +1,16 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!--
-  Global header (design README section 5): logo and name, the five sections, and the
-  emergency stop, always visible. Desktop: one 56 px row. Below 768 px: logo and emergency
-  stop in the first row, the sections as a scrolling tab bar in the second.
+  Global header (design README section 5): logo and name, the five sections, the colour
+  scheme switch and the emergency stop, always visible. Desktop: one 56 px row. Below 768 px:
+  logo, then the compact scheme switch and the emergency stop together (in the first row when
+  they fit, else in a row of their own), the sections as a scrolling tab bar below. The scheme switch stays without access too: it is a
+  per-browser convenience, also on the sign-in page.
 -->
 <script lang="ts">
   import { m } from '../i18n.ts';
   import type { Section } from '../router.ts';
   import Icon from './Icon.svelte';
+  import ThemeSwitch from './ThemeSwitch.svelte';
 
   interface Props {
     section: Section | null;
@@ -41,13 +44,20 @@
         <a href={tab.href} aria-current={section === tab.key ? 'page' : undefined}>{tab.label()}</a>
       {/each}
     </nav>
-    <button type="button" class="estop" class:active={estopActive} onclick={onestop}>
-      <Icon name="power" />
-      <span>{estopActive ? m.estop_button_active() : m.estop_button()}</span>
-    </button>
-    {#if onsignout}
-      <button type="button" class="signout" onclick={onsignout}>{m.signout_button()}</button>
+  {/if}
+  <!-- The scheme switch and the emergency stop wrap together, so the switch never pushes the
+       emergency stop away from its place at the end of the row. -->
+  <div class="actions">
+    <ThemeSwitch />
+    {#if showNav}
+      <button type="button" class="estop" class:active={estopActive} onclick={onestop}>
+        <Icon name="power" />
+        <span>{estopActive ? m.estop_button_active() : m.estop_button()}</span>
+      </button>
     {/if}
+  </div>
+  {#if showNav && onsignout}
+    <button type="button" class="signout" onclick={onsignout}>{m.signout_button()}</button>
   {/if}
 </header>
 
@@ -110,8 +120,15 @@
     color: var(--hm-color-accent-text);
     border-block-end-color: var(--hm-color-accent);
   }
-  .estop {
+  .actions {
     order: 3;
+    display: flex;
+    align-items: center;
+    gap: var(--hm-space-2);
+    /* Without the sections (no access), or wrapped onto a row of its own, still at the end. */
+    margin-inline-start: auto;
+  }
+  .estop {
     display: inline-flex;
     align-items: center;
     gap: var(--hm-space-2);

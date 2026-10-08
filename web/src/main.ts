@@ -5,19 +5,15 @@ import App from './App.svelte';
 import { createHttpClient, type ApiClient } from './lib/api/client.ts';
 import { adoptLanguage, storedLanguage } from './lib/app/language.ts';
 import { AppState } from './lib/app/state.svelte.ts';
+import { applyTheme, browserStorage, storedTheme } from './lib/app/theme.ts';
 import { m } from './lib/i18n.ts';
 import { resolveLocale } from './lib/locale.ts';
 import { baseLocale, getLocale, locales, setLocale } from './lib/paraglide/runtime.js';
 import './app.css';
 
-/** localStorage, or a stand-in where it is blocked (private mode, sandboxed iframe). */
-function storage(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> {
-  try {
-    return window.localStorage;
-  } catch {
-    return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
-  }
-}
+// First: the chosen colour scheme, before anything renders (no flash of the wrong scheme).
+// index.html cannot do it in an inline script, the CSP forbids those (issue #12).
+applyTheme(storedTheme(browserStorage()), document.documentElement);
 
 // The dev server and the test builds run against the mock client; the release build never
 // contains it (VITE_MOCK is only set in .env.development, .env.mock and .env.pseudo).
@@ -32,7 +28,7 @@ async function client(): Promise<ApiClient> {
   return createHttpClient();
 }
 
-const locale = resolveLocale(storedLanguage(storage()), navigator.languages, locales, baseLocale);
+const locale = resolveLocale(storedLanguage(browserStorage()), navigator.languages, locales, baseLocale);
 setLocale(locale, { reload: false });
 document.documentElement.lang = locale;
 document.title = m.app_name();
@@ -45,6 +41,6 @@ if (!target) {
 const app = new AppState(await client());
 mount(App, { target, props: { app } });
 await app.start();
-if (app.session && adoptLanguage(app.session.language, getLocale(), storage())) {
+if (app.session && adoptLanguage(app.session.language, getLocale(), browserStorage())) {
   window.location.reload();
 }

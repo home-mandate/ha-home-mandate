@@ -9,8 +9,9 @@ process.env.INGRESS_PATH = ingressPath;
 const port = 4173;
 const pseudoPort = 4174;
 const at = (p: number) => `http://127.0.0.1:${p}${ingressPath}`;
-// The screen sweep (step 6: themes, rtl, widths, axe) runs in every language; the flows only in de/en.
-const sweep = /(sweep|hostile)\.spec\.ts$/;
+// The screen sweep (step 6: themes, rtl, widths, axe) and the colour scheme switch run in every
+// language; the flows only in de/en.
+const sweep = /(sweep|hostile|theme)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: './e2e',

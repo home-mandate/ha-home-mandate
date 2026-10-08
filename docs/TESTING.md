@@ -76,6 +76,12 @@ protection class, expired, not yet valid) needs its own named test.
   with the Tab key only: every stop needs a visible focus indicator and must not be hidden,
   covered or inside inert content. The helpers have their own tests
   (`web/e2e/sweep-helpers.spec.ts`), so a green sweep cannot come from a check that finds nothing.
+- **Colour scheme switch** (`web/e2e/theme.spec.ts`, de, en and pseudo): the header switch
+  changes the scheme at once and the choice survives a reload; blocked storage or an unknown
+  stored value falls back to the system scheme; at 375 px the compact switch sits next to the
+  emergency stop without overflow; the main screens keep WCAG 2.2 AA with the scheme forced
+  against the opposite system scheme. `web/src/lib/tokens/tokens.test.ts` keeps forced and
+  system dark tokens equal and checks the contrast of the token pairs in both schemes.
 - Start and teardown via `docker compose` or Podman; every test run starts from a fresh state.
 
 ### Mandatory E2E scenarios
