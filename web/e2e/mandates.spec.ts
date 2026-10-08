@@ -95,7 +95,7 @@ test('from the list into the editor: change a rule, read the summary, save a ver
 
   await page.getByRole('button', { name: t.edit(1) }).click();
   await page.getByRole('radio', { name: t.ask, exact: true }).click();
-  await expect(page.locator('main').getByText(t.unsaved)).toBeVisible();
+  await expect(page.locator('main').getByText(t.unsaved).first()).toBeVisible();
   // The preview follows the draft at once.
   await expect(page.getByRole('gridcell', { name: /Küchenlicht/ }).first()).toContainText(info.project.name === 'de' ? 'Nachfragen' : 'Ask first');
 
@@ -155,7 +155,7 @@ test('critical actions without approval need the separate confirmation, with the
   await expect(dialog.getByText(t.criticalFlag)).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
-  await expect(page.locator('main').getByText(t.unsaved)).toBeVisible();
+  await expect(page.locator('main').getByText(t.unsaved).first()).toBeVisible();
 });
 
 test('the preview matrix is a grid: arrow keys move, the selection follows and is explained', async ({ page }, info) => {
