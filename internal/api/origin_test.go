@@ -136,7 +136,7 @@ func TestApplyingATemplateCanRename(t *testing.T) {
 	m := h.mandateOf(voice.ClientID)
 	path := "/api/mandates/" + m.ID + "/apply-template"
 	h.putTemplate("strict", func(d map[string]any) { d["limits"] = map[string]any{"max_actions_per_hour": 5} })
-	for _, name := range []any{"", "‮", strings.Repeat("n", 81), 7} {
+	for _, name := range []any{"", "\u202e", strings.Repeat("n", 81), 7} {
 		if r := h.do(http.MethodPost, path, map[string]any{"template": "strict", "base_digest": m.Digest, "name": name}); r.errCode() != codeInvalidInput || r.field() != "/name" {
 			t.Errorf("name %v = %d %s", name, r.code, r.body)
 		}

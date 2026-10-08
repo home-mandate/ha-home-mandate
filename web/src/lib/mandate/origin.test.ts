@@ -51,7 +51,7 @@ describe('rulesFromText', () => {
   });
 
   it('shows a removed template by its cleaned name and says nothing without an origin', () => {
-    expect(rulesFromText(from('gone‮-x'), [], ctx)).toContain('the template gone-x on');
+    expect(rulesFromText(from('gone\u202e-x'), [], ctx)).toContain('the template gone-x on');
     expect(rulesFromText(null, templatesFixture, ctx)).toBe('');
   });
 
