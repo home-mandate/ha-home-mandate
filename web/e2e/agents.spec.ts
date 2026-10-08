@@ -80,6 +80,8 @@ async function toTemplates(page: Page, options: Record<string, unknown>, lang: L
     (window as unknown as { hmMockOptions: unknown }).hmMockOptions = o;
   }, options);
   await page.goto('./#/agents/pair');
+  // A second call only changes the hash, which loads nothing: reload so the new options apply.
+  await page.reload();
   await page.getByLabel(text[lang].field).fill('bcdf ghjk');
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: text[lang].verify })).toBeFocused();
