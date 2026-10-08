@@ -1,5 +1,8 @@
+# Multi-arch: the UI and the Go build run on the build machine's platform; Go cross-compiles
+# for the target (TARGETOS/TARGETARCH), so no stage runs under emulation.
+
 # 1) UI: Svelte + Vite, built without package install scripts
-FROM node:24.21.0-alpine@sha256:83f1c388c31fb2e51f7cbd4dea949b96260798c98f206e8e4696bc93bd964e3a AS web
+FROM --platform=$BUILDPLATFORM node:24.21.0-alpine@sha256:83f1c388c31fb2e51f7cbd4dea949b96260798c98f206e8e4696bc93bd964e3a AS web
 WORKDIR /web
 RUN corepack enable
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
@@ -8,7 +11,7 @@ COPY web/ ./
 RUN pnpm run build            # produces /web/dist with relative paths (base: './')
 
 # 2) Gateway: static Go binary with the embedded UI
-FROM golang:1.27.1-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS build
 WORKDIR /src
 # Build against the version of the specification pinned in go.mod, never a workspace.
 ENV GOWORK=off
@@ -21,7 +24,9 @@ RUN go run ./tools/golicenses -file internal/webui/dist/licenses.txt \
       -pending github.com/home-mandate/spec=Apache-2.0
 ARG VERSION=dev
 ARG COMMIT=unknown
-RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+ARG TARGETOS=linux
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -buildvcs=false \
       -ldflags="-s -w -buildid= -X main.version=${VERSION} -X main.commit=${COMMIT}" \
       -o /out/home-mandate ./cmd/home-mandate
 
@@ -35,6 +40,5 @@ COPY --from=build /out/home-mandate /home-mandate
 EXPOSE 8765 8099
 ENTRYPOINT ["/home-mandate"]
 
-# For real reproducibility, pin all base images by digest
-# (node:<version>-alpine@sha256:…, golang:<version>-alpine@sha256:…),
-# sign in CI (cosign) and generate an SBOM for Go and JavaScript dependencies.
+# Releases (.github/workflows/release.yml) build this for linux/amd64 and linux/arm64, sign
+# the image with cosign and attach provenance and SBOMs for the Go and JavaScript dependencies.

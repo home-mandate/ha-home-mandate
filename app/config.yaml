@@ -6,7 +6,7 @@ version: "0.1.0"
 slug: home_mandate
 description: Mandates for AI agents – allow, ask, deny, log.
 url: https://home-mandate.com
-image: ghcr.io/OWNER/home-mandate-{arch}
+image: ghcr.io/home-mandate/ha-home-mandate
 arch:
   - amd64
   - aarch64
