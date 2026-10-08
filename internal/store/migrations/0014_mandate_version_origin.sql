@@ -11,7 +11,7 @@ ALTER TABLE mandate_versions ADD COLUMN template_name TEXT NOT NULL DEFAULT '';
 ALTER TABLE mandate_versions ADD COLUMN template_digest TEXT NOT NULL DEFAULT ''
     CHECK ((origin = 'template') = (template_name <> '' AND template_digest <> '')
         AND (origin = 'template' OR (template_name = '' AND template_digest = '')));
-CREATE INDEX mandate_versions_template ON mandate_versions (template_name, mandate_id) WHERE origin = 'template';
+CREATE INDEX mandate_versions_template ON mandate_versions (mandate_id, version) WHERE origin = 'template';
 
 -- +goose Down
 DROP INDEX mandate_versions_template;
