@@ -113,6 +113,16 @@
     if (list) void apply(list);
   }
 
+  /**
+   * retry tries one refused mandate again, from the version the server named. A rule
+   * allowing critical actions without approval is confirmed anew: the confirmation was
+   * for the versions the human saw.
+   */
+  function retry(u: TemplateUser) {
+    confirmed = false;
+    void apply([u]);
+  }
+
   function cancelCritical() {
     confirming = null;
     applyButton?.focus();
@@ -150,7 +160,11 @@
             />
           {/if}
           <div class="text">
-            <label for="{id}-{u.mandate_id}" class="agent"><bdi>{cleanUntrusted(u.agent_display_name)}</bdi></label>
+            {#if done}
+              <span class="agent"><bdi>{cleanUntrusted(u.agent_display_name)}</bdi></span>
+            {:else}
+              <label for="{id}-{u.mandate_id}" class="agent"><bdi>{cleanUntrusted(u.agent_display_name)}</bdi></label>
+            {/if}
             <span id="{id}-{u.mandate_id}-about" class="about">
               <span>{m.rollout_mandate({ mandate: isolate(u.mandate_name) })}</span>
               <span>{m.rollout_taken({ date: formatDateTime(new Date(u.taken_at), ctx) })}</span>
@@ -162,7 +176,7 @@
             {/if}
           </div>
           {#if result && retryable(result)}
-            <Button size="md" disabled={busy} onclick={() => void apply([u])} aria-label={m.rollout_retry({ agent: isolate(u.agent_display_name) })}>
+            <Button size="md" disabled={busy} onclick={() => retry(u)} aria-label={m.rollout_retry({ agent: isolate(u.agent_display_name) })}>
               {m.common_retry()}
             </Button>
           {/if}

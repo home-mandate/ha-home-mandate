@@ -50,7 +50,8 @@ type wireTemplateUser struct {
 	TemplateDigest string `json:"template_digest"`
 	// EditedSince: a later version came from an edit; taking the template over replaces it.
 	EditedSince bool `json:"edited_since"`
-	// UpToDate: the rules are the template's as it is now.
+	// UpToDate: taking the template over as it is now would change nothing (the same
+	// rules, approval settings and limits), whatever the digests say.
 	UpToDate bool `json:"up_to_date"`
 }
 
@@ -75,6 +76,9 @@ func (s *Server) getTemplateUsage(r *request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The template as it would be taken over; without it (nobody to approve, a hidden base
+	// template) a mandate counts as up to date only with the template's current digest.
+	resolved, _, resolveErr := s.cfg.Admission.Resolved(r.Context(), name, s.actor(r))
 	out := wireTemplateUsage{Name: name, Digest: t.Digest, Mandates: []wireTemplateUser{}}
 	for _, m := range list {
 		use, ok := uses[m.ID]
@@ -88,11 +92,26 @@ func (s *Server) getTemplateUsage(r *request) (any, error) {
 		if a.Status != agent.StatusActive {
 			continue
 		}
+		upToDate := !use.EditedSince && use.TemplateDigest == t.Digest
+		if resolveErr == nil {
+			upToDate = s.wouldNotChange(r, m.ID, resolved)
+		}
 		out.Mandates = append(out.Mandates, wireTemplateUser{MandateID: m.ID, MandateName: nameOf(m), ClientID: m.ClientID,
 			AgentDisplayName: a.DisplayName, Digest: m.Digest, TakenAt: *formatTime(use.At), TemplateDigest: use.TemplateDigest,
-			EditedSince: use.EditedSince, UpToDate: !use.EditedSince && use.TemplateDigest == t.Digest})
+			EditedSince: use.EditedSince, UpToDate: upToDate})
 	}
 	return out, nil
+}
+
+// wouldNotChange tells whether taking the resolved template over into mandate id would
+// store no version; false when that cannot be told.
+func (s *Server) wouldNotChange(r *request, id string, template []byte) bool {
+	_, current, err := s.cfg.Mandates.Current(r.Context(), id)
+	if err != nil {
+		return false
+	}
+	doc, err := s.templateMandate(r, id, current, template)
+	return err == nil && mandate.SameEditable(current, doc)
 }
 
 type rolloutTarget struct {

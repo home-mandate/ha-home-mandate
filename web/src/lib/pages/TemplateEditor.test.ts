@@ -474,6 +474,31 @@ describe('TemplateEditor: a changed template and the mandates that use it (#18)'
     await waitFor(() => expect(within(dialog).getByRole('status').textContent).toBe('Updated: 2 · Not updated: 0'));
   });
 
+  it('asks the separate confirmation again for a retry', async () => {
+    const { api } = await start('voice-assistant', async (a) => {
+      const t = await a.template('voice-assistant');
+      const rule = { id: 'r-unlock', resource: { category: 'lock' as const }, actions: ['unlock'], decision: 'allow' as const, allow_critical: true as const };
+      await a.putTemplate('voice-assistant', { draft: { ...t.draft, rules: [...t.draft.rules, rule] }, base_digest: t.digest, confirm_critical: true });
+    });
+    await saveRate('20');
+    const dialog = await screen.findByRole('dialog', { name: ROLLOUT });
+    const { summary, document: d } = await api.mandate('mandate-voice');
+    await api.putMandate('mandate-voice', {
+      name: summary.name,
+      draft: { rules: d.rules, approval: d.approval, limits: { max_actions_per_hour: 3 }, valid_from: d.valid_from },
+      base_digest: summary.digest,
+    });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Take over into 1 mandate' }));
+    await fireEvent.click(within(await within(dialog).findByRole('alertdialog')).getByRole('button', { name: 'Allow without approval' }));
+    await waitFor(() => expect(within(dialog).getByText('Not updated: changed in the meantime')).toBeTruthy());
+    const apply = vi.spyOn(api, 'applyTemplateToMandates');
+    await fireEvent.click(within(dialog).getByRole('button', { name: /^Try again for .?Sprachassistent.?$/ }));
+    const box = await within(dialog).findByRole('alertdialog');
+    expect(apply).not.toHaveBeenCalled();
+    await fireEvent.click(within(box).getByRole('button', { name: 'Allow without approval' }));
+    await waitFor(() => expect(within(dialog).getByText('Updated')).toBeTruthy());
+  });
+
   it('asks the confirmation when the server does, though the template showed no such rule', async () => {
     const { api } = await start('voice-assistant');
     await saveRate('20');

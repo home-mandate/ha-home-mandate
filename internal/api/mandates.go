@@ -440,7 +440,7 @@ func (s *Server) resolvedTemplate(r *request, name string) ([]byte, string, erro
 // applyTemplate makes the template's rules, approval settings and limits a new version
 // of the mandate (decision D3); dates stay, and so does the name unless the request names
 // another. Same conflict and U9 rules as an edit. A template that brings nothing new
-// stores no version and answers "unchanged".
+// stores no version and answers "unchanged" (about the rules: a new name is still taken).
 func (s *Server) applyTemplate(r *request) (any, error) {
 	id, err := mandateID(r)
 	if err != nil {

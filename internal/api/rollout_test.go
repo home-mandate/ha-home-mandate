@@ -105,6 +105,17 @@ func TestTemplateUsage(t *testing.T) {
 			t.Errorf("up to date after a change of the template: %+v", m)
 		}
 	}
+	// A change of the template that its mandates would not take over (its valid_from) leaves
+	// them up to date; so does a mandate edited back to the template's rules.
+	ma = h.mandateOf(a.ClientID)
+	h.ok(http.MethodPost, "/api/templates/voice-assistant/apply", map[string]any{"template_digest": h.templateDigest("voice-assistant"),
+		"targets": []any{map[string]any{"mandate_id": ma.ID, "base_digest": ma.Digest}}}, nil)
+	h.saveTemplate(func(d map[string]any) { d["valid_from"] = "2026-01-01T00:00:00Z" }, false)
+	for _, m := range h.usage("voice-assistant").Mandates {
+		if m.MandateID == ma.ID && (!m.UpToDate || m.TemplateDigest == h.templateDigest("voice-assistant")) {
+			t.Errorf("after a change not taken over: %+v", m)
+		}
+	}
 	if u := h.usage("strict"); len(u.Mandates) != 1 || u.Mandates[0].MandateID != me.ID {
 		t.Errorf("usage of strict = %+v", u)
 	}

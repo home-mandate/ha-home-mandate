@@ -905,6 +905,15 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       emit({ type: 'templates.changed' });
     },
     async templateUsage(name) {
+      /** As the server: taking the template over would store nothing; undefined if it cannot be told. */
+      const wouldNotChange = (doc: MandateDocument, template: string): boolean | undefined => {
+        try {
+          const d = resolved(template);
+          return canonical(draftOf(doc)) === canonical({ ...draftOf(doc), rules: d.rules, approval: d.approval, limits: d.limits });
+        } catch {
+          return undefined;
+        }
+      };
       const t = state.templates.find((x) => x.name === name) ?? fail('not_found');
       const mandates: TemplateUser[] = [];
       for (const [id, m] of Object.entries(state.mandates)) {
@@ -921,7 +930,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
           taken_at: from.at,
           template_digest: from.template_digest,
           edited_since: from.edited_since,
-          up_to_date: !from.edited_since && from.template_digest === t.digest,
+          up_to_date: wouldNotChange(current.document, name) ?? (!from.edited_since && from.template_digest === t.digest),
         });
       }
       return copy({ name, digest: t.digest, mandates });

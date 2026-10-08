@@ -574,7 +574,7 @@ export interface TemplateUser {
   template_digest: string;
   /** A later version came from an edit; taking the template over replaces it. */
   edited_since: boolean;
-  /** The rules are the template's as it is now. */
+  /** Taking the template over as it is now would change nothing. */
   up_to_date: boolean;
 }
 
