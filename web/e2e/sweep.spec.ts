@@ -60,6 +60,8 @@ const SCREENS: Screen[] = [
   { name: 'audit entry', path: './#/audit/8' },
   { name: 'requests', path: './#/audit/requests' },
   { name: 'agents', path: './#/agents' },
+  { name: 'agents, adding', path: './#/agents?add' },
+  { name: 'agents, adding to an empty household', path: './#/agents?add', mock: { empty: true } },
   { name: 'agent detail', path: `./#/agents/id/${CLAUDE}` },
   { name: 'agent detail, revoked', path: './#/agents/id/pair%3Aold-bot' },
   { name: 'agent detail, long name', path: './#/agents/id/pair%3Along' },
