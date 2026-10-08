@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/home-mandate/spec"
+	specaudit "github.com/home-mandate/spec/audit"
 
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
 )
@@ -306,7 +307,7 @@ func TestApproverCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.approvers.Put(context.Background(), approval.Approver{UserID: "4d5e6f", Devices: []approval.Device{{Service: "mobile_app_iphone", Critical: true}},
-		UI: true, UICritical: true}); err != nil {
+		UI: true, UICritical: true}, localAdmin); err != nil {
 		t.Fatal(err)
 	}
 	_ = s.store.Close()
@@ -389,5 +390,62 @@ func TestTheMandateIssuerStaysTheSame(t *testing.T) {
 	if !regexp.MustCompile(`^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(issuers[0]) ||
 		issuers[0] != issuers[1] {
 		t.Errorf("issuers = %v", issuers)
+	}
+}
+
+// Template and approver changes on the command line are in the audit log with local-admin
+// as actor, once per change; unchanged and refused changes are not. audit verify and the
+// export include them, and the export verifies with the specification.
+func TestTemplateAndApproverCommandsAreAudited(t *testing.T) {
+	c := newCLI(t)
+	household := strings.TrimSpace(c.mustRun("", "household"))
+	doc := mandateFor(t, household, "hm-client:placeholder-00000000")
+	c.mustRun(doc, "mandate", "template", "import", "voice-assistant", "-")
+	c.mustRun(doc, "mandate", "template", "import", "voice-assistant", "-") // unchanged
+	c.mustRun("", "mandate", "template", "remove", "voice-assistant")
+	c.mustRun("", "approver", "add", "1a2b3c", "mobile_app_pixel_9")
+	c.mustRun("", "approver", "add", "1a2b3c", "mobile_app_mac") // other devices: still the same approver
+	c.mustRun("", "approver", "remove", "1a2b3c")
+	for _, refused := range [][]string{
+		{"mandate", "template", "remove", "voice-assistant"},
+		{"mandate", "template", "remove", "hm-read-only"},
+		{"approver", "remove", "1a2b3c"},
+		{"approver", "add", "4d5e6f", "Not A Service"},
+	} {
+		if code, _, _ := c.run("", refused...); code == exitOK {
+			t.Errorf("%v succeeded", refused)
+		}
+	}
+	if out := c.mustRun("", "audit", "verify"); !strings.HasPrefix(out, "audit log valid\n") || field(t, out, "entries") != "4" {
+		t.Errorf("audit verify = %q", out)
+	}
+	export := c.mustRun("", "audit", "export")
+	var lines [][]byte
+	var got []string
+	for _, line := range strings.Split(strings.TrimSpace(export), "\n") {
+		lines = append(lines, []byte(line))
+		var e struct {
+			Event    string            `json:"event"`
+			Actor    map[string]string `json:"actor"`
+			Template map[string]string `json:"template"`
+			Approver map[string]string `json:"approver"`
+		}
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatal(err)
+		}
+		if e.Event == "log.checkpoint" {
+			continue
+		}
+		if e.Actor["kind"] != "user" || e.Actor["id"] != "local-admin" {
+			t.Errorf("actor = %v", e.Actor)
+		}
+		got = append(got, e.Event+" "+e.Template["change"]+e.Approver["change"])
+	}
+	want := []string{"template.changed stored", "template.changed removed", "approver.changed added", "approver.changed removed"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("entries = %v, want %v", got, want)
+	}
+	if r, err := specaudit.Verify(lines); err != nil || !r.Valid {
+		t.Errorf("spec verifier = %+v, %v", r, err)
 	}
 }

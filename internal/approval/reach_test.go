@@ -27,7 +27,7 @@ func TestReachOfPeople(t *testing.T) {
 		{UserID: u3, UI: true},
 		{UserID: ownUser, Devices: phones("mobile_app_service")},
 	} {
-		if err := a.Put(ctx, ap); err != nil {
+		if err := a.Put(ctx, ap, changer); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -60,7 +60,7 @@ func TestReachOfCoverage(t *testing.T) {
 		{UserID: u3, UI: true}, // only while an administrator
 		{UserID: ownUser, Devices: []Device{{Service: "mobile_app_service", Critical: true}}},
 	} {
-		if err := a.Put(ctx, ap); err != nil {
+		if err := a.Put(ctx, ap, changer); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -100,7 +100,7 @@ func TestReachOfCoverage(t *testing.T) {
 func TestReachOfUnknown(t *testing.T) {
 	a, _ := newApprovers(t)
 	ctx := context.Background()
-	if err := a.Put(ctx, Approver{UserID: u1, Devices: phones("mobile_app_pixel")}); err != nil {
+	if err := a.Put(ctx, Approver{UserID: u1, Devices: phones("mobile_app_pixel")}, changer); err != nil {
 		t.Fatal(err)
 	}
 	failing := func(context.Context, string) (bool, error) { return false, errors.New("home assistant unavailable") }

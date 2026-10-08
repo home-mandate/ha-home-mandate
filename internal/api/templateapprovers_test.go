@@ -27,7 +27,7 @@ func (h *harness) withPlaceholder() {
 
 func (h *harness) putApproverDirect(ap approval.Approver) {
 	h.t.Helper()
-	if err := h.approvers.Put(context.Background(), ap); err != nil {
+	if err := h.approvers.Put(context.Background(), ap, audit.Actor{Kind: audit.ActorUser, ID: adminID}); err != nil {
 		h.t.Fatal(err)
 	}
 }
@@ -135,7 +135,7 @@ func TestTemplateApproversRefuses(t *testing.T) {
 			t.Errorf("%s = %d %s", path, r.code, r.body)
 		}
 	}
-	if err := h.adm.SetHidden(context.Background(), "hm-read-only", true); err != nil {
+	if err := h.adm.SetHidden(context.Background(), "hm-read-only", true, audit.Actor{Kind: audit.ActorUser, ID: "local-admin"}); err != nil {
 		t.Fatal(err)
 	}
 	if r := h.do(http.MethodGet, "/api/templates/hm-read-only/approvers", nil); r.errCode() != codeNotFound {

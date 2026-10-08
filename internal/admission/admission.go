@@ -4,11 +4,12 @@
 // the agent, its mandate (an instance of the template) and its first tokens are created
 // in one transaction (ARCHITECTURE section 6, decision W2). Templates are stored here;
 // they are not mandates and are never evaluated themselves. Admissions are in the audit
-// log (agent.registered, mandate.created); template changes are local settings for which
-// SPEC-v0 has no event type.
+// log (agent.registered, mandate.created), and so is every change of a template
+// (template.changed), written in the same transaction as the change.
 package admission
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/home-mandate/spec/displaytext"
 	"github.com/home-mandate/spec/evaluator"
+	"github.com/home-mandate/spec/jcs"
 
 	"github.com/home-mandate/ha-home-mandate/internal/agent"
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
@@ -83,7 +85,9 @@ type Request struct {
 
 // Store keeps the templates and admits agents.
 type Store struct {
-	db        *sql.DB
+	db *sql.DB
+	// log records every change of a template in the transaction of the change.
+	log       *audit.Log
 	agents    *agent.Store
 	mandates  *mandate.Store
 	principal string
@@ -102,9 +106,10 @@ func (s *Store) SetApprovers(list func(context.Context) ([]string, error)) {
 	s.approvers = list
 }
 
-// New returns the admission of the household principal.
-func New(db *sql.DB, agents *agent.Store, mandates *mandate.Store, principal string) *Store {
-	return &Store{db: db, agents: agents, mandates: mandates, principal: principal, now: time.Now}
+// New returns the admission of the household principal; log is the audit log of the
+// household, which records every change of a template.
+func New(db *sql.DB, log *audit.Log, agents *agent.Store, mandates *mandate.Store, principal string) *Store {
+	return &Store{db: db, log: log, agents: agents, mandates: mandates, principal: principal, now: time.Now}
 }
 
 // SetClock replaces the clock, for tests.
@@ -120,9 +125,10 @@ func (s *Store) clock() time.Time {
 	return s.now().UTC()
 }
 
-// PutTemplate stores or replaces a template. The document is a mandate whose id,
-// principal, agent, created_by, created_at, valid_from and expires are replaced at
-// admission; an instance of it must be a valid mandate.
+// PutTemplate stores or replaces a template (the command line). The document is a
+// mandate whose id, principal, agent, created_by, created_at, valid_from and expires are
+// replaced at admission; an instance of it must be a valid mandate. Unchanged content
+// stores nothing; a change is a template.changed audit entry with by as actor.
 func (s *Store) PutTemplate(ctx context.Context, name string, document []byte, by audit.Actor) error {
 	if err := checkOwnName(name); err != nil {
 		return err
@@ -130,12 +136,48 @@ func (s *Store) PutTemplate(ctx context.Context, name string, document []byte, b
 	if err := s.checkTemplate(document, by); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO mandate_templates (name, document, created_at, created_by) VALUES (?, ?, ?, ?)
-		ON CONFLICT (name) DO UPDATE SET document = excluded.document, created_at = excluded.created_at, created_by = excluded.created_by`,
-		name, string(document), s.clock().Format(time.RFC3339Nano), by.ID); err != nil {
-		return fmt.Errorf("admission: store template: %w", err)
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		var current sql.NullString
+		err := tx.QueryRowContext(ctx, `SELECT document FROM mandate_templates WHERE name = ?`, name).Scan(&current)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("admission: read template: %w", err)
+		}
+		previous := ""
+		if current.Valid {
+			if previous = digest([]byte(current.String)); previous == digest(document) {
+				return nil
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO mandate_templates (name, document, created_at, created_by) VALUES (?, ?, ?, ?)
+			ON CONFLICT (name) DO UPDATE SET document = excluded.document, created_at = excluded.created_at, created_by = excluded.created_by`,
+			name, string(document), s.clock().Format(time.RFC3339Nano), by.ID); err != nil {
+			return fmt.Errorf("admission: store template: %w", err)
+		}
+		return s.record(ctx, tx, by, audit.Template{Change: audit.TemplateStored, Name: name, Digest: digest(document), PreviousDigest: previous})
+	})
+}
+
+// inTx runs fn in a transaction and commits it if fn succeeds.
+func (s *Store) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("admission: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("admission: commit: %w", err)
 	}
 	return nil
+}
+
+// record writes the template.changed entry of a change within its transaction: if the
+// entry cannot be written, the change is rolled back with it.
+func (s *Store) record(ctx context.Context, tx *sql.Tx, by audit.Actor, change audit.Template) error {
+	_, err := s.log.AppendTx(ctx, tx, audit.Entry{Event: audit.EventTemplateChanged, Actor: &by, Template: &change})
+	return err
 }
 
 // checkTemplate accepts a document whose instance is a valid mandate.
@@ -184,19 +226,23 @@ func (s *Store) Templates(ctx context.Context) ([]Template, error) {
 	return list, rows.Err()
 }
 
-// RemoveTemplate deletes a template; mandates made from it stay unchanged.
-func (s *Store) RemoveTemplate(ctx context.Context, name string) error {
+// RemoveTemplate deletes a template; mandates made from it stay unchanged. The removal
+// is a template.changed audit entry with by as actor and the digest of the last content.
+func (s *Store) RemoveTemplate(ctx context.Context, name string, by audit.Actor) error {
 	if _, ok := builtinNamed(name); ok {
 		return ErrBuiltinTemplate
 	}
-	res, err := s.db.ExecContext(ctx, `DELETE FROM mandate_templates WHERE name = ?`, name)
-	if err != nil {
-		return fmt.Errorf("admission: remove template: %w", err)
-	}
-	if n, err := res.RowsAffected(); err != nil || n == 0 {
-		return ErrTemplateNotFound
-	}
-	return nil
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		var document string
+		err := tx.QueryRowContext(ctx, `DELETE FROM mandate_templates WHERE name = ? RETURNING document`, name).Scan(&document)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrTemplateNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("admission: remove template: %w", err)
+		}
+		return s.record(ctx, tx, by, audit.Template{Change: audit.TemplateRemoved, Name: name, Digest: digest([]byte(document))})
+	})
 }
 
 // Admit registers the agent, stores its mandate from the template and issues its first
@@ -322,8 +368,19 @@ func (s *Store) people(ctx context.Context, by audit.Actor) ([]string, error) {
 	return append(out, more...), nil
 }
 
-// digest identifies a template's content.
+// digest identifies a template's content as SPEC-v0 section 3.2 computes digests (over
+// the canonical form, so key order and white space do not count), the form the audit log
+// records it in. A document that is no JSON (only a damaged store has one) gets the
+// digest of its bytes.
 func digest(document []byte) string {
+	dec := json.NewDecoder(bytes.NewReader(document))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err == nil {
+		if d, err := jcs.Digest(v); err == nil {
+			return d
+		}
+	}
 	sum := sha256.Sum256(document)
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
@@ -464,25 +521,32 @@ func (s *Store) UpdateTemplate(ctx context.Context, name string, document []byte
 	if err := s.checkTemplate(document, by); err != nil {
 		return err
 	}
+	if current != nil && digest(document) == info.Digest {
+		return nil // unchanged: nothing to store or record
+	}
 	// The write itself is conditional, so no other writer (the command line is another
 	// process) can come in between the check of the base version and the write: an update
 	// only replaces the content it started from, a new template only takes a free name.
 	now := s.clock().Format(time.RFC3339Nano)
-	var res sql.Result
-	if current == nil {
-		res, err = s.db.ExecContext(ctx, `INSERT INTO mandate_templates (name, document, created_at, created_by) VALUES (?, ?, ?, ?)
-			ON CONFLICT (name) DO NOTHING`, name, string(document), now, by.ID)
-	} else {
-		res, err = s.db.ExecContext(ctx, `UPDATE mandate_templates SET document = ?, created_at = ?, created_by = ?
-			WHERE name = ? AND document = ?`, string(document), now, by.ID, name, string(current))
-	}
-	if err != nil {
-		return fmt.Errorf("admission: store template: %w", err)
-	}
-	if n, err := res.RowsAffected(); err != nil || n != 1 {
-		return fmt.Errorf("%w: the template changed since the edit started", mandate.ErrConflict)
-	}
-	return nil
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		var res sql.Result
+		change := audit.Template{Change: audit.TemplateStored, Name: name, Digest: digest(document)}
+		if current == nil {
+			res, err = tx.ExecContext(ctx, `INSERT INTO mandate_templates (name, document, created_at, created_by) VALUES (?, ?, ?, ?)
+				ON CONFLICT (name) DO NOTHING`, name, string(document), now, by.ID)
+		} else {
+			change.PreviousDigest = info.Digest
+			res, err = tx.ExecContext(ctx, `UPDATE mandate_templates SET document = ?, created_at = ?, created_by = ?
+				WHERE name = ? AND document = ?`, string(document), now, by.ID, name, string(current))
+		}
+		if err != nil {
+			return fmt.Errorf("admission: store template: %w", err)
+		}
+		if n, err := res.RowsAffected(); err != nil || n != 1 {
+			return fmt.Errorf("%w: the template changed since the edit started", mandate.ErrConflict)
+		}
+		return s.record(ctx, tx, by, change)
+	})
 }
 
 // instantiate makes the mandate of a for a template. The mandate is valid from now on
