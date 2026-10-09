@@ -6,7 +6,7 @@ human has to approve first, and what it may never do. Approval requests go to yo
 through the Home Assistant Companion app, an emergency stop blocks every agent at once,
 and every request is recorded in a tamper-evident audit log.
 
-**Status: experimental.** 0.1.0-rc.1 is the first release candidate. Expect rough edges,
+**Status: experimental.** 0.1.0-rc.2 is the first published release candidate. Expect rough edges,
 read the [limits of this version](#limits-of-this-version) and keep backups.
 
 ## Why

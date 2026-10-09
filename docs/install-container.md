@@ -188,7 +188,7 @@ address with its own certificate.
 services:
   home-mandate:
     # Released images: ghcr.io/home-mandate/ha-home-mandate:<version>, signed (see Updates).
-    image: ghcr.io/home-mandate/ha-home-mandate:0.1.0-rc.1
+    image: ghcr.io/home-mandate/ha-home-mandate:0.1.0-rc.2
     container_name: home-mandate
     restart: unless-stopped
     user: "65532:65532"           # owns ./data; port 8765 needs no privilege
@@ -275,7 +275,7 @@ among others:
 ```
 {"level":"INFO","msg":"MCP endpoint listening","addr":"192.0.2.10:8765","tls":true,"path":"/mcp"}
 {"level":"INFO","msg":"UI in direct mode","url":"https://hm.example.org:8765/ui/"}
-{"level":"INFO","msg":"home-mandate started","version":"0.1.0-rc.1","mode":"container","household":"…"}
+{"level":"INFO","msg":"home-mandate started","version":"0.1.0-rc.2","mode":"container","household":"…"}
 {"level":"INFO","msg":"connected to home assistant"}
 ```
 
@@ -317,14 +317,14 @@ All commands: [usage.md](usage.md#command-line).
 ## Updates
 
 Released images are `ghcr.io/home-mandate/ha-home-mandate:<version>` for `linux/amd64` and
-`linux/arm64`, for example `0.1.0-rc.1`. There is no `latest` tag; you choose the version.
+`linux/arm64`, for example `0.1.0-rc.2`. There is no `latest` tag; you choose the version.
 
 1. Read the [changelog](../app/CHANGELOG.md) and the release notes.
 2. Optionally verify the image's signature (the release notes show the exact command):
 
    ```sh
-   cosign verify ghcr.io/home-mandate/ha-home-mandate:0.1.0-rc.1 \
-     --certificate-identity https://github.com/home-mandate/ha-home-mandate/.github/workflows/release.yml@refs/tags/v0.1.0-rc.1 \
+   cosign verify ghcr.io/home-mandate/ha-home-mandate:0.1.0-rc.2 \
+     --certificate-identity https://github.com/home-mandate/ha-home-mandate/.github/workflows/release.yml@refs/tags/v0.1.0-rc.2 \
      --certificate-oidc-issuer https://token.actions.githubusercontent.com
    ```
 

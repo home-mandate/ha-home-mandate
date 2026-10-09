@@ -50,7 +50,7 @@ Playwright's CDN, for tests only.
 ```bash
 make webui build            # static binaries in bin/ with the embedded UI (without webui: a placeholder page)
 make image                  # image home-mandate:dev for this machine (podman; E2E_RUNTIME=docker for docker)
-make image VERSION=0.1.0-rc.1
+make image VERSION=0.1.0-rc.2
 ```
 
 The image sets no `USER`: in app mode the Supervisor runs it as root and creates `/data`
@@ -68,6 +68,17 @@ and SBOMs, verifies all of that, tags the image and creates the GitHub release (
 pre-release for `-rc.N`).
 
 Before tagging: update `app/config.yaml` (`version`) and `app/CHANGELOG.md`.
+
+Create the tag with git, not with GitHub's "Draft a new release": that page creates the
+release together with the tag, and the workflow refuses to publish when the release exists
+already (it never overwrites one). Tags are immutable, so a failed release needs a new
+version (`-rc.N+1`).
+
+```sh
+git switch main && git pull
+git tag -a v0.1.0-rc.2 -m "Home-Mandate 0.1.0-rc.2"
+git push origin v0.1.0-rc.2
+```
 
 ## Contributing
 
