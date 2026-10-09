@@ -173,29 +173,41 @@ const (
 func (s *Service) Expire(ctx context.Context) (Expired, error) {
 	var out Expired
 	steps := []struct {
-		query string
-		into  *[]string
-		do    func(*sql.Tx, string) error
+		table, key, where string
+		into              *[]string
+		do                func(*sql.Tx, string) error
 	}{
-		{`SELECT id FROM mandates WHERE removed_at IS NOT NULL AND purged_at IS NULL AND ` + noMandateEntry + ` ORDER BY rowid`,
+		{"mandates", "id", `removed_at IS NOT NULL AND purged_at IS NULL AND ` + noMandateEntry,
 			&out.Purged.Mandates, func(tx *sql.Tx, id string) error { return s.mandates.PurgeTx(ctx, tx, id) }},
-		{`SELECT client_id FROM agents WHERE removed_at IS NOT NULL AND purged_at IS NULL AND ` + noAgentEntry + ` ORDER BY rowid`,
+		{"agents", "client_id", `removed_at IS NOT NULL AND purged_at IS NULL AND ` + noAgentEntry,
 			&out.Purged.Agents, func(tx *sql.Tx, id string) error { return s.agents.PurgeTx(ctx, tx, id) }},
-		{`SELECT id FROM mandates WHERE status = 'revoked' AND removed_at IS NULL AND purged_at IS NULL AND ` + noMandateEntry + ` ORDER BY rowid`,
+		{"mandates", "id", `status = 'revoked' AND removed_at IS NULL AND purged_at IS NULL AND ` + noMandateEntry,
 			&out.Removed.Mandates, func(tx *sql.Tx, id string) error { _, err := s.mandates.RemoveTx(ctx, tx, id, System); return err }},
-		{`SELECT client_id FROM agents WHERE status = 'revoked' AND removed_at IS NULL AND purged_at IS NULL AND ` + noAgentEntry + ` ORDER BY rowid`,
+		{"agents", "client_id", `status = 'revoked' AND removed_at IS NULL AND purged_at IS NULL AND ` + noAgentEntry,
 			&out.Removed.Agents, func(tx *sql.Tx, id string) error { _, err := s.agents.RemoveTx(ctx, tx, id, System); return err }},
 	}
 	for _, step := range steps {
-		list, err := ids(ctx, s.db, step.query)
+		list, err := ids(ctx, s.db, `SELECT `+step.key+` FROM `+step.table+` WHERE `+step.where+` ORDER BY rowid`)
 		if err != nil {
 			return out, err
 		}
 		for _, id := range list {
-			if err := s.inTx(ctx, func(tx *sql.Tx) error { return step.do(tx, id) }); err != nil {
+			done := false
+			err := s.inTx(ctx, func(tx *sql.Tx) error {
+				// Checked again in the transaction: an entry written meanwhile keeps the data.
+				still, err := ids(ctx, tx, `SELECT `+step.key+` FROM `+step.table+` WHERE `+step.key+` = ? AND `+step.where, id)
+				if err != nil || len(still) == 0 {
+					return err
+				}
+				done = true
+				return step.do(tx, id)
+			})
+			if err != nil {
 				return out, err
 			}
-			*step.into = append(*step.into, id)
+			if done {
+				*step.into = append(*step.into, id)
+			}
 		}
 	}
 	return out, nil
