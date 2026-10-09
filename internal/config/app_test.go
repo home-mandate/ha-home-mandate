@@ -60,3 +60,24 @@ func TestAppOptionsMatchTheCode(t *testing.T) {
 		}
 	}
 }
+
+// The Supervisor loads app/apparmor.txt only with exactly one top-level profile, and a
+// profile in complain mode would only log what it should refuse.
+func TestAppArmorProfileEnforces(t *testing.T) {
+	data, err := os.ReadFile("../../app/apparmor.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles := 0
+	for line := range strings.Lines(string(data)) {
+		if strings.HasPrefix(line, "profile ") {
+			profiles++
+			if strings.Contains(line, "complain") {
+				t.Errorf("profile in complain mode: %s", line)
+			}
+		}
+	}
+	if profiles != 1 {
+		t.Errorf("%d top-level profiles, the Supervisor needs exactly one", profiles)
+	}
+}

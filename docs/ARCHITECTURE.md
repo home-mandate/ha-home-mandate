@@ -459,7 +459,7 @@ Decided by Markus on 2026-10-01.
    (`home-mandate approver add USER_ID SERVICE de|en`).
 
 **Toolchain (2026-10-01):**
-- Go 1.27.1 for `home-mandate/spec` and `home-mandate`; build image `golang:1.27.1-alpine` pinned
+- Go 1.27.2 for `home-mandate/spec` and `home-mandate`; build image `golang:1.27.2-alpine` pinned
   by digest (Dockerfile).
 - HA WebSocket client: `github.com/coder/websocket`.
 - Migrations: `github.com/pressly/goose/v3` with embedded SQL files, plus own guards

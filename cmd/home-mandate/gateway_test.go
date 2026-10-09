@@ -362,6 +362,13 @@ func TestGatewayBehindAProxy(t *testing.T) {
 		if err != nil || meta.Issuer != "https://hm.example.org" {
 			t.Errorf("issuer %q, %v", meta.Issuer, err)
 		}
+		// The administrator check asks Home Assistant: wait until the gateway is connected.
+		for deadline := time.Now().Add(10 * time.Second); !g.status().HAConnected; {
+			if time.Now().After(deadline) {
+				t.Fatal("gateway did not connect to Home Assistant")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 		req := httptest.NewRequest(http.MethodGet, "/api/system", nil)
 		req.RemoteAddr = "172.30.32.2:1234"
 		req.Header.Set("X-Remote-User-Id", ownerID)

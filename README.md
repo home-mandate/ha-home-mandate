@@ -21,7 +21,7 @@ Planned code structure: `cmd/home-mandate` (gateway), `cmd/relay` (cloud relay),
 
 ## Development
 
-Requirements: Go 1.27.1, Node 24 LTS with corepack (`corepack enable pnpm`).
+Requirements: Go 1.27.2, Node 24 LTS with corepack (`corepack enable pnpm`).
 
 ```bash
 make check                  # vet, staticcheck, race tests, coverage per package, govulncheck, actionlint
