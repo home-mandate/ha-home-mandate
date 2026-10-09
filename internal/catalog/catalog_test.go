@@ -612,3 +612,124 @@ func TestNotReadyWhileRenamesOverflow(t *testing.T) {
 		t.Error("ready while renames overflow")
 	}
 }
+
+// A registry change makes the snapshot outdated: nothing is decided on it until the
+// refresh that follows has succeeded, also when that refresh keeps failing.
+func TestNotReadyWhileARegistryChangeIsPending(t *testing.T) {
+	for _, typ := range []string{"entity_registry_updated", "device_registry_updated", "area_registry_updated"} {
+		src := house()
+		c := loaded(t, src)
+		c.HandleEvent(event(t, typ, map[string]any{"action": "update"}))
+		if c.Ready() {
+			t.Errorf("%s: ready with a pending registry change", typ)
+		}
+		src.set(func(f *fakeSource) { f.err = errors.New("not connected") })
+		if err := c.Refresh(context.Background()); err == nil || c.Ready() {
+			t.Errorf("%s: failed refresh: err %v, ready %v", typ, err, c.Ready())
+		}
+		src.set(func(f *fakeSource) { f.err = nil })
+		if err := c.Refresh(context.Background()); err != nil || !c.Ready() {
+			t.Errorf("%s: not ready after a refresh: %v", typ, err)
+		}
+	}
+}
+
+// A registry change during a refresh may be missing from what that refresh fetched: only
+// the next one makes the catalog ready.
+func TestRegistryChangeDuringARefreshNeedsAnother(t *testing.T) {
+	src := blockingSource{fakeSource: house(), entered: make(chan struct{}), release: make(chan struct{})}
+	c := New(src, nil)
+	done := make(chan error, 1)
+	go func() { done <- c.Refresh(context.Background()) }()
+	<-src.entered
+	c.HandleEvent(event(t, "device_registry_updated", map[string]any{"action": "update"}))
+	close(src.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if c.Ready() {
+		t.Error("ready although the registry changed during the refresh")
+	}
+	go func() { <-src.entered }() // released already
+	if err := c.Refresh(context.Background()); err != nil || !c.Ready() {
+		t.Errorf("not ready after the next refresh: %v", err)
+	}
+}
+
+// A rename keeps taking effect at once while the catalog waits for its refresh.
+func TestRenameIsHeldWhileARefreshIsPending(t *testing.T) {
+	c := loaded(t, house())
+	aliases := &fakeAliases{}
+	c.SetAliases(aliases)
+	c.HandleEvent(event(t, "entity_registry_updated", map[string]any{"action": "update",
+		"entity_id": "light.kitchen_ceiling", "old_entity_id": "light.kitchen"}))
+	if c.Ready() || len(aliases.Formers("light.kitchen_ceiling")) != 1 {
+		t.Errorf("ready %v, formers %v", c.Ready(), aliases.Formers("light.kitchen_ceiling"))
+	}
+}
+
+// A snapshot older than MaxAge is not decided on: events alone cannot tell that none
+// was missed.
+func TestNotReadyWhenTheSnapshotIsTooOld(t *testing.T) {
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	c := New(house(), nil)
+	c.now = func() time.Time { return now }
+	if err := c.Refresh(context.Background()); err != nil || !c.Ready() {
+		t.Fatalf("not ready: %v", err)
+	}
+	now = now.Add(MaxAge)
+	if !c.Ready() {
+		t.Error("not ready at MaxAge")
+	}
+	now = now.Add(time.Second)
+	if c.Ready() {
+		t.Error("ready with a snapshot older than MaxAge")
+	}
+	if err := c.Refresh(context.Background()); err != nil || !c.Ready() {
+		t.Errorf("not ready after a refresh: %v", err)
+	}
+}
+
+// Run refreshes on its own, often enough that a failure or two do not let the snapshot
+// get too old.
+func TestRunRefreshesPeriodically(t *testing.T) {
+	if 3*resyncEvery > MaxAge {
+		t.Errorf("a refresh every %v leaves fewer than three attempts within %v", resyncEvery, MaxAge)
+	}
+	src := house()
+	c := New(src, nil)
+	c.resync = 10 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		c.Run(ctx, time.Millisecond)
+		close(done)
+	}()
+	waitFor(t, "periodic refreshes", func() bool { return src.refreshes() >= 3 && c.Ready() })
+	cancel()
+	<-done
+}
+
+// A refresh that keeps failing, e.g. while Home Assistant is away, is retried less and
+// less often, up to every maxRetryDelay.
+func TestFailedRefreshesBackOff(t *testing.T) {
+	src := house()
+	src.err = errors.New("not connected")
+	c := New(src, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		c.Run(ctx, time.Millisecond)
+		close(done)
+	}()
+	c.RequestRefresh()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-done
+	// Doubling from 1 ms gives about 8 attempts in 200 ms; a fixed delay about 200.
+	if n := src.refreshes(); n < 2 || n > 20 {
+		t.Errorf("%d attempts in 200 ms", n)
+	}
+}

@@ -105,7 +105,13 @@ The evaluation is only as good as the directory it gets category, area and the c
 mark from (SPEC-v0 sections 3.4 and 4). The catalog builds it from Home Assistant's
 states and registries and keeps it current through `state_changed` and the
 `*_registry_updated` events; until the first load, and after a lost connection until the
-next one, it is empty and every request is denied.
+next one, it is empty and every request is denied. A registry event says that the
+directory has changed but not how: from the event until the refresh that follows it has
+succeeded (0.5 s later, retried at growing intervals up to every 5 s while it fails),
+nothing is decided and every request is refused as `unavailable`; a rename in the event
+takes effect at once all the same. The registries are also read anew every 10 minutes,
+and a directory older than 30 minutes is not decided on: events cannot tell that none
+was missed.
 
 - **Category** comes from the domain and, for covers, the `device_class`: a cover that
   may close an entrance is `gate`, whose `open` is critical (`garage`, `gate`, `door`, and
