@@ -133,7 +133,9 @@ Actions with the decision `ask` wait for a human. Home-Mandate sends a notificat
 answer must come from that approver's Home Assistant account. No answer within the timeout,
 an answer from anyone else, or no reachable approver means deny. An answer from someone who
 may not approve also warns the approvers. The agent's reason is shown as its claim, never as
-a fact. The first answer counts.
+a fact. The first answer counts. After a rejection, a timeout or an invalid answer, the
+agent may not ask again for the same device for a minute, twice as long after every
+further one up to an hour; an approval ends the wait. Nobody is notified meanwhile.
 
 ```bash
 home-mandate approver add USER_ID mobile_app_pixel_9,mobile_app_mac:no-critical [de|en]   # up to 5 devices

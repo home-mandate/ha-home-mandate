@@ -30,8 +30,13 @@ const (
 )
 
 // askHuman asks the approvers of the mandate and executes only after a valid
-// confirmation. Every outcome is in the audit log with the approval.
+// confirmation. Every outcome is in the audit log with the approval. An agent whose last
+// request for the device was not approved waits before anyone is asked again.
 func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, reason string) (*sdk.CallToolResult, actionOut, error) {
+	if g.cooling(a.ClientID, d.Resource.EntityID) > 0 {
+		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval, Error: "approval_cooldown"})
+		return nil, actionOut{}, errors.New(codeDenied + ": approval_cooldown")
+	}
 	g.mu.Lock()
 	if g.pendingAsks[a.ClientID] >= maxPendingAsks {
 		g.mu.Unlock()
@@ -70,10 +75,13 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 		return g.cancelled(ctx, a, d, res.ID)
 	}
 	appr := approvalRef{approval: &audit.Approval{Outcome: res.Outcome, By: res.By, Via: res.Via, At: res.At}, id: res.ID}
+	if res.Outcome == approval.OutcomeApproved {
+		g.forgive(a.ClientID, d.Resource.EntityID)
+		return g.afterApproval(ctx, a, token, d, call, appr, res.At.Add(g.approvalValidity(req.Timeout)))
+	}
+	g.coolDown(a.ClientID, d.Resource.EntityID)
 	var code string
 	switch res.Outcome {
-	case approval.OutcomeApproved:
-		return g.afterApproval(ctx, a, token, d, call, appr, res.At.Add(g.approvalValidity(req.Timeout)))
 	case approval.OutcomeRejected:
 		code = "approval_rejected"
 	case approval.OutcomeInvalidResponse:

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -135,8 +136,27 @@ func (f *fakeClock) set(behind bool, err error) {
 	f.behind, f.err = behind, err
 }
 
+// fakeNow is a clock that moves only when told to.
+type fakeNow struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (f *fakeNow) Now() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.t
+}
+
+func (f *fakeNow) advance(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.t = f.t.Add(d)
+}
+
 type harness struct {
 	clock    *fakeClock
+	now      *fakeNow // the gateway's clock
 	t        *testing.T
 	url      string
 	token    string
@@ -202,7 +222,7 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 		t.Fatal(err)
 	}
 
-	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin", self: "hm-service-user", clock: &fakeClock{},
+	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin", self: "hm-service-user", clock: &fakeClock{}, now: &fakeNow{t: time.Now()},
 		ha: &fakeHA{connected: true},
 		catalog: &fakeCatalog{ready: true, devices: map[string]catalog.Device{
 			"light.kitchen":            {EntityID: "light.kitchen", Category: "light", Area: "kitchen", State: "off", Attributes: map[string]any{"friendly_name": "Kitchen"}},
@@ -224,7 +244,7 @@ func (h *harness) serve(auditor Auditor) string {
 		decider = h.decider
 	}
 	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test",
-		TimeZone: h.timeZone, ServiceUser: h.serviceUser})
+		TimeZone: h.timeZone, ServiceUser: h.serviceUser, Now: h.now.Now})
 	g.cfg.Clock = h.clock
 	srv := httptest.NewServer(g.Handler())
 	h.t.Cleanup(srv.Close)

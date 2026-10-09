@@ -5,6 +5,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -285,8 +286,9 @@ func TestPendingAsksAreBounded(t *testing.T) {
 			t.Errorf("waiting request = %q", r)
 		}
 	}
-	// The slots are free again.
+	// The slots are free again, once the wait the refusals started is over.
 	f.during = nil
+	h.now.advance(cooldownMax)
 	if errText := unlock(h, nil); errText != "denied: approval_rejected" {
 		t.Errorf("after the others = %q", errText)
 	}
@@ -462,6 +464,7 @@ func TestAskRequestsCountTowardsTheRateLimit(t *testing.T) {
 	h.url = h.serve(h.log)
 	s := h.session()
 	for i := range 2 {
+		h.now.advance(cooldownMax) // past the wait after a refusal; the limit counts real time
 		if _, errText := h.call(s, "perform_action", map[string]any{"entity_id": "lock.front_door", "action": "unlock"}); errText != "denied: approval_rejected" {
 			t.Fatalf("ask %d: %q", i+1, errText)
 		}
@@ -498,5 +501,125 @@ func TestConfigurationLostWhileTheHumanDecides(t *testing.T) {
 	}
 	if e := h.lastEntry(); path(e, "result", "error") != "timezone_unknown" || len(h.ha.recorded()) != 0 {
 		t.Errorf("audit entry = %v", e)
+	}
+}
+
+func (f *fakeApprover) answer(res approval.Result) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.result = res
+}
+
+// Approver fatigue: after a refusal, a timeout or an invalid answer, the agent may not ask
+// again for the same device at once. The wait doubles from a minute up to an hour and ends
+// with an approval; nobody is notified meanwhile, and every refusal is in the audit log.
+func TestAskingAgainAfterARefusalWaits(t *testing.T) {
+	rejected := approval.Result{Outcome: approval.OutcomeRejected, By: approverID, At: answeredAt}
+	f := &fakeApprover{result: rejected}
+	h := approvalHarness(t, f)
+	if errText := unlock(h, nil); errText != "denied: approval_rejected" {
+		t.Fatalf("first ask = %q", errText)
+	}
+	if errText := unlock(h, nil); errText != "denied: approval_cooldown" {
+		t.Errorf("asked again at once = %q", errText)
+	}
+	if n := len(f.requests()); n != 1 {
+		t.Errorf("approvers asked %d times, want 1", n)
+	}
+	if e := h.lastEntry(); path(e, "result", "denied_by") != "approval" || path(e, "result", "error") != "approval_cooldown" ||
+		path(e, "evaluation", "decision") != "ask" || e["approval"] != nil {
+		t.Errorf("audit entry = %v", e)
+	}
+	h.now.advance(cooldownMin)
+	if errText := unlock(h, nil); errText != "denied: approval_rejected" {
+		t.Fatalf("after a minute = %q", errText)
+	}
+	h.now.advance(cooldownMin) // the second wait is twice as long
+	if errText := unlock(h, nil); errText != "denied: approval_cooldown" {
+		t.Errorf("a minute after the second refusal = %q", errText)
+	}
+	h.now.advance(cooldownMin)
+	f.answer(approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: answeredAt})
+	if errText := unlock(h, nil); errText != "" {
+		t.Fatalf("after two minutes = %q", errText)
+	}
+	// An approval ends the waits: the next refusal waits a minute again.
+	f.answer(rejected)
+	_ = unlock(h, nil)
+	h.now.advance(cooldownMin)
+	if errText := unlock(h, nil); errText != "denied: approval_rejected" {
+		t.Errorf("after an approval and a refusal = %q", errText)
+	}
+}
+
+func TestTimeoutsAndInvalidAnswersStartTheWait(t *testing.T) {
+	for _, res := range []approval.Result{
+		{Outcome: approval.OutcomeTimeout, At: answeredAt},
+		{Outcome: approval.OutcomeInvalidResponse, By: "user-2", At: answeredAt},
+	} {
+		f := &fakeApprover{result: res}
+		h := approvalHarness(t, f)
+		_ = unlock(h, nil)
+		if errText := unlock(h, nil); errText != "denied: approval_cooldown" || len(f.requests()) != 1 {
+			t.Errorf("%s: asked again = %q, %d requests", res.Outcome, errText, len(f.requests()))
+		}
+	}
+}
+
+// Nobody was bothered when no approver could be reached: the agent may ask again.
+func TestNoApproverStartsNoWait(t *testing.T) {
+	f := &fakeApprover{err: approval.ErrNoApprover}
+	h := approvalHarness(t, f)
+	for i := range 2 {
+		if errText := unlock(h, nil); errText != "denied: no_approver" {
+			t.Errorf("ask %d = %q", i+1, errText)
+		}
+	}
+}
+
+// The wait is per device: a refusal for the lock does not block a request for a light.
+func TestTheWaitIsPerDevice(t *testing.T) {
+	f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeRejected, By: approverID, At: answeredAt}}
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = append([]any{map[string]any{"id": "r-ask-light", "resource": map[string]any{"entity_id": "light.kitchen"},
+			"actions": []any{"turn_on"}, "decision": "ask"}}, d["rules"].([]any)...)
+	})
+	h.approver = f
+	h.url = h.serve(h.log)
+	_ = unlock(h, nil)
+	if _, errText := h.call(h.session(), "perform_action", map[string]any{"entity_id": "light.kitchen", "action": "turn_on"}); errText != "denied: approval_rejected" {
+		t.Errorf("light after a refused unlock = %q", errText)
+	}
+}
+
+func TestTheWaitGrowsUpToAnHour(t *testing.T) {
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	g := New(Config{Now: func() time.Time { return now }})
+	var waits []time.Duration
+	for range 9 {
+		g.coolDown("agent", "lock.front_door")
+		waits = append(waits, g.cooling("agent", "lock.front_door"))
+		now = now.Add(waits[len(waits)-1])
+		if left := g.cooling("agent", "lock.front_door"); left != 0 {
+			t.Fatalf("still cooling %v after the wait", left)
+		}
+	}
+	want := []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 16 * time.Minute, 32 * time.Minute, time.Hour, time.Hour, time.Hour}
+	if !slices.Equal(waits, want) {
+		t.Errorf("waits = %v, want %v", waits, want)
+	}
+	if g.cooling("other-agent", "lock.front_door") != 0 || g.cooling("agent", "lock.back_door") != 0 {
+		t.Error("the wait applies to another agent or device")
+	}
+	// After a quiet hour beyond the last wait, the next refusal waits a minute again, and
+	// the entry is gone.
+	now = now.Add(cooldownMax)
+	g.coolDown("agent", "lock.front_door")
+	if left := g.cooling("agent", "lock.front_door"); left != time.Minute {
+		t.Errorf("after a quiet hour: %v", left)
+	}
+	g.forgive("agent", "lock.front_door")
+	if left := g.cooling("agent", "lock.front_door"); left != 0 || len(g.cooldowns) != 0 {
+		t.Errorf("after an approval: %v, %d entries", left, len(g.cooldowns))
 	}
 }

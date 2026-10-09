@@ -209,8 +209,9 @@ validity; admission fills them in.
 - **Base templates** ship with Home-Mandate, so a new installation can admit an agent at
   once: `hm-read-only` (reads everything), `hm-light-climate` (reads everything, switches
   lights, sets temperatures, moves covers such as blinds; garage doors, gates, doors and
-  covers without a class are the category `gate` and not included) and `hm-voice-cautious` (as `hm-light-climate` without
-  covers, locks only with approval, never cameras or disarming the alarm). They cannot be
+  covers without a class are the category `gate` and not included) and
+  `hm-voice-cautious` (as `hm-light-climate` without covers, locks only with approval,
+  never cameras or disarming the alarm). They cannot be
   changed or removed, only used, loaded into the editor and saved under a new name, and
   hidden: a hidden base template is neither offered nor accepted at admission. Names
   starting with `hm-` are reserved for them.
@@ -273,6 +274,12 @@ checked on every request.
   2 minutes, at most 10) because the agent's request waits → `deny`. Every nonce is valid
   exactly once; open requests live in memory.
 - After an approval the PEP checks emergency stop, token and mandate again before executing.
+- **Approver fatigue:** an agent has at most 2 requests waiting, and every request counts
+  towards its rate limit. After a rejection, a timeout or an invalid answer, the same
+  agent may not ask again for the same device for a minute; every further one doubles the
+  wait up to an hour, an approval or a quiet hour after the last wait ends it. Meanwhile
+  the agent gets `denied: approval_cooldown`, nobody is notified, and the refusal is in the
+  audit log (`denied_by: approval`, `error: approval_cooldown`). The waits live in memory.
 - **Answering in the UI (decision F2, 2026-10-02):** an approver who is a Home Assistant
   administrator may also answer in the Home-Mandate UI if this is switched on for them, and
   for critical actions only with a second, separate switch (a browser session asks for no

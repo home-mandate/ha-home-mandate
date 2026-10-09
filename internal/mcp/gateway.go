@@ -148,6 +148,7 @@ type Gateway struct {
 	mu           sync.Mutex
 	rateLimitLog map[string]time.Time // last rate-limit entry per agent
 	pendingAsks  map[string]int       // approval requests waiting, per agent
+	cooldowns    map[string]cooldown  // waits after requests not approved, per agent and device
 	rejectedLog  time.Time            // last auth.rejected entry for an invalid token
 }
 
@@ -165,7 +166,7 @@ func New(cfg Config) *Gateway {
 	if cfg.CallTimeout <= 0 {
 		cfg.CallTimeout = defaultCallTimeout
 	}
-	g := &Gateway{cfg: cfg, rateLimitLog: map[string]time.Time{}, pendingAsks: map[string]int{}, server: sdk.NewServer(&sdk.Implementation{Name: "home-mandate", Version: cfg.Version}, nil)}
+	g := &Gateway{cfg: cfg, rateLimitLog: map[string]time.Time{}, pendingAsks: map[string]int{}, cooldowns: map[string]cooldown{}, server: sdk.NewServer(&sdk.Implementation{Name: "home-mandate", Version: cfg.Version}, nil)}
 	sdk.AddTool(g.server, &sdk.Tool{Name: "list_devices",
 		Description: "Lists the devices you may read, with category, area and state."}, g.listDevices)
 	sdk.AddTool(g.server, &sdk.Tool{Name: "get_state",

@@ -20,7 +20,7 @@ We acknowledge within 72 hours and disclose in a coordinated manner.
 
 | Attacker / scenario | Countermeasure | Status |
 |---|---|---|
-| **Manipulated agent** (prompt injection via website, e-mail, document) tries to open a door | Decision outside the model; locks default to `ask`; the agent's reason is sanitized and marked as unverified in approval requests, which also show the service data; at most 2 pending approval requests per agent; rate limit against loops | done |
+| **Manipulated agent** (prompt injection via website, e-mail, document) tries to open a door | Decision outside the model; locks default to `ask`; the agent's reason is sanitized and marked as unverified in approval requests, which also show the service data; at most 2 pending approval requests per agent; after a rejection, timeout or invalid answer the agent waits before asking again for the same device (1 minute, doubling up to 1 hour, ended by an approval); rate limit against loops | done |
 | Agent tries to extend its own permissions | Administrative functions are not reachable via MCP (the API is served only on the Ingress listener); mandates can only be changed through the UI by HA admins | done |
 | Agent explores devices outside its mandate | Unreadable devices are neither listed nor mentioned in error messages | planned |
 | Stolen agent token | Access tokens 10 minutes, bound to the MCP resource; refresh tokens bound to the agent's OAuth client, rotated, reuse revokes the whole family; agent status, revocation and emergency stop read on every request and again after an approval | done |
