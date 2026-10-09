@@ -39,6 +39,9 @@ import (
 // haImage is pinned by digest (docs/TESTING.md section 3: official image, fixed version).
 const haImage = "docker.io/homeassistant/home-assistant:2026.9.4@sha256:e47c978e1b801466e7f62f612fd552bc3a228e077b31a3f1c22c05cf63d754da"
 
+// haConfiguration stands in a notify service for the approvers' phone: Home-Mandate sends
+// only to notify services of the Companion App (notify.mobile_app_…), and the test
+// reads the calls as call_service events.
 const haConfiguration = `homeassistant:
   name: E2E
   time_zone: Europe/Berlin
@@ -48,7 +51,14 @@ http:
   ssl_certificate: /config/certs/cert.pem
   ssl_key: /config/certs/key.pem
 demo:
+command_line:
+  - notify:
+      name: ` + approverDevice + `
+      command: "cat > /dev/null"
 `
+
+// approverDevice is the notify service of the approvers in the test.
+const approverDevice = "mobile_app_e2e_phone"
 
 // env is the running environment shared by all scenarios.
 var env struct {

@@ -48,7 +48,7 @@ protection class, expired, not yet valid) needs its own named test.
 - **Home-Mandate** as a container from the release image, not from source, so that the shipped
   artifact is tested.
 - **Agent** = test client based on the official MCP Go SDK, going through real OAuth flows.
-- **Approval requests:** sent to a configurable `notify` service; the answer is fired as a
+- **Approval requests:** sent to `notify.mobile_app_e2e_phone`, a `command_line` notify service that stands in for the Companion App; the answer is fired as a
   `mobile_app_notification_action` event via the HA API with the respective test user, so
   that `context.user_id` is set for real.
 - **UI:** Playwright against the UI (mandate editor, emergency stop, revoke agent), every UI
@@ -176,6 +176,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - Many sign-ins, pairings or metadata fetches from one sender → refused beyond the per-sender limit
 
 **Approval requests**
+- Approver device that is not a notify service of the Companion App (`notify.notify`, a group, a messenger, `mobile_app_` alone) → refused by `approver add`, the API (`approvers` Put) and the Home Assistant client; one stored earlier → not sent, the delivery is logged with the reason
 - Answer with an unknown, expired or already used nonce → discarded
 - Answer from a non-approver (also without user, or from Home-Mandate's own HA user) → request denied as `invalid_response`, approvers warned (decision W8)
 - "Yes" and "No" at the same time → first valid answer counts, second discarded, both logged

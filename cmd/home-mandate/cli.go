@@ -22,6 +22,7 @@ import (
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/config"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
@@ -226,6 +227,11 @@ func approverCommand(ctx context.Context, e env, args []string) int {
 	switch {
 	case (len(args) == 3 || len(args) == 4) && args[0] == "add":
 		ap := approval.Approver{UserID: args[1], Devices: parseDevices(args[2])}
+		for _, d := range ap.Devices {
+			if !ha.ValidNotifyService(d.Service) {
+				return usageError(e, fmt.Sprintf("%q is no device of the Companion App: approver add needs notify services like mobile_app_pixel_9", d.Service))
+			}
+		}
 		if len(args) == 4 {
 			ap.Language = args[3]
 		}

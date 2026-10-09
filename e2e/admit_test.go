@@ -189,7 +189,7 @@ var approverOnce sync.Once
 func newAgent(t *testing.T, name string, edit func(map[string]any)) string {
 	t.Helper()
 	approver := env.users[adminApprover].id
-	approverOnce.Do(func() { cli(t, "", "approver", "add", approver, "persistent_notification") })
+	approverOnce.Do(func() { cli(t, "", "approver", "add", approver, approverDevice) })
 	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
 		t.Fatal(err)

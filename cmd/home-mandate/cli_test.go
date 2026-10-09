@@ -250,12 +250,13 @@ func TestCommandErrors(t *testing.T) {
 		{[]string{"agent", "add", "--name", "x"}, exitUsage}, // agents are admitted via OAuth only
 		{[]string{"emergency-stop"}, exitUsage},
 		{[]string{"approver"}, exitUsage},
+		{[]string{"approver", "add", "4d5e6f", "mobile_app_pixel,telegram_family"}, exitUsage}, // Companion App devices only
 		{[]string{"approver", "add", "u1"}, exitUsage},
-		{[]string{"approver", "add", "u1", "notify.x"}, exitFailure},
+		{[]string{"approver", "add", "u1", "notify.x"}, exitUsage}, // not a Companion App device: refused before the database
 		{[]string{"approver", "add", "u1", "mobile_app_a,mobile_app_a"}, exitFailure},
-		{[]string{"approver", "add", "u1", ","}, exitFailure},
-		{[]string{"approver", "add", "u1", "mobile_app_a:critical"}, exitFailure},
-		{[]string{"approver", "add", "u1", "mobile_app_a:no-critical:no-critical"}, exitFailure},
+		{[]string{"approver", "add", "u1", ","}, exitUsage},
+		{[]string{"approver", "add", "u1", "mobile_app_a:critical"}, exitUsage},
+		{[]string{"approver", "add", "u1", "mobile_app_a:no-critical:no-critical"}, exitUsage},
 		{[]string{"approver", "remove", "none"}, exitFailure},
 		{[]string{"emergency-stop", "maybe"}, exitUsage},
 		{[]string{"emergency-stop", "on", "now"}, exitUsage},
@@ -490,6 +491,7 @@ func TestTemplateAndApproverCommandsAreAudited(t *testing.T) {
 		{"mandate", "template", "remove", "hm-read-only"},
 		{"approver", "remove", "1a2b3c"},
 		{"approver", "add", "4d5e6f", "Not A Service"},
+		{"approver", "add", "4d5e6f", "telegram_family"},
 	} {
 		if code, _, _ := c.run("", refused...); code == exitOK {
 			t.Errorf("%v succeeded", refused)

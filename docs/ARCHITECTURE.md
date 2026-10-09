@@ -233,7 +233,9 @@ checked on every request.
 
 ## 7. Approval requests ("ask")
 
-- Sent via `notify.mobile_app_<device>` to every device (up to 5) of the approvers selected
+- Sent via `notify.mobile_app_<device>` (nothing else: the Home Assistant client, the
+  approvers store and `approver add` refuse other notify services, which could reach people
+  who are no approvers) to every device (up to 5) of the approvers selected
   in the settings: phones, tablets, the Companion App on a Mac. Each device has its own switch
   for critical requests; critical requests go only to devices where it is on. The UI
   proposes on only for iOS devices of the person themselves and off for everything else

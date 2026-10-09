@@ -132,6 +132,8 @@ func TestPutApproverRejects(t *testing.T) {
 		"long user":          {UserID: strings.Repeat("a", 65), Devices: phones("mobile_app_x")},
 		"unknown language":   {UserID: u1, Devices: phones("mobile_app_x"), Language: "fr"},
 		"language with tail": {UserID: u1, Devices: phones("mobile_app_x"), Language: "de-DE"},
+		"not mobile_app":     {UserID: u1, Devices: phones("telegram_family")},
+		"prefix only":        {UserID: u1, Devices: phones("mobile_app_")},
 	} {
 		if err := a.Put(context.Background(), ap, changer); !errors.Is(err, ErrInvalidApprover) {
 			t.Errorf("%s: %v", name, err)

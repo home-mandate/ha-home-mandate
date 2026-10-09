@@ -141,7 +141,8 @@ home-mandate approver add USER_ID mobile_app_pixel_9,mobile_app_mac:no-critical 
 
 `USER_ID` is the Home Assistant user ID; it must also be listed in the mandate's
 `approvers`. Without a language, the language of the Home Assistant configuration applies.
-Any device with the Home Assistant Companion App counts, including the Mac app. Critical
+Any device with the Home Assistant Companion App counts, including the Mac app; other notify
+services (groups, messengers, `notify.notify`) are refused, also when stored earlier. Critical
 actions (unlocking a door, disarming the alarm …) go only to devices without
 `:no-critical`: an iPhone asks for unlocking before a button counts, the Mac app and Android
 do not. The UI proposes `no-critical` for the Mac app.
