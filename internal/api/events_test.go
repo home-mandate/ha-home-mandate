@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -281,14 +282,46 @@ func TestSlowClientIsClosed(t *testing.T) {
 	h.srv.publish(event{Type: "templates.changed"}) // closing twice must not panic
 	h.srv.hub.remove(c)
 	// Too many connections.
-	for range maxClients {
-		if _, ok := h.srv.hub.add(adminID, ""); !ok {
+	for i := range maxClients {
+		if _, ok := h.srv.hub.add("user"+strconv.Itoa(i), ""); !ok {
 			t.Fatal("refused below the limit")
 		}
 	}
 	srv := h.wsServer()
 	if _, resp, err := h.connect(srv, adminID, nil); err == nil || resp.StatusCode != http.StatusTooManyRequests {
 		t.Errorf("over the limit: %v", err)
+	}
+}
+
+// One user, and in direct mode one session, cannot take every connection.
+func TestEventStreamsPerUserAndSession(t *testing.T) {
+	h := newHarness(t)
+	for range maxClientsPerUser {
+		if _, ok := h.srv.hub.add(adminID, ""); !ok {
+			t.Fatal("refused below the limit of a user")
+		}
+	}
+	if _, ok := h.srv.hub.add(adminID, ""); ok {
+		t.Error("a connection beyond the limit of a user")
+	}
+	srv := h.wsServer()
+	if _, resp, err := h.connect(srv, adminID, nil); err == nil || resp.StatusCode != http.StatusTooManyRequests ||
+		resp.Header.Get("Retry-After") == "" {
+		t.Errorf("over the limit of a user: %v", err)
+	}
+	for range maxClientsPerSession {
+		if _, ok := h.srv.hub.add(annaID, "session-1"); !ok {
+			t.Fatal("refused below the limit of a session")
+		}
+	}
+	if _, ok := h.srv.hub.add(annaID, "session-1"); ok {
+		t.Error("a connection beyond the limit of a session")
+	}
+	if _, ok := h.srv.hub.add(annaID, "session-2"); !ok {
+		t.Error("another session of the user refused")
+	}
+	if _, ok := h.srv.hub.add(guestID, ""); !ok {
+		t.Error("another user refused")
 	}
 }
 
