@@ -723,7 +723,10 @@ func (l *Log) truncate(ctx context.Context, cutoff time.Time, limit int64, actor
 		}
 		return nil
 	})
-	return removed, err
+	if err != nil {
+		return 0, err // rolled back: nothing was deleted
+	}
+	return removed, nil
 }
 
 // newUUIDv7 returns a UUIDv7 (RFC 9562): 48-bit Unix milliseconds, version, variant,

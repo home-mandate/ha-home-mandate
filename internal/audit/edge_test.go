@@ -298,4 +298,62 @@ func TestExpireWaitsWhileTheClockIsBehind(t *testing.T) {
 	if _, err := l.Expire(context.Background(), time.Hour, actor); err == nil {
 		t.Error("Expire on a closed database succeeded")
 	}
+	if _, err := l.HasCheckpoints(context.Background()); err == nil {
+		t.Error("HasCheckpoints on a closed database succeeded")
+	}
+}
+
+// A clock a little behind the newest entry, within the tolerance, counts from the clock.
+func TestExpireCountsFromAClockSlightlyBehind(t *testing.T) {
+	last := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	l, db := retentionLog(t, 20, last)
+	l.SetClock(func() time.Time { return last.Add(-audit.ClockTolerance / 2) })
+	// 24h before the clock: the entry of exactly one day before the newest is old by
+	// the clock, not by the newest entry.
+	if n, err := l.Expire(context.Background(), 24*time.Hour-audit.ClockTolerance, audit.Actor{Kind: audit.ActorSystem, ID: "retention"}); err != nil || n != 2 {
+		t.Fatalf("Expire = %d, %v; want 2", n, err)
+	}
+	if first := firstSeq(t, db); first != 3 {
+		t.Errorf("first seq = %d, want 3", first)
+	}
+}
+
+// The checkpoint after a truncation belongs to it: if it cannot be written, nothing is
+// deleted.
+func TestTruncateFailsWithoutItsCheckpoint(t *testing.T) {
+	last := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	l, db := retentionLog(t, 20, last)
+	if _, err := db.Exec(`CREATE TRIGGER no_checkpoint BEFORE INSERT ON audit_log WHEN NEW.event = 'log.checkpoint'
+		BEGIN SELECT RAISE(ABORT, 'injected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	l.SetClock(func() time.Time { return last })
+	if n, err := l.Expire(context.Background(), time.Hour, audit.Actor{Kind: audit.ActorSystem, ID: "retention"}); err == nil || n != 0 {
+		t.Errorf("Expire = %d, %v; want an error", n, err)
+	}
+	if first := firstSeq(t, db); first != 1 {
+		t.Errorf("first seq = %d, want 1", first)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER no_setting BEFORE INSERT ON settings BEGIN SELECT RAISE(ABORT, 'injected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := l.AcceptClock(context.Background()); err == nil {
+		t.Error("AcceptClock succeeded although the setting could not be written")
+	}
+}
+
+// A stored time that cannot be read stops the retention instead of guessing an age.
+func TestExpireRefusesAnUnreadableTime(t *testing.T) {
+	last := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	l, db := retentionLog(t, 3, last)
+	if _, err := db.Exec(`UPDATE audit_log SET recorded_at = '9999-garbage' WHERE seq = 3`); err != nil {
+		t.Fatal(err)
+	}
+	l.SetClock(func() time.Time { return last })
+	if _, _, err := l.AcceptClock(context.Background()); err != nil { // the clock check passes
+		t.Fatal(err)
+	}
+	if n, err := l.Expire(context.Background(), time.Hour, audit.Actor{Kind: audit.ActorSystem, ID: "retention"}); err == nil || n != 0 {
+		t.Errorf("Expire = %d, %v; want an error", n, err)
+	}
 }
