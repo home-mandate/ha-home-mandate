@@ -380,26 +380,38 @@ func readDocument(e env, name string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(r, evaluator.MaxMandateBytes+1))
 }
 
+// verifyAudit prints the verification of the audit log. A deleted beginning that no
+// verified checkpoint covers fails it: the log.truncated entry needs no key.
+func verifyAudit(ctx context.Context, e env, s *state) error {
+	r, err := s.log.Verify(ctx)
+	if err != nil {
+		return err
+	}
+	switch {
+	case r.Truncation == audit.TruncationUnanchored:
+		fmt.Fprintf(e.stdout, "audit log beginning deleted without a verified checkpoint\nfirst_seq=%d\ntruncation=%s\n", r.FirstSeq, r.Truncation)
+		return errBrokenLog
+	case !r.Valid:
+		fmt.Fprintf(e.stdout, "audit log broken at seq %d (entry %d)\n", r.BrokenAt, r.Index+1)
+		if r.Truncation != "" {
+			fmt.Fprintf(e.stdout, "first_seq=%d\ntruncation=%s\n", r.FirstSeq, r.Truncation)
+		}
+		return errBrokenLog
+	}
+	fmt.Fprintln(e.stdout, "audit log valid")
+	// Entries after the last checkpoint are consistent but not anchored.
+	fmt.Fprintf(e.stdout, "entries=%d\nanchored_up_to=%d\nfirst_seq=%d\ntruncation=%s\nlog_id=%s\n",
+		r.Entries, r.AnchoredSeq, r.FirstSeq, r.Truncation, s.signer.LogID)
+	return nil
+}
+
 func auditCommand(ctx context.Context, e env, args []string) int {
 	if len(args) != 1 {
 		return usageError(e, "audit needs verify, export, key or accept-clock")
 	}
 	switch args[0] {
 	case "verify":
-		return withState(ctx, e, func(s *state) error {
-			r, err := s.log.Verify(ctx)
-			if err != nil {
-				return err
-			}
-			if !r.Valid {
-				fmt.Fprintf(e.stdout, "audit log broken at seq %d (entry %d)\n", r.BrokenAt, r.Index+1)
-				return errBrokenLog
-			}
-			fmt.Fprintln(e.stdout, "audit log valid")
-			// Entries after the last checkpoint are consistent but not anchored.
-			fmt.Fprintf(e.stdout, "entries=%d\nanchored_up_to=%d\nlog_id=%s\n", r.Entries, r.AnchoredSeq, s.signer.LogID)
-			return nil
-		})
+		return withState(ctx, e, func(s *state) error { return verifyAudit(ctx, e, s) })
 	case "key":
 		// The public key and the log ID belong outside the device: with them, anyone can
 		// verify an exported log and its checkpoints (SPEC-v0 section 9.5).

@@ -13,11 +13,13 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/home-mandate/spec"
 	specaudit "github.com/home-mandate/spec/audit"
 
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 )
 
 // cli runs commands against one temporary data directory in container mode.
@@ -174,6 +176,65 @@ func TestAuditVerifyReportsABrokenChain(t *testing.T) {
 	code, out, _ := c.run("", "audit", "verify")
 	if code != exitFailure || !strings.Contains(out, "broken at seq 2") {
 		t.Errorf("audit verify = %d, %q", code, out)
+	}
+}
+
+// forgeTruncation deletes the beginning of the audit log behind the gateway's back and
+// accounts for it with a log.truncated entry, which needs no key. With checkpoints, the
+// log had a checkpoint before.
+func forgeTruncation(t *testing.T, c *cli, checkpoints bool) {
+	t.Helper()
+	ctx := context.Background()
+	dir := c.envVars["HM_DATA_DIR"]
+	s, err := openStore(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.store.Close()
+	// Later entries two hours after the existing ones, so that only those are deleted and
+	// a checkpoint after them stays.
+	later := time.Now().Add(2 * time.Hour)
+	s.log.SetClock(func() time.Time { return later })
+	if checkpoints {
+		if err := attachSigner(ctx, s, dir, func(k string) string { return c.envVars[k] }); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.log.Checkpoint(ctx); err != nil {
+			t.Fatal(err)
+		}
+		s.log.SetSigner(nil)
+	}
+	if _, err := s.log.Append(ctx, audit.Entry{Event: audit.EventEmergencyStopActivated, Actor: &localAdmin}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.log.Truncate(ctx, later.Add(-time.Hour), audit.Actor{Kind: audit.ActorSystem, ID: "retention"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// audit verify says where the log starts and whether a verified checkpoint covers a
+// deleted beginning; without one, verify fails.
+func TestAuditVerifyReportsTheTruncation(t *testing.T) {
+	c := newCLI(t)
+	c.register("A")
+	out := c.mustRun("", "audit", "verify")
+	if field(t, out, "first_seq") != "1" || field(t, out, "truncation") != "none" {
+		t.Errorf("audit verify of a whole log: %q", out)
+	}
+
+	forgeTruncation(t, c, false)
+	code, out, _ := c.run("", "audit", "verify")
+	if code != exitFailure || field(t, out, "truncation") != "unanchored" || field(t, out, "first_seq") == "1" ||
+		!strings.Contains(out, "without a verified checkpoint") {
+		t.Errorf("unanchored truncation: exit %d, %q", code, out)
+	}
+
+	c = newCLI(t)
+	c.register("A")
+	forgeTruncation(t, c, true)
+	code, out, _ = c.run("", "audit", "verify")
+	if code != exitFailure || field(t, out, "truncation") != "tampered" || !strings.Contains(out, "broken at seq") {
+		t.Errorf("truncation behind the checkpoints: exit %d, %q", code, out)
 	}
 }
 

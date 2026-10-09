@@ -338,6 +338,12 @@ Further tables: `critical_entities` (the household's critical marks), the settin
   shows that a stored version was altered (it then denies), but a new, consistent version
   can be written. The audit log shows such changes only up to its last checkpoint that left
   the device. Mandates signed with a key outside the device (planned) remove this trust.
+  Deleting the beginning of the log is accounted for by a `log.truncated` entry, which
+  needs no key; Home-Mandate therefore counts a truncation only if a verified checkpoint
+  covers that entry (stricter than SPEC-v0 section 9.4). Otherwise `audit verify` fails and
+  prints `first_seq` and `truncation`, the UI shows the chain broken at the first remaining
+  entry, and the gateway logs an error at start; if the log has checkpoints but none
+  covers the truncation, it is tampering and the gateway does not start.
 - **The clock.** Validity periods, time windows and the audit log follow the host clock.
   While it lies more than a minute behind the latest time in the audit log, nothing is
   decided (SPEC-v0 section 11.4): requests fail with `clock_behind`, the UI shows a banner.

@@ -165,7 +165,7 @@ home-mandate mandate list | revoke ID
 home-mandate mandate check                   # lists stored mandates and templates the evaluator rejects, e.g. after an update
 home-mandate approver add USER_ID NOTIFY_SERVICE[:no-critical][,…] [de|en] | list | remove USER_ID
 home-mandate emergency-stop on | off | status   # on: all tokens revoked, all agents blocked
-home-mandate audit verify | export           # hash chain and checkpoint check, JSON Lines export
+home-mandate audit verify | export           # hash chain and checkpoint check (fails if a deleted beginning is not covered by a checkpoint), JSON Lines export
 home-mandate audit key                       # log ID and public key of the checkpoints; keep them outside this device
 ```
 

@@ -145,6 +145,24 @@ func TestVerify(t *testing.T) {
 	}
 }
 
+// A deleted beginning that no verified checkpoint covers is reported as a broken chain
+// at the first remaining entry: the log.truncated entry needs no key.
+func TestVerifyReportsAnUnanchoredTruncation(t *testing.T) {
+	h := newHarness(t)
+	h.admit("Voice")
+	h.admit("Lights")
+	if _, err := h.log.Truncate(t.Context(), time.Now().AddDate(10, 0, 0), audit.Actor{Kind: audit.ActorSystem, ID: "retention"}); err != nil {
+		t.Fatal(err)
+	}
+	var first int64
+	_ = h.st.DB().QueryRow(`SELECT min(seq) FROM audit_log`).Scan(&first)
+	var v wireVerification
+	h.ok(http.MethodPost, "/api/audit/verify", nil, &v)
+	if v.Valid || v.BrokenAtSeq == nil || *v.BrokenAtSeq != first {
+		t.Errorf("verification = %+v, want broken at %d", v, first)
+	}
+}
+
 func TestRunVerifierAndRunTailStop(t *testing.T) {
 	h := newHarness(t)
 	old := verifyEvery

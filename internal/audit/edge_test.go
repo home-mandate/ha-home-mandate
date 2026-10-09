@@ -116,14 +116,15 @@ func TestTruncateNeverDeletesTheNewestEntry(t *testing.T) {
 		t.Fatalf("Truncate(single) = %d, %v; want 0", n, err)
 	}
 	appendAll(t, l, samples()[:2])
+	l.SetSigner(signer())
 	n, err := l.Truncate(ctx, old.Add(time.Hour), audit.Actor{Kind: audit.ActorSystem, ID: "retention"})
 	if err != nil || n != 2 {
 		t.Fatalf("Truncate(all old) = %d, %v; want 2", n, err)
 	}
 	var left int
 	_ = db.QueryRow(`SELECT count(*) FROM audit_log`).Scan(&left)
-	if left != 2 { // newest original entry + log.truncated
-		t.Errorf("entries left = %d, want 2", left)
+	if left != 3 { // newest original entry + log.truncated + log.checkpoint
+		t.Errorf("entries left = %d, want 3", left)
 	}
 	if r := verify(t, l); !r.Valid {
 		t.Errorf("Verify = %+v", r)

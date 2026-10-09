@@ -535,29 +535,80 @@ func validate(w wire) error {
 	return nil
 }
 
+// How the beginning of a log that verifies with the specification is accounted for.
+const (
+	// TruncationNone: the log starts at seq 1.
+	TruncationNone = "none"
+	// TruncationAnchored: a verified checkpoint covers the log.truncated entry.
+	TruncationAnchored = "anchored"
+	// TruncationUnanchored: no checkpoint covers it, and the log has none at all.
+	TruncationUnanchored = "unanchored"
+	// TruncationTampered: no checkpoint covers it although the log has checkpoints;
+	// Home-Mandate writes one after every truncation of its own.
+	TruncationTampered = "tampered"
+)
+
+// Verification is the result of verifying the stored log. It is stricter than the specification,
+// which accepts any log.truncated entry for a deleted beginning (SPEC-v0 section 9.4):
+// that entry needs no key, so Home-Mandate counts a truncation as valid only if a
+// verified checkpoint covers it. Otherwise Valid is false and BrokenAt is FirstSeq.
+type Verification struct {
+	specaudit.Result
+	// Truncation is one of the Truncation constants; empty if the chain is broken.
+	Truncation string
+}
+
 // Verify checks the whole stored log with the specification (SPEC-v0 section 9.4).
-func (l *Log) Verify(ctx context.Context) (specaudit.Result, error) {
+func (l *Log) Verify(ctx context.Context) (Verification, error) {
 	r, _, err := l.Check(ctx)
 	return r, err
 }
 
 // Check is Verify that also returns how many entries it checked.
-func (l *Log) Check(ctx context.Context) (specaudit.Result, int, error) {
+func (l *Log) Check(ctx context.Context) (Verification, int, error) {
 	var entries [][]byte
 	err := l.each(ctx, func(entry []byte) error {
 		entries = append(entries, entry)
 		return nil
 	})
 	if err != nil {
-		return specaudit.Result{}, 0, err
+		return Verification{}, 0, err
 	}
+	r, err := l.verifyEntries(entries)
+	if err != nil || !r.Valid {
+		return Verification{Result: r}, len(entries), err
+	}
+	strict, err := l.truncation(ctx, r)
+	return strict, len(entries), err
+}
+
+func (l *Log) verifyEntries(entries [][]byte) (specaudit.Result, error) {
 	if signer := l.signer(); signer != nil {
-		r, err := specaudit.VerifyAnchored(entries, specaudit.Anchor{
+		return specaudit.VerifyAnchored(entries, specaudit.Anchor{
 			Keys: jws.Keys{signer.KeyID: signer.Key.Public()}, LogID: signer.LogID})
-		return r, len(entries), err
 	}
-	r, err := specaudit.Verify(entries)
-	return r, len(entries), err
+	return specaudit.Verify(entries)
+}
+
+// truncation applies Home-Mandate's own rule for a deleted beginning to a valid log.
+func (l *Log) truncation(ctx context.Context, r specaudit.Result) (Verification, error) {
+	switch {
+	case r.FirstSeq <= 1:
+		return Verification{Result: r, Truncation: TruncationNone}, nil
+	case r.TruncationAnchored:
+		return Verification{Result: r, Truncation: TruncationAnchored}, nil
+	}
+	var checkpoints bool
+	if err := l.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM audit_log WHERE event = ?)`,
+		EventLogCheckpoint).Scan(&checkpoints); err != nil {
+		return Verification{}, fmt.Errorf("audit: read: %w", err)
+	}
+	out := Verification{Result: specaudit.Result{Index: 0, BrokenAt: r.FirstSeq, FirstSeq: r.FirstSeq, LogID: r.LogID},
+		Truncation: TruncationUnanchored}
+	if checkpoints {
+		out.Truncation = TruncationTampered
+	}
+	return out, nil
 }
 
 // Export writes the log as JSON Lines, the exchange format of SPEC-v0 section 9.4.

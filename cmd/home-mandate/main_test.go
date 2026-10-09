@@ -159,6 +159,48 @@ func TestServeRefusesABrokenAuditLog(t *testing.T) {
 	}
 }
 
+// A deleted beginning that no checkpoint covers, although the log has checkpoints, is
+// tampering: the gateway does not start, as with a broken chain.
+func TestServeRefusesATruncationBehindTheCheckpoints(t *testing.T) {
+	c := newCLI(t)
+	c.register("A")
+	forgeTruncation(t, c, true)
+	e, _, stderr := c.env("")
+	if code := run(context.Background(), []string{"serve"}, e); code != exitFailure || !strings.Contains(stderr.String(), "audit log is broken") {
+		t.Errorf("exit code = %d, stderr %q", code, stderr.String())
+	}
+}
+
+// A deleted beginning in a log without any checkpoint cannot be told apart from an old
+// truncation: the gateway starts, but says so as an error.
+func TestServeReportsAnUnanchoredTruncation(t *testing.T) {
+	c := newCLI(t)
+	c.register("A")
+	forgeTruncation(t, c, false)
+	e, _, _ := c.env("")
+	stderr := &lockedBuffer{}
+	e.stderr = stderr
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan int, 1)
+	go func() { done <- run(ctx, []string{"serve"}, e) }()
+	deadline := time.After(10 * time.Second)
+	for !strings.Contains(stderr.String(), "home-mandate started") {
+		select {
+		case code := <-done:
+			t.Fatalf("run returned %d: %s", code, stderr)
+		case <-deadline:
+			t.Fatalf("gateway did not start: %s", stderr)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	cancel()
+	<-done
+	if !strings.Contains(stderr.String(), `"level":"ERROR","msg":"audit log beginning deleted without a verified checkpoint"`) {
+		t.Errorf("no error about the truncation: %s", stderr)
+	}
+}
+
 func TestRunUntilSignalStopsOnSIGTERM(t *testing.T) {
 	// Our own handler keeps SIGTERM from terminating the test process.
 	guard := make(chan os.Signal, 1)

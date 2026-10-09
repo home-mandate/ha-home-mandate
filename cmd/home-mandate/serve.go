@@ -95,9 +95,14 @@ func serve(ctx context.Context, e env) int {
 	if ctx.Err() != nil {
 		return exitOK
 	}
-	if err != nil || !r.Valid {
-		logger.Error("audit log is broken, not starting", "broken_at", r.BrokenAt, "error", err)
+	if err != nil || !r.Valid && r.Truncation != audit.TruncationUnanchored {
+		logger.Error("audit log is broken, not starting", "broken_at", r.BrokenAt, "truncation", r.Truncation, "error", err)
 		return exitFailure
+	}
+	if r.Truncation == audit.TruncationUnanchored {
+		// Without any checkpoint it cannot be told from a truncation of an old version; the
+		// UI shows it as a broken chain.
+		logger.Error("audit log beginning deleted without a verified checkpoint", "first_seq", r.FirstSeq)
 	}
 	n, err := s.log.IndexSearch(ctx)
 	if ctx.Err() != nil {

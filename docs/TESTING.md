@@ -252,6 +252,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - Tampered entry in the database → chain verification fails and reports the position
 - Log rewritten consistently by someone who can write the database → `audit verify` reports it anchored only up to the last checkpoint; a checkpoint signed with another key or for another log ID → invalid
 - Shortening of the log with an agent as actor → refused; every shortening is followed by a checkpoint
+- Beginning of the log deleted with a forged `log.truncated` entry (needs no key) → `audit verify` prints `first_seq` and `truncation=unanchored` and fails, the UI shows the chain broken at the first remaining entry, the gateway starts but logs an error; if the log has checkpoints but none covers the `log.truncated` entry (`truncation=tampered`) → treated as a broken chain, the gateway does not start
 - No tokens, nonces or HA credentials in logs (a test searches the log output of all E2E runs)
 - Search text with `%`, `_`, `\`, quotes, control, bidi or zero-width characters → cleaned, then matched literally (bound parameter, wildcards escaped or `instr`); errors name only `/q`, never the text
 - Search text over 100 characters after cleaning, a repeated `q`, or invalid UTF-8 → `invalid_input`, nothing run; empty or whitespace-only `q` → same result as no search
