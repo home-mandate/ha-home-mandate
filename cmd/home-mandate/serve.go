@@ -83,7 +83,7 @@ func serve(ctx context.Context, e env) int {
 	}
 	defer s.store.Close()
 	s.cfg = cfg
-	if err := attachSigner(ctx, s, cfg.DataDir, e.getenv); err != nil {
+	if err := attachSigner(ctx, s, cfg.DataDir, e.getenv, true); err != nil {
 		fmt.Fprintln(e.stderr, "home-mandate:", err)
 		return exitFailure
 	}

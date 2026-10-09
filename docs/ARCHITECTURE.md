@@ -327,7 +327,13 @@ index `audit_search`, `approvers`, `mandate_templates`, `settings`.
 
 Further tables: `critical_entities` (the household's critical marks), the settings
 `mandate_issuer` and `audit_log_id`; the key of the audit checkpoints lies in
-`audit-checkpoint.key` next to the database or at `HM_AUDIT_KEY_FILE`.
+`audit-checkpoint.key` next to the database or at `HM_AUDIT_KEY_FILE`. Only `serve` creates
+the key, on its first start, atomically (temporary file with mode 0600 in the same
+directory, synced, renamed); the command line never does, and `audit key` fails before
+that start. The key is read only from a regular file (no symbolic link) owned by the user
+Home-Mandate runs as, without access for group or others. If the log has checkpoints but
+the key is missing, both refuse to run instead of creating a new key that could not
+verify them.
 
 ### What Home-Mandate trusts
 

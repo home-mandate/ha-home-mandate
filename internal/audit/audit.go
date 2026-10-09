@@ -599,10 +599,9 @@ func (l *Log) truncation(ctx context.Context, r specaudit.Result) (Verification,
 	case r.TruncationAnchored:
 		return Verification{Result: r, Truncation: TruncationAnchored}, nil
 	}
-	var checkpoints bool
-	if err := l.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM audit_log WHERE event = ?)`,
-		EventLogCheckpoint).Scan(&checkpoints); err != nil {
-		return Verification{}, fmt.Errorf("audit: read: %w", err)
+	checkpoints, err := l.HasCheckpoints(ctx)
+	if err != nil {
+		return Verification{}, err
 	}
 	out := Verification{Result: specaudit.Result{Index: 0, BrokenAt: r.FirstSeq, FirstSeq: r.FirstSeq, LogID: r.LogID},
 		Truncation: TruncationUnanchored}

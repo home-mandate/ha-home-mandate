@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/home-mandate/spec/jws"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -58,7 +59,8 @@ func openState(ctx context.Context, e env) (*state, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := attachSigner(ctx, s, dir, e.getenv); err != nil {
+	// The command line never creates the key: serve does on its first start.
+	if err := attachSigner(ctx, s, dir, e.getenv, false); err != nil {
 		_ = s.store.Close()
 		return nil, err
 	}
@@ -66,10 +68,22 @@ func openState(ctx context.Context, e env) (*state, error) {
 }
 
 // attachSigner gives the audit log the key for its checkpoints, so that it writes them
-// and verifies how far the log is anchored.
-func attachSigner(ctx context.Context, s *state, dataDir string, getenv func(string) string) error {
-	signer, err := loadSigner(ctx, s.store, dataDir, getenv)
+// and verifies how far the log is anchored. A missing key is created only with create
+// and only while the log has no checkpoints: a new key could not verify them. Without
+// create and without a key, the log stays without signer.
+func attachSigner(ctx context.Context, s *state, dataDir string, getenv func(string) string, create bool) error {
+	checkpoints, err := s.log.HasCheckpoints(ctx)
 	if err != nil {
+		return err
+	}
+	path := keyPath(dataDir, getenv)
+	signer, err := loadSigner(ctx, s.store, path, create && !checkpoints)
+	switch {
+	case errors.Is(err, fs.ErrNotExist) && checkpoints:
+		return fmt.Errorf("audit checkpoint key %s is missing although the audit log has checkpoints: restore the key; a new one could not verify them", path)
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
 		return err
 	}
 	s.signer = signer
@@ -400,10 +414,16 @@ func verifyAudit(ctx context.Context, e env, s *state) error {
 	}
 	fmt.Fprintln(e.stdout, "audit log valid")
 	// Entries after the last checkpoint are consistent but not anchored.
-	fmt.Fprintf(e.stdout, "entries=%d\nanchored_up_to=%d\nfirst_seq=%d\ntruncation=%s\nlog_id=%s\n",
-		r.Entries, r.AnchoredSeq, r.FirstSeq, r.Truncation, s.signer.LogID)
+	fmt.Fprintf(e.stdout, "entries=%d\nanchored_up_to=%d\nfirst_seq=%d\ntruncation=%s\n",
+		r.Entries, r.AnchoredSeq, r.FirstSeq, r.Truncation)
+	if s.signer != nil {
+		fmt.Fprintf(e.stdout, "log_id=%s\n", s.signer.LogID)
+	}
 	return nil
 }
+
+// errNoKey: before serve first started there is no key for the checkpoints.
+var errNoKey = errors.New("no audit checkpoint key yet: home-mandate serve creates it on its first start")
 
 func auditCommand(ctx context.Context, e env, args []string) int {
 	if len(args) != 1 {
@@ -416,6 +436,9 @@ func auditCommand(ctx context.Context, e env, args []string) int {
 		// The public key and the log ID belong outside the device: with them, anyone can
 		// verify an exported log and its checkpoints (SPEC-v0 section 9.5).
 		return withState(ctx, e, func(s *state) error {
+			if s.signer == nil {
+				return errNoKey
+			}
 			set, err := jws.MarshalJWKS(jws.Keys{s.signer.KeyID: s.signer.Key.Public()})
 			if err != nil {
 				return err

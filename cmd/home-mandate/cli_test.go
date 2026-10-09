@@ -196,7 +196,7 @@ func forgeTruncation(t *testing.T, c *cli, checkpoints bool) {
 	later := time.Now().Add(2 * time.Hour)
 	s.log.SetClock(func() time.Time { return later })
 	if checkpoints {
-		if err := attachSigner(ctx, s, dir, func(k string) string { return c.envVars[k] }); err != nil {
+		if err := attachSigner(ctx, s, dir, func(k string) string { return c.envVars[k] }, true); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := s.log.Checkpoint(ctx); err != nil {
@@ -414,6 +414,7 @@ func TestMandateCheck(t *testing.T) {
 func TestAuditKeyAndAnchoredVerify(t *testing.T) {
 	c := newCLI(t)
 	c.register("Voice assistant")
+	c.createKey()
 	key := c.mustRun("", "audit", "key")
 	logID := field(t, key, "log_id")
 	if len(logID) != 36 || !strings.Contains(key, `"kty": "OKP"`) || strings.Contains(key, `"d"`) {
@@ -426,9 +427,25 @@ func TestAuditKeyAndAnchoredVerify(t *testing.T) {
 	if again := c.mustRun("", "audit", "key"); again != key {
 		t.Error("the key or the log ID changed between two calls")
 	}
-	c.envVars[envAuditKeyFile] = filepath.Join(c.envVars["HM_DATA_DIR"], "no-such-directory", "key")
+	if err := os.Chmod(filepath.Join(c.envVars["HM_DATA_DIR"], auditKeyFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if code, _, errOut := c.run("", "audit", "verify"); code != exitFailure || !strings.Contains(errOut, "audit checkpoint key") {
-		t.Errorf("key file that cannot be created: exit %d, %q", code, errOut)
+		t.Errorf("key file readable by others: exit %d, %q", code, errOut)
+	}
+}
+
+// createKey creates the key of the checkpoints, as serve does on its first start.
+func (c *cli) createKey() {
+	c.t.Helper()
+	ctx := context.Background()
+	s, err := openStore(ctx, c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	defer s.store.Close()
+	if err := attachSigner(ctx, s, c.envVars["HM_DATA_DIR"], func(k string) string { return c.envVars[k] }, true); err != nil {
+		c.t.Fatal(err)
 	}
 }
 
