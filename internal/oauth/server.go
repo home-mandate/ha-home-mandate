@@ -45,6 +45,10 @@ type (
 		Admit(ctx context.Context, req admission.Request) (agent.Agent, agent.TokenPair, error)
 		Templates(ctx context.Context) ([]admission.Template, error)
 		TemplateDocument(ctx context.Context, name string) ([]byte, admission.Template, error)
+		// Reconnectable and Reconnect offer and carry out reconnecting an existing agent
+		// instead of admitting a new one (issue #22).
+		Reconnectable(ctx context.Context, client agent.Client) ([]admission.Reconnectable, error)
+		Reconnect(ctx context.Context, req admission.ReconnectRequest) (agent.Agent, agent.TokenPair, error)
 	}
 	// Refresher rotates refresh tokens.
 	Refresher interface {
@@ -208,6 +212,13 @@ type page struct {
 	Verified                            bool
 	Name, Selected                      string
 	Templates                           []consentTemplate
+	// Reconnect are the existing agents of the client the human may reconnect instead.
+	Reconnect []reconnectOption
+}
+
+// reconnectOption is an agent to reconnect as the consent page shows it.
+type reconnectOption struct {
+	ClientID, Name, Mandate, Admitted string
 }
 
 // T translates key with name/value pairs as arguments.

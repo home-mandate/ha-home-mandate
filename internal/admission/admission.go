@@ -606,3 +606,73 @@ func (s *Store) InvalidTemplates(ctx context.Context) ([]InvalidTemplate, error)
 	}
 	return out, nil
 }
+
+// Reconnectable is an agent a human may reconnect instead of admitting a new one
+// (issue #22), with its active mandate (empty without one).
+type Reconnectable struct {
+	Agent       agent.Agent
+	MandateID   string
+	MandateName string
+}
+
+// Reconnectable lists the agents of client that hold no valid token (agent.Disconnected),
+// with their active mandates, for the human to choose from.
+func (s *Store) Reconnectable(ctx context.Context, client agent.Client) ([]Reconnectable, error) {
+	agents, err := s.agents.Disconnected(ctx, client)
+	if err != nil || len(agents) == 0 {
+		return nil, err
+	}
+	list, err := s.mandates.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Reconnectable, 0, len(agents))
+	for _, a := range agents {
+		r := Reconnectable{Agent: a}
+		for _, m := range list {
+			if m.ClientID == a.ClientID && m.Status == mandate.StatusActive {
+				r.MandateID, r.MandateName = m.ID, m.Name
+				if r.MandateName == "" {
+					r.MandateName = m.ID
+				}
+			}
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// ReconnectRequest is a human's decision to give an existing agent new tokens.
+type ReconnectRequest struct {
+	ClientID       string // the agent inside Home-Mandate
+	OAuthClient    string // the client that signs in now
+	ClientVerified bool
+	Resource       string
+	By             audit.Actor
+}
+
+// Reconnect gives an existing agent of the signing-in client new tokens and records
+// agent.reconnected (agent.Store.ReconnectTx): same client ID, same mandates and history.
+func (s *Store) Reconnect(ctx context.Context, req ReconnectRequest) (agent.Agent, agent.TokenPair, error) {
+	if req.By.Kind != audit.ActorUser || req.By.ID == "" {
+		return agent.Agent{}, agent.TokenPair{}, errors.New("admission: only a human reconnects an agent")
+	}
+	if err := displaytext.Check(req.By.ID); err != nil {
+		return agent.Agent{}, agent.TokenPair{}, fmt.Errorf("%w: actor: %w", mandate.ErrInvalid, err)
+	}
+	var tokens agent.TokenPair
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		tokens, err = s.agents.ReconnectTx(ctx, tx, req.ClientID, agent.Client{ID: req.OAuthClient, Verified: req.ClientVerified},
+			req.Resource, req.By)
+		return err
+	})
+	if err != nil {
+		return agent.Agent{}, agent.TokenPair{}, err
+	}
+	a, err := s.agents.Get(ctx, req.ClientID)
+	if err != nil {
+		return agent.Agent{}, agent.TokenPair{}, err
+	}
+	return a, tokens, nil
+}

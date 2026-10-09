@@ -183,9 +183,14 @@ func (f *fakePairing) Deny(_ context.Context, session, code, id string) error {
 	return f.err
 }
 
+func (f *fakePairing) Reconnect(_ context.Context, session string, r oauth.PairingReconnect) (agent.Agent, error) {
+	f.calls = append(f.calls, "reconnect:"+session+":"+r.ClientID)
+	return f.agent, f.err
+}
+
 func TestPairingWithoutOAuth(t *testing.T) {
 	h := newHarness(t)
-	for _, path := range []string{"/api/pairing/check", "/api/pairing/approve", "/api/pairing/deny"} {
+	for _, path := range []string{"/api/pairing/check", "/api/pairing/approve", "/api/pairing/deny", "/api/pairing/reconnect"} {
 		if r := h.do(http.MethodPost, path, map[string]any{"code": "BCDF-GHJK"}); r.errCode() != codeUnavailable {
 			t.Errorf("%s = %d", path, r.code)
 		}
@@ -267,6 +272,10 @@ func TestPairingHandlers(t *testing.T) {
 		}
 		if r := h.do(http.MethodPost, "/api/pairing/deny", map[string]any{"code": "BCDF-GHJK", "pairing_id": "p1"}); r.code != tc.status {
 			t.Errorf("deny with %v = %d", tc.err, r.code)
+		}
+		if r := h.do(http.MethodPost, "/api/pairing/reconnect", map[string]any{"code": "BCDF-GHJK", "pairing_id": "p1",
+			"client_id": "hm-client:a"}); r.code != tc.status {
+			t.Errorf("reconnect with %v = %d", tc.err, r.code)
 		}
 	}
 }

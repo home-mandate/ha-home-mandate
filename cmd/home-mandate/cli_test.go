@@ -531,3 +531,60 @@ func TestTemplateAndApproverCommandsAreAudited(t *testing.T) {
 		t.Errorf("spec verifier = %+v, %v", r, err)
 	}
 }
+
+// Removing revoked agents and mandates on the command line, audited as local-admin
+// (needs a specification with mandate.removed and agent.removed, v0.1.0-alpha.3).
+func TestRemoveCommands(t *testing.T) {
+	c := newCLI(t)
+	household := strings.TrimSpace(c.mustRun("", "household"))
+	clientID := c.register("Voice assistant")
+	c.mustRun(mandateFor(t, household, clientID), "mandate", "import", "-")
+	if code, _, stderr := c.run("", "mandate", "remove", "m-voice-assistant"); code != exitFailure || !strings.Contains(stderr, "not revoked") {
+		t.Errorf("remove active mandate = %d %q", code, stderr)
+	}
+	if code, _, stderr := c.run("", "agent", "remove", clientID); code != exitFailure || !strings.Contains(stderr, "not revoked") {
+		t.Errorf("remove active agent = %d %q", code, stderr)
+	}
+	c.mustRun("", "mandate", "revoke", "m-voice-assistant")
+	if out := c.mustRun("", "mandate", "remove", "m-voice-assistant"); !strings.Contains(out, "removed") {
+		t.Errorf("mandate remove = %q", out)
+	}
+	if list := c.mustRun("", "mandate", "list"); !strings.Contains(list, "m-voice-assistant\tremoved\t") {
+		t.Errorf("mandate list: %q", list)
+	}
+	c.mustRun("", "agent", "revoke", clientID)
+	if out := c.mustRun("", "agent", "remove", "--with-mandates", clientID); !strings.Contains(out, "removed agent "+clientID) {
+		t.Errorf("agent remove = %q", out)
+	}
+	if list := c.mustRun("", "agent", "list"); !strings.Contains(list, clientID+"\tremoved\t") {
+		t.Errorf("agent list: %q", list)
+	}
+	other := c.register("Other")
+	c.mustRun("", "agent", "revoke", other)
+	if out := c.mustRun("", "agent", "remove", "--all-revoked"); !strings.Contains(out, "removed 1 agents and 0 mandates") {
+		t.Errorf("remove all revoked = %q", out)
+	}
+	export := c.mustRun("", "audit", "export")
+	if strings.Count(export, `"event":"mandate.removed"`) != 1 || strings.Count(export, `"event":"agent.removed"`) != 2 ||
+		strings.Contains(export, `"kind":"system"`) {
+		t.Errorf("audit export:\n%s", export)
+	}
+	if out := c.mustRun("", "audit", "verify"); !strings.Contains(out, "valid") {
+		t.Errorf("audit verify: %q", out)
+	}
+	for _, args := range [][]string{
+		{"agent", "remove"},
+		{"agent", "remove", "--all-revoked", clientID},
+		{"agent", "remove", "--with-mandates"},
+		{"agent", "remove", "--unknown", clientID},
+		{"mandate", "remove"},
+		{"mandate", "remove", "a", "b"},
+	} {
+		if code, _, _ := c.run("", args...); code != exitUsage {
+			t.Errorf("%v: exit %d, want usage", args, code)
+		}
+	}
+	if code, _, _ := c.run("", "mandate", "remove", "m-none"); code != exitFailure {
+		t.Errorf("remove unknown mandate: exit %d", code)
+	}
+}

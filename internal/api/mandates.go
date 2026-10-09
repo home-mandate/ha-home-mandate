@@ -45,6 +45,8 @@ type wireMandateSummary struct {
 	StaleReferences []wireStaleReference `json:"stale_references"`
 	// RulesFrom is the template the rules were last taken from; nil if unknown.
 	RulesFrom *wireRulesFrom `json:"rules_from"`
+	// RemovedAt is set once the revoked mandate was removed from the lists.
+	RemovedAt *string `json:"removed_at"`
 }
 
 // wireRulesFrom says from which template the rules of a mandate were last taken.
@@ -114,7 +116,7 @@ func (s *Server) summary(info mandate.Info, doc []byte, uses map[string]mandate.
 	return wireMandateSummary{ID: info.ID, Name: nameOf(info), ClientID: info.ClientID, AgentDisplayName: f.AgentName.DisplayName,
 		Status: info.Status, Digest: info.Digest, RuleCount: len(f.Rules), ValidFrom: f.ValidFrom, Expires: optional(f.Expires),
 		MaxActionsPerHour: info.MaxActionsPerHour, UpdatedAt: *formatTime(info.UpdatedAt),
-		StaleReferences: s.staleReferences(info, doc), RulesFrom: rulesFrom(uses, info.ID)}, nil
+		StaleReferences: s.staleReferences(info, doc), RulesFrom: rulesFrom(uses, info.ID), RemovedAt: formatTime(info.RemovedAt)}, nil
 }
 
 func (s *Server) getMandates(r *request) (any, error) {

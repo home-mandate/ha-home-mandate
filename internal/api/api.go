@@ -63,6 +63,7 @@ type (
 		Check(ctx context.Context, session, code string) (oauth.PairingCandidate, error)
 		Approve(ctx context.Context, session string, a oauth.PairingApproval) (agent.Agent, error)
 		Deny(ctx context.Context, session, code, pairingID string) error
+		Reconnect(ctx context.Context, session string, r oauth.PairingReconnect) (agent.Agent, error)
 	}
 )
 

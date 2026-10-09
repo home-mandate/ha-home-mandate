@@ -42,6 +42,9 @@ type decision struct {
 	mandateName     string
 	confirmCritical bool
 	by              string // Home Assistant user ID
+	// reconnect is the client ID of an existing agent the human chose to give new tokens
+	// instead of admitting a new agent (issue #22); empty for an admission.
+	reconnect string
 }
 
 // authCode is an authorization code waiting to be exchanged, at most codeTTL.
@@ -256,6 +259,10 @@ func (s *Server) renderConsent(w http.ResponseWriter, r *http.Request, st consen
 	templates = s.withApprovers(r.Context(), templates, st.user.ID)
 	p := page{Lang: language(r), Title: i18n.PageConsentTitle, User: st.user.Name, CSRF: st.csrf, Claimed: st.client.Name,
 		ClientID: st.client.ID, Verified: st.client.Verified, Name: name, Selected: selected, Templates: templates, Error: errKey}
+	for _, c := range s.reconnectCandidates(r.Context(), st.client) {
+		p.Reconnect = append(p.Reconnect, reconnectOption{ClientID: c.ClientID, Name: c.DisplayName, Mandate: c.MandateName,
+			Admitted: c.AdmittedAt.UTC().Format(time.DateOnly)})
+	}
 	formTarget := ""
 	if u, err := url.Parse(st.client.ID); err == nil && st.client.Verified {
 		p.Host = u.Host
@@ -327,35 +334,51 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 			s.renderConsent(w, r, st, name, tmpl, i18n.PageConsentInvalid)
 			return
 		}
-		d := decision{name: name, template: tmpl, templateDigest: shown, by: st.user.ID}
-		if !s.decide(w, id, form["csrf"]) {
-			s.fail(w, r, http.StatusForbidden, i18n.PageSessionExpired)
+		s.carryOutConsent(w, r, st, id, form["csrf"], decision{name: name, template: tmpl, templateDigest: shown, by: st.user.ID})
+	case "reconnect":
+		// Only an agent offered on the page right now: same client, no valid token.
+		if !s.offered(r.Context(), st.client, form["agent"]) {
+			s.renderConsent(w, r, st, st.client.Name, "", i18n.PageReconnectInvalid)
 			return
 		}
-		if st.authz != nil {
-			code, err := s.issueCode(*st.authz, d)
-			if err != nil {
-				s.redirectToClient(w, r, st.authz, url.Values{"error": {"temporarily_unavailable"}}, http.StatusSeeOther)
-				return
-			}
-			s.redirectToClient(w, r, st.authz, url.Values{"code": {code}}, http.StatusSeeOther)
-			return
-		}
-		if _, err := s.admitGrant(r.Context(), st.device, st.grantID, d); err != nil {
-			switch {
-			case errors.Is(err, ErrPairingAdmission):
-				s.fail(w, r, http.StatusBadRequest, i18n.PageConsentInvalid)
-			case errors.Is(err, ErrPairingUnavailable):
-				s.fail(w, r, http.StatusServiceUnavailable, i18n.PageBusy)
-			default:
-				s.fail(w, r, http.StatusBadRequest, i18n.PagePairInvalid)
-			}
-			return
-		}
-		s.message(w, r, http.StatusOK, i18n.PageConsentTitle, i18n.PageAdmitted)
+		s.carryOutConsent(w, r, st, id, form["csrf"], decision{reconnect: form["agent"], by: st.user.ID})
 	default:
 		s.fail(w, r, http.StatusBadRequest, i18n.PageInvalidRequest)
 	}
+}
+
+// carryOutConsent ends the session for the decision d and carries it out: for a browser
+// sign-in as an authorization code for the agent, for a pairing code at once.
+func (s *Server) carryOutConsent(w http.ResponseWriter, r *http.Request, st consentState, id, csrf string, d decision) {
+	if !s.decide(w, id, csrf) {
+		s.fail(w, r, http.StatusForbidden, i18n.PageSessionExpired)
+		return
+	}
+	if st.authz != nil {
+		code, err := s.issueCode(*st.authz, d)
+		if err != nil {
+			s.redirectToClient(w, r, st.authz, url.Values{"error": {"temporarily_unavailable"}}, http.StatusSeeOther)
+			return
+		}
+		s.redirectToClient(w, r, st.authz, url.Values{"code": {code}}, http.StatusSeeOther)
+		return
+	}
+	if _, err := s.admitGrant(r.Context(), st.device, st.grantID, d); err != nil {
+		switch {
+		case errors.Is(err, ErrPairingAdmission):
+			s.fail(w, r, http.StatusBadRequest, i18n.PageConsentInvalid)
+		case errors.Is(err, ErrPairingUnavailable):
+			s.fail(w, r, http.StatusServiceUnavailable, i18n.PageBusy)
+		default:
+			s.fail(w, r, http.StatusBadRequest, i18n.PagePairInvalid)
+		}
+		return
+	}
+	done := i18n.PageAdmitted
+	if d.reconnect != "" {
+		done = i18n.PageReconnected
+	}
+	s.message(w, r, http.StatusOK, i18n.PageConsentTitle, done)
 }
 
 // decide ends the session for the decision; false if another request decided first.

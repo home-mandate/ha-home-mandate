@@ -375,6 +375,60 @@ func TestMandateVersionOriginMigration(t *testing.T) {
 	}
 }
 
+// TestRemovalMigration: existing agents and mandates are not removed; a removed one
+// stays revoked; audit entries are found by the mandate they name.
+func TestRemovalMigration(t *testing.T) {
+	ctx := context.Background()
+	db := openRaw(t)
+	if err := migrate(ctx, db, upTo(t, 14)); err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO agents (client_id, display_name, status, created_at, created_by) VALUES ('hm-client:a', 'A', 'revoked', 't', 'u')`,
+		`INSERT INTO agents (client_id, display_name, status, created_at, created_by) VALUES ('hm-client:b', 'B', 'active', 't', 'u')`,
+		`INSERT INTO mandates (id, client_id, status, current_digest, max_actions_per_hour, created_at, updated_at)
+			VALUES ('m-a', 'hm-client:a', 'revoked', 'sha256:1', 60, 't1', 't2')`,
+		`INSERT INTO mandates (id, client_id, status, current_digest, max_actions_per_hour, created_at, updated_at)
+			VALUES ('m-b', 'hm-client:b', 'active', 'sha256:2', 60, 't1', 't2')`,
+		`INSERT INTO audit_log (seq, recorded_at, event, entry, digest)
+			VALUES (1, 't', 'mandate.revoked', '{"mandate":{"id":"m-a","digest":"sha256:1"}}', 'sha256:e')`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrate(ctx, db, embeddedMigrations()); err != nil {
+		t.Fatal(err)
+	}
+	var removed int
+	if err := db.QueryRow(`SELECT (SELECT count(*) FROM agents WHERE removed_at IS NOT NULL OR purged_at IS NOT NULL OR removed_by <> '')
+		+ (SELECT count(*) FROM mandates WHERE removed_at IS NOT NULL OR purged_at IS NOT NULL OR removed_by <> '')`).Scan(&removed); err != nil {
+		t.Fatal(err)
+	}
+	if removed != 0 {
+		t.Errorf("%d rows removed by the migration", removed)
+	}
+	var seq int
+	if err := db.QueryRow(`SELECT seq FROM audit_log WHERE mandate_id = 'm-a'`).Scan(&seq); err != nil || seq != 1 {
+		t.Errorf("entry by mandate: seq %d, %v", seq, err)
+	}
+	for _, tc := range []struct {
+		stmt string
+		ok   bool
+	}{
+		{`UPDATE agents SET removed_at = 't' WHERE client_id = 'hm-client:a'`, true},
+		{`UPDATE agents SET removed_at = 't' WHERE client_id = 'hm-client:b'`, false},
+		{`UPDATE agents SET status = 'active' WHERE client_id = 'hm-client:a'`, false},
+		{`UPDATE mandates SET removed_at = 't' WHERE id = 'm-a'`, true},
+		{`UPDATE mandates SET removed_at = 't' WHERE id = 'm-b'`, false},
+		{`UPDATE mandates SET status = 'active' WHERE id = 'm-a'`, false},
+	} {
+		if _, err := db.Exec(tc.stmt); (err == nil) != tc.ok {
+			t.Errorf("%s: err = %v, want ok %v", tc.stmt, err, tc.ok)
+		}
+	}
+}
+
 // releasedMigrations are the checksums of migrations that installations have applied.
 // An applied migration must never change, not even in a comment: Migrate refuses to
 // start with ErrMigrationChanged. Add every new migration here once it is installed

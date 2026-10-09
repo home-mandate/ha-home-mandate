@@ -59,6 +59,10 @@ type Info struct {
 	Digest            string
 	MaxActionsPerHour int
 	UpdatedAt         time.Time
+	// RemovedAt and RemovedBy are set once a revoked mandate is removed from the lists
+	// (SPEC-v0 section 11.3); it stays revoked.
+	RemovedAt time.Time
+	RemovedBy string
 	// version is the version the document carries (SPEC-v0 section 3.5); 0 without.
 	version int64
 }
@@ -337,6 +341,11 @@ func (s *Store) Revoke(ctx context.Context, id string, by audit.Actor) error {
 	})
 }
 
+// RevokeTx is Revoke inside tx.
+func (s *Store) RevokeTx(ctx context.Context, tx *sql.Tx, id string, by audit.Actor) error {
+	return s.revokeTx(ctx, tx, `id = ?`, id, by, true)
+}
+
 // RevokeAgentTx revokes the mandate of an agent inside tx, if it has an active one, so
 // that revoking an agent ends its mandate in the same transaction.
 func (s *Store) RevokeAgentTx(ctx context.Context, tx *sql.Tx, clientID string, by audit.Actor) error {
@@ -553,14 +562,20 @@ func (s *Store) Get(ctx context.Context, id string) (Info, error) {
 	return list[0], nil
 }
 
-// List returns all mandates in creation order.
+// List returns all mandates in creation order, removed ones included; mandates whose
+// data was deleted after their removal (tombstones) are left out.
 func (s *Store) List(ctx context.Context) ([]Info, error) {
 	return s.query(ctx, ``)
 }
 
 func (s *Store) query(ctx context.Context, where string, args ...any) ([]Info, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, client_id, status, current_digest, max_actions_per_hour, updated_at FROM mandates `+
-		where+` ORDER BY rowid`, args...)
+	if where == "" {
+		where = `WHERE purged_at IS NULL`
+	} else {
+		where += ` AND purged_at IS NULL`
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, client_id, status, current_digest, max_actions_per_hour, updated_at,
+		coalesce(removed_at, ''), removed_by FROM mandates `+where+` ORDER BY rowid`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("mandate: query: %w", err)
 	}
@@ -568,11 +583,12 @@ func (s *Store) query(ctx context.Context, where string, args ...any) ([]Info, e
 	var list []Info
 	for rows.Next() {
 		var i Info
-		var updatedAt string
-		if err := rows.Scan(&i.ID, &i.Name, &i.ClientID, &i.Status, &i.Digest, &i.MaxActionsPerHour, &updatedAt); err != nil {
+		var updatedAt, removedAt string
+		if err := rows.Scan(&i.ID, &i.Name, &i.ClientID, &i.Status, &i.Digest, &i.MaxActionsPerHour, &updatedAt, &removedAt, &i.RemovedBy); err != nil {
 			return nil, fmt.Errorf("mandate: query: %w", err)
 		}
 		i.UpdatedAt, _ = time.Parse(timeFormat, updatedAt)
+		i.RemovedAt, _ = time.Parse(timeFormat, removedAt)
 		list = append(list, i)
 	}
 	return list, rows.Err()
