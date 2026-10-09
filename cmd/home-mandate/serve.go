@@ -600,16 +600,24 @@ func (g *gateway) run(ctx context.Context) int {
 	return exitOK
 }
 
-// retention truncates the audit log to 30 days and deletes expired tokens, at start and
-// then daily.
+// expireLog truncates the audit log to 30 days, counted so that a wrong clock cannot
+// wipe it (audit.Log.Expire).
+func expireLog(ctx context.Context, log *audit.Log, logger *slog.Logger) {
+	n, err := log.Expire(ctx, retention, audit.Actor{Kind: audit.ActorSystem, ID: "retention"})
+	switch {
+	case errors.Is(err, audit.ErrClockBehind):
+		logger.Warn("audit log retention postponed: the clock lies behind the newest entry")
+	case err != nil:
+		logger.Error("audit log retention failed", "error", err)
+	case n > 0:
+		logger.Info("audit log truncated", "entries", n)
+	}
+}
+
+// retention truncates the audit log and deletes expired tokens, at start and then daily.
 func (g *gateway) retention(ctx context.Context) {
-	actor := audit.Actor{Kind: audit.ActorSystem, ID: "retention"}
 	for {
-		if n, err := g.state.log.Truncate(ctx, time.Now().Add(-retention), actor); err != nil {
-			g.logger.Error("audit log retention failed", "error", err)
-		} else if n > 0 {
-			g.logger.Info("audit log truncated", "entries", n)
-		}
+		expireLog(ctx, g.state.log, g.logger)
 		if n, err := g.state.agents.PurgeExpiredTokens(ctx, time.Now()); err != nil {
 			g.logger.Error("deleting expired tokens failed", "error", err)
 		} else if n > 0 {

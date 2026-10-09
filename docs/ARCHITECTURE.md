@@ -348,7 +348,11 @@ Further tables: `critical_entities` (the household's critical marks), the settin
   While it lies more than a minute behind the latest time in the audit log, nothing is
   decided (SPEC-v0 section 11.4): requests fail with `clock_behind`, the UI shows a banner.
   If the clock ran ahead by mistake and was corrected, `home-mandate audit accept-clock`
-  sets the entries with the future times aside for this check.
+  sets the entries with the future times aside for this check. The retention of the audit
+  log (30 days, at start and daily) counts the age back from the newest entry that is not
+  a `log.truncated` or `log.checkpoint`, or from the clock if that is earlier, so a clock
+  that jumped ahead does not age the log; it waits while the clock is behind (warning, the
+  next run tries again) and deletes at most a tenth of the entries per run.
 - **Nothing from the agent** except the requested resource, action, parameters and its
   reason, which is shown as the agent's claim.
 

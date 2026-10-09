@@ -207,3 +207,95 @@ func TestWithEntry(t *testing.T) {
 		t.Errorf("Verify = %+v", r)
 	}
 }
+
+// retentionLog holds n entries a day apart, the last at last.
+func retentionLog(t *testing.T, n int, last time.Time) (*audit.Log, *sql.DB) {
+	t.Helper()
+	l, db := newLog(t)
+	for i := range n {
+		at := last.Add(-time.Duration(n-1-i) * 24 * time.Hour)
+		l.SetClock(func() time.Time { return at })
+		appendAll(t, l, samples()[:1])
+	}
+	l.SetSigner(signer())
+	return l, db
+}
+
+func firstSeq(t *testing.T, db *sql.DB) int64 {
+	t.Helper()
+	var first int64
+	if err := db.QueryRow(`SELECT min(seq) FROM audit_log`).Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	return first
+}
+
+// The age of an entry counts from the newest entry when the clock lies beyond it: a clock
+// that jumped years ahead does not make the whole log old.
+func TestExpireCountsFromTheNewestEntry(t *testing.T) {
+	last := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	l, db := retentionLog(t, 50, last)
+	ctx := context.Background()
+	actor := audit.Actor{Kind: audit.ActorSystem, ID: "retention"}
+	l.SetClock(func() time.Time { return last.AddDate(10, 0, 0) })
+	// 19 entries are more than 30 days older than the newest; a tenth of 50 per run.
+	if n, err := l.Expire(ctx, 30*24*time.Hour, actor); err != nil || n != 5 {
+		t.Fatalf("Expire = %d, %v; want 5", n, err)
+	}
+	for range 10 {
+		if _, err := l.Expire(ctx, 30*24*time.Hour, actor); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if first := firstSeq(t, db); first != 20 {
+		t.Errorf("first seq = %d, want 20", first)
+	}
+	if r := verify(t, l); !r.Valid || r.Truncation != audit.TruncationAnchored {
+		t.Errorf("Verify = %+v", r)
+	}
+}
+
+// One run deletes at most a tenth of the entries, so that a wrong clock cannot wipe the
+// log at once.
+func TestExpireDeletesAtMostATenthPerRun(t *testing.T) {
+	last := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	actor := audit.Actor{Kind: audit.ActorSystem, ID: "retention"}
+	l, db := retentionLog(t, 40, last)
+	l.SetClock(func() time.Time { return last })
+	if n, err := l.Expire(ctx, time.Hour, actor); err != nil || n != 4 {
+		t.Fatalf("Expire = %d, %v; want 4", n, err)
+	}
+	if first := firstSeq(t, db); first != 5 {
+		t.Errorf("first seq = %d, want 5", first)
+	}
+	// Too few entries for a tenth: nothing is deleted.
+	small, _ := retentionLog(t, 9, last)
+	small.SetClock(func() time.Time { return last })
+	if n, err := small.Expire(ctx, time.Hour, actor); err != nil || n != 0 {
+		t.Errorf("Expire on 9 entries = %d, %v; want 0", n, err)
+	}
+	empty, _ := newLog(t)
+	if n, err := empty.Expire(ctx, time.Hour, actor); err != nil || n != 0 {
+		t.Errorf("Expire on an empty log = %d, %v", n, err)
+	}
+}
+
+// While the clock lies behind the newest entry, nothing is deleted: the next run tries
+// again.
+func TestExpireWaitsWhileTheClockIsBehind(t *testing.T) {
+	last := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	l, db := retentionLog(t, 40, last)
+	actor := audit.Actor{Kind: audit.ActorSystem, ID: "retention"}
+	l.SetClock(func() time.Time { return last.Add(-2 * audit.ClockTolerance) })
+	if n, err := l.Expire(context.Background(), time.Hour, actor); !errors.Is(err, audit.ErrClockBehind) || n != 0 {
+		t.Errorf("Expire = %d, %v; want ErrClockBehind", n, err)
+	}
+	if first := firstSeq(t, db); first != 1 {
+		t.Errorf("first seq = %d, want 1", first)
+	}
+	_ = db.Close()
+	if _, err := l.Expire(context.Background(), time.Hour, actor); err == nil {
+		t.Error("Expire on a closed database succeeded")
+	}
+}

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -282,6 +283,31 @@ func TestWithOAuth(t *testing.T) {
 	}
 	if as, _, err := withOAuth(s, mcpHandler, ui, "https://hm.example.org/mcp", logger); err != nil || as == nil {
 		t.Errorf("app mode with public_url: %v", err)
+	}
+}
+
+// The retention waits while the clock lies behind the newest entry: a warning, no
+// deletion, the next run tries again.
+func TestRetentionWaitsForTheClock(t *testing.T) {
+	c := newCLI(t)
+	c.register("A")
+	s, err := openStore(context.Background(), c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.store.Close()
+	var out bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&out, nil))
+	s.log.SetClock(func() time.Time { return time.Now().Add(-time.Hour) })
+	expireLog(context.Background(), s.log, logger)
+	if !strings.Contains(out.String(), `"level":"WARN","msg":"audit log retention postponed: the clock lies behind the newest entry"`) {
+		t.Errorf("log = %s", out.String())
+	}
+	out.Reset()
+	s.log.SetClock(time.Now)
+	expireLog(context.Background(), s.log, logger)
+	if out.Len() != 0 {
+		t.Errorf("nothing old, nothing logged: %s", out.String())
 	}
 }
 

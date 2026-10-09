@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -639,19 +640,67 @@ func (l *Log) each(ctx context.Context, fn func([]byte) error) error {
 	return rows.Err()
 }
 
+// ErrClockBehind means the clock lies more than ClockTolerance before the newest entry.
+var ErrClockBehind = errors.New("audit: clock behind the newest entry")
+
+// expireShare: one run of Expire deletes at most this share of the entries (one in ten),
+// so that a wrong clock cannot wipe the log at once.
+const expireShare = 10
+
+// Expire deletes the entries older than retention, as the retention of the gateway does.
+// Age counts back from the newest entry Home-Mandate did not write for its own upkeep
+// (log.truncated, log.checkpoint), or from the clock if that is earlier: a clock that
+// jumped ahead neither ages the log by itself nor through the entries Expire writes. It
+// deletes at most a tenth of the entries per run and nothing while ClockBehind holds
+// (ErrClockBehind; the next run tries again).
+func (l *Log) Expire(ctx context.Context, retention time.Duration, actor Actor) (int64, error) {
+	behind, err := l.ClockBehind(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if behind {
+		return 0, ErrClockBehind
+	}
+	var first, last sql.NullInt64
+	var newest sql.NullString
+	if err := l.db.QueryRowContext(ctx, `SELECT min(seq), max(seq),
+		(SELECT max(recorded_at) FROM audit_log WHERE event NOT IN (?, ?)) FROM audit_log`,
+		EventLogTruncated, EventLogCheckpoint).Scan(&first, &last, &newest); err != nil {
+		return 0, fmt.Errorf("audit: read: %w", err)
+	}
+	if !newest.Valid {
+		return 0, nil
+	}
+	cutoff, err := time.Parse(timeFormat, newest.String)
+	if err != nil {
+		return 0, fmt.Errorf("audit: newest entry: %w", err)
+	}
+	if now := l.clock(); now.Before(cutoff) {
+		cutoff = now
+	}
+	return l.truncate(ctx, cutoff.Add(-retention), (last.Int64-first.Int64+1)/expireShare, actor)
+}
+
 // Truncate deletes entries recorded before cutoff, after appending a log.truncated
 // entry that keeps the log verifiable (SPEC-v0 section 9.4). The newest entry is never
 // deleted. It returns the number of deleted entries.
 func (l *Log) Truncate(ctx context.Context, cutoff time.Time, actor Actor) (int64, error) {
+	return l.truncate(ctx, cutoff, math.MaxInt32, actor)
+}
+
+// truncate is Truncate that deletes at most limit entries.
+func (l *Log) truncate(ctx context.Context, cutoff time.Time, limit int64, actor Actor) (int64, error) {
 	var removed int64
 	err := l.inTx(ctx, func(tx *sql.Tx) error {
-		// n: the newest old entry, but never the newest entry of the log.
+		// n: the newest old entry, but never the newest entry of the log, nor more than
+		// limit entries.
 		var n sql.NullInt64
 		var lastDigest sql.NullString
 		err := tx.QueryRowContext(ctx, `WITH bounds AS (
-				SELECT min((SELECT max(seq) FROM audit_log WHERE recorded_at < ?), (SELECT max(seq) FROM audit_log) - 1) AS n)
+				SELECT min((SELECT max(seq) FROM audit_log WHERE recorded_at < ?), (SELECT max(seq) FROM audit_log) - 1,
+					(SELECT min(seq) FROM audit_log) - 1 + ?) AS n)
 			SELECT n, (SELECT digest FROM audit_log WHERE seq = n) FROM bounds`,
-			cutoff.UTC().Format(timeFormat)).Scan(&n, &lastDigest)
+			cutoff.UTC().Format(timeFormat), limit).Scan(&n, &lastDigest)
 		if err != nil {
 			return fmt.Errorf("audit: find old entries: %w", err)
 		}
