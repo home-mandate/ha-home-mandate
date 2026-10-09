@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -68,9 +69,10 @@ func restoredLimiter(ctx context.Context, log *audit.Log, now func() time.Time, 
 func serve(ctx context.Context, e env) int {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel() // also stops what a failed start-up already started
+	uid, gid := os.Getuid(), os.Getgid()
 	cfg, err := config.Load(e.getenv, e.readFile)
 	if err != nil {
-		fmt.Fprintln(e.stderr, "home-mandate:", err)
+		fmt.Fprintln(e.stderr, "home-mandate:", permissionHint(err, uid, gid))
 		return exitFailure
 	}
 	s, err := openStore(ctx, cfg.DataDir)
@@ -78,16 +80,19 @@ func serve(ctx context.Context, e env) int {
 		return exitOK // stopped during start-up
 	}
 	if err != nil {
-		fmt.Fprintln(e.stderr, "home-mandate:", err)
+		fmt.Fprintln(e.stderr, "home-mandate:", permissionHint(err, uid, gid))
 		return exitFailure
 	}
 	defer s.store.Close()
 	s.cfg = cfg
 	if err := attachSigner(ctx, s, cfg.DataDir, e.getenv); err != nil {
-		fmt.Fprintln(e.stderr, "home-mandate:", err)
+		fmt.Fprintln(e.stderr, "home-mandate:", permissionHint(err, uid, gid))
 		return exitFailure
 	}
 	logger := slog.New(slog.NewJSONHandler(e.stderr, &slog.HandlerOptions{Level: s.cfg.LogLevel}))
+	if warning := rootWarning(cfg.Mode, uid); warning != "" {
+		logger.Warn(warning)
+	}
 
 	// A stop signal during start-up cancels ctx and makes the step in progress fail; that
 	// is a clean stop, not a failed start.
@@ -115,7 +120,7 @@ func serve(ctx context.Context, e env) int {
 		return exitOK
 	}
 	if err != nil {
-		logger.Error("cannot start", "error", err)
+		logger.Error("cannot start", "error", permissionHint(err, uid, gid))
 		return exitFailure
 	}
 	return g.run(ctx)
