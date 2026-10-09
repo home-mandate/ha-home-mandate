@@ -269,7 +269,9 @@ checked on every request.
 - On iOS, `authenticationRequired: true` is set (unlocking required). Android and the
   Companion App on a Mac have no such step: whoever has the unlocked device can answer.
 - The "reason" supplied by the agent is explicitly marked in the message as the agent's claim,
-  not as a fact. The message also shows the service data that will be executed.
+  not as a fact. The message also shows the service data that will be executed, and when
+  the alarm is armed the mode (`mode=night`; `away` when the agent names none), which is
+  part of the service, not of the data; the UI shows the same.
 - Timeout: the mandate's `approval.timeout`, capped by `HM_APPROVAL_TIMEOUT` (default
   2 minutes, at most 10) because the agent's request waits → `deny`. Every nonce is valid
   exactly once; open requests live in memory.

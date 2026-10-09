@@ -623,3 +623,30 @@ func TestTheWaitGrowsUpToAnHour(t *testing.T) {
 		t.Errorf("after an approval: %v, %d entries", left, len(g.cooldowns))
 	}
 }
+
+// Arming the alarm sends no service data: the mode is part of the service. The human
+// sees it all the same, also the default mode when the agent names none.
+func TestApprovalShowsTheAlarmMode(t *testing.T) {
+	for mode, want := range map[string]string{"night": "night", "home": "home", "": "away"} {
+		f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: answeredAt}}
+		h := newHarness(t, func(d map[string]any) {
+			d["rules"] = append([]any{map[string]any{"id": "r-ask-arm", "resource": map[string]any{"category": "alarm"},
+				"actions": []any{"arm"}, "decision": "ask"}}, d["rules"].([]any)...)
+		})
+		h.approver = f
+		h.url = h.serve(h.log)
+		args := map[string]any{"entity_id": "alarm_control_panel.home", "action": "arm"}
+		if mode != "" {
+			args["params"] = map[string]any{"mode": mode}
+		}
+		if _, errText := h.call(h.session(), "perform_action", args); errText != "" {
+			t.Fatalf("%q: perform_action = %q", mode, errText)
+		}
+		if reqs := f.requests(); len(reqs) != 1 || len(reqs[0].Params) != 1 || reqs[0].Params["mode"] != want {
+			t.Errorf("%q: asked = %+v", mode, reqs)
+		}
+		if calls := h.ha.recorded(); len(calls) != 1 || calls[0].Service != "alarm_arm_"+want || calls[0].Data != nil {
+			t.Errorf("%q: calls = %+v", mode, calls)
+		}
+	}
+}

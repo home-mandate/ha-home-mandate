@@ -5,6 +5,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -54,7 +55,7 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 	}()
 
 	req := approval.Request{ClientID: a.ClientID, Agent: a.DisplayName, EntityID: d.Resource.EntityID, Area: d.Resource.Area,
-		Device: d.Resource.EntityID, Action: d.Action, Reason: reason, Params: call.Data, Critical: criticalRequest(d)}
+		Device: d.Resource.EntityID, Action: d.Action, Reason: reason, Params: shownParams(d, call), Critical: criticalRequest(d)}
 	if dev, ok := g.cfg.Catalog.Lookup(d.Resource.EntityID); ok {
 		if name, _ := dev.Attributes["friendly_name"].(string); name != "" {
 			req.Device = name
@@ -91,6 +92,15 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 	}
 	_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}, appr)
 	return nil, actionOut{}, errors.New(codeDenied + ": " + code)
+}
+
+// shownParams is what the human sees of the call besides device and action: its service
+// data, and for arming the alarm the mode, which is part of the service, not of the data.
+func shownParams(d pdp.Decision, call ha.ServiceCall) map[string]any {
+	if d.Resource.Category == "alarm" && d.Action == "arm" {
+		return map[string]any{"mode": strings.TrimPrefix(call.Service, vocabulary["alarm"]["arm"].service)}
+	}
+	return call.Data
 }
 
 // approvalRef is the outcome of an approval request for its audit entry: the approval
