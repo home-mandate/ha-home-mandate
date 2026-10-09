@@ -189,6 +189,15 @@ func newLimits(now func() time.Time) *limits {
 
 // allow counts one request under key and reports whether it is within n per period;
 // otherwise it returns the seconds until the window ends.
+// room tells whether key's window has room for one more, without counting it.
+func (l *limits) room(key string, n int, period time.Duration) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	w, ok := l.windows[key]
+	return !ok || now.Sub(w.start) >= period || now.Before(w.start) || w.count < n
+}
+
 func (l *limits) allow(key string, n int, period time.Duration) (bool, int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

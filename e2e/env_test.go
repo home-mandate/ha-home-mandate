@@ -276,6 +276,13 @@ func startHA() error {
 	return waitHTTP(env.haURL+"/api/onboarding", 3*time.Minute)
 }
 
+// oauthClient is httpClient for the gateway's OAuth endpoints, waiting out their limits.
+func oauthClient() *http.Client {
+	c := httpClient()
+	c.Transport, c.Timeout = polite{c.Transport}, politeTimeout
+	return c
+}
+
 func httpClient() *http.Client {
 	return &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: env.roots, MinVersion: tls.VersionTLS12}}}
 }

@@ -46,6 +46,12 @@ func (g *Gateway) coolDown(clientID, entityID string) {
 	now := g.cfg.Now()
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	// Forget the waits of a quiet hour, so that devices never asked about again do not stay.
+	for k, c := range g.cooldowns {
+		if !now.Before(c.until.Add(cooldownMax)) {
+			delete(g.cooldowns, k)
+		}
+	}
 	key := cooldownKey(clientID, entityID)
 	wait := cooldownMin
 	if c, ok := g.cooldowns[key]; ok && now.Before(c.until.Add(cooldownMax)) {

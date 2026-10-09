@@ -20,6 +20,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/signal"
 	"syscall"
@@ -52,6 +53,7 @@ const usage = `Usage:
 type env struct {
 	getenv   func(string) string
 	readFile func(string) ([]byte, error)
+	stat     func(string) (fs.FileInfo, error)
 	unsetenv func(string) error
 	stdin    io.Reader
 	stdout   io.Writer
@@ -60,7 +62,7 @@ type env struct {
 
 func main() {
 	os.Exit(runUntilSignal(os.Args[1:], env{
-		getenv: os.Getenv, readFile: os.ReadFile, unsetenv: os.Unsetenv, stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr,
+		getenv: os.Getenv, readFile: os.ReadFile, stat: os.Stat, unsetenv: os.Unsetenv, stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr,
 	}))
 }
 

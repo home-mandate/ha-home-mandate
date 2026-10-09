@@ -74,7 +74,7 @@ func serve(ctx context.Context, e env) int {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel() // also stops what a failed start-up already started
 	uid, gid := os.Getuid(), os.Getgid()
-	cfg, err := config.Load(config.Env{Getenv: e.getenv, ReadFile: e.readFile, Stat: os.Stat, Unsetenv: e.unsetenv})
+	cfg, err := config.Load(config.Env{Getenv: e.getenv, ReadFile: e.readFile, Stat: e.stat, Unsetenv: e.unsetenv})
 	if err != nil {
 		fmt.Fprintln(e.stderr, "home-mandate:", permissionHint(err, uid, gid))
 		return exitFailure
@@ -232,7 +232,8 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		return nil, fmt.Errorf("subscribe %s: %w", ha.EventMobileAppNotificationAction, err)
 	}
 
-	decider := pdp.New(pdp.Config{Principal: s.household, Mandates: s.mandates, Catalog: g.catalog, TimeZone: g.householdTimeZone})
+	decider := pdp.New(pdp.Config{Principal: s.household, Mandates: s.mandates, Catalog: g.catalog, TimeZone: g.householdTimeZone,
+		Ready: func() bool { return g.catalog.Ready() && g.householdTimeZone() != "" }})
 	if s.cfg.PDPAddr != "" { // the AuthZEN endpoint for other gateways is opt-in
 		addr, err := decider.ListenAndServe(ctx, s.cfg.PDPAddr)
 		if err != nil {

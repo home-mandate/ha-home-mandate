@@ -120,9 +120,15 @@ func directHeaders(h http.Header) {
 // overall limit let the request through, so unauthenticated requests cannot grow the
 // limits' table faster than signInOverall a period.
 func (s *Server) signInAllowed(r *http.Request) bool {
-	ok, _ := s.limits.allow("signin", signInOverall, signInPeriod)
+	// Only a request its sender may make counts overall, so one sender cannot use up the
+	// sign-ins of everyone. A sender's window is created only while there is room overall,
+	// which bounds the windows unauthenticated requests can create.
+	ok := s.limits.room("signin", signInOverall, signInPeriod)
 	if ok {
 		ok, _ = s.limits.allow("signin:"+sender(r), signInPerSender, signInPeriod)
+	}
+	if ok {
+		ok, _ = s.limits.allow("signin", signInOverall, signInPeriod)
 	}
 	if !ok {
 		if logged, _ := s.limits.allow("log:signin", 1, time.Minute); logged {

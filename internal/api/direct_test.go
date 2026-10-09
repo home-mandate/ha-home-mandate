@@ -426,6 +426,22 @@ func TestDirectSignInIsLimitedPerSender(t *testing.T) {
 	}
 }
 
+// Requests one sender makes beyond its own limit do not count overall: a single address
+// cannot use up the sign-ins of everyone else.
+func TestDirectSignInOneSenderCannotLockOutOthers(t *testing.T) {
+	d := newDirect(t)
+	attacker := newBrowser()
+	attacker.addr = "198.51.100.66:1"
+	for range 2 * signInOverall {
+		d.send(attacker, http.MethodGet, "/ui/signin", nil)
+	}
+	admin := newBrowser()
+	admin.addr = "192.0.2.50:1"
+	if got := d.signInWith(admin, "code-admin"); got != "/ui/" {
+		t.Errorf("sign-in of another sender during the flood ended at %q", got)
+	}
+}
+
 func TestDirectSignInIsLimitedOverall(t *testing.T) {
 	d := newDirect(t)
 	if busy := d.flood(signInOverall); busy != 0 {

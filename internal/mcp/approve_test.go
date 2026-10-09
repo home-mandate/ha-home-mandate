@@ -650,3 +650,16 @@ func TestApprovalShowsTheAlarmMode(t *testing.T) {
 		}
 	}
 }
+
+// Waits of a quiet hour are forgotten, so devices never asked about again do not stay in
+// memory.
+func TestCooldownsOfAQuietHourAreForgotten(t *testing.T) {
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	g := &Gateway{cfg: Config{Now: func() time.Time { return now }}, cooldowns: map[string]cooldown{}}
+	g.coolDown("agent", "lock.front_door")
+	now = now.Add(cooldownMin + cooldownMax)
+	g.coolDown("agent", "cover.garage")
+	if _, ok := g.cooldowns[cooldownKey("agent", "lock.front_door")]; ok || len(g.cooldowns) != 1 {
+		t.Errorf("cooldowns = %v", g.cooldowns)
+	}
+}

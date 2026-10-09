@@ -47,6 +47,7 @@ from Playwright's CDN, for tests only.
 | `HM_HA_TOKEN_FILE` or `HM_HA_TOKEN` | Long-lived token of Home-Mandate's own Home Assistant user. Prefer the file: it must be a regular file nobody but its owner can read (`chmod 600`), otherwise Home-Mandate does not start; `HM_HA_TOKEN` is removed from the environment once read, but stays visible in the container configuration |
 | `HM_HA_CA_FILE` | Optional PEM file with a CA to trust for `wss://` (self-signed Home Assistant certificate) |
 | `HM_DATA_DIR` | Data directory, default `/data` |
+| `HM_AUDIT_KEY_FILE` | Optional place of the audit checkpoint key outside the data directory (`SECURITY.md`). Only `serve` creates it, on its first start; it must be a regular file (no symbolic link) owned by the user Home-Mandate runs as, without access for group or others, so a secret mounted as a link or readable by others is refused |
 | `HM_TLS_CERT`, `HM_TLS_KEY` | Certificate for the MCP endpoint and the UI (TLS 1.3); without it, MCP listens on localhost only. Renewed files are taken over without a restart; the certificate must cover the host of `HM_PUBLIC_URL` |
 | `HM_MCP_ADDR` | Listen address of the MCP endpoint, default `:8765` with TLS or `HM_PROXY`, `127.0.0.1:8765` without |
 | `HM_PROXY` | The one IP address of a reverse proxy that ends TLS in front of Home-Mandate. Only that address is served (plaintext allowed beyond loopback), the sender is the last entry of its `X-Forwarded-For`; needs an `https://` `HM_PUBLIC_URL`. See [docs/deploy/reverse-proxy.md](docs/deploy/reverse-proxy.md) |

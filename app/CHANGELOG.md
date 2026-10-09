@@ -9,3 +9,5 @@ First release.
 - Audit log with hash chain and signed checkpoints
 - UI in Home Assistant's sidebar (Ingress), for administrators only
 - Agents over MCP with OAuth (Authorization Code with PKCE, or a pairing code)
+- Covers of the class garage, gate or door, and covers without a class (groups, template
+  covers), count as gates: opening them is critical. Blinds, shades and windows stay covers.

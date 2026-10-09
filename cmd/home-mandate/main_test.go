@@ -39,6 +39,7 @@ func bareEnv() (env, *bytes.Buffer, *bytes.Buffer) {
 	return env{
 		getenv:   func(string) string { return "" },
 		readFile: os.ReadFile,
+		stat:     os.Stat,
 		unsetenv: func(string) error { return nil },
 		stdin:    strings.NewReader(""),
 		stdout:   &stdout,

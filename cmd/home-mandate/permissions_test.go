@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -50,6 +51,12 @@ func TestServeExplainsAnUnreadableTokenFile(t *testing.T) {
 	e.readFile = func(name string) ([]byte, error) {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrPermission}
 	}
+	// The file itself is private, only reading it fails (it belongs to another user).
+	private := filepath.Join(t.TempDir(), "ha-token")
+	if err := os.WriteFile(private, []byte("t"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.stat = func(string) (fs.FileInfo, error) { return os.Stat(private) }
 
 	code := run(context.Background(), nil, e)
 

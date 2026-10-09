@@ -179,7 +179,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - Admission during the emergency stop → no agent, no tokens
 - Many sign-ins, pairings or metadata fetches from one sender → refused beyond the per-sender limit; all addresses of one IPv6 /64 are one sender, also behind the proxy
 - More than 60 requests a minute from one sender or 600 from all to `/oauth/authorize`, the sign-in callback, `/oauth/consent`, `/pair` or `/oauth/device_authorization` (120 and 1200 to `/oauth/token`) → 429 with `Retry-After`, a page for the browser and `temporarily_unavailable` for the agent; the token endpoint counts apart, so a flood of sign-ins does not stop refreshes; metadata and the style sheet are not limited
-- Bare `GET /pair`, any number of times → no session; its signed state is bound to the cookie, used up by a failed attempt, expires after 10 minutes and is worthless after a restart; the session is created only for an administrator Home Assistant signed in
+- Bare `GET /pair`, any number of times → no session; its signed state is bound to the cookie, which a failed attempt clears (a client that keeps the cookie can try again, bounded by the request limits), expires after 10 minutes and is worthless after a restart; the session is created only for an administrator Home Assistant signed in
 - Client metadata fetch that failed → not repeated for a minute (at most 100 remembered); not remembered when the caller gave up or all fetch slots were busy, so nobody can block another client's document
 - Refused authorization requests, failed sign-ins, refused admissions, reused refresh tokens, requests over the rate limit → logged at most once a minute per kind
 
