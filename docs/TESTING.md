@@ -171,7 +171,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - Session cookie from before the sign-in → worthless afterwards (session fixation)
 - Consent without CSRF token, from another origin, or posted twice at the same time → rejected, at most one agent admitted
 - Authorization code used twice, expired, for another client, redirect URI or resource → rejected
-- Refresh token presented by another OAuth client or for another resource → rejected
+- Refresh token presented by another OAuth client or for another resource → rejected; a used one from another client revokes nothing (the family stays) and is logged as `auth.rejected`
 - Admission during the emergency stop → no agent, no tokens
 - Many sign-ins, pairings or metadata fetches from one sender → refused beyond the per-sender limit
 
