@@ -106,7 +106,10 @@ protection class, expired, not yet valid) needs its own named test.
 4. Open door → answer from `admin-other` → discarded, denied, audit entry "invalid approval".
 5. Request camera → denied, camera does not appear in `list_devices`.
 6. Revoke agent in the UI → next request with the old token denied.
-7. Emergency stop → all agents blocked immediately; lifting it → only newly issued tokens work.
+7. Emergency stop → all agents blocked immediately; lifting it → only newly issued tokens work;
+   the agent signs in again and the administrator reconnects it to its existing entry → same
+   client ID and mandate, `agent.reconnected` in the log (needs the specification with the
+   event, v0.1.0-alpha.3).
 8. Exceed the rate limit → refusal from request n+1, logged.
 9. Mandate with a time window: request outside of it → denied. There is no test clock in
    the release image (it would be a security-relevant switch, decision U5): the test computes
@@ -260,6 +263,10 @@ Every line is at least one test. New attack ideas are added here before they are
 - Revoke whose answer is lost although the server revoked → the UI reloads and shows the agent as revoked; a repeated revoke answers like the first; agent, tokens, mandate and pending approvals end in one transaction
 - `apply-template`, `POST mandates` and pairing approval with a template whose rules allow critical actions without approval → refused without the separate confirmation, like a mandate edit; the UI then asks for it in a box that names the template, the agent and every such rule, with Cancel first and focused (Escape cancels, another template drops it), and only "Allow without approval" repeats the request with the confirmation
 - Mandate change from an agent's page based on an outdated version → `conflict`, nothing replaced
+- Removing an active mandate or agent (UI, API, command line) → `conflict` / refused, nothing removed; a database trigger refuses a removed one that is not revoked; removing a removed one records nothing
+- Older version, a version without `version`, a later version or the same ID for another agent offered after the mandate was removed and its data deleted → refused (tombstone keeps `highest_version`; `mandate.TestARemovedMandateIsNeverAcceptedAgain`)
+- Revoke and remove in one step → `agent.revoked`, `mandate.revoked`, then the removals; a removal that fails rolls the revocation back
+- Retention: a revoked agent or mandate is removed by the system only once no audit entry refers to it; its data is deleted only after its removal entry left the log too; one a human removed is not recorded again (`removal.TestExpire`)
 
 **Audit log**
 - Tampered entry in the database → chain verification fails and reports the position
@@ -269,6 +276,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - Retention with the clock years ahead → only entries older than 30 days before the newest entry of activity are deleted, never the whole log; at most a tenth of the entries per run; clock behind the newest entry → nothing deleted, a warning, the next run tries again
 - Beginning of the log deleted with a forged `log.truncated` entry (needs no key) → `audit verify` prints `first_seq` and `truncation=unanchored` and fails, the UI shows the chain broken at the first remaining entry, the gateway starts but logs an error; if the log has checkpoints but none covers the `log.truncated` entry (`truncation=tampered`) → treated as a broken chain, the gateway does not start
 - No tokens, nonces or HA credentials in logs (a test searches the log output of all E2E runs)
+- Audit view of a removed mandate → still named (from the tombstone), version number resolved while its versions are kept
 - Search text with `%`, `_`, `\`, quotes, control, bidi or zero-width characters → cleaned, then matched literally (bound parameter, wildcards escaped or `instr`); errors name only `/q`, never the text
 - Search text over 100 characters after cleaning, a repeated `q`, or invalid UTF-8 → `invalid_input`, nothing run; empty or whitespace-only `q` → same result as no search
 - Search: client and server clean and fold case the same way (shared test vectors incl. ß, İ, Σ/ς, composed/decomposed é); device and area names are matched as the UI shows them
@@ -413,6 +421,8 @@ How Home-Mandate meets each obligation and which tests show it. Gaps are listed,
 | Next evaluation, no caching | Candidates are read for every request; revoked mandates and agents are no candidates | `mandate.TestCandidatesAreTheActiveMandatesOfAnActiveAgent`, `pdp.TestSelectionCasesOverHTTP`, `mcp.TestAuthentication` |
 | Waiting approvals end | Revoking a mandate or an agent cancels its requests | `api.TestRevokeMandate`, `api.TestRevokeAgent`, `approval.TestCancel`, `mcp.TestCancelledApprovals` |
 | Emergency stop | Checked before everything, `denied_by: emergency_stop`, ends waiting requests, recorded, released only by a human (UI or CLI) | `mcp.TestEmergencyStopIsEnforcedByThePEP`, `mcp.TestEmergencyStopRefusesLists`, `api.TestEmergencyStop`, `cmd/home-mandate.TestEmergencyStopCommand` |
+| Removal | Only revoked mandates and agents; revocations recorded first in one step; no audit entry deleted; data deleted only once no entry refers to it; highest version kept | `agent.TestOnlyARevokedAgentIsRemoved`, `mandate.TestOnlyARevokedMandateIsRemoved`, `mandate.TestARemovedMandateIsNeverAcceptedAgain`, `removal.TestRevokeAndRemoveInOneStep`, `removal.TestExpire`, `api.TestRemoveAgent`, `cmd/home-mandate.TestRemoveCommands` |
+| Reconnection | Only a human, only active agents of the same OAuth client without a valid token, withdrawn tokens stay invalid, recorded with the human as actor | `agent.TestReconnectIssuesNewTokensToTheExistingAgent`, `agent.TestReconnectNeedsAHuman`, `oauth.TestConsentOffersToReconnectAfterAnEmergencyStop`, `oauth.TestReconnectRaceIsRefused`, `oauth.TestReconnectInTheUI`, `api.TestReconnectInThePairing` |
 
 ### 11.4 Clock and directory
 

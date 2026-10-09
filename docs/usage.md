@@ -184,10 +184,22 @@ The emergency stop blocks every agent at once: all tokens are revoked, pending a
 are declined, and every request is refused until you lift it. Home Assistant itself keeps
 running normally.
 
-After you lift it, every agent has to be admitted again (agents with a pairing code need
-a new code). Each admission creates a new entry under Agents with a new mandate from the
-chosen template; the earlier entry and its mandate stay, without access. Revoke the old
-entry if you no longer need it.
+Lifting it does not bring access back: the withdrawn tokens stay invalid, so a stolen
+token stays useless. Every agent has to sign in again (agents with a pairing code need a
+new code). Until then, its entry under Agents shows **Not signed in**.
+
+When an agent signs in again, the sign-in page (browser) or the pairing step (code) offers
+**Reconnect an existing agent**, listing the agents of the same OAuth client that have no
+access, with their mandate and the day they were admitted. Choose the right one and
+**Reconnect**: it gets new access and keeps its entry, its mandate with all your changes,
+and its history; the audit log records `agent.reconnected` with you as the actor. Nothing
+is preselected and nothing is reconnected on its own, because several assistants can use
+the same client (every Claude Desktop with `mcp-remote` does). If you are not sure, admit
+it as a new agent, which stays the default.
+
+Entries left over (agents you admitted anew instead) can be cleaned up on the agent's page:
+**Revoke access** with **Also remove the agent and its mandates from the lists**, see
+[Removing revoked agents and mandates](#removing-revoked-agents-and-mandates).
 
 ### Audit log
 
@@ -295,7 +307,8 @@ for you, you can answer there (**Approve** → **Yes, approve**, or **Decline**)
 Choose **Emergency stop** in the header, read the dialog and confirm **Trigger emergency
 stop**. A banner "Emergency stop active" appears, and every agent's next request is
 refused. Lift it with **Lift …** in the banner or **Settings → Emergency stop → Lift
-emergency stop …**, then admit the agent again (see [Emergency stop](#emergency-stop)).
+emergency stop …**, then let the agent sign in again and reconnect it to its entry (see
+[Emergency stop](#emergency-stop)).
 
 ### 7. Read the audit log
 
@@ -327,6 +340,30 @@ usage and a link to its audit entries.
   rules, approval settings and rate limit.
 - **End access → Revoke access** blocks the agent immediately and permanently, revokes its
   tokens and mandate, and declines its pending approvals. To use it again, admit it anew.
+  With **Also remove the agent and its mandates from the lists**, it is revoked and removed
+  in one step (for entries left over after an emergency stop).
+- An agent without valid access (after an emergency stop, or once its tokens expired after
+  30 days without use) shows **Not signed in**; reconnect it when it signs in again.
+- A revoked agent offers **Remove from the lists …** (with or without its mandates).
+
+### Removing revoked agents and mandates
+
+Revoked agents and mandates stay in the lists until you remove them. Only revoked ones can
+be removed; an active agent or mandate has to be revoked first.
+
+- **One at a time:** **Remove from the lists …** on a revoked agent's page (optionally with
+  its mandates) or in the banner of a revoked mandate.
+- **All at once:** **Remove all revoked …** on **Agents** or **Mandates** removes every
+  revoked agent with its mandates and every other revoked mandate.
+- **Show removed** brings removed ones back into the list, read-only.
+
+Removing hides; it deletes nothing you could still need. A removed agent or mandate stays
+revoked for good, and the audit log keeps every entry about it; each removal is an entry of
+its own (`agent.removed`, `mandate.removed`). Once the audit log no longer mentions a removed
+agent or mandate (its entries expire after 30 days), Home-Mandate deletes its data and keeps
+only its ID, name and, for a mandate, the highest version issued, so that an older version
+of it is never accepted again. Revoked agents and mandates you never removed are removed by
+Home-Mandate itself once the audit log no longer mentions them (actor `system`).
 
 ### Mandates
 
@@ -381,17 +418,20 @@ Where to run them:
 | `home-mandate -version` | Prints the version. |
 | `home-mandate serve` | Runs the gateway; the default without a command. |
 | `home-mandate household` | Prints the household's principal, the value of `principal` in mandates. |
-| `home-mandate agent list` | Lists agents: client ID, status, display name (tab-separated). |
+| `home-mandate agent list` | Lists agents: client ID, status (`active`, `revoked` or `removed`), display name (tab-separated). |
 | `home-mandate agent revoke CLIENT_ID` | Revokes an agent and all its tokens; its next request is refused. |
+| `home-mandate agent remove [--with-mandates] CLIENT_ID` | Removes a revoked agent from the lists, with `--with-mandates` its mandates too; refused for an active agent. |
+| `home-mandate agent remove --all-revoked` | Removes every revoked agent with its mandates and every other revoked mandate. |
 | `home-mandate emergency-stop on` | Triggers the emergency stop: all tokens revoked, all agents blocked. |
-| `home-mandate emergency-stop off` | Lifts it; agents need new tokens. |
+| `home-mandate emergency-stop off` | Lifts it; agents need new tokens (reconnect them in the UI when they sign in). |
 | `home-mandate emergency-stop status` | Prints `emergency stop: on` or `off`. |
 | `home-mandate approver add USER_ID SERVICE[:no-critical][,SERVICE…] [de\|en]` | Adds or replaces an approver: their Home Assistant user ID, up to 5 Companion app notify services such as `mobile_app_pixel_9` (without `notify.`), `:no-critical` for devices that should not get critical requests, and optionally the language. Keeps the "answer in the UI" settings, which only the UI changes. |
 | `home-mandate approver list` | Lists approvers: user ID, devices, language, UI channel. |
 | `home-mandate approver remove USER_ID` | Removes an approver. |
 | `home-mandate mandate import FILE` (or `-` for standard input) | Stores a mandate (JSON, validated against the Home-Mandate specification); prints `id`, `client_id` and `digest`. |
-| `home-mandate mandate list` | Lists mandates: ID, status, client ID, digest. |
+| `home-mandate mandate list` | Lists mandates: ID, status (`active`, `revoked` or `removed`), client ID, digest. |
 | `home-mandate mandate revoke ID` | Revokes a mandate. |
+| `home-mandate mandate remove ID` | Removes a revoked mandate from the lists; refused for an active one. |
 | `home-mandate mandate check` | Lists stored mandates and templates this version does not accept (an invalid mandate denies every request of its agent); prints `ok` if there are none. Useful after an update. |
 | `home-mandate mandate template import NAME FILE` (or `-`) | Stores a template under `NAME`. |
 | `home-mandate mandate template list` | Lists templates (built-in ones as `base template`, hidden ones marked). |

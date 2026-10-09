@@ -43,7 +43,10 @@ model, so no agent can talk itself into more.
 - Approval requests on the approvers' phones (Companion app), optionally also in the
   Home-Mandate UI; cooldown after a refusal, at most two waiting requests per agent
 - Emergency stop for all agents at once, revoking single agents, both effective with the
-  next request
+  next request; after the stop, an administrator reconnects each agent to its existing
+  entry and mandate when it signs in again
+- Revoked agents and mandates can be removed from the lists (one at a time or all at once);
+  the audit log keeps every entry and an old mandate version is never accepted again
 - Mandate templates (three built in), versioned mandates with a preview of what an agent
   may do, and a comparison of versions
 - Audit log with hash chain, signed checkpoints, a daily checkpoint notification to the
@@ -113,6 +116,11 @@ The threat model and how to report vulnerabilities: [SECURITY.md](SECURITY.md).
 - An approval waits at most 10 minutes (the approval timeout setting, 30 to 600 seconds),
   although a mandate may name up to an hour: the agent's request waits for the answer.
 - Open approval requests live in memory: a restart ends them without execution.
+- Reconnecting after an emergency stop is offered only for agents of the same OAuth client
+  without valid access, and only on the sign-in or pairing page when the agent signs in
+  again; the administrator chooses the agent, Home-Mandate never matches one by itself.
+- Removed agents and mandates are hidden at once; their data is deleted only once the audit
+  log no longer mentions them (30 days after their last entry), not on request.
 - In the Home Assistant OS app, a reverse proxy that ends TLS (`HM_PROXY`) is not available;
   agents from outside need a TLS passthrough or a port forward
   ([docs/install-ha-os.md](docs/install-ha-os.md#reaching-home-mandate-from-outside)).

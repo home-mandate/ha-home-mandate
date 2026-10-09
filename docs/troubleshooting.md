@@ -149,7 +149,18 @@ request is refused (agents get `unavailable`) until the clock is right.
 8. **Approval takes long and the agent gives up, or nginx answers 504:** the request waits
    for the approval; the proxy must allow at least the approval timeout plus 30 seconds
    ([reverse-proxy.md](deploy/reverse-proxy.md#what-every-proxy-must-do)).
-9. **After an emergency stop or revocation**, the agent's tokens are gone. Admit it again.
+9. **After an emergency stop or revocation**, the agent's tokens are gone. After an
+   emergency stop, let the agent sign in again and choose **Reconnect** for its existing
+   entry on the sign-in or pairing page: it keeps its mandate. If no agent is offered there,
+   the agent signed in with another OAuth client than before (another `client_id`, or a
+   pairing code instead of the browser) or still has valid access; admit it as a new agent
+   and revoke and remove the old entry. After a revocation, admit it again.
+10. **An agent shows "Not signed in"**: it has no valid access, after an emergency stop or
+   because it was not used for 30 days. It works again after it signs in and you reconnect
+   it; if you admitted it anew instead, remove the old entry (**Revoke access** with
+   **Also remove the agent and its mandates from the lists**).
+11. **Removed an agent or mandate by mistake**: a removed one stays revoked; **Show removed**
+   shows it read-only. Admit the agent again, or give it a new mandate.
 
 ## Signing in fails
 
