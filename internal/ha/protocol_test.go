@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
@@ -107,32 +108,42 @@ func TestCommandsOutsideAllowlistNeverReachHA(t *testing.T) {
 	}
 }
 
+// appPlaintext is the policy of app mode, as internal/config sets it.
+var appPlaintext = Plaintext{Hosts: []string{"supervisor", "homeassistant"}, Network: netip.MustParsePrefix("172.30.32.0/23")}
+
 func TestNewValidatesConfig(t *testing.T) {
 	tests := []struct {
-		name string
-		url  string
-		tok  Secret
-		want error
+		name  string
+		url   string
+		tok   Secret
+		plain Plaintext
+		want  error
 	}{
-		{"supervisor", "ws://supervisor/core/websocket", "t", nil},
-		{"localhost", "ws://localhost:8123/api/websocket", "t", nil},
-		{"loopback v4", "ws://127.0.0.1:8123/api/websocket", "t", nil},
-		{"loopback v6", "ws://[::1]:8123/api/websocket", "t", nil},
-		{"tls", "wss://ha.example.org/api/websocket", "t", nil},
-		{"plaintext on lan", "ws://192.168.1.10:8123/api/websocket", "t", ErrInsecureURL},
-		{"plaintext hostname", "ws://homeassistant.local:8123/api/websocket", "t", ErrInsecureURL},
-		{"localhost lookalike", "ws://localhost.evil.example/api/websocket", "t", ErrInsecureURL},
-		{"http scheme", "http://localhost:8123/api/websocket", "t", ErrInvalidURL},
-		{"userinfo", "wss://user:pw@ha.example.org/api/websocket", "t", ErrInvalidURL},
-		{"query", "wss://ha.example.org/api/websocket?token=x", "t", ErrInvalidURL},
-		{"fragment", "wss://ha.example.org/api/websocket#x", "t", ErrInvalidURL},
-		{"no host", "wss:///api/websocket", "t", ErrInvalidURL},
-		{"garbage", "::", "t", ErrInvalidURL},
-		{"empty token", "wss://ha.example.org/api/websocket", "", ErrInvalidConfig},
+		{"supervisor in app mode", "ws://supervisor/core/websocket", "t", appPlaintext, nil},
+		{"homeassistant in app mode", "ws://homeassistant:8123/api/websocket", "t", appPlaintext, nil},
+		{"localhost in app mode", "ws://localhost:8123/api/websocket", "t", appPlaintext, ErrInsecureURL},
+		{"hassio address in app mode", "ws://172.30.32.1:8123/api/websocket", "t", appPlaintext, ErrInsecureURL},
+		{"tls in app mode", "wss://ha.example.org/api/websocket", "t", appPlaintext, nil},
+		{"supervisor in container mode", "ws://supervisor/core/websocket", "t", Plaintext{}, ErrInsecureURL},
+		{"homeassistant in container mode", "ws://homeassistant:8123/api/websocket", "t", Plaintext{}, ErrInsecureURL},
+		{"localhost", "ws://localhost:8123/api/websocket", "t", Plaintext{}, nil},
+		{"loopback v4", "ws://127.0.0.1:8123/api/websocket", "t", Plaintext{}, nil},
+		{"loopback v6", "ws://[::1]:8123/api/websocket", "t", Plaintext{}, nil},
+		{"tls", "wss://ha.example.org/api/websocket", "t", Plaintext{}, nil},
+		{"plaintext on lan", "ws://192.168.1.10:8123/api/websocket", "t", Plaintext{}, ErrInsecureURL},
+		{"plaintext hostname", "ws://homeassistant.local:8123/api/websocket", "t", Plaintext{}, ErrInsecureURL},
+		{"localhost lookalike", "ws://localhost.evil.example/api/websocket", "t", Plaintext{}, ErrInsecureURL},
+		{"http scheme", "http://localhost:8123/api/websocket", "t", Plaintext{}, ErrInvalidURL},
+		{"userinfo", "wss://user:pw@ha.example.org/api/websocket", "t", Plaintext{}, ErrInvalidURL},
+		{"query", "wss://ha.example.org/api/websocket?token=x", "t", Plaintext{}, ErrInvalidURL},
+		{"fragment", "wss://ha.example.org/api/websocket#x", "t", Plaintext{}, ErrInvalidURL},
+		{"no host", "wss:///api/websocket", "t", Plaintext{}, ErrInvalidURL},
+		{"garbage", "::", "t", Plaintext{}, ErrInvalidURL},
+		{"empty token", "wss://ha.example.org/api/websocket", "", Plaintext{}, ErrInvalidConfig},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := New(Config{URL: tt.url, Token: tt.tok})
+			_, err := New(Config{URL: tt.url, Token: tt.tok, Plaintext: tt.plain})
 			if !errors.Is(err, tt.want) {
 				t.Errorf("New = %v, want %v", err, tt.want)
 			}
@@ -143,31 +154,72 @@ func TestNewValidatesConfig(t *testing.T) {
 	}
 }
 
-func TestPlaintextAllowed(t *testing.T) {
+func TestPlaintextAllowsAddress(t *testing.T) {
 	tests := []struct {
-		host string
-		ip   string
-		want bool
+		name  string
+		plain Plaintext
+		ip    string
+		want  bool
 	}{
-		{"localhost", "127.0.0.1", true},
-		{"localhost", "::1", true},
-		{"localhost", "192.168.1.10", false},
-		{"localhost", "203.0.113.7", false},
-		{"supervisor", "172.30.32.2", true},
-		{"supervisor", "10.0.0.5", true},
-		{"supervisor", "203.0.113.7", false},
-		{"127.0.0.1", "127.0.0.1", true},
+		{"loopback v4", Plaintext{}, "127.0.0.1", true},
+		{"loopback v6", Plaintext{}, "::1", true},
+		{"private in container mode", Plaintext{}, "192.168.1.10", false},
+		{"hassio in container mode", Plaintext{}, "172.30.32.2", false},
+		{"public in container mode", Plaintext{}, "203.0.113.7", false},
+		{"core in app mode", appPlaintext, "172.30.32.1", true},
+		{"supervisor in app mode", appPlaintext, "172.30.32.2", true},
+		{"upper half of hassio", appPlaintext, "172.30.33.9", true},
+		{"mapped hassio address", appPlaintext, "::ffff:172.30.32.1", true},
+		{"other private in app mode", appPlaintext, "10.0.0.5", false},
+		{"next to hassio", appPlaintext, "172.30.34.1", false},
+		{"loopback in app mode", appPlaintext, "127.0.0.1", false},
 	}
 	for _, tt := range tests {
-		if got := plaintextAllowed(tt.host, net.ParseIP(tt.ip)); got != tt.want {
-			t.Errorf("plaintextAllowed(%s, %s) = %v, want %v", tt.host, tt.ip, got, tt.want)
+		ip := netip.MustParseAddr(tt.ip)
+		if got := tt.plain.allowsAddr(ip); got != tt.want {
+			t.Errorf("%s: allowsAddr(%s) = %v, want %v", tt.name, tt.ip, got, tt.want)
+		}
+	}
+}
+
+// fixedLookup resolves every name to ips, as a DNS answer an attacker controls would.
+func fixedLookup(ips ...string) func(context.Context, string) ([]net.IPAddr, error) {
+	return func(context.Context, string) ([]net.IPAddr, error) {
+		var out []net.IPAddr
+		for _, ip := range ips {
+			out = append(out, net.IPAddr{IP: net.ParseIP(ip)})
+		}
+		return out, nil
+	}
+}
+
+// The address is checked after name resolution, so a host name on the list cannot be
+// pointed elsewhere via DNS.
+func TestPlaintextDialChecksResolvedAddress(t *testing.T) {
+	tests := []struct {
+		name   string
+		plain  Plaintext
+		addr   string
+		lookup []string
+	}{
+		{"homeassistant outside hassio", appPlaintext, "homeassistant:8123", []string{"192.0.2.1"}},
+		{"supervisor to loopback", appPlaintext, "supervisor:80", []string{"127.0.0.1"}},
+		{"supervisor in container mode", Plaintext{}, "supervisor:80", []string{"172.30.32.2"}},
+		{"localhost elsewhere", Plaintext{}, "localhost:8123", []string{"192.0.2.1"}},
+		{"name not on the list", appPlaintext, "evil:8123", []string{"172.30.32.1"}},
+	}
+	for _, tt := range tests {
+		dial := tt.plain.dialer(fixedLookup(tt.lookup...))
+		if _, err := dial(context.Background(), "tcp", tt.addr); !errors.Is(err, ErrInsecureURL) {
+			t.Errorf("%s: dial = %v, want ErrInsecureURL", tt.name, err)
 		}
 	}
 }
 
 func TestPlaintextDialRefusesNonLocalAddresses(t *testing.T) {
-	if _, err := plaintextDial(context.Background(), "tcp", "192.0.2.1:8123"); !errors.Is(err, ErrInsecureURL) {
-		t.Errorf("plaintextDial = %v, want ErrInsecureURL", err)
+	dial := Plaintext{}.dialer(net.DefaultResolver.LookupIPAddr)
+	if _, err := dial(context.Background(), "tcp", "192.0.2.1:8123"); !errors.Is(err, ErrInsecureURL) {
+		t.Errorf("dial = %v, want ErrInsecureURL", err)
 	}
 	// Both loopback addresses are tried; the listener only exists on 127.0.0.1.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -176,19 +228,23 @@ func TestPlaintextDialRefusesNonLocalAddresses(t *testing.T) {
 	}
 	defer ln.Close()
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
-	conn, err := plaintextDial(context.Background(), "tcp", net.JoinHostPort("localhost", port))
+	conn, err := dial(context.Background(), "tcp", net.JoinHostPort("localhost", port))
 	if err != nil {
-		t.Fatalf("plaintextDial(localhost) = %v", err)
+		t.Fatalf("dial(localhost) = %v", err)
 	}
 	conn.Close()
 	// Refused, or timed out where a firewall drops packets to closed ports (WSL).
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	if _, err := plaintextDial(ctx, "tcp", "127.0.0.1:1"); err == nil || errors.Is(err, ErrInsecureURL) {
-		t.Errorf("plaintextDial to a closed local port = %v, want a connection error", err)
+	if _, err := dial(ctx, "tcp", "127.0.0.1:1"); err == nil || errors.Is(err, ErrInsecureURL) {
+		t.Errorf("dial to a closed local port = %v, want a connection error", err)
 	}
-	if _, err := plaintextDial(context.Background(), "tcp", "no-port"); err == nil {
-		t.Error("plaintextDial without port succeeded")
+	if _, err := dial(context.Background(), "tcp", "no-port"); err == nil {
+		t.Error("dial without port succeeded")
+	}
+	failing := func(context.Context, string) ([]net.IPAddr, error) { return nil, errors.New("no such host") }
+	if _, err := (Plaintext{}).dialer(failing)(context.Background(), "tcp", "localhost:1"); err == nil {
+		t.Error("dial with a failing lookup succeeded")
 	}
 }
 

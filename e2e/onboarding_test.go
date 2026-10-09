@@ -68,7 +68,7 @@ func TestScenario02ApprovedDoorOpens(t *testing.T) {
 	}
 	result := callAsync(t, s, "perform_action", unlockArgs("lock.front_door"))
 	n := nextNotification(t, notes)
-	if n.Service != "persistent_notification" || n.Title != "Approval needed: Door helper" || len(n.Actions) != 2 ||
+	if n.Service != approverDevice || n.Title != "Approval needed: Door helper" || len(n.Actions) != 2 ||
 		!strings.Contains(n.Message, "not verified: The parcel service is at the door") {
 		t.Fatalf("notification = %+v", n)
 	}

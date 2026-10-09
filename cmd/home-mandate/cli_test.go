@@ -13,11 +13,13 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/home-mandate/spec"
 	specaudit "github.com/home-mandate/spec/audit"
 
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 )
 
 // cli runs commands against one temporary data directory in container mode.
@@ -45,6 +47,7 @@ func (c *cli) env(stdin string) (env, *bytes.Buffer, *bytes.Buffer) {
 	return env{
 		getenv:   func(k string) string { return c.envVars[k] },
 		readFile: os.ReadFile,
+		unsetenv: func(string) error { return nil },
 		stdin:    strings.NewReader(stdin),
 		stdout:   &stdout,
 		stderr:   &stderr,
@@ -177,6 +180,65 @@ func TestAuditVerifyReportsABrokenChain(t *testing.T) {
 	}
 }
 
+// forgeTruncation deletes the beginning of the audit log behind the gateway's back and
+// accounts for it with a log.truncated entry, which needs no key. With checkpoints, the
+// log had a checkpoint before.
+func forgeTruncation(t *testing.T, c *cli, checkpoints bool) {
+	t.Helper()
+	ctx := context.Background()
+	dir := c.envVars["HM_DATA_DIR"]
+	s, err := openStore(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.store.Close()
+	// Later entries two hours after the existing ones, so that only those are deleted and
+	// a checkpoint after them stays.
+	later := time.Now().Add(2 * time.Hour)
+	s.log.SetClock(func() time.Time { return later })
+	if checkpoints {
+		if err := attachSigner(ctx, s, dir, func(k string) string { return c.envVars[k] }, true); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.log.Checkpoint(ctx); err != nil {
+			t.Fatal(err)
+		}
+		s.log.SetSigner(nil)
+	}
+	if _, err := s.log.Append(ctx, audit.Entry{Event: audit.EventEmergencyStopActivated, Actor: &localAdmin}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.log.Truncate(ctx, later.Add(-time.Hour), audit.Actor{Kind: audit.ActorSystem, ID: "retention"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// audit verify says where the log starts and whether a verified checkpoint covers a
+// deleted beginning; without one, verify fails.
+func TestAuditVerifyReportsTheTruncation(t *testing.T) {
+	c := newCLI(t)
+	c.register("A")
+	out := c.mustRun("", "audit", "verify")
+	if field(t, out, "first_seq") != "1" || field(t, out, "truncation") != "none" {
+		t.Errorf("audit verify of a whole log: %q", out)
+	}
+
+	forgeTruncation(t, c, false)
+	code, out, _ := c.run("", "audit", "verify")
+	if code != exitFailure || field(t, out, "truncation") != "unanchored" || field(t, out, "first_seq") == "1" ||
+		!strings.Contains(out, "without a verified checkpoint") {
+		t.Errorf("unanchored truncation: exit %d, %q", code, out)
+	}
+
+	c = newCLI(t)
+	c.register("A")
+	forgeTruncation(t, c, true)
+	code, out, _ = c.run("", "audit", "verify")
+	if code != exitFailure || field(t, out, "truncation") != "tampered" || !strings.Contains(out, "broken at seq") {
+		t.Errorf("truncation behind the checkpoints: exit %d, %q", code, out)
+	}
+}
+
 func TestCommandErrors(t *testing.T) {
 	c := newCLI(t)
 	tests := []struct {
@@ -188,12 +250,13 @@ func TestCommandErrors(t *testing.T) {
 		{[]string{"agent", "add", "--name", "x"}, exitUsage}, // agents are admitted via OAuth only
 		{[]string{"emergency-stop"}, exitUsage},
 		{[]string{"approver"}, exitUsage},
+		{[]string{"approver", "add", "4d5e6f", "mobile_app_pixel,telegram_family"}, exitUsage}, // Companion App devices only
 		{[]string{"approver", "add", "u1"}, exitUsage},
-		{[]string{"approver", "add", "u1", "notify.x"}, exitFailure},
+		{[]string{"approver", "add", "u1", "notify.x"}, exitUsage}, // not a Companion App device: refused before the database
 		{[]string{"approver", "add", "u1", "mobile_app_a,mobile_app_a"}, exitFailure},
-		{[]string{"approver", "add", "u1", ","}, exitFailure},
-		{[]string{"approver", "add", "u1", "mobile_app_a:critical"}, exitFailure},
-		{[]string{"approver", "add", "u1", "mobile_app_a:no-critical:no-critical"}, exitFailure},
+		{[]string{"approver", "add", "u1", ","}, exitUsage},
+		{[]string{"approver", "add", "u1", "mobile_app_a:critical"}, exitUsage},
+		{[]string{"approver", "add", "u1", "mobile_app_a:no-critical:no-critical"}, exitUsage},
 		{[]string{"approver", "remove", "none"}, exitFailure},
 		{[]string{"emergency-stop", "maybe"}, exitUsage},
 		{[]string{"emergency-stop", "on", "now"}, exitUsage},
@@ -353,6 +416,7 @@ func TestMandateCheck(t *testing.T) {
 func TestAuditKeyAndAnchoredVerify(t *testing.T) {
 	c := newCLI(t)
 	c.register("Voice assistant")
+	c.createKey()
 	key := c.mustRun("", "audit", "key")
 	logID := field(t, key, "log_id")
 	if len(logID) != 36 || !strings.Contains(key, `"kty": "OKP"`) || strings.Contains(key, `"d"`) {
@@ -365,9 +429,25 @@ func TestAuditKeyAndAnchoredVerify(t *testing.T) {
 	if again := c.mustRun("", "audit", "key"); again != key {
 		t.Error("the key or the log ID changed between two calls")
 	}
-	c.envVars[envAuditKeyFile] = filepath.Join(c.envVars["HM_DATA_DIR"], "no-such-directory", "key")
+	if err := os.Chmod(filepath.Join(c.envVars["HM_DATA_DIR"], auditKeyFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if code, _, errOut := c.run("", "audit", "verify"); code != exitFailure || !strings.Contains(errOut, "audit checkpoint key") {
-		t.Errorf("key file that cannot be created: exit %d, %q", code, errOut)
+		t.Errorf("key file readable by others: exit %d, %q", code, errOut)
+	}
+}
+
+// createKey creates the key of the checkpoints, as serve does on its first start.
+func (c *cli) createKey() {
+	c.t.Helper()
+	ctx := context.Background()
+	s, err := openStore(ctx, c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	defer s.store.Close()
+	if err := attachSigner(ctx, s, c.envVars["HM_DATA_DIR"], func(k string) string { return c.envVars[k] }, true); err != nil {
+		c.t.Fatal(err)
 	}
 }
 
@@ -411,6 +491,7 @@ func TestTemplateAndApproverCommandsAreAudited(t *testing.T) {
 		{"mandate", "template", "remove", "hm-read-only"},
 		{"approver", "remove", "1a2b3c"},
 		{"approver", "add", "4d5e6f", "Not A Service"},
+		{"approver", "add", "4d5e6f", "telegram_family"},
 	} {
 		if code, _, _ := c.run("", refused...); code == exitOK {
 			t.Errorf("%v succeeded", refused)

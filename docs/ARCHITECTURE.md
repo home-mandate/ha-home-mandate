@@ -256,7 +256,9 @@ checked on every request.
 
 ## 7. Approval requests ("ask")
 
-- Sent via `notify.mobile_app_<device>` to every device (up to 5) of the approvers selected
+- Sent via `notify.mobile_app_<device>` (nothing else: the Home Assistant client, the
+  approvers store and `approver add` refuse other notify services, which could reach people
+  who are no approvers) to every device (up to 5) of the approvers selected
   in the settings: phones, tablets, the Companion App on a Mac. Each device has its own switch
   for critical requests; critical requests go only to devices where it is on. The UI
   proposes on only for iOS devices of the person themselves and off for everything else
@@ -319,6 +321,15 @@ checked on every request.
 
 One image, two configuration sources. Architectures: `amd64`, `aarch64`.
 
+**Plaintext to Home Assistant** is decided by the mode, never guessed by the client. App
+mode: exactly `supervisor` (WebSocket via `ws://supervisor/core/websocket`) and
+`homeassistant` (HTTP API at `http://homeassistant:8123` for the sign-in of humans, since
+the Supervisor proxy does not forward `/auth`), each only while it resolves into the hassio
+network `172.30.32.0/23` (Core at `.1`, Supervisor at `.2`); no other host, no literal
+address, not `localhost`. Container mode: loopback only (literal loopback addresses and
+`localhost`), `supervisor` and `homeassistant` are refused. The resolved address is checked
+right before dialing, so DNS cannot point an allowed name elsewhere.
+
 **Who may use the UI (decision U2, checked against the Supervisor and Core sources):**
 Ingress lets every signed-in Home Assistant user reach the UI; `panel_admin` only hides the
 sidebar entry. Home-Mandate therefore checks itself, on every request:
@@ -350,7 +361,13 @@ index `audit_search`, `approvers`, `mandate_templates`, `settings`.
 
 Further tables: `critical_entities` (the household's critical marks), the settings
 `mandate_issuer` and `audit_log_id`; the key of the audit checkpoints lies in
-`audit-checkpoint.key` next to the database or at `HM_AUDIT_KEY_FILE`.
+`audit-checkpoint.key` next to the database or at `HM_AUDIT_KEY_FILE`. Only `serve` creates
+the key, on its first start, atomically (temporary file with mode 0600 in the same
+directory, synced, renamed); the command line never does, and `audit key` fails before
+that start. The key is read only from a regular file (no symbolic link) owned by the user
+Home-Mandate runs as, without access for group or others. If the log has checkpoints but
+the key is missing, both refuse to run instead of creating a new key that could not
+verify them.
 
 ### What Home-Mandate trusts
 
@@ -361,17 +378,29 @@ Further tables: `critical_entities` (the household's critical marks), the settin
   shows that a stored version was altered (it then denies), but a new, consistent version
   can be written. The audit log shows such changes only up to its last checkpoint that left
   the device. Mandates signed with a key outside the device (planned) remove this trust.
+  Deleting the beginning of the log is accounted for by a `log.truncated` entry, which
+  needs no key; Home-Mandate therefore counts a truncation only if a verified checkpoint
+  covers that entry (stricter than SPEC-v0 section 9.4). Otherwise `audit verify` fails and
+  prints `first_seq` and `truncation`, the UI shows the chain broken at the first remaining
+  entry, and the gateway logs an error at start; if the log has checkpoints but none
+  covers the truncation, it is tampering and the gateway does not start.
 - **The clock.** Validity periods, time windows and the audit log follow the host clock.
   While it lies more than a minute behind the latest time in the audit log, nothing is
   decided (SPEC-v0 section 11.4): requests fail with `clock_behind`, the UI shows a banner.
   If the clock ran ahead by mistake and was corrected, `home-mandate audit accept-clock`
-  sets the entries with the future times aside for this check.
+  sets the entries with the future times aside for this check. The retention of the audit
+  log (30 days, at start and daily) counts the age back from the newest entry that is not
+  a `log.truncated` or `log.checkpoint`, or from the clock if that is earlier, so a clock
+  that jumped ahead does not age the log; it waits while the clock is behind (warning, the
+  next run tries again) and deletes at most a tenth of the entries per run.
 - **Nothing from the agent** except the requested resource, action, parameters and its
   reason, which is shown as the agent's claim.
 
 **The Home Assistant credentials are never stored (decision U8).** In app mode Home-Mandate
-uses `SUPERVISOR_TOKEN`; in container mode the token comes from `HM_HA_TOKEN` or the file in
-`HM_HA_TOKEN_FILE` (mode 0600, mounted read-only). Nothing to encrypt in the database; a test
+uses `SUPERVISOR_TOKEN`; in container mode the token comes from the file in `HM_HA_TOKEN_FILE`
+(preferred; a regular file that neither group nor others can read, e.g. mode 0600 mounted
+read-only, otherwise the start is refused) or from `HM_HA_TOKEN`, which Home-Mandate takes
+out of its environment once read. Nothing to encrypt in the database; a test
 runs the gateway with a token and checks that no file of the data directory contains it.
 
 ## 10. Cryptography

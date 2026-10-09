@@ -52,6 +52,7 @@ const usage = `Usage:
 type env struct {
 	getenv   func(string) string
 	readFile func(string) ([]byte, error)
+	unsetenv func(string) error
 	stdin    io.Reader
 	stdout   io.Writer
 	stderr   io.Writer
@@ -59,7 +60,7 @@ type env struct {
 
 func main() {
 	os.Exit(runUntilSignal(os.Args[1:], env{
-		getenv: os.Getenv, readFile: os.ReadFile, stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr,
+		getenv: os.Getenv, readFile: os.ReadFile, unsetenv: os.Unsetenv, stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr,
 	}))
 }
 

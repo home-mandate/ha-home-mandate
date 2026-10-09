@@ -44,7 +44,7 @@ from Playwright's CDN, for tests only.
 | Variable | Meaning |
 |---|---|
 | `HM_HA_URL` | WebSocket API of Home Assistant: `ws://localhost:8123/api/websocket` or `wss://…` (plaintext only to localhost) |
-| `HM_HA_TOKEN` or `HM_HA_TOKEN_FILE` | Long-lived token of Home-Mandate's own Home Assistant user |
+| `HM_HA_TOKEN_FILE` or `HM_HA_TOKEN` | Long-lived token of Home-Mandate's own Home Assistant user. Prefer the file: it must be a regular file nobody but its owner can read (`chmod 600`), otherwise Home-Mandate does not start; `HM_HA_TOKEN` is removed from the environment once read, but stays visible in the container configuration |
 | `HM_HA_CA_FILE` | Optional PEM file with a CA to trust for `wss://` (self-signed Home Assistant certificate) |
 | `HM_DATA_DIR` | Data directory, default `/data` |
 | `HM_TLS_CERT`, `HM_TLS_KEY` | Certificate for the MCP endpoint and the UI (TLS 1.3); without it, MCP listens on localhost only. Renewed files are taken over without a restart; the certificate must cover the host of `HM_PUBLIC_URL` |
@@ -179,7 +179,8 @@ home-mandate approver add USER_ID mobile_app_pixel_9,mobile_app_mac:no-critical 
 
 `USER_ID` is the Home Assistant user ID; it must also be listed in the mandate's
 `approvers`. Without a language, the language of the Home Assistant configuration applies.
-Any device with the Home Assistant Companion App counts, including the Mac app. Critical
+Any device with the Home Assistant Companion App counts, including the Mac app; other notify
+services (groups, messengers, `notify.notify`) are refused, also when stored earlier. Critical
 actions (unlocking a door, disarming the alarm …) go only to devices without
 `:no-critical`: an iPhone asks for unlocking before a button counts, the Mac app and Android
 do not. The UI proposes `no-critical` for the Mac app.
@@ -203,7 +204,7 @@ home-mandate mandate list | revoke ID
 home-mandate mandate check                   # lists stored mandates and templates the evaluator rejects, e.g. after an update
 home-mandate approver add USER_ID NOTIFY_SERVICE[:no-critical][,…] [de|en] | list | remove USER_ID
 home-mandate emergency-stop on | off | status   # on: all tokens revoked, all agents blocked
-home-mandate audit verify | export           # hash chain and checkpoint check, JSON Lines export
+home-mandate audit verify | export           # hash chain and checkpoint check (fails if a deleted beginning is not covered by a checkpoint), JSON Lines export
 home-mandate audit key                       # log ID and public key of the checkpoints; keep them outside this device
 ```
 

@@ -50,7 +50,7 @@ protection class, expired, not yet valid) needs its own named test.
   the tests (rootless Podman: `keep-id`), on a data directory of the host; only a test run
   by root keeps it root. Home Assistant and the stand-ins run as root.
 - **Agent** = test client based on the official MCP Go SDK, going through real OAuth flows.
-- **Approval requests:** sent to a configurable `notify` service; the answer is fired as a
+- **Approval requests:** sent to `notify.mobile_app_e2e_phone`, a `command_line` notify service that stands in for the Companion App; the answer is fired as a
   `mobile_app_notification_action` event via the HA API with the respective test user, so
   that `context.user_id` is set for real.
 - **UI:** Playwright against the UI (mandate editor, emergency stop, revoke agent), every UI
@@ -184,6 +184,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - Refused authorization requests, failed sign-ins, refused admissions, reused refresh tokens, requests over the rate limit → logged at most once a minute per kind
 
 **Approval requests**
+- Approver device that is not a notify service of the Companion App (`notify.notify`, a group, a messenger, `mobile_app_` alone) → refused by `approver add`, the API (`approvers` Put) and the Home Assistant client; one stored earlier → not sent, the delivery is logged with the reason
 - Answer with an unknown, expired or already used nonce → discarded
 - Answer from a non-approver (also without user, or from Home-Mandate's own HA user) → request denied as `invalid_response`, approvers warned (decision W8)
 - "Yes" and "No" at the same time → first valid answer counts, second discarded, both logged
@@ -264,6 +265,9 @@ Every line is at least one test. New attack ideas are added here before they are
 - Tampered entry in the database → chain verification fails and reports the position
 - Log rewritten consistently by someone who can write the database → `audit verify` reports it anchored only up to the last checkpoint; a checkpoint signed with another key or for another log ID → invalid
 - Shortening of the log with an agent as actor → refused; every shortening is followed by a checkpoint
+- Checkpoint key: created only by `serve` (atomically, mode 0600, no temporary file left), never by `audit verify` or `audit key`; a symbolic link, a directory or a key file with group or world access → refused; key missing while the log has checkpoints → `serve` and the command line refuse with a clear message, no new key
+- Retention with the clock years ahead → only entries older than 30 days before the newest entry of activity are deleted, never the whole log; at most a tenth of the entries per run; clock behind the newest entry → nothing deleted, a warning, the next run tries again
+- Beginning of the log deleted with a forged `log.truncated` entry (needs no key) → `audit verify` prints `first_seq` and `truncation=unanchored` and fails, the UI shows the chain broken at the first remaining entry, the gateway starts but logs an error; if the log has checkpoints but none covers the `log.truncated` entry (`truncation=tampered`) → treated as a broken chain, the gateway does not start
 - No tokens, nonces or HA credentials in logs (a test searches the log output of all E2E runs)
 - Search text with `%`, `_`, `\`, quotes, control, bidi or zero-width characters → cleaned, then matched literally (bound parameter, wildcards escaped or `instr`); errors name only `/q`, never the text
 - Search text over 100 characters after cleaning, a repeated `q`, or invalid UTF-8 → `invalid_input`, nothing run; empty or whitespace-only `q` → same result as no search
@@ -280,8 +284,9 @@ Every line is at least one test. New attack ideas are added here before they are
 - `auth_invalid` → no retry, permanent error state
 - Connection lost with requests in flight → they fail immediately, nothing is executed after reconnecting
 - Oversized or malformed message from HA → connection closed, no panic
-- Plaintext `ws://` to a host other than loopback or the Supervisor, also after DNS resolution → refused; redirects are not followed; untrusted TLS certificate → refused
+- Plaintext `ws://`/`http://` beyond the hosts of the mode (app mode: `supervisor` and `homeassistant` resolving into `172.30.32.0/23`; container mode: loopback only, `supervisor` refused), also after DNS resolution (e.g. `homeassistant` → an address outside the hassio network) → refused; redirects are not followed; untrusted TLS certificate → refused
 - Access token in logs, error messages or formatted configuration → never (redacted)
+- `HM_HA_TOKEN_FILE` not a regular file, or readable by group or others → start refused; `HM_HA_TOKEN` → removed from the environment once read (injected function in tests)
 
 **Storage**
 - Checksum of an applied migration changed → start aborted

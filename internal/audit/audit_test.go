@@ -79,7 +79,7 @@ func appendAll(t *testing.T, l *audit.Log, entries []audit.Entry) {
 	}
 }
 
-func verify(t *testing.T, l *audit.Log) specaudit.Result {
+func verify(t *testing.T, l *audit.Log) audit.Verification {
 	t.Helper()
 	r, err := l.Verify(context.Background())
 	if err != nil {
@@ -223,6 +223,7 @@ func TestTruncateKeepsTheLogVerifiable(t *testing.T) {
 	appendAll(t, l, samples()[:3])
 	l.SetClock(func() time.Time { return now })
 	appendAll(t, l, samples()[3:5])
+	l.SetSigner(signer()) // as in the gateway: the truncation is anchored by a checkpoint
 
 	removed, err := l.Truncate(ctx, now.Add(-30*24*time.Hour), audit.Actor{Kind: audit.ActorSystem, ID: "retention"})
 	if err != nil || removed != 3 {
@@ -233,8 +234,8 @@ func TestTruncateKeepsTheLogVerifiable(t *testing.T) {
 	}
 	var minSeq, maxSeq int64
 	_ = db.QueryRow(`SELECT min(seq), max(seq) FROM audit_log`).Scan(&minSeq, &maxSeq)
-	if minSeq != 4 || maxSeq != 6 {
-		t.Errorf("seq range = %d..%d, want 4..6", minSeq, maxSeq)
+	if minSeq != 4 || maxSeq != 7 { // 6 log.truncated, 7 log.checkpoint
+		t.Errorf("seq range = %d..%d, want 4..7", minSeq, maxSeq)
 	}
 	if removed, err := l.Truncate(ctx, now.Add(-30*24*time.Hour), audit.Actor{Kind: audit.ActorSystem, ID: "retention"}); err != nil || removed != 0 {
 		t.Errorf("second Truncate = %d, %v; want no-op", removed, err)

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/netip"
@@ -55,6 +56,9 @@ type Config struct {
 	DataDir string
 	HAURL   string
 	HAToken ha.Secret
+	// HAPlaintext are the hosts of Home Assistant reached without TLS: the Supervisor and
+	// Home Assistant on the hassio network in app mode, loopback only in container mode.
+	HAPlaintext ha.Plaintext
 	// HARootCAs replaces the system roots for wss:// to Home Assistant (HM_HA_CA_FILE),
 	// e.g. for a self-signed certificate. Nil means the system roots.
 	HARootCAs *x509.CertPool
@@ -119,16 +123,25 @@ func DataDir(getenv func(string) string) (string, error) {
 	return dir, nil
 }
 
-// Load reads the configuration. getenv and readFile are os.Getenv and os.ReadFile in
+// Env is what Load reads and changes: os.Getenv, os.ReadFile, os.Stat and os.Unsetenv in
 // production.
-func Load(getenv func(string) string, readFile func(string) ([]byte, error)) (Config, error) {
-	if token := getenv("SUPERVISOR_TOKEN"); token != "" {
-		if getenv("HM_PROXY") != "" {
+type Env struct {
+	Getenv   func(string) string
+	ReadFile func(string) ([]byte, error)
+	Stat     func(string) (fs.FileInfo, error)
+	// Unsetenv takes HM_HA_TOKEN out of the environment once it is read.
+	Unsetenv func(string) error
+}
+
+// Load reads the configuration.
+func Load(e Env) (Config, error) {
+	if token := e.Getenv("SUPERVISOR_TOKEN"); token != "" {
+		if e.Getenv("HM_PROXY") != "" {
 			return Config{}, fmt.Errorf("%w: HM_PROXY is not available in app mode", ErrInvalid)
 		}
-		return loadApp(ha.Secret(token), readFile)
+		return loadApp(ha.Secret(token), e.ReadFile)
 	}
-	return loadContainer(getenv, readFile)
+	return loadContainer(e)
 }
 
 type appOptionsFile struct {
@@ -151,7 +164,7 @@ func loadApp(token ha.Secret, readFile func(string) ([]byte, error)) (Config, er
 	if err := dec.Decode(&opts); err != nil {
 		return Config{}, fmt.Errorf("%w: %s: %w", ErrInvalid, appOptions, err)
 	}
-	cfg := Config{Mode: ModeApp, DataDir: appDataDir, HAURL: supervisorWS, HAToken: token}
+	cfg := Config{Mode: ModeApp, DataDir: appDataDir, HAURL: supervisorWS, HAToken: token, HAPlaintext: appPlaintext}
 	if cfg.TLSCert, cfg.TLSKey, err = sslPaths(opts.TLSCertFile, opts.TLSKeyFile); err != nil {
 		return Config{}, err
 	}
@@ -193,12 +206,13 @@ func sslPaths(cert, key string) (string, string, error) {
 	return path.Join(appSSLDir, cert), path.Join(appSSLDir, key), nil
 }
 
-func loadContainer(getenv func(string) string, readFile func(string) ([]byte, error)) (Config, error) {
+func loadContainer(e Env) (Config, error) {
+	getenv, readFile := e.Getenv, e.ReadFile
 	cfg := Config{Mode: ModeContainer, HAURL: getenv("HM_HA_URL"), DataDir: getenv("HM_DATA_DIR")}
 	if !strings.HasPrefix(cfg.HAURL, "ws://") && !strings.HasPrefix(cfg.HAURL, "wss://") {
 		return Config{}, fmt.Errorf("%w: HM_HA_URL must be a ws:// or wss:// URL", ErrInvalid)
 	}
-	token, err := containerToken(getenv, readFile)
+	token, err := containerToken(e)
 	if err != nil {
 		return Config{}, err
 	}
@@ -265,22 +279,46 @@ func loadContainer(getenv func(string) string, readFile func(string) ([]byte, er
 	return cfg, nil
 }
 
-func containerToken(getenv func(string) string, readFile func(string) ([]byte, error)) (ha.Secret, error) {
-	token, file := getenv("HM_HA_TOKEN"), getenv("HM_HA_TOKEN_FILE")
+// containerToken reads the access token from HM_HA_TOKEN_FILE (preferred) or HM_HA_TOKEN,
+// which it then takes out of the environment.
+func containerToken(e Env) (ha.Secret, error) {
+	token, file := e.Getenv("HM_HA_TOKEN"), e.Getenv("HM_HA_TOKEN_FILE")
 	switch {
 	case token != "" && file != "":
 		return "", fmt.Errorf("%w: set HM_HA_TOKEN or HM_HA_TOKEN_FILE, not both", ErrInvalid)
 	case file != "":
-		data, err := readFile(file)
-		if err != nil {
-			return "", fmt.Errorf("%w: HM_HA_TOKEN_FILE: %w", ErrInvalid, err)
+		var err error
+		if token, err = tokenFile(e, file); err != nil {
+			return "", err
 		}
-		token = strings.TrimSpace(string(data))
+	case token != "":
+		if err := e.Unsetenv("HM_HA_TOKEN"); err != nil {
+			return "", fmt.Errorf("%w: cannot remove HM_HA_TOKEN from the environment: %w", ErrInvalid, err)
+		}
 	}
 	if token == "" || len(token) > maxTokenBytes {
 		return "", fmt.Errorf("%w: HM_HA_TOKEN or HM_HA_TOKEN_FILE is required", ErrInvalid)
 	}
 	return ha.Secret(token), nil
+}
+
+// tokenFile reads the token from a regular file that neither group nor others can read.
+func tokenFile(e Env, file string) (string, error) {
+	info, err := e.Stat(file)
+	if err != nil {
+		return "", fmt.Errorf("%w: HM_HA_TOKEN_FILE: %w", ErrInvalid, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%w: HM_HA_TOKEN_FILE is not a regular file", ErrInvalid)
+	}
+	if info.Mode().Perm()&0o044 != 0 {
+		return "", fmt.Errorf("%w: HM_HA_TOKEN_FILE is readable by group or others; make it readable by its owner only (chmod 600)", ErrInvalid)
+	}
+	data, err := e.ReadFile(file)
+	if err != nil {
+		return "", fmt.Errorf("%w: HM_HA_TOKEN_FILE: %w", ErrInvalid, err)
+	}
+	return strings.TrimSpace(string(data)), nil
 }
 
 // caPool reads PEM certificates to trust for Home Assistant; "" means system roots.
@@ -327,6 +365,15 @@ func mcpAddr(addr string, secured bool) (string, error) {
 // SupervisorAddr is the Supervisor's address in Home Assistant OS: the hassio network
 // 172.30.32.0/23 and the Supervisor at .2 are constants of the Supervisor.
 var SupervisorAddr = netip.MustParseAddr("172.30.32.2")
+
+// hassioNetwork is the Supervisor's network: Home Assistant Core at 172.30.32.1, the
+// Supervisor at SupervisorAddr.
+var hassioNetwork = netip.MustParsePrefix("172.30.32.0/23")
+
+// appPlaintext allows plaintext in app mode exactly to the Supervisor proxy
+// (ws://supervisor/core/websocket) and Home Assistant's HTTP API (appHAHTTP), and only
+// while they resolve into the hassio network.
+var appPlaintext = ha.Plaintext{Hosts: []string{"supervisor", "homeassistant"}, Network: hassioNetwork}
 
 // ingressProxy reads HM_INGRESS_PROXY: required with HM_INGRESS_ADDR, one IP address (no
 // range, zone, unspecified or multicast address), meaningless without it.

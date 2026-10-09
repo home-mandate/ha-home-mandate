@@ -4,8 +4,12 @@ package config
 
 import (
 	"errors"
+	"net/netip"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
 func containerEnv(kv ...string) map[string]string {
@@ -37,7 +41,7 @@ func TestOAuthURLsContainerMode(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			cfg, err := Load(env(tc.env), files(nil))
+			cfg, err := load(env(tc.env), files(nil))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -68,7 +72,7 @@ func TestOAuthURLsRejected(t *testing.T) {
 	}
 	for name, m := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, err := Load(env(m), files(nil)); !errors.Is(err, ErrInvalid) {
+			if _, err := load(env(m), files(nil)); !errors.Is(err, ErrInvalid) {
 				t.Errorf("Load = %v, want ErrInvalid", err)
 			}
 		})
@@ -78,7 +82,7 @@ func TestOAuthURLsRejected(t *testing.T) {
 func TestOAuthURLsAppMode(t *testing.T) {
 	opts := `{"tls_certfile":"fullchain.pem","tls_keyfile":"privkey.pem","approval_timeout_seconds":120,"log_level":"info",` +
 		`"public_url":"https://hm.example.org:8765","ha_browser_url":"https://ha.example.org"}`
-	cfg, err := Load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": opts}))
+	cfg, err := load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": opts}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,24 +92,59 @@ func TestOAuthURLsAppMode(t *testing.T) {
 	}
 
 	// Without the options, OAuth is off: no public URL and no browser URL to guess.
-	cfg, err = Load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": options}))
+	cfg, err = load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": options}))
 	if err != nil || cfg.PublicURL != "" || cfg.HABrowserURL != "" {
 		t.Errorf("without options: %+v, %v", cfg, err)
 	}
 
 	noBrowser := strings.Replace(opts, `,"ha_browser_url":"https://ha.example.org"`, ``, 1)
-	if _, err := Load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": noBrowser})); !errors.Is(err, ErrInvalid) {
+	if _, err := load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": noBrowser})); !errors.Is(err, ErrInvalid) {
 		t.Errorf("public_url without ha_browser_url: %v", err)
 	}
 
 	bad := strings.Replace(opts, "https://hm.example.org:8765", "http://hm.lan", 1)
-	if _, err := Load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": bad})); !errors.Is(err, ErrInvalid) {
+	if _, err := load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": bad})); !errors.Is(err, ErrInvalid) {
 		t.Errorf("plaintext public_url: %v", err)
 	}
 }
 
+// The Home Assistant URLs of each mode are accepted by the Home Assistant client: in app
+// mode plaintext is allowed to the Supervisor and Home Assistant on the hassio network
+// only, in container mode to loopback only.
+func TestPlaintextHostsPerMode(t *testing.T) {
+	opts := `{"approval_timeout_seconds":120,"public_url":"https://hm.example.org:8765","ha_browser_url":"https://ha.example.org"}`
+	app, err := load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": opts}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ha.Plaintext{Hosts: []string{"supervisor", "homeassistant"}, Network: netip.MustParsePrefix("172.30.32.0/23")}
+	if !reflect.DeepEqual(app.HAPlaintext, want) || !want.Network.Contains(SupervisorAddr) {
+		t.Errorf("app mode plaintext = %+v", app.HAPlaintext)
+	}
+	if _, err := ha.HTTPClient(app.HAHTTPURL, nil, app.HAPlaintext); err != nil {
+		t.Errorf("app mode Home Assistant HTTP URL refused: %v", err)
+	}
+	if _, err := ha.New(ha.Config{URL: app.HAURL, Token: "t", Plaintext: app.HAPlaintext}); err != nil {
+		t.Errorf("app mode Home Assistant URL refused: %v", err)
+	}
+
+	container, err := load(env(containerEnv("HM_HA_URL", "ws://localhost:8123/api/websocket")), files(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(container.HAPlaintext, ha.Plaintext{}) {
+		t.Errorf("container mode plaintext = %+v, want loopback only", container.HAPlaintext)
+	}
+	if _, err := ha.HTTPClient("http://homeassistant:8123", nil, container.HAPlaintext); !errors.Is(err, ha.ErrInsecureURL) {
+		t.Errorf("container mode plaintext to homeassistant: %v", err)
+	}
+	if _, err := ha.HTTPClient("http://supervisor", nil, container.HAPlaintext); !errors.Is(err, ha.ErrInsecureURL) {
+		t.Errorf("container mode plaintext to supervisor: %v", err)
+	}
+}
+
 func TestStringShowsThePublicURL(t *testing.T) {
-	cfg, err := Load(env(containerEnv("HM_PUBLIC_URL", "https://hm.lan")), files(nil))
+	cfg, err := load(env(containerEnv("HM_PUBLIC_URL", "https://hm.lan")), files(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
