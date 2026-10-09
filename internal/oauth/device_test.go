@@ -187,6 +187,7 @@ func TestApprovalAfterExpiryIsRefused(t *testing.T) {
 // n attempts, per session and across sessions.
 func TestPairingBruteForce(t *testing.T) {
 	h := newHarness(t)
+	h.server.onboarding.raise(1000, 1000) // many sign-ins from one sender on purpose
 	a := h.device("n8n-kitchen")
 	b, page := h.pairBrowser("admin-code")
 	for i := range pairSessionMax {

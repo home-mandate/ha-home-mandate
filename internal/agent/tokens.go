@@ -30,6 +30,9 @@ var (
 	// ErrRefreshReused means a rotated refresh token was presented again; its whole
 	// family has been revoked. It is also an ErrInvalidGrant.
 	ErrRefreshReused = fmt.Errorf("%w: refresh token reused", ErrInvalidGrant)
+	// ErrRefreshWrongClient means a refresh token was presented by another OAuth client
+	// than the agent's; nothing is revoked. It is also an ErrInvalidGrant.
+	ErrRefreshWrongClient = fmt.Errorf("%w: refresh token of another client", ErrInvalidGrant)
 	// ErrEmergencyStop means no tokens are issued while the emergency stop is active.
 	ErrEmergencyStop = errors.New("agent: emergency stop active")
 )
@@ -48,7 +51,8 @@ const (
 	stopOn                 = "on"
 	stopOff                = "off"
 
-	errRefreshReused = "refresh_token_reused"
+	errRefreshReused      = "refresh_token_reused"
+	errRefreshWrongClient = "refresh_token_wrong_client"
 )
 
 var tokenLen = len(accessPrefix) + base64.RawURLEncoding.EncodedLen(tokenBytes)
@@ -158,13 +162,15 @@ type refreshRow struct {
 // same family. It must be presented by the OAuth client the agent was admitted with;
 // resource, if not empty, must be the one the family is bound to. Presenting a used
 // refresh token revokes the whole family and is logged as auth.rejected
-// (ErrRefreshReused).
+// (ErrRefreshReused). The client is checked first: a token presented by another client
+// is logged as auth.rejected but revokes nothing (ErrRefreshWrongClient), so that a
+// replay by someone else cannot cut the agent off.
 func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string) (TokenPair, error) {
 	if !wellFormed(token, refreshPrefix) {
 		return TokenPair{}, ErrInvalidGrant
 	}
 	var p TokenPair
-	reused := false
+	var rejected error // ErrRefreshReused or ErrRefreshWrongClient, after the commit
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		var r refreshRow
 		err := tx.QueryRowContext(ctx, `SELECT t.kind, t.client_id, a.display_name, t.family_id, t.resource, t.expires_at,
@@ -180,12 +186,13 @@ func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string
 		if r.kind != kindRefresh {
 			return ErrInvalidGrant
 		}
-		if r.usedAt.Valid {
-			reused = true
-			return s.revokeFamily(ctx, tx, r)
-		}
 		if r.oauthClient != oauthClient {
-			return ErrInvalidGrant
+			rejected = ErrRefreshWrongClient
+			return s.rejectRefresh(ctx, tx, r, errRefreshWrongClient)
+		}
+		if r.usedAt.Valid {
+			rejected = ErrRefreshReused
+			return s.revokeFamily(ctx, tx, r)
 		}
 		if err := s.checkRefresh(ctx, tx, r, resource); err != nil {
 			return err
@@ -201,8 +208,8 @@ func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string
 		p, err = s.insertPair(ctx, tx, r.clientID, r.family, r.resource)
 		return err
 	})
-	if err == nil && reused {
-		return TokenPair{}, ErrRefreshReused
+	if err == nil && rejected != nil {
+		return TokenPair{}, rejected
 	}
 	return p, err
 }
@@ -230,9 +237,14 @@ func (s *Store) revokeFamily(ctx context.Context, tx *sql.Tx, r refreshRow) erro
 		s.clock().Format(timeFormat), r.family); err != nil {
 		return fmt.Errorf("agent: revoke token family: %w", err)
 	}
+	return s.rejectRefresh(ctx, tx, r, errRefreshReused)
+}
+
+// rejectRefresh logs a refused refresh token of r's agent as auth.rejected.
+func (s *Store) rejectRefresh(ctx context.Context, tx *sql.Tx, r refreshRow, code string) error {
 	_, err := s.log.AppendTx(ctx, tx, audit.Entry{Event: audit.EventAuthRejected,
 		Agent:  &audit.Agent{ClientID: r.clientID, DisplayName: r.name},
-		Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication, Error: errRefreshReused}})
+		Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication, Error: code}})
 	return err
 }
 

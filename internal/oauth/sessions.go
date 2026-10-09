@@ -3,11 +3,14 @@
 package oauth
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +26,9 @@ const (
 
 // errTooManySessions means the in-memory session store is full.
 var errTooManySessions = errors.New("oauth: too many sign-ins in progress")
+
+// errSessionExpired means the session ended while Home Assistant signed the human in.
+var errSessionExpired = errors.New("oauth: session expired")
 
 // Purposes of a browser session.
 const (
@@ -141,6 +147,36 @@ func (s *sessions) dropExpired() {
 			delete(s.byID, key)
 		}
 	}
+}
+
+// pairStatePrefix marks the state of a pairing sign-in (pairState).
+const pairStatePrefix = "pair."
+
+func newPairKey() []byte {
+	key := make([]byte, secretBytes)
+	_, _ = rand.Read(key) // crypto/rand.Read never fails (Go ≥ 1.24)
+	return key
+}
+
+// pairState is the Home Assistant state of a pairing sign-in. It keeps no server state,
+// so that a bare GET /pair costs nothing: it is bound to the browser by nonce, the
+// browser's cookie, signed with the server's pairKey and valid until expires. The
+// session is created only after Home Assistant signed in an administrator.
+func (s *Server) pairState(nonce string, expires time.Time) string {
+	exp := strconv.FormatInt(expires.Unix(), 10)
+	mac := hmac.New(sha256.New, s.pairKey)
+	mac.Write([]byte(purposePair + "\x00" + nonce + "\x00" + exp))
+	return pairStatePrefix + exp + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// validPairState reports whether state is an unexpired pairState of nonce.
+func (s *Server) validPairState(nonce, state string) bool {
+	exp, _, _ := strings.Cut(strings.TrimPrefix(state, pairStatePrefix), ".")
+	unix, err := strconv.ParseInt(exp, 10, 64)
+	if nonce == "" || err != nil || !s.cfg.Now().Before(time.Unix(unix, 0)) {
+		return false
+	}
+	return equalSecret(s.pairState(nonce, time.Unix(unix, 0)), state)
 }
 
 // newSecret returns 256 bits from crypto/rand, base64url without padding.

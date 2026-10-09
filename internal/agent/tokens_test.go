@@ -517,6 +517,46 @@ func TestRefreshChecksTheOAuthClient(t *testing.T) {
 	}
 }
 
+// A used refresh token presented by another OAuth client is refused and logged, but it
+// does not revoke the family: whoever replays it cannot cut the agent off.
+func TestRefreshReuseByAnotherClientKeepsTheFamily(t *testing.T) {
+	s, log, db := newStore(t)
+	ctx := context.Background()
+	const own = "https://claude.example.org/client.json"
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.RegisterTx(ctx, tx, "Claude", agent.Client{ID: own, Verified: true}, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	first := issue(t, s, a.ClientID)
+	second, err := s.Refresh(ctx, first.RefreshToken, resource, own)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, token := range map[string]string{"used": first.RefreshToken, "unused": second.RefreshToken} {
+		_, err := s.Refresh(ctx, token, resource, "https://evil.example.org/client.json")
+		if !errors.Is(err, agent.ErrInvalidGrant) || errors.Is(err, agent.ErrRefreshReused) || !errors.Is(err, agent.ErrRefreshWrongClient) {
+			t.Errorf("%s token from another client: %v", name, err)
+		}
+	}
+	if _, err := s.Authenticate(ctx, second.AccessToken, resource); err != nil {
+		t.Errorf("family revoked by another client: %v", err)
+	}
+	if _, err := s.Refresh(ctx, second.RefreshToken, resource, own); err != nil {
+		t.Errorf("own client afterwards: %v", err)
+	}
+	out := exported(t, log)
+	if strings.Count(out, `"error":"refresh_token_wrong_client"`) != 2 || strings.Contains(out, `"error":"refresh_token_reused"`) {
+		t.Errorf("audit log:\n%s", out)
+	}
+}
+
 func TestEmergencyStopState(t *testing.T) {
 	s, _, db := newStore(t)
 	ctx := context.Background()

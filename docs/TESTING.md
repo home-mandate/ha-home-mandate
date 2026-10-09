@@ -165,15 +165,19 @@ Every line is at least one test. New attack ideas are added here before they are
 - `requested_from` behind a proxy: `X-Forwarded-For` or `Forwarded` from a peer outside the configured trusted proxies → ignored; the address is normalized and at most 45 characters
 - Redirect URIs from client metadata: not `https` (except loopback), with userinfo, fragment, wildcards, control, bidi or format characters, more than 10 or longer than 2048 characters → refused; a later metadata fetch never widens the admitted set
 - Admission by a non-admin → rejected
-- Client metadata on a private, loopback or link-local address (also after DNS resolution), other port than 443, redirect, more than 5 KB, repeated keys → rejected without a connection to the private address
+- Client metadata on a private, loopback, link-local, site-local, IPv4-compatible (`::/96`) or Teredo address (also after DNS resolution), other port than 443, redirect, more than 5 KB, repeated keys → rejected without a connection to the private address
 - Redirect URI host with characters that could end a CSP directive → rejected
 - Sign-in callback without session, with a wrong, reused or expired `state` → rejected; a wrong `state` uses the attempt up
 - Session cookie from before the sign-in → worthless afterwards (session fixation)
 - Consent without CSRF token, from another origin, or posted twice at the same time → rejected, at most one agent admitted
 - Authorization code used twice, expired, for another client, redirect URI or resource → rejected
-- Refresh token presented by another OAuth client or for another resource → rejected
+- Refresh token presented by another OAuth client or for another resource → rejected; a used one from another client revokes nothing (the family stays) and is logged as `auth.rejected`
 - Admission during the emergency stop → no agent, no tokens
-- Many sign-ins, pairings or metadata fetches from one sender → refused beyond the per-sender limit
+- Many sign-ins, pairings or metadata fetches from one sender → refused beyond the per-sender limit; all addresses of one IPv6 /64 are one sender, also behind the proxy
+- More than 60 requests a minute from one sender or 600 from all to `/oauth/authorize`, the sign-in callback, `/oauth/consent`, `/pair` or `/oauth/device_authorization` (120 and 1200 to `/oauth/token`) → 429 with `Retry-After`, a page for the browser and `temporarily_unavailable` for the agent; the token endpoint counts apart, so a flood of sign-ins does not stop refreshes; metadata and the style sheet are not limited
+- Bare `GET /pair`, any number of times → no session; its signed state is bound to the cookie, used up by a failed attempt, expires after 10 minutes and is worthless after a restart; the session is created only for an administrator Home Assistant signed in
+- Client metadata fetch that failed → not repeated for a minute (at most 100 remembered); not remembered when the caller gave up or all fetch slots were busy, so nobody can block another client's document
+- Refused authorization requests, failed sign-ins, refused admissions, reused refresh tokens, requests over the rate limit → logged at most once a minute per kind
 
 **Approval requests**
 - Answer with an unknown, expired or already used nonce → discarded

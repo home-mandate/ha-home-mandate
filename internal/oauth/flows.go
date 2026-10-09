@@ -62,7 +62,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	client, err := s.cfg.Clients.Resolve(r.Context(), q["client_id"])
 	if err != nil || !client.Verified || !redirectAllowed(client.RedirectURIs, q["redirect_uri"]) {
-		s.cfg.Logger.Warn("authorization request refused: client or redirect URI", "error", err)
+		s.warn("authorization request refused: client or redirect URI", "error", err)
 		s.fail(w, r, http.StatusBadRequest, i18n.PageInvalidClient)
 		return
 	}
@@ -118,22 +118,19 @@ func (s *Server) redirectToClient(w http.ResponseWriter, r *http.Request, authz 
 }
 
 // callback receives the human from Home Assistant. Only an administrator continues,
-// with a new session cookie.
+// with a new session cookie. A failed attempt ends the sign-in.
 func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	id := s.sessionID(r)
 	q, ok := singleValues(r.URL.Query())
-	var haState, purpose string
-	found := s.sessions.with(id, func(sess *session) {
-		haState, purpose = sess.haState, sess.purpose
-		sess.haState = "" // one attempt per sign-in
-	})
-	if !found || !ok || !equalSecret(haState, q["state"]) {
+	purpose, stored, valid := s.signInState(id, q["state"])
+	if !ok || !valid {
+		s.endSession(w, id)
 		s.fail(w, r, http.StatusBadRequest, i18n.PageSessionExpired)
 		return
 	}
 	user, err := s.cfg.SignIn.SignIn(r.Context(), q["code"])
 	if err != nil {
-		s.cfg.Logger.Warn("sign-in through Home Assistant failed", "error", err)
+		s.warn("sign-in through Home Assistant failed", "error", err)
 		s.endSession(w, id)
 		s.fail(w, r, http.StatusBadGateway, i18n.PageSignInFailed)
 		return
@@ -144,18 +141,55 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, http.StatusForbidden, i18n.PageNotAdmin)
 		return
 	}
-	newID, ok := s.sessions.rotate(id)
-	if !ok {
+	newID, err := s.signedIn(r, id, stored, user)
+	switch {
+	case errors.Is(err, errTooManySessions):
+		s.endSession(w, id)
+		s.fail(w, r, http.StatusServiceUnavailable, i18n.PageBusy)
+		return
+	case err != nil:
+		s.endSession(w, id)
 		s.fail(w, r, http.StatusBadRequest, i18n.PageSessionExpired)
 		return
 	}
-	s.sessions.with(newID, func(sess *session) { sess.user = &user })
 	s.setCookie(w, newID)
 	next := ConsentPath
 	if purpose == purposePair {
 		next = PairPath
 	}
 	http.Redirect(w, r, next, http.StatusSeeOther)
+}
+
+// signInState checks the state Home Assistant sent back against the browser's sign-in:
+// its session, whose state the first attempt uses up, or else a pairState (stored false).
+func (s *Server) signInState(id, state string) (purpose string, stored, valid bool) {
+	var haState string
+	if s.sessions.with(id, func(sess *session) {
+		haState, purpose = sess.haState, sess.purpose
+		sess.haState = "" // one attempt per sign-in
+	}) {
+		return purpose, true, equalSecret(haState, state)
+	}
+	return purposePair, false, s.validPairState(id, state)
+}
+
+// signedIn gives the administrator a session with a new cookie value: the stored session
+// rotated, or a new one after a pairing sign-in, which had none.
+func (s *Server) signedIn(r *http.Request, id string, stored bool, user ha.User) (string, error) {
+	var newID string
+	if stored {
+		var ok bool
+		if newID, ok = s.sessions.rotate(id); !ok {
+			return "", errSessionExpired
+		}
+	} else {
+		var err error
+		if newID, _, err = s.sessions.create(s.clientAddr(r), purposePair, nil); err != nil {
+			return "", err
+		}
+	}
+	s.sessions.with(newID, func(sess *session) { sess.user, sess.haState = &user, "" })
+	return newID, nil
 }
 
 func (s *Server) endSession(w http.ResponseWriter, id string) {
