@@ -187,7 +187,8 @@ was missed.
   their next change. Mandates of another issuer, signed ones included, are refused until
   importing them is needed.
 - **Removal (issue #21, SPEC-v0 section 11.3).** Only a revoked mandate or agent is
-  removed (`removed_at`, `removed_by`); a trigger keeps a removed one revoked. Removed ones
+  removed (`removed_at`, `removed_by`); triggers refuse a removed row that is not revoked
+(insert or status change) and clearing `removed_at` or `purged_at` once set. Removed ones
   are hidden from the lists of the UI (a switch shows them, read-only) and stay readable,
   versions included, while audit entries refer to them. Removing records
   `mandate.removed` (with the digest of the current version) or `agent.removed`, with the

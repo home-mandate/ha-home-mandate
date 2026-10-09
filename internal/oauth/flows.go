@@ -208,6 +208,7 @@ type consentState struct {
 	device  string
 	grantID string
 	client  Client
+	sender  string // address the pairing request came from, as the UI shows it
 }
 
 // consentSession returns the signed-in session of r with an agent to admit.
@@ -229,7 +230,7 @@ func (s *Server) consentSession(r *http.Request) (consentState, bool) {
 		return st, true
 	}
 	g, ok := s.pendingGrant(st.device)
-	st.client, st.grantID = g.client, g.id
+	st.client, st.grantID, st.sender = g.client, g.id, normalizeAddr(g.sender)
 	return st, ok
 }
 
@@ -259,6 +260,9 @@ func (s *Server) renderConsent(w http.ResponseWriter, r *http.Request, st consen
 	templates = s.withApprovers(r.Context(), templates, st.user.ID)
 	p := page{Lang: language(r), Title: i18n.PageConsentTitle, User: st.user.Name, CSRF: st.csrf, Claimed: st.client.Name,
 		ClientID: st.client.ID, Verified: st.client.Verified, Name: name, Selected: selected, Templates: templates, Error: errKey}
+	if !st.client.Verified {
+		p.ReconnectUnverified, p.ReconnectFrom = true, st.sender
+	}
 	for _, c := range s.reconnectCandidates(r.Context(), st.client) {
 		p.Reconnect = append(p.Reconnect, reconnectOption{ClientID: c.ClientID, Name: c.DisplayName, Mandate: c.MandateName,
 			Admitted: c.AdmittedAt.UTC().Format(time.DateOnly)})

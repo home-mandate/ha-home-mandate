@@ -194,8 +194,10 @@ access, with their mandate and the day they were admitted. Choose the right one 
 **Reconnect**: it gets new access and keeps its entry, its mandate with all your changes,
 and its history; the audit log records `agent.reconnected` with you as the actor. Nothing
 is preselected and nothing is reconnected on its own, because several assistants can use
-the same client (every Claude Desktop with `mcp-remote` does). If you are not sure, admit
-it as a new agent, which stays the default.
+the same client (every Claude Desktop with `mcp-remote` does). With a pairing code the
+client is only the name the agent gave itself; the pairing step says so and shows the
+address the request came from, so check that it really is that agent. If you are not
+sure, admit it as a new agent, which stays the default.
 
 Entries left over (agents you admitted anew instead) can be cleaned up on the agent's page:
 **Revoke access** with **Also remove the agent and its mandates from the lists**, see

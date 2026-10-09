@@ -63,6 +63,7 @@
 </form>
 {{if .Reconnect}}<h2 id="reconnect-title">{{.T "page_reconnect_title"}}</h2>
 <p id="reconnect-intro">{{.T "page_reconnect_intro"}}</p>
+{{if .ReconnectUnverified}}<p class="warn">{{.T "page_reconnect_unverified" "address" .ReconnectFrom}}</p>{{end}}
 <form method="post" action="/oauth/consent" aria-labelledby="reconnect-title" aria-describedby="reconnect-intro">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <fieldset class="templates">

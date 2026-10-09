@@ -214,6 +214,11 @@ type page struct {
 	Templates                           []consentTemplate
 	// Reconnect are the existing agents of the client the human may reconnect instead.
 	Reconnect []reconnectOption
+	// ReconnectFrom is the sender of a pairing request whose client ID is only the name
+	// the agent gave itself; empty for a verified client.
+	ReconnectFrom string
+	// ReconnectUnverified: the candidates match only that self-chosen name.
+	ReconnectUnverified bool
 }
 
 // reconnectOption is an agent to reconnect as the consent page shows it.

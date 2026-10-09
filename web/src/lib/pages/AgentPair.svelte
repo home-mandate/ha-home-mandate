@@ -312,7 +312,11 @@
         }}
       />
       {#if candidate.reconnect.length > 0}
-        <PairReconnect candidates={candidate.reconnect} {ctx} {busy} error={reconnectError} onreconnect={(id) => void reconnect(id)} />
+        <PairReconnect
+          candidates={candidate.reconnect}
+          verified={candidate.client_verified}
+          from={candidate.requested_from}
+          {ctx} {busy} error={reconnectError} onreconnect={(id) => void reconnect(id)} />
       {/if}
       {#if critical}
         <CriticalTemplateConfirm

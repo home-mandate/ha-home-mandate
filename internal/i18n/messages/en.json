@@ -116,5 +116,6 @@
   "page_reconnect_no_mandate": "no active mandate",
   "page_reconnect_submit": "Reconnect",
   "page_reconnect_invalid": "Choose one of the agents listed to reconnect. The list may have changed: it shows only agents of this client without access.",
-  "page_reconnected": "The agent is reconnected to its existing entry. You can close this window."
+  "page_reconnected": "The agent is reconnected to its existing entry. You can close this window.",
+  "page_reconnect_unverified": "This request comes from {address}. It used a pairing code, so these agents match only by the name the agent gave itself, which any agent can give. Reconnect only if you are sure this request really comes from that agent."
 }

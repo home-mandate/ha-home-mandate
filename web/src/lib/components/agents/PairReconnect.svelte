@@ -4,7 +4,9 @@
   same OAuth client that have no access any more are offered under the mandate step. The
   default stays admitting a new agent: nothing is chosen here until the person picks an
   agent, because several assistants can share one client. Reconnecting keeps the agent's
-  entry, mandate and history; it is recorded as agent.reconnected.
+  entry, mandate and history; it is recorded as agent.reconnected. A pairing code's client
+  ID is only the name the agent gave itself: then a warning with the address the request
+  came from comes first.
 -->
 <script lang="ts">
   import type { ReconnectCandidate } from '../../api/types.ts';
@@ -16,15 +18,20 @@
 
   interface Props {
     candidates: readonly ReconnectCandidate[];
+    /** The client ID was verified (metadata document); false for a pairing code's own name. */
+    verified: boolean;
+    /** Address the request came from. */
+    from: string;
     ctx: FormatContext;
     busy: boolean;
     error: string;
     onreconnect: (clientId: string) => void;
   }
 
-  let { candidates, ctx, busy, error, onreconnect }: Props = $props();
+  let { candidates, verified, from, ctx, busy, error, onreconnect }: Props = $props();
 
   const id = $props.id();
+  const ADDRESS_MAX = 45;
   let selected = $state('');
 
   function details(c: ReconnectCandidate): string {
@@ -37,6 +44,9 @@
 
 <section class="reconnect" aria-labelledby="{id}-title" aria-describedby="{id}-intro">
   <h3 id="{id}-title">{m.pair_reconnect_title()}</h3>
+  {#if !verified}
+    <p class="warn"><Icon name="warning" size={16} /><span>{m.pair_reconnect_unverified({ address: isolate(from, ADDRESS_MAX) })}</span></p>
+  {/if}
   <p id="{id}-intro">{m.pair_reconnect_intro()}</p>
   <fieldset>
     <legend class="hm-visually-hidden">{m.pair_reconnect_choose()}</legend>
@@ -117,6 +127,16 @@
   .about {
     font-size: var(--hm-font-size-sm);
     color: var(--hm-color-text-muted);
+    overflow-wrap: anywhere;
+  }
+  .warn {
+    display: flex;
+    gap: var(--hm-space-2);
+    padding: var(--hm-space-3);
+    border-radius: var(--hm-radius-md);
+    background: var(--hm-color-warning-bg);
+    color: var(--hm-color-warning-fg);
+    font-weight: var(--hm-font-weight-medium);
     overflow-wrap: anywhere;
   }
   .error {

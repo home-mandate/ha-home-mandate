@@ -951,5 +951,6 @@
   "pair_reconnect_no_mandate": "kein aktives Mandat",
   "pair_reconnect_button": "Wieder verbinden",
   "pair_reconnect_failed": "Wiederverbinden hat nicht geklappt: Der Agent wird nicht mehr angeboten oder die Anfrage hat sich geändert. Prüfe den Code erneut.",
-  "pair_reconnected_body": "Er macht mit seinem bestehenden Eintrag, seinem Verlauf und dem Mandat „{mandate}“ weiter."
+  "pair_reconnected_body": "Er macht mit seinem bestehenden Eintrag, seinem Verlauf und dem Mandat „{mandate}“ weiter.",
+  "pair_reconnect_unverified": "Diese Anfrage kommt von {address}. Sie nutzt einen Kopplungscode, daher passen diese Agenten nur über den Namen, den sich der Agent selbst gegeben hat – den kann jeder Agent angeben. Verbinde nur wieder, wenn du sicher bist, dass die Anfrage wirklich von diesem Agenten kommt."
 }

@@ -116,5 +116,6 @@
   "page_reconnect_no_mandate": "kein aktives Mandat",
   "page_reconnect_submit": "Wieder verbinden",
   "page_reconnect_invalid": "Wähle einen der aufgeführten Agenten zum Wiederverbinden. Die Liste kann sich geändert haben: Sie zeigt nur Agenten dieses Clients ohne Zugang.",
-  "page_reconnected": "Der Agent ist wieder mit seinem bestehenden Eintrag verbunden. Du kannst dieses Fenster schließen."
+  "page_reconnected": "Der Agent ist wieder mit seinem bestehenden Eintrag verbunden. Du kannst dieses Fenster schließen.",
+  "page_reconnect_unverified": "Diese Anfrage kommt von {address}. Sie nutzt einen Kopplungscode, daher passen diese Agenten nur über den Namen, den sich der Agent selbst gegeben hat – den kann jeder Agent angeben. Verbinde nur wieder, wenn du sicher bist, dass die Anfrage wirklich von diesem Agenten kommt."
 }

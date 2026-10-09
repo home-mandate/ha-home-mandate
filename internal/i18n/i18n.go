@@ -117,15 +117,16 @@ const (
 	PagePairInvalid               Key = "page_pair_invalid"
 	PagePairLocked                Key = "page_pair_locked"
 	// Reconnecting an existing agent instead of admitting a new one (issue #22).
-	PageAdmitNew         Key = "page_admit_new"
-	PageReconnectTitle   Key = "page_reconnect_title"
-	PageReconnectIntro   Key = "page_reconnect_intro"
-	PageReconnectChoose  Key = "page_reconnect_choose"
-	PageReconnectDetails Key = "page_reconnect_details"
-	PageReconnectNone    Key = "page_reconnect_no_mandate"
-	PageReconnectSubmit  Key = "page_reconnect_submit"
-	PageReconnectInvalid Key = "page_reconnect_invalid"
-	PageReconnected      Key = "page_reconnected"
+	PageAdmitNew            Key = "page_admit_new"
+	PageReconnectTitle      Key = "page_reconnect_title"
+	PageReconnectIntro      Key = "page_reconnect_intro"
+	PageReconnectChoose     Key = "page_reconnect_choose"
+	PageReconnectDetails    Key = "page_reconnect_details"
+	PageReconnectNone       Key = "page_reconnect_no_mandate"
+	PageReconnectSubmit     Key = "page_reconnect_submit"
+	PageReconnectInvalid    Key = "page_reconnect_invalid"
+	PageReconnected         Key = "page_reconnected"
+	PageReconnectUnverified Key = "page_reconnect_unverified"
 )
 
 // actions are the vocabulary actions of SPEC-v0 section 5; their display names have the
@@ -147,7 +148,7 @@ var Keys = append([]Key{
 	PageConsentApproverNoCritical, PageConsentApproverUI, PageConsentApproverUnknown, PageConsentApproverService,
 	PageConsentNobody, PageConsentNobodyCritical, PageConsentReachUnknown,
 	PageAdmitNew, PageReconnectTitle, PageReconnectIntro, PageReconnectChoose, PageReconnectDetails, PageReconnectNone,
-	PageReconnectSubmit, PageReconnectInvalid, PageReconnected,
+	PageReconnectSubmit, PageReconnectInvalid, PageReconnected, PageReconnectUnverified,
 }, append(actionKeys(), categoryKeys()...)...)
 
 // categories are the vocabulary categories of SPEC-v0 section 5; their display names

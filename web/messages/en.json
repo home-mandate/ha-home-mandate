@@ -951,5 +951,6 @@
   "pair_reconnect_no_mandate": "no active mandate",
   "pair_reconnect_button": "Reconnect",
   "pair_reconnect_failed": "Couldn’t reconnect: the agent is no longer offered or the request changed. Check the code again.",
-  "pair_reconnected_body": "It continues with its existing entry, its history and the mandate “{mandate}”."
+  "pair_reconnected_body": "It continues with its existing entry, its history and the mandate “{mandate}”.",
+  "pair_reconnect_unverified": "This request comes from {address}. It uses a pairing code, so these agents match only by the name the agent gave itself, which any agent can give. Reconnect only if you are sure this request really comes from that agent."
 }

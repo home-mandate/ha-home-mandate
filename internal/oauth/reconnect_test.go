@@ -61,6 +61,9 @@ func TestConsentOffersToReconnectAfterAnEmergencyStop(t *testing.T) {
 		!strings.Contains(page.body, "Reconnect an existing agent") || !strings.Contains(page.body, "Admit as a new agent") {
 		t.Fatalf("consent page:\n%s", page.body)
 	}
+	if strings.Contains(page.body, "the name the agent gave itself") {
+		t.Error("warning about a self-chosen name for a verified client")
+	}
 	// Nothing is chosen for the human: the radio buttons start unchecked.
 	if strings.Contains(page.body, `value="`+a.ClientID+`" required checked`) {
 		t.Error("an agent to reconnect is preselected")
@@ -132,6 +135,11 @@ func TestPairingPageOffersToReconnect(t *testing.T) {
 	consent = b.get(b.enterCode(page, again.UserCode).location)
 	if !strings.Contains(consent.body, `name="agent" value="`+admitted[0].ClientID+`"`) || !strings.Contains(consent.body, "Kitchen n8n") {
 		t.Fatalf("consent:\n%s", consent.body)
+	}
+	// A pairing code's client ID is only the name the agent gave itself: the page says so and
+	// names the address the request came from.
+	if !strings.Contains(consent.body, "the name the agent gave itself") || !strings.Contains(consent.body, "127.0.0.1") {
+		t.Errorf("no warning for an unverified client:\n%s", consent.body)
 	}
 	res := b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, consent.body)}, "action": {"reconnect"}, "agent": {admitted[0].ClientID}})
 	if res.status != http.StatusOK || !strings.Contains(res.body, "reconnected") {

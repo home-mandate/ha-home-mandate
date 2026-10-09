@@ -406,6 +406,9 @@ describe('reconnecting after an emergency stop (#22)', () => {
     const option = within(region).getByRole('radio', { name: /Küchen-Tablet/ }) as HTMLInputElement;
     expect(option.checked).toBe(false);
     expect(region.textContent).toMatch(/Mandate: .*Tablet Küche.* · admitted on/);
+    // A pairing code's client ID is only the name the agent gave itself: say so, with the address.
+    const warning = within(region).getByText(/the name the agent gave itself/);
+    expect(warning.textContent).toContain('192.168.1.42');
     const button = within(region).getByRole('button', { name: 'Reconnect' });
     expect(button.getAttribute('aria-disabled')).toBe('true');
     const before = (await api.agents()).length;

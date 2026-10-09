@@ -51,8 +51,12 @@ token can be used once; presenting a used one again revokes all tokens of that a
 Revoking the agent or the emergency stop takes effect with its next request. After an
 emergency stop the agent signs in again as at its first admission; the administrator then
 reconnects it to its existing entry (same client ID inside Home-Mandate, same mandate and
-history) instead of admitting a new agent. Only agents admitted with the same OAuth client
-(the same `client_id`, verified the same way) and without valid tokens are offered. An agent whose
+history) instead of admitting a new agent. Only active agents without valid tokens that
+were admitted with the same OAuth client are offered: for a browser sign-in that is the
+verified client (the same Client ID Metadata Document URL); for a pairing code it is only
+the identifier the agent chose itself, which any agent can give. The pairing step therefore
+says so and shows the address the request came from; the administrator's explicit choice
+is what decides, and admitting a new agent stays the default. An agent whose
 refresh token expired after 30 days without use is offered the same way.
 
 ## Admitting: browser sign-in or pairing code
