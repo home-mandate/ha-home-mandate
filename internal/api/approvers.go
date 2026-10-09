@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/approval"
-	"github.com/home-mandate/home-mandate/internal/ha"
-	"github.com/home-mandate/home-mandate/internal/i18n"
-	"github.com/home-mandate/home-mandate/internal/untrusted"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/i18n"
+	"github.com/home-mandate/ha-home-mandate/internal/untrusted"
 )
 
 const (
@@ -296,7 +296,7 @@ func (s *Server) putApprover(r *request) (any, error) {
 	if err := approval.CheckUI(ap, admin); err != nil {
 		return nil, failField(codeInvalidInput, "/ui")
 	}
-	if err := s.cfg.Approvers.PutIf(r.Context(), ap, in.BaseVersion); err != nil {
+	if err := s.cfg.Approvers.PutIf(r.Context(), ap, in.BaseVersion, s.actor(r)); err != nil {
 		switch {
 		case errors.Is(err, approval.ErrApproversChanged):
 			return nil, fail(codeConflict)
@@ -350,7 +350,7 @@ func (s *Server) deleteApprover(r *request) (any, error) {
 	if len(base) != 1 || !approversVersionPattern.MatchString(base[0]) {
 		return nil, failField(codeInvalidInput, "/base_version")
 	}
-	switch err := s.cfg.Approvers.RemoveIf(r.Context(), id, base[0]); {
+	switch err := s.cfg.Approvers.RemoveIf(r.Context(), id, base[0], s.actor(r)); {
 	case errors.Is(err, approval.ErrApproverNotFound):
 		return nil, fail(codeNotFound)
 	case errors.Is(err, approval.ErrApproversChanged):

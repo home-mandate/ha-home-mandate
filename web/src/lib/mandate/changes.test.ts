@@ -5,7 +5,7 @@ import { devicesFixture, voiceAssistantDraft } from '../api/fixtures.ts';
 import type { MandateDraft, Rule } from '../api/types.ts';
 import { diff } from '../engine/analysis.ts';
 import { setLocale } from '../paraglide/runtime.js';
-import { countChanges, effectGroups, ruleChanges, settingChanges } from './changes.ts';
+import { countChanges, effectGroups, ruleChanges, ruleUnsaved, settingChanges } from './changes.ts';
 import { appendRule, moveRule, removeRule, replaceRule, withDecision, withExpires, withLimit, withValidFrom, withWindow } from './edit.ts';
 import { describeProblems } from './problems.ts';
 
@@ -30,6 +30,28 @@ describe('ruleChanges', () => {
       ['added', 'rule-1', 4],
       ['removed', 'no-cameras', 4],
     ]);
+  });
+});
+
+describe('ruleUnsaved', () => {
+  it('is false for a rule as stored, also with its actions in another order', () => {
+    const shuffled = replaceRule(base, 0, { ...ruleAt(base, 0), actions: ['set', 'turn_off', 'turn_on', 'read'] });
+    expect(ruleUnsaved(base, structuredClone(base), 'lights')).toBe(false);
+    expect(ruleUnsaved(base, shuffled, 'lights')).toBe(false);
+  });
+
+  it('is true for a changed rule and for a rule that is not stored yet', () => {
+    const changed = replaceRule(base, 0, withDecision(ruleAt(base, 0), 'ask'));
+    expect(ruleUnsaved(base, changed, 'lights')).toBe(true);
+    // Other rules of the same draft stay as stored.
+    expect(ruleUnsaved(base, changed, 'no-cameras')).toBe(false);
+    const added = appendRule(base);
+    expect(ruleUnsaved(base, added, added.rules.at(-1)?.id ?? '')).toBe(true);
+  });
+
+  it('is false for a rule the draft does not have (removed meanwhile)', () => {
+    expect(ruleUnsaved(base, removeRule(base, 0), 'lights')).toBe(false);
+    expect(ruleUnsaved(base, base, 'unknown')).toBe(false);
   });
 });
 

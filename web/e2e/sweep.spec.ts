@@ -51,17 +51,87 @@ const SCREENS: Screen[] = [
   { name: 'mandates', path: './#/mandates' },
   { name: 'mandate editor', path: './#/mandates/mandate-voice' },
   { name: 'mandate editor, long names', path: './#/mandates/mandate-long' },
+  {
+    name: 'mandate editor, a rule changed and not saved (issue #20)',
+    path: './#/mandates/mandate-voice',
+    setup: async (page) => {
+      // No texts here: the pseudo build translates them. Rule 1 to "ask", then "Done".
+      await page.locator('main ol > li .head .btn.text').first().click();
+      await page.locator('main li.editing [role="radiogroup"]').first().getByRole('radio').nth(1).click();
+      await page.locator('main li.editing .btn.primary').click();
+      await expect(page.locator('main li p.unsaved')).toBeVisible();
+      await expect(page.locator('section.savebar')).toBeVisible();
+    },
+  },
+  {
+    name: 'mandate editor, unsaved changes from earlier (issue #20)',
+    path: './#/mandates/mandate-voice',
+    setup: async (page) => {
+      await page.locator('main .rate input[type="number"]').fill('20');
+      await page.locator('main a[href="#/mandates"]').first().click();
+      await page.locator('main a[href="#/mandates/mandate-voice"]').first().click();
+      await expect(page.locator('main .banner.warning')).toBeVisible();
+    },
+  },
   { name: 'mandate versions', path: './#/mandates/mandate-voice/versions' },
   { name: 'templates', path: './#/templates' },
   { name: 'template editor, base template', path: './#/templates/hm-voice-cautious' },
   { name: 'template editor, own template', path: './#/templates/voice-assistant' },
   { name: 'template editor, new template', path: './#/templates/_new' },
+  {
+    name: 'template editor, unsaved changes (issue #20)',
+    path: './#/templates/hm-voice-cautious',
+    setup: async (page) => {
+      await page.locator('main .rate input[type="number"]').fill('20');
+      await expect(page.locator('section.savebar')).toBeVisible();
+    },
+  },
+  {
+    name: 'template saved, take the change over into mandates',
+    path: './#/templates/voice-assistant',
+    setup: async (page) => {
+      // No texts here: the pseudo build translates them. The rate limit, Save, then the summary's confirmation.
+      await page.locator('main .rate input[type="number"]').fill('20');
+      await page.locator('main button.btn.primary').first().click();
+      await page.getByRole('dialog').locator('button.btn.primary').click();
+      await expect(page.getByRole('dialog').getByRole('checkbox').first()).toBeVisible();
+    },
+  },
   { name: 'audit log', path: './#/audit' },
   { name: 'audit entry', path: './#/audit/8' },
   { name: 'requests', path: './#/audit/requests' },
   { name: 'agents', path: './#/agents' },
+  { name: 'agents, adding', path: './#/agents?add' },
+  { name: 'agents, adding to an empty household', path: './#/agents?add', mock: { empty: true } },
   { name: 'agent detail', path: `./#/agents/id/${CLAUDE}` },
   { name: 'agent detail, revoked', path: './#/agents/id/pair%3Aold-bot' },
+  {
+    name: 'agent detail, revoked, removing (#21)',
+    path: './#/agents/id/pair%3Aold-bot',
+    setup: async (page) => {
+      await page.locator('main .end button').click();
+      await expect(page.getByRole('alertdialog').getByRole('checkbox')).toBeVisible();
+    },
+  },
+  { name: 'agent detail, not signed in after an emergency stop (#22)', path: `./#/agents/id/${CLAUDE}`, mock: { afterStop: true } },
+  {
+    name: 'agent detail, revoke and remove (#21)',
+    path: `./#/agents/id/${CLAUDE}`,
+    setup: async (page) => {
+      await page.locator('main .end button').click();
+      await page.getByRole('alertdialog').getByRole('checkbox').check();
+    },
+  },
+  {
+    name: 'agents, removed shown (#21)',
+    path: './#/agents',
+    setup: async (page) => {
+      await page.locator('main .tools button.btn').click();
+      await page.getByRole('alertdialog').locator('button.btn.danger').click();
+      await page.getByRole('switch').click();
+      await expect(page.getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+    },
+  },
   { name: 'agent detail, long name', path: './#/agents/id/pair%3Along' },
   { name: 'agent detail, bidi name', path: './#/agents/id/pair%3Abidi' },
   { name: 'pairing', path: './#/agents/pair' },
@@ -76,6 +146,35 @@ const SCREENS: Screen[] = [
       await page.keyboard.press('Tab'); // Continue
       await page.keyboard.press('Enter');
       await expect(page.getByRole('radio').first()).toBeVisible();
+    },
+  },
+  {
+    name: 'pairing, nobody can approve',
+    path: './#/agents/pair',
+    mock: { noApprovers: true },
+    setup: async (page) => {
+      await page.getByRole('textbox').first().fill('bcdf ghjk');
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('heading', { level: 2 })).toBeFocused();
+      await page.keyboard.press('Tab'); // "This isn't my agent"
+      await page.keyboard.press('Tab'); // Continue
+      await page.keyboard.press('Enter');
+      await page.locator('input[type="radio"][value="hm-voice-cautious"]').check();
+      await expect(page.locator('a[href="#/settings/approvers"]')).toBeVisible();
+    },
+  },
+  {
+    name: 'pairing, reconnect after an emergency stop (#22)',
+    path: './#/agents/pair',
+    mock: { afterStop: true },
+    setup: async (page) => {
+      await page.getByRole('textbox').first().fill('bcdf ghjk');
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('heading', { level: 2 })).toBeFocused();
+      await page.keyboard.press('Tab'); // "This isn't my agent"
+      await page.keyboard.press('Tab'); // Continue
+      await page.keyboard.press('Enter');
+      await page.locator('.reconnect input[type="radio"]').first().check();
     },
   },
   { name: 'browser sign-in', path: './#/agents/browser' },

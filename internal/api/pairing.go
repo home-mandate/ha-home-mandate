@@ -8,11 +8,11 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/mandate"
-	"github.com/home-mandate/home-mandate/internal/oauth"
-	"github.com/home-mandate/home-mandate/internal/untrusted"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/oauth"
+	"github.com/home-mandate/ha-home-mandate/internal/untrusted"
 )
 
 // maxCode bounds the typed code; the server ignores case, spaces and the dash.
@@ -26,6 +26,22 @@ type wirePairingCandidate struct {
 	RequestedAt    string `json:"requested_at"`
 	ExpiresAt      string `json:"expires_at"`
 	RequestedFrom  string `json:"requested_from"`
+	// Reconnect are existing agents of this client without a valid token (issue #22).
+	Reconnect []wireReconnect `json:"reconnect"`
+}
+
+// wireReconnect is an existing agent offered for reconnecting.
+type wireReconnect struct {
+	ClientID    string          `json:"client_id"`
+	DisplayName string          `json:"display_name"`
+	AdmittedAt  string          `json:"admitted_at"`
+	Mandate     *wireMandateRef `json:"mandate"`
+}
+
+// wireMandateRef names a mandate.
+type wireMandateRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type pairingDecision struct {
@@ -103,9 +119,18 @@ func (s *Server) pairingCheck(r *request) (any, error) {
 		return nil, pairingError(err)
 	}
 	// Claimed by the agent: cleaned here as well as in the UI (defence in depth).
-	return wirePairingCandidate{PairingID: c.PairingID, ClaimedName: untrusted.Clean(c.ClaimedName, untrusted.Max),
+	out := wirePairingCandidate{PairingID: c.PairingID, ClaimedName: untrusted.Clean(c.ClaimedName, untrusted.Max),
 		Client: untrusted.Clean(c.Client, untrusted.Max), ClientVerified: c.ClientVerified,
-		RequestedAt: *formatTime(c.RequestedAt), ExpiresAt: *formatTime(c.ExpiresAt), RequestedFrom: c.RequestedFrom}, nil
+		RequestedAt: *formatTime(c.RequestedAt), ExpiresAt: *formatTime(c.ExpiresAt), RequestedFrom: c.RequestedFrom,
+		Reconnect: make([]wireReconnect, 0, len(c.Reconnect))}
+	for _, a := range c.Reconnect {
+		w := wireReconnect{ClientID: a.ClientID, DisplayName: a.DisplayName, AdmittedAt: *formatTime(a.AdmittedAt)}
+		if a.MandateID != "" {
+			w.Mandate = &wireMandateRef{ID: a.MandateID, Name: a.MandateName}
+		}
+		out.Reconnect = append(out.Reconnect, w)
+	}
+	return out, nil
 }
 
 // validDisplayName applies the rules of agent names (and mandate names): trimmed, 1 to

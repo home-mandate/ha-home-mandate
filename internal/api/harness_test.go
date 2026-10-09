@@ -20,16 +20,16 @@ import (
 	"testing"
 	"time"
 
-	mandatespec "github.com/mandate-spec/mandate-spec"
+	"github.com/home-mandate/spec"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/approval"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/catalog"
-	"github.com/home-mandate/home-mandate/internal/ha"
-	"github.com/home-mandate/home-mandate/internal/mandate"
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 const (
@@ -230,7 +230,7 @@ var testStart = time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC)
 
 func voiceTemplate(t *testing.T, edit func(map[string]any)) []byte {
 	t.Helper()
-	data, err := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,8 +254,11 @@ func newHarness(t *testing.T) *harness {
 	log := audit.New(st.DB(), household)
 	agents := agent.New(st.DB(), log)
 	mandates := mandate.New(st.DB(), log, household, "urn:uuid:5b0c9f4e-8f1a-4c2e-9d3b-7a6e5f4d3c2b")
-	adm := admission.New(st.DB(), agents, mandates, household)
-	if err := adm.PutTemplate(ctx, "voice-assistant", voiceTemplate(t, nil), audit.Actor{Kind: audit.ActorUser, ID: adminID}); err != nil {
+	adm := admission.New(st.DB(), log, agents, mandates, household)
+	// The template is part of the household the tests start with: stored directly, so
+	// that the audit log starts empty.
+	if _, err := st.DB().ExecContext(ctx, `INSERT INTO mandate_templates (name, document, created_at, created_by) VALUES (?, ?, ?, ?)`,
+		"voice-assistant", string(voiceTemplate(t, nil)), testStart.Format(time.RFC3339Nano), adminID); err != nil {
 		t.Fatal(err)
 	}
 	renames, err := catalog.LoadRenames(ctx, st.DB())
@@ -263,7 +266,7 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	h := &harness{t: t, ha: fakeHousehold(), cat: house(), marks: &fakeMarks{set: map[string]string{}}, renames: renames, st: st, log: log, agents: agents, mandates: mandates, adm: adm,
-		approvers: approval.NewApprovers(st.DB()), notifier: &recordingNotifier{}, now: &clock{t: testStart},
+		approvers: approval.NewApprovers(st.DB(), log), notifier: &recordingNotifier{}, now: &clock{t: testStart},
 		status: Status{HAConnected: true, HASince: testStart.Add(-time.Hour), HAVersion: "2026.9.4", ServiceUser: serviceID,
 			TimeZone: "Europe/Berlin", Language: "de", Units: map[string]string{"temperature": "°C", "length": "km", "extra": "x"}}}
 	h.build()
@@ -281,7 +284,7 @@ func (h *harness) build() {
 		Approvals: h.approvals, Pairing: h.pairing, HA: h.ha, Catalog: h.cat, Marks: h.marks, Renames: h.renames, Status: func() Status { return h.status },
 		UI:    http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ui") }),
 		Proxy: netip.MustParseAddr(supervisorAddr), Principal: household, Mode: "app", Version: "0.1.0", Commit: "abc123", MCPURL: "https://hm.example.org:8765/mcp",
-		TLS: func() TLSStatus { return TLSStatus{Present: true, ValidUntil: testStart.Add(90 * 24 * time.Hour)} }, Retention: 30 * 24 * time.Hour,
+		TLS: func() TLSStatus { return TLSStatus{Present: true, ValidUntil: testStart.Add(90 * 24 * time.Hour)} }, Retention: 30 * 24 * time.Hour, ApprovalTimeout: 5 * time.Minute,
 		Direct: h.direct, PublicURL: h.publicURL,
 		DirectUI: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "direct ui") }),
 		Now:      h.now.Now})
@@ -426,18 +429,25 @@ func (h *harness) mandateOf(clientID string) mandate.Info {
 // putApprover stores an approver directly.
 func (h *harness) putApprover(ap approval.Approver) {
 	h.t.Helper()
-	if err := h.approvers.Put(context.Background(), ap); err != nil {
+	if err := h.approvers.Put(context.Background(), ap, audit.Actor{Kind: audit.ActorUser, ID: adminID}); err != nil {
 		h.t.Fatal(err)
 	}
 }
 
 // ask opens an approval request as the gateway would and, like it, writes the audit
-// entry of the outcome with the request ID. It returns the request ID.
+// entry of the outcome with the request ID. It returns the request ID. A request still
+// open when the test ends is dropped with it: its timeout must not report into a test
+// that is over (and whose store is closed).
 func (h *harness) ask(req approval.Request) (string, chan approval.Result) {
 	h.t.Helper()
 	done := make(chan approval.Result, 1)
+	ctx := h.t.Context()
 	go func() {
-		res, err := h.approvals.Ask(context.Background(), req)
+		res, err := h.approvals.Ask(ctx, req)
+		if ctx.Err() != nil {
+			close(done)
+			return
+		}
 		if err != nil {
 			h.t.Errorf("Ask: %v", err)
 			close(done)

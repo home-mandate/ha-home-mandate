@@ -6,9 +6,9 @@ import (
 	"context"
 	"strings"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/i18n"
-	"github.com/home-mandate/home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/i18n"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 )
 
 // consentTemplate is a template as the consent page shows it: what the human chooses
@@ -18,6 +18,7 @@ type consentTemplate struct {
 	Digest                   string // bound to the choice: the human approves what they saw
 	Base                     bool
 	Allow, Ask, Deny         []string
+	Approvers                *consentApprovers // who may approve; nil when not known here
 }
 
 // consentTemplates lists the templates a human may choose at admission: hidden base

@@ -75,13 +75,19 @@ export interface ChainStatus {
 }
 
 export interface SystemStatus {
-  /** v0.1 serves the UI only through Ingress, i.e. in app mode. */
+  /** app: Home Assistant OS app (UI through Ingress); container: own container (UI in direct mode). */
   mode: 'app' | 'container';
   version: string;
   commit: string;
   /** Server clock, for countdowns that must not depend on the browser clock. */
   server_time: string;
   retention_days: number;
+  /**
+   * The installation's upper limit for an approval wait in seconds (app option
+   * approval_timeout_seconds, HM_APPROVAL_TIMEOUT; 30–600). A mandate may only shorten it:
+   * a longer mandate timeout is capped to it when a request is decided.
+   */
+  approval_timeout_seconds: number;
   /**
    * user_name: Home-Mandate's own Home Assistant user. commands: the fixed allowlist of
    * WebSocket commands it may send (internal/ha), shown under "Why admin rights?".
@@ -90,7 +96,8 @@ export interface SystemStatus {
   /** URL agents connect to; null without TLS (MCP only on localhost then). */
   mcp_url: string | null;
   /** renewal_failed: renewed files could not be taken over; the previous certificate is in use. */
-  tls: { present: boolean; valid_until: string | null; renewal_failed: boolean };
+  /** proxy: TLS ends at the reverse proxy in front (HM_PROXY), which holds the certificate. */
+  tls: { present: boolean; valid_until: string | null; renewal_failed: boolean; proxy: boolean };
   emergency_stop: EmergencyStop;
   /** The server clock lies behind the newest audit entry: no request is decided (SPEC-v0 section 11.4). */
   clock_behind: boolean;
@@ -102,7 +109,8 @@ export interface SystemStatus {
 }
 
 // ---------------------------------------------------------------------------
-// Agents: GET api/agents, POST api/agents/revoke
+// Agents: GET api/agents, POST api/agents/revoke, POST api/agents/remove,
+// POST api/revoked/remove
 //
 // Client IDs are often URLs. They travel in the body, never in the path: an encoded "/"
 // (%2F) does not survive every proxy on the Ingress path unchanged.
@@ -132,6 +140,18 @@ export interface Agent {
   /** When and by whom the agent was revoked; null while active. */
   revoked_at: string | null;
   revoked_by_name: string | null;
+  /**
+   * When and by whom the revoked agent was removed from the lists (issue #21); null while
+   * listed. The UI hides removed agents unless asked; they stay revoked for good.
+   * removed_by_name is null for the retention of Home-Mandate.
+   */
+  removed_at: string | null;
+  removed_by_name: string | null;
+  /**
+   * The agent holds a valid token. False after an emergency stop until it signs in again
+   * and is reconnected (issue #22), or once its tokens expired.
+   */
+  connected: boolean;
   /** Requests of the agent (any decision) on the current day in the household's time zone. */
   requests_today: number;
   /** Requests counted against the mandate's rate limit in the last 60 minutes. */
@@ -142,12 +162,39 @@ export interface Agent {
    * new mandate through POST api/mandates. max_actions_per_hour: the mandate's rate limit,
    * null without one; digest: of its current version (base for apply-template).
    */
-  mandate: { id: string; name: string; status: MandateStatus; max_actions_per_hour: number | null; digest: string } | null;
+  mandate: {
+    id: string;
+    name: string;
+    status: MandateStatus;
+    max_actions_per_hour: number | null;
+    digest: string;
+    /** The template the rules were last taken from; null if unknown. */
+    rules_from: RulesFrom | null;
+    /** Set once the revoked mandate was removed from the lists. */
+    removed_at: string | null;
+  } | null;
 }
 
 /** POST api/agents/revoke: revokes the agent, its tokens and its mandate at once. */
 export interface AgentRevoke {
   client_id: string;
+}
+
+/**
+ * POST api/agents/remove → Agent. Only a revoked agent is removed (otherwise "conflict"),
+ * unless revoke is set: then an active agent is revoked first, in the same step (leftovers
+ * after an emergency stop). mandates: remove its mandates too, each recorded on its own.
+ */
+export interface AgentRemove {
+  client_id: string;
+  revoke?: boolean;
+  mandates?: boolean;
+}
+
+/** POST api/revoked/remove (no body): removes every revoked agent with its mandates and every revoked mandate. */
+export interface RemovedCount {
+  agents: number;
+  mandates: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +223,29 @@ export interface PairingCandidate {
   expires_at: string;
   /** Network address the pairing request came from (decision G4); only shown here, not logged in the audit. */
   requested_from: string;
+  /**
+   * Existing agents of the same OAuth client without a valid token, e.g. after an
+   * emergency stop (issue #22). The person may reconnect one instead of admitting a new
+   * agent; nothing is preselected. Several assistants can share a client.
+   */
+  reconnect: ReconnectCandidate[];
+}
+
+export interface ReconnectCandidate {
+  client_id: string;
+  /** Chosen by a human at admission; untrusted text. */
+  display_name: string;
+  admitted_at: string;
+  /** The agent's active mandate; null without one. */
+  mandate: { id: string; name: string } | null;
+}
+
+/**
+ * POST api/pairing/reconnect → Agent: gives the chosen agent new tokens instead of
+ * admitting a new one (agent.reconnected). "conflict" if it is no longer offered.
+ */
+export interface PairingReconnect extends PairingDecision {
+  client_id: string;
 }
 
 export interface PairingDecision extends PairingCode {
@@ -255,7 +325,7 @@ export interface DeviceCatalog {
 }
 
 // ---------------------------------------------------------------------------
-// Mandates (mandate-spec schema/mandate-v0.schema.json)
+// Mandates (specification schema/mandate-v0.schema.json)
 
 export type Decision = 'allow' | 'ask' | 'deny';
 /** Stored status; "not yet valid" and "expired" follow from the dates and the server time. */
@@ -314,7 +384,7 @@ export interface MandateDraft {
 
 /** A stored mandate version, as in the schema. */
 export interface MandateDocument extends MandateDraft {
-  type: 'https://mandate-spec.org/mandate/v0';
+  type: 'https://home-mandate.org/mandate/v0';
   id: string;
   principal: string;
   agent: { client_id: string; display_name: string };
@@ -325,6 +395,25 @@ export interface MandateDocument extends MandateDraft {
   issuer?: string;
   /** Counts up with every stored version of the mandate, also when one restores an earlier one. */
   version?: number;
+}
+
+/**
+ * Where the rules of a mandate version came from (display only, never evaluated):
+ * "template" (at admission, for a new mandate or applied later), "edit" (editor, command
+ * line, a rename taken over), "unknown" for versions stored before origins were kept.
+ */
+export type VersionOrigin = 'template' | 'edit' | 'unknown';
+
+/** The template whose rules a mandate last took over. */
+export interface RulesFrom {
+  /** Template name (base templates are shown by their title). */
+  template: string;
+  /** Digest of the template's content then (TemplateSummary.digest). */
+  template_digest: string;
+  /** When that version was stored. */
+  at: string;
+  /** A later version came from an edit. */
+  edited_since: boolean;
 }
 
 export interface MandateSummary {
@@ -350,6 +439,13 @@ export interface MandateSummary {
    * catalog is not loaded.
    */
   stale_references: StaleReference[];
+  /** The template the rules were last taken from; null if unknown or never from one. */
+  rules_from: RulesFrom | null;
+  /**
+   * Set once the revoked mandate was removed from the lists (issue #21, POST
+   * api/mandates/{id}/remove). The UI hides it unless asked; it stays readable.
+   */
+  removed_at: string | null;
 }
 
 export interface StaleReference {
@@ -393,6 +489,10 @@ export interface MandateVersion {
   created_at: string;
   created_by: string;
   created_by_name: string | null;
+  origin: VersionOrigin;
+  /** Name and digest of the template, for origin "template" only. */
+  template: string | null;
+  template_digest: string | null;
 }
 
 /** GET api/mandates/{id}; versions newest first. A single version: GET api/mandates/{id}/versions/{number}. */
@@ -409,7 +509,7 @@ export interface MandateDetail {
 export interface MandateCreate {
   client_id: string;
   template: string;
-  /** Default: the template name. */
+  /** Default: the agent's display name. */
   name?: string;
   /** As for PairingApprove: needed for a template with allow_critical rules (U9). */
   confirm_critical?: boolean;
@@ -440,7 +540,17 @@ export interface MandateUpdate {
 export interface ApplyTemplate {
   template: string;
   base_digest: string;
+  /** Renames the mandate in the same request; without it the name stays. */
+  name?: string;
   confirm_critical?: boolean;
+}
+
+/**
+ * Answer of apply-template: "unchanged" when the template's rules, approval settings and
+ * limits equal the current version, so no version was stored (a name is still taken).
+ */
+export interface ApplyTemplateResult extends MandateDetail {
+  result: 'updated' | 'unchanged';
 }
 
 /** Reason codes of SPEC-v0 section 4.1. */
@@ -496,6 +606,36 @@ export interface Template extends TemplateSummary {
 }
 
 /**
+ * GET api/templates/{name}/approvers: who may approve if the signed-in human admits an agent
+ * with the template now – the people the approvers placeholder stands for (the human
+ * first, then the approvers set up) and those the template names, each once – and how
+ * requests reach each of them. Hidden or unknown templates are not_found.
+ * name comes from Home Assistant (untrusted text; null if unknown); unknown: Home
+ * Assistant could not be asked, never counted as reachable; service: Home-Mandate's own
+ * user, never asked.
+ * normal / critical: whether every approver list the template's rules can ask for ordinary
+ * or critical actions has someone reachable (not_needed: the template asks for none).
+ */
+export type ApproverReach = ReachChannel | 'unknown';
+
+export type ApprovalCoverage = 'not_needed' | 'reachable' | 'nobody' | 'unknown';
+
+export interface TemplateApprover {
+  user_id: string;
+  name: string | null;
+  normal: ApproverReach;
+  critical: ApproverReach;
+  self: boolean;
+  service: boolean;
+}
+
+export interface TemplateApprovers {
+  people: TemplateApprover[];
+  normal: ApprovalCoverage;
+  critical: ApprovalCoverage;
+}
+
+/**
  * PUT api/templates/{name}. base_digest: null for a new template, otherwise the digest the
  * edit started from; an outdated one, or null for a name that exists, is "conflict" and
  * stores nothing. A bad or reserved name ("hm-…") is invalid_input /name, a base template
@@ -505,6 +645,60 @@ export interface TemplateUpdate {
   draft: MandateDraft;
   base_digest: string | null;
   confirm_critical?: boolean;
+}
+
+/**
+ * GET api/templates/{name}/usage (#18): the active mandates of active agents whose rules
+ * were last taken from the template. digest: the template's now.
+ */
+export interface TemplateUsage {
+  name: string;
+  digest: string;
+  mandates: TemplateUser[];
+}
+
+export interface TemplateUser {
+  mandate_id: string;
+  /** Untrusted text, rendered escaped. */
+  mandate_name: string;
+  client_id: string;
+  /** Untrusted text, rendered escaped. */
+  agent_display_name: string;
+  /** The mandate's current version: the base of taking the template over. */
+  digest: string;
+  /** When the rules were last taken from the template, and its digest then. */
+  taken_at: string;
+  template_digest: string;
+  /** A later version came from an edit; taking the template over replaces it. */
+  edited_since: boolean;
+  /** Taking the template over as it is now would change nothing. */
+  up_to_date: boolean;
+}
+
+/**
+ * POST api/templates/{name}/apply (#18): the template as the human saw it (its digest;
+ * another one is "conflict") becomes a new version of each target, at most 100, each with
+ * the version the human saw. One confirm_critical covers every target that would gain a
+ * rule allowing critical actions without approval; without it the answer is
+ * critical_confirmation_required and no mandate changes.
+ */
+export interface TemplateRolloutRequest {
+  template_digest: string;
+  targets: { mandate_id: string; base_digest: string }[];
+  confirm_critical?: boolean;
+}
+
+/**
+ * Result per mandate: updated; unchanged (already equal, no version); conflict (changed
+ * since it was seen); revoked (the mandate or its agent); not_found; failed (anything
+ * else); skipped (not attempted: the request neared its time limit, nothing stored). Each
+ * mandate changed alone: one refused holds back no other.
+ */
+export type RolloutResult = 'updated' | 'unchanged' | 'conflict' | 'revoked' | 'not_found' | 'failed' | 'skipped';
+
+export interface TemplateRollout {
+  /** In the order of the targets. digest: the mandate's current version, null if unknown. */
+  results: { mandate_id: string; result: RolloutResult; digest: string | null }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -593,24 +787,35 @@ export interface ApprovalAnswer {
 }
 
 // ---------------------------------------------------------------------------
-// Audit log: GET api/audit, POST api/audit/verify (mandate-spec audit-v0)
+// Audit log: GET api/audit, POST api/audit/verify (specification audit-v0)
 
 export type AuditEvent =
   | 'decision'
   | 'mandate.created'
   | 'mandate.updated'
   | 'mandate.revoked'
+  | 'mandate.removed'
   | 'agent.registered'
   | 'agent.revoked'
+  | 'agent.reconnected'
+  | 'agent.removed'
   | 'emergency_stop.activated'
   | 'emergency_stop.released'
   | 'auth.rejected'
   | 'log.truncated'
   | 'log.checkpoint'
-  | 'directory.changed';
+  | 'directory.changed'
+  | 'template.changed'
+  | 'approver.changed';
 
 /** A change of the resource directory (SPEC-v0 section 11.4). */
 export type DirectoryChange = 'critical_marked' | 'critical_unmarked' | 'renamed' | 'rename_applied' | 'rename_dismissed';
+
+/** A change of a template (SPEC-v0 section 9.1): stored without previous_digest is a new one. */
+export type TemplateChange = 'stored' | 'removed' | 'hidden' | 'shown';
+
+/** A change of the approvers (SPEC-v0 section 11.1). */
+export type ApproverChange = 'added' | 'removed';
 
 export type ResultStatus = 'executed' | 'denied' | 'failed';
 export type DeniedBy = 'mandate' | 'approval' | 'rate_limit' | 'emergency_stop' | 'authentication';
@@ -629,8 +834,11 @@ export interface AuditEntry {
     resource: { entity_id: string; category?: string; area?: string; critical?: boolean };
     action: string;
   };
-  /** version: number of the mandate version with this digest (added by the API, not part of the chain; F4). */
-  mandate?: { id: string; digest: string; previous_digest?: string; version?: number };
+  /**
+   * version: number of the mandate version with this digest; name: the mandate's display
+   * name, also of a removed one (both added by the API, not part of the chain; F4).
+   */
+  mandate?: { id: string; digest: string; previous_digest?: string; version?: number; name?: string };
   evaluation?: { decision: Decision; reason: Reason; rule_id: string | null; approval_timeout?: string };
   /** via: the channel the answer came through, push or ui (decision F2). */
   approval?: { outcome: ApprovalOutcome; by?: string; by_name?: string; via?: 'push' | 'ui'; at: string };
@@ -638,6 +846,10 @@ export interface AuditEntry {
   truncated?: { up_to_seq: number; last_digest: string };
   /** directory.changed: the device, and for a rename its former ID. */
   directory?: { change: DirectoryChange; entity_id: string; previous_entity_id?: string };
+  /** template.changed: the template's name and digests, never its content. */
+  template?: { change: TemplateChange; name: string; digest?: string; previous_digest?: string };
+  /** approver.changed: the person's user ID; name added by the API, not part of the chain. */
+  approver?: { change: ApproverChange; id: string; name?: string };
   /** Digest of this entry and of the one before (technical details). */
   digest: string;
   prev: string | null;

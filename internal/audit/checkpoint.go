@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 
-	specaudit "github.com/mandate-spec/mandate-spec/audit"
+	specaudit "github.com/home-mandate/spec/audit"
 )
 
 // ErrNoSigner means the log has no key to sign checkpoints with.
@@ -52,6 +52,17 @@ func (l *Log) signer() *Signer {
 	l.signerMu.Lock()
 	defer l.signerMu.Unlock()
 	return l.checkpointSigner
+}
+
+// HasCheckpoints reports whether the log holds a checkpoint: then only the key that
+// signed it can verify the log, and a new key must not take its place.
+func (l *Log) HasCheckpoints(ctx context.Context) (bool, error) {
+	var found bool
+	if err := l.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM audit_log WHERE event = ?)`,
+		EventLogCheckpoint).Scan(&found); err != nil {
+		return false, fmt.Errorf("audit: read: %w", err)
+	}
+	return found, nil
 }
 
 // sign returns the checkpoint over the log up to the entry seq with the digest.

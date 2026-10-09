@@ -9,6 +9,7 @@ import { AppState } from '../app/state.svelte.ts';
 import { setLocale } from '../paraglide/runtime.js';
 import AgentDetail from './AgentDetail.svelte';
 import { addCriticalTemplate, DOORS } from '../test/critical.ts';
+import { toasts } from '../ui/toasts.ts';
 
 beforeEach(() => setLocale('en', { reload: false }));
 afterEach(() => {
@@ -75,7 +76,7 @@ describe('AgentDetail', () => {
     await waitFor(() => expect(plain(document.body.textContent)).toContain('Revoked on'));
     expect(plain(document.body.textContent)).toContain('by Markus. This agent can’t do anything anymore.');
     expect(screen.queryByRole('button', { name: 'Revoke access' })).toBeNull();
-    expect(screen.queryByLabelText('Change mandate')).toBeNull();
+    expect(screen.queryByLabelText('Take over rules from a template')).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1 })));
   });
 
@@ -127,7 +128,7 @@ describe('AgentDetail', () => {
 
   it('says when the mandate changed since the page showed it', async () => {
     const { api } = await start(VOICE);
-    const select = (await screen.findByLabelText('Change mandate')) as HTMLSelectElement;
+    const select = (await screen.findByLabelText('Take over rules from a template')) as HTMLSelectElement;
     // Someone else saves a new version; the page still shows the old one.
     const detail = await api.mandate('mandate-voice');
     const stale = await api.agents();
@@ -140,7 +141,7 @@ describe('AgentDetail', () => {
 
   it('shows the chosen template in plain words and does not offer hidden base templates', async () => {
     await start(VOICE, (api) => void api.setTemplateHidden('hm-light-climate', true));
-    const select = (await screen.findByLabelText('Change mandate')) as HTMLSelectElement;
+    const select = (await screen.findByLabelText('Take over rules from a template')) as HTMLSelectElement;
     const options = [...select.options].map((o) => o.textContent);
     expect(options).toEqual(['Read only', 'Voice assistant (cautious)', 'empty', 'read-only', 'voice-assistant']);
     await fireEvent.change(select, { target: { value: 'hm-voice-cautious' } });
@@ -153,14 +154,14 @@ describe('AgentDetail', () => {
   it('says when nobody could approve for the template (no_approvers)', async () => {
     const { api } = await start(VOICE);
     api.applyTemplate = async () => Promise.reject(new ApiError('no_approvers', 422));
-    await screen.findByLabelText('Change mandate');
+    await screen.findByLabelText('Take over rules from a template');
     await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Nobody could approve requests of this template'));
   });
 
   it('changes the mandate to a template as a new version', async () => {
     const { api } = await start(VOICE);
-    const select = (await screen.findByLabelText('Change mandate')) as HTMLSelectElement;
+    const select = (await screen.findByLabelText('Take over rules from a template')) as HTMLSelectElement;
     await fireEvent.change(select, { target: { value: 'read-only' } });
     const apply = vi.spyOn(api, 'applyTemplate');
     await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
@@ -177,11 +178,13 @@ describe('AgentDetail', () => {
     const create = vi.spyOn(api, 'createMandate');
     await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ client_id: VOICE })));
+    // The server names it after the agent.
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('name');
   });
 
   it('asks for the separate confirmation when a template allows critical actions (U9)', async () => {
     const { api } = await start(VOICE, (api) => void addCriticalTemplate(api));
-    const select = (await screen.findByLabelText('Change mandate')) as HTMLSelectElement;
+    const select = (await screen.findByLabelText('Take over rules from a template')) as HTMLSelectElement;
     await fireEvent.change(select, { target: { value: DOORS } });
     const apply = vi.spyOn(api, 'applyTemplate');
     const button = screen.getByRole('button', { name: 'Apply' });
@@ -207,7 +210,7 @@ describe('AgentDetail', () => {
 
   it('cancels the confirmation with Escape and when another template is chosen', async () => {
     await start(VOICE, (api) => void addCriticalTemplate(api));
-    const select = (await screen.findByLabelText('Change mandate')) as HTMLSelectElement;
+    const select = (await screen.findByLabelText('Take over rules from a template')) as HTMLSelectElement;
     await fireEvent.change(select, { target: { value: DOORS } });
     await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
     const box = await screen.findByRole('alertdialog');
@@ -238,15 +241,140 @@ describe('AgentDetail', () => {
     api.template = async () => {
       throw new ApiError('unavailable', 0);
     };
-    const select = (await screen.findByLabelText('Change mandate')) as HTMLSelectElement;
+    const select = (await screen.findByLabelText('Take over rules from a template')) as HTMLSelectElement;
     await fireEvent.change(select, { target: { value: DOORS } });
     await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
     const box = await screen.findByRole('alertdialog');
     expect(box.textContent).toContain('could not be loaded');
   });
 
+  it('says where the rules came from and how to change the name (#16)', async () => {
+    await start(VOICE);
+    const mandate = await waitFor(() => section('Mandate'));
+    await waitFor(() => expect(plain(mandate.textContent)).toContain('Rules last taken from the template voice-assistant on'));
+    expect(within(mandate).getByRole('link', { name: 'Change name' }).getAttribute('href')).toBe('#/mandates/mandate-voice');
+    expect(screen.getByText(/The same mandate gets a new version/)).toBeTruthy();
+  });
+
+  it('says so when a template brings no change', async () => {
+    const { api } = await start(VOICE);
+    const select = (await screen.findByLabelText('Take over rules from a template')) as HTMLSelectElement;
+    await fireEvent.change(select, { target: { value: 'voice-assistant' } });
+    const apply = vi.spyOn(api, 'applyTemplate');
+    await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(apply).toHaveBeenCalled());
+    await waitFor(() => expect(toasts.list().map((t) => t.text)).toContain('No changes — already up to date'));
+    expect((await api.mandate('mandate-voice')).versions).toHaveLength(1);
+  });
+
+  it('proposes the agent’s name only while the mandate is named after its previous template', async () => {
+    const { api } = await start(VOICE, (api) => {
+      void api.mandate('mandate-voice').then(({ summary, document }) =>
+        api.putMandate('mandate-voice', {
+          name: 'voice-assistant',
+          draft: { rules: document.rules, approval: document.approval, limits: document.limits, valid_from: document.valid_from },
+          base_digest: summary.digest,
+        }),
+      );
+    });
+    const group = await screen.findByRole('group', { name: 'Name of the mandate' });
+    const take = within(group).getByRole('radio', { name: /Rename to/ }) as HTMLInputElement;
+    const keep = within(group).getByRole('radio', { name: /Keep/ }) as HTMLInputElement;
+    expect(plain(take.parentElement?.textContent)).toBe('Rename to Sprachassistent');
+    expect(plain(keep.parentElement?.textContent)).toBe('Keep voice-assistant');
+    expect(take.checked).toBe(true);
+    // Keeping the name sends none.
+    await fireEvent.click(keep);
+    const select = screen.getByLabelText('Take over rules from a template') as HTMLSelectElement;
+    await fireEvent.change(select, { target: { value: 'read-only' } });
+    const apply = vi.spyOn(api, 'applyTemplate');
+    await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(apply).toHaveBeenCalledTimes(1));
+    expect(apply.mock.calls[0]?.[1]).not.toHaveProperty('name');
+    // The name is now the one of another template than the rules came from: nothing proposed.
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Name of the mandate' })).toBeNull());
+  });
+
+  it('renames to the proposed name when applying', async () => {
+    const { api } = await start(VOICE, (api) => {
+      void api.mandate('mandate-voice').then(({ summary, document }) =>
+        api.putMandate('mandate-voice', {
+          name: 'voice-assistant',
+          draft: { rules: document.rules, approval: document.approval, limits: document.limits, valid_from: document.valid_from },
+          base_digest: summary.digest,
+        }),
+      );
+    });
+    await screen.findByRole('group', { name: 'Name of the mandate' });
+    const select = screen.getByLabelText('Take over rules from a template') as HTMLSelectElement;
+    await fireEvent.change(select, { target: { value: 'read-only' } });
+    const apply = vi.spyOn(api, 'applyTemplate');
+    await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(apply).toHaveBeenCalledWith('mandate-voice', expect.objectContaining({ template: 'read-only', name: 'Sprachassistent' })));
+    await waitFor(async () => expect((await api.mandate('mandate-voice')).summary.name).toBe('Sprachassistent'));
+  });
+
   it('looks like any missing page for an unknown agent', async () => {
     await start('pair:nobody');
     expect(await screen.findByText('Page not found')).toBeTruthy();
+  });
+});
+
+describe('removing (#21) and reconnecting (#22)', () => {
+  it('revokes and removes in one step when asked, recorded as both', async () => {
+    const { api } = await start(CLAUDE);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Revoke access' }));
+    const dialog = await screen.findByRole('alertdialog');
+    const also = within(dialog).getByRole('checkbox', { name: 'Also remove the agent and its mandates from the lists' }) as HTMLInputElement;
+    expect(also.checked).toBe(false);
+    await fireEvent.click(also);
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke and remove' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    await waitFor(() => expect(plain(document.body.textContent)).toContain('Removed from the lists on'));
+    const events = (await api.audit({ limit: 4 })).entries.map((e) => e.event).toReversed();
+    expect(events).toEqual(['agent.revoked', 'mandate.revoked', 'mandate.removed', 'agent.removed']);
+    expect(screen.queryByRole('button', { name: 'Remove from the lists …' })).toBeNull();
+  });
+
+  it('removes a revoked agent with its mandates after a confirmation', async () => {
+    const { api } = await start(VOICE, (a) => void a.revokeAgent(VOICE));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Remove from the lists …' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(plain(within(dialog).getByRole('heading').textContent)).toBe('Remove Sprachassistent from the lists?');
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect((within(dialog).getByRole('checkbox', { name: 'Also remove its mandates' }) as HTMLInputElement).checked).toBe(true);
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect((await api.mandate('mandate-voice')).summary.removed_at).not.toBeNull();
+    await waitFor(() => expect(plain(document.body.textContent)).toContain('by Markus. This agent stays revoked'));
+    expect(screen.getAllByText('Removed').length).toBeGreaterThan(0);
+  });
+
+  it('removes only the agent when its mandates are to stay, and reports a failure', async () => {
+    const { api } = await start(VOICE, (a) => void a.revokeAgent(VOICE));
+    const remove = api.removeAgent.bind(api);
+    let fail = true;
+    api.removeAgent = async (r) => {
+      if (fail) throw new ApiError('unavailable', 0);
+      return remove(r);
+    };
+    await fireEvent.click(await screen.findByRole('button', { name: 'Remove from the lists …' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Also remove its mandates' }));
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(within(dialog).getByRole('alert').textContent).toContain('Couldn’t remove'));
+    fail = false;
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect((await api.mandate('mandate-voice')).summary.removed_at).toBeNull();
+  });
+
+  it('says how to reconnect or clean up an agent without access', async () => {
+    const api = createMockClient({ now: () => new Date(NOW), afterStop: true });
+    const app = new AppState(api, () => Date.parse(NOW));
+    await app.start();
+    render(AgentDetail, { app, id: CLAUDE, now: Date.parse(NOW) });
+    await waitFor(() => expect(plain(document.body.textContent)).toContain('choose “Reconnect” on the sign-in or pairing page'));
+    expect(screen.getAllByText('Not signed in').length).toBeGreaterThan(0);
   });
 });

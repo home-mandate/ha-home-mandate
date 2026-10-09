@@ -35,6 +35,8 @@
     onshow: (problem: FieldProblem) => void;
     /** The problem list, for the editor to move the focus to. */
     summary?: HTMLElement;
+    /** The page heading, for the editor to move the focus to (after discarding). */
+    heading?: HTMLElement;
   }
 
   let {
@@ -52,6 +54,7 @@
     onsave,
     onshow,
     summary = $bindable(),
+    heading = $bindable(),
   }: Props = $props();
 
   const uid = $props.id();
@@ -62,7 +65,7 @@
   <BackLink href={backHref} label={m.editor_back()} />
   <div class="bar">
     <div class="title">
-      <h1><bdi>{cleanUntrusted(name) || cleanUntrusted(storedName)}</bdi></h1>
+      <h1 bind:this={heading} tabindex="-1"><bdi>{cleanUntrusted(name) || cleanUntrusted(storedName)}</bdi></h1>
       <MandateStatus {status} />
       <VersionChip {version} {digest} />
     </div>

@@ -58,6 +58,7 @@ export const systemFixture: SystemStatus = {
   commit: 'da11343',
   server_time: NOW,
   retention_days: 30,
+  approval_timeout_seconds: 120,
   ha: {
     connected: true,
     since: '2026-10-01T06:12:00Z',
@@ -80,7 +81,7 @@ export const systemFixture: SystemStatus = {
     ],
   },
   mcp_url: 'https://home.example:8765/mcp',
-  tls: { present: true, valid_until: '2026-12-24T10:00:00Z', renewal_failed: false },
+  tls: { present: true, valid_until: '2026-12-24T10:00:00Z', renewal_failed: false, proxy: false },
   emergency_stop: { active: false, since: null, by_name: null },
   chain: { valid: true, broken_at_seq: null, checked_at: '2026-10-02T17:38:00Z' },
   approvers_configured: 1,
@@ -128,7 +129,7 @@ export const voiceAssistantDraft: MandateDraft = {
 
 export const voiceAssistantMandate: MandateDocument = {
   ...voiceAssistantDraft,
-  type: 'https://mandate-spec.org/mandate/v0',
+  type: 'https://home-mandate.org/mandate/v0',
   id: 'mandate-voice',
   principal: 'household:home',
   agent: { client_id: 'pair:voice-assistant', display_name: 'Sprachassistent' },
@@ -137,7 +138,19 @@ export const voiceAssistantMandate: MandateDocument = {
   created_at: '2026-10-01T08:00:00Z',
 };
 
-type Defaulted = 'created_by' | 'created_by_name' | 'client_verified' | 'redirect_uris' | 'revoked_at' | 'revoked_by_name' | 'requests_today' | 'actions_last_hour' | 'mandate';
+type Defaulted =
+  | 'created_by'
+  | 'created_by_name'
+  | 'client_verified'
+  | 'redirect_uris'
+  | 'revoked_at'
+  | 'revoked_by_name'
+  | 'removed_at'
+  | 'removed_by_name'
+  | 'connected'
+  | 'requests_today'
+  | 'actions_last_hour'
+  | 'mandate';
 type AgentInput = Omit<Agent, Defaulted> & Partial<Omit<Agent, 'mandate'>> & { mandate: { id: string; name: string; status: Agent['status'] } | null };
 
 /** Activity counts and the mandate's limit are filled in by the mock from the log and the mandate. */
@@ -148,10 +161,29 @@ const agent = ({ mandate, ...a }: AgentInput): Agent => ({
   redirect_uris: [],
   revoked_at: null,
   revoked_by_name: null,
+  removed_at: null,
+  removed_by_name: null,
+  connected: a.status === 'active',
   requests_today: 0,
   actions_last_hour: 0,
-  mandate: mandate && { ...mandate, max_actions_per_hour: null, digest: '' },
+  mandate: mandate && { ...mandate, max_actions_per_hour: null, digest: '', rules_from: null, removed_at: null },
   ...a,
+});
+
+/**
+ * After an emergency stop was lifted (MockOptions.afterStop): the kitchen tablet of the
+ * pairing code was admitted before and has no token since, so the pairing offers to
+ * reconnect it (#22).
+ */
+export const tabletAgentFixture: Agent = agent({
+  client_id: 'pair:kitchen-tablet-1',
+  display_name: 'Küchen-Tablet',
+  status: 'active',
+  connected: false,
+  created_at: '2026-09-28T10:00:00Z',
+  last_active_at: '2026-10-02T16:00:00Z',
+  oauth_client: 'kitchen-tablet',
+  mandate: { id: 'mandate-tablet', name: 'Tablet Küche', status: 'active' },
 });
 
 export const agentsFixture: Agent[] = [
@@ -202,7 +234,8 @@ export const agentsFixture: Agent[] = [
     created_at: '2026-10-02T07:30:00Z',
     last_active_at: null,
     oauth_client: 'bidi',
-    mandate: { id: 'mandate-bidi', name: 'Bidi', status: 'active' },
+    // Stored before mandates were named after their agent: it still carries the template's name (#16).
+    mandate: { id: 'mandate-bidi', name: 'hm-voice-cautious', status: 'active' },
   }),
 ];
 

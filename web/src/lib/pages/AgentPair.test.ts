@@ -89,8 +89,9 @@ describe('AgentPair', () => {
       display_name: 'Tablet Küche',
       template: 'hm-read-only',
       template_digest: (await api.template('hm-read-only')).digest,
-      mandate_name: 'Read only',
     });
+    // The mandate is named after the agent (#16).
+    expect((await api.agents()).at(-1)?.mandate?.name).toBe('Tablet Küche');
     expect(approve).toHaveBeenCalledTimes(1);
     const agent = (await api.agents()).at(-1);
     expect(screen.getByRole('link', { name: 'Go to agent' }).getAttribute('href')).toBe(`#/agents/id/${encodeURIComponent(agent?.client_id ?? '')}`);
@@ -292,6 +293,35 @@ describe('AgentPair', () => {
     expect((screen.getByRole('radio', { name: 'Voice assistant (cautious)' }) as HTMLInputElement).checked).toBe(true);
   });
 
+  it('shows who may approve with the chosen template, and warns without blocking when nobody can', async () => {
+    const { api } = await start();
+    await toMandate();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Voice assistant (cautious)' }));
+    const region = await screen.findByRole('region', { name: 'Who may approve' });
+    await waitFor(() => expect(region.textContent).toContain('Markus'));
+    expect(region.textContent).toContain('(you)');
+    expect(region.textContent).not.toContain('Nobody can answer');
+
+    // Without any approver set up, the human who admits has no channel.
+    await api.deleteApprover('u-admin', (await api.approvers()).version);
+    await fireEvent.click(screen.getByRole('radio', { name: 'Read only' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Voice assistant (cautious)' }));
+    await waitFor(() => expect(alerts()).toContain('Nobody can answer approval requests for critical actions'));
+    expect(screen.getByRole('link', { name: 'Set up approvers' }).getAttribute('href')).toBe('#/settings/approvers');
+    expect(screen.getByRole('region', { name: 'Who may approve' }).textContent).toContain('no channel for approval requests');
+    await fireEvent.click(screen.getByRole('button', { name: 'Approve agent' }));
+    await screen.findByRole('heading', { name: /is connected/ });
+  });
+
+  it('says unknown, never reachable, when the approvers cannot be checked', async () => {
+    await start((api) => {
+      api.templateApprovers = async () => Promise.reject(new ApiError('unavailable', 503));
+    });
+    await toMandate();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Voice assistant (cautious)' }));
+    await waitFor(() => expect(alerts()).toContain('Could not check whether anyone can answer approval requests'));
+  });
+
   it('does not offer hidden base templates; one hidden meanwhile is no choice any more, said at the choice', async () => {
     const { api } = await start((a) => void a.setTemplateHidden('hm-light-climate', true));
     await toMandate();
@@ -362,5 +392,52 @@ describe('AgentPair', () => {
     const verify = await screen.findByRole('heading', { name: 'Is this the right agent?' });
     expect(document.activeElement).toBe(verify);
     expect(within(step()).getAllByRole('listitem')[0]?.getAttribute('aria-current')).toBeNull();
+  });
+});
+
+describe('reconnecting after an emergency stop (#22)', () => {
+  it('offers the agents of the same client without access; nothing is chosen until the person picks one', async () => {
+    const api = createMockClient({ now: () => new Date(NOW), afterStop: true });
+    const app = new AppState(api, () => Date.parse(NOW));
+    await app.start();
+    render(AgentPair, { app, now: Date.now() });
+    await toMandate();
+    const region = screen.getByRole('region', { name: 'Or reconnect an existing agent' });
+    const option = within(region).getByRole('radio', { name: /Küchen-Tablet/ }) as HTMLInputElement;
+    expect(option.checked).toBe(false);
+    expect(region.textContent).toMatch(/Mandate: .*Tablet Küche.* · admitted on/);
+    // A pairing code's client ID is only the name the agent gave itself: say so, with the address.
+    const warning = within(region).getByText(/the name the agent gave itself/);
+    expect(warning.textContent).toContain('192.168.1.42');
+    const button = within(region).getByRole('button', { name: 'Reconnect' });
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    const before = (await api.agents()).length;
+    const reconnect = vi.spyOn(api, 'pairingReconnect');
+    await fireEvent.click(option);
+    await fireEvent.click(button);
+    const done = await screen.findByRole('heading', { name: /Küchen-Tablet.* is connected/ });
+    expect(document.activeElement).toBe(done);
+    expect(done.parentElement?.textContent).toContain('existing entry');
+    expect(reconnect).toHaveBeenCalledWith({ code: 'BCDFGHJK', pairing_id: 'pg-kitchen-tablet', client_id: 'pair:kitchen-tablet-1' });
+    expect((await api.agents()).length).toBe(before);
+  });
+
+  it('offers nothing to reconnect while the agents have access', async () => {
+    await start();
+    await toMandate();
+    expect(screen.queryByRole('region', { name: 'Or reconnect an existing agent' })).toBeNull();
+  });
+
+  it('says when the agent is no longer offered', async () => {
+    const api = createMockClient({ now: () => new Date(NOW), afterStop: true });
+    api.pairingReconnect = async () => Promise.reject(new ApiError('conflict', 409));
+    const app = new AppState(api, () => Date.parse(NOW));
+    await app.start();
+    render(AgentPair, { app, now: Date.now() });
+    await toMandate();
+    const region = screen.getByRole('region', { name: 'Or reconnect an existing agent' });
+    await fireEvent.click(within(region).getByRole('radio', { name: /Küchen-Tablet/ }));
+    await fireEvent.click(within(region).getByRole('button', { name: 'Reconnect' }));
+    await waitFor(() => expect(within(region).getByRole('alert').textContent).toContain('no longer offered'));
   });
 });

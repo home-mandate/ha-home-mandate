@@ -38,6 +38,8 @@
     /** Button that opened the form; gets the focus back when it closes. */
     opener?: HTMLButtonElement;
     children?: Snippet;
+    /** Shown under the closed rule, e.g. that its change is not saved yet. */
+    after?: Snippet;
   }
 
   let {
@@ -58,6 +60,7 @@
     ondrop,
     opener = $bindable(),
     children,
+    after,
   }: Props = $props();
 
   const ICONS: Record<RuleNote['kind'], IconName> = { critical: 'critical', danger: 'warning', info: 'info' };
@@ -132,7 +135,7 @@
       {/if}
     {/if}
   </div>
-  {#if editing && children}{@render children()}{/if}
+  {#if editing && children}{@render children()}{:else if !editing && after}{@render after()}{/if}
 </li>
 
 <style>

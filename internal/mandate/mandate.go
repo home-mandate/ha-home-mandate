@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Package mandate stores and versions mandates. A mandate is accepted only if the
-// reference evaluator of mandate-spec accepts it (SPEC-v0 section 3.1), it belongs to
+// reference evaluator of the specification accepts it (SPEC-v0 section 3.1), it belongs to
 // this household and to an active agent. Every version is kept unchanged; changes are
 // written to the audit log in the same transaction, by digest only.
 package mandate
@@ -18,9 +18,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mandate-spec/mandate-spec/evaluator"
+	"github.com/home-mandate/spec/evaluator"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 )
 
 var (
@@ -59,6 +59,10 @@ type Info struct {
 	Digest            string
 	MaxActionsPerHour int
 	UpdatedAt         time.Time
+	// RemovedAt and RemovedBy are set once a revoked mandate is removed from the lists
+	// (SPEC-v0 section 11.3); it stays revoked.
+	RemovedAt time.Time
+	RemovedBy string
 	// version is the version the document carries (SPEC-v0 section 3.5); 0 without.
 	version int64
 }
@@ -73,6 +77,8 @@ type Version struct {
 	Digest    string
 	CreatedAt time.Time
 	CreatedBy string
+	// Origin says where its rules came from.
+	Origin Origin
 }
 
 // Loaded is the current version of an agent's mandate, ready for evaluation.
@@ -131,11 +137,16 @@ func (s *Store) Put(ctx context.Context, document []byte, by audit.Actor) (Info,
 // PutTx is Put inside tx, so that admitting an agent and storing its mandate commit
 // together. It returns the stored information as written.
 func (s *Store) PutTx(ctx context.Context, tx *sql.Tx, document []byte, by audit.Actor) (Info, error) {
+	return s.PutOriginTx(ctx, tx, document, Origin{Kind: OriginEdit}, by)
+}
+
+// PutOriginTx is PutTx for a document whose rules came from origin, e.g. a template.
+func (s *Store) PutOriginTx(ctx context.Context, tx *sql.Tx, document []byte, origin Origin, by audit.Actor) (Info, error) {
 	info, err := s.check(document)
 	if err != nil {
 		return Info{}, err
 	}
-	if err := s.put(ctx, tx, info, document, by); err != nil {
+	if err := s.put(ctx, tx, info, document, origin, by); err != nil {
 		return Info{}, err
 	}
 	return info, nil
@@ -238,7 +249,10 @@ func withVersion(document []byte, issuer string, version int64) ([]byte, error) 
 	return out, nil
 }
 
-func (s *Store) put(ctx context.Context, tx *sql.Tx, info Info, document []byte, by audit.Actor) error {
+func (s *Store) put(ctx context.Context, tx *sql.Tx, info Info, document []byte, origin Origin, by audit.Actor) error {
+	if err := origin.check(); err != nil {
+		return err
+	}
 	var agentStatus string
 	err := tx.QueryRowContext(ctx, `SELECT status FROM agents WHERE client_id = ?`, info.ClientID).Scan(&agentStatus)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && agentStatus != StatusActive {
@@ -273,7 +287,7 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, info Info, document []byte,
 		if err != nil {
 			return err
 		}
-		return s.create(ctx, tx, info, document, by)
+		return s.create(ctx, tx, info, document, origin, by)
 	case err != nil:
 		return fmt.Errorf("mandate: read: %w", err)
 	case existing.clientID != info.ClientID || existing.status != StatusActive:
@@ -296,21 +310,22 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, info Info, document []byte,
 		info.Digest, info.MaxActionsPerHour, info.UpdatedAt.Format(timeFormat), info.version, info.ID); err != nil {
 		return fmt.Errorf("mandate: update: %w", err)
 	}
-	return s.addVersion(ctx, tx, info, document, by, audit.EventMandateUpdated, existing.digest)
+	return s.addVersion(ctx, tx, info, document, origin, by, audit.EventMandateUpdated, existing.digest)
 }
 
-func (s *Store) create(ctx context.Context, tx *sql.Tx, info Info, document []byte, by audit.Actor) error {
+func (s *Store) create(ctx context.Context, tx *sql.Tx, info Info, document []byte, origin Origin, by audit.Actor) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO mandates (id, client_id, status, current_digest, max_actions_per_hour, created_at, updated_at, highest_version)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, info.ID, info.ClientID, StatusActive, info.Digest, info.MaxActionsPerHour,
 		info.UpdatedAt.Format(timeFormat), info.UpdatedAt.Format(timeFormat), info.version); err != nil {
 		return fmt.Errorf("mandate: insert: %w", err)
 	}
-	return s.addVersion(ctx, tx, info, document, by, audit.EventMandateCreated, "")
+	return s.addVersion(ctx, tx, info, document, origin, by, audit.EventMandateCreated, "")
 }
 
-func (s *Store) addVersion(ctx context.Context, tx *sql.Tx, info Info, document []byte, by audit.Actor, event, previous string) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO mandate_versions (mandate_id, digest, document, created_at, created_by) VALUES (?, ?, ?, ?, ?)`,
-		info.ID, info.Digest, string(document), info.UpdatedAt.Format(timeFormat), by.ID); err != nil {
+func (s *Store) addVersion(ctx context.Context, tx *sql.Tx, info Info, document []byte, origin Origin, by audit.Actor, event, previous string) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO mandate_versions (mandate_id, digest, document, created_at, created_by, origin, template_name, template_digest)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, info.ID, info.Digest, string(document), info.UpdatedAt.Format(timeFormat), by.ID,
+		origin.Kind, origin.Template, origin.TemplateDigest); err != nil {
 		return fmt.Errorf("mandate: insert version: %w", err)
 	}
 	_, err := s.log.AppendTx(ctx, tx, audit.Entry{Event: event, Actor: &by,
@@ -324,6 +339,11 @@ func (s *Store) Revoke(ctx context.Context, id string, by audit.Actor) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		return s.revokeTx(ctx, tx, `id = ?`, id, by, true)
 	})
+}
+
+// RevokeTx is Revoke inside tx.
+func (s *Store) RevokeTx(ctx context.Context, tx *sql.Tx, id string, by audit.Actor) error {
+	return s.revokeTx(ctx, tx, `id = ?`, id, by, true)
 }
 
 // RevokeAgentTx revokes the mandate of an agent inside tx, if it has an active one, so
@@ -542,14 +562,20 @@ func (s *Store) Get(ctx context.Context, id string) (Info, error) {
 	return list[0], nil
 }
 
-// List returns all mandates in creation order.
+// List returns all mandates in creation order, removed ones included; mandates whose
+// data was deleted after their removal (tombstones) are left out.
 func (s *Store) List(ctx context.Context) ([]Info, error) {
 	return s.query(ctx, ``)
 }
 
 func (s *Store) query(ctx context.Context, where string, args ...any) ([]Info, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, client_id, status, current_digest, max_actions_per_hour, updated_at FROM mandates `+
-		where+` ORDER BY rowid`, args...)
+	if where == "" {
+		where = `WHERE purged_at IS NULL`
+	} else {
+		where += ` AND purged_at IS NULL`
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, client_id, status, current_digest, max_actions_per_hour, updated_at,
+		coalesce(removed_at, ''), removed_by FROM mandates `+where+` ORDER BY rowid`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("mandate: query: %w", err)
 	}
@@ -557,11 +583,12 @@ func (s *Store) query(ctx context.Context, where string, args ...any) ([]Info, e
 	var list []Info
 	for rows.Next() {
 		var i Info
-		var updatedAt string
-		if err := rows.Scan(&i.ID, &i.Name, &i.ClientID, &i.Status, &i.Digest, &i.MaxActionsPerHour, &updatedAt); err != nil {
+		var updatedAt, removedAt string
+		if err := rows.Scan(&i.ID, &i.Name, &i.ClientID, &i.Status, &i.Digest, &i.MaxActionsPerHour, &updatedAt, &removedAt, &i.RemovedBy); err != nil {
 			return nil, fmt.Errorf("mandate: query: %w", err)
 		}
 		i.UpdatedAt, _ = time.Parse(timeFormat, updatedAt)
+		i.RemovedAt, _ = time.Parse(timeFormat, removedAt)
 		list = append(list, i)
 	}
 	return list, rows.Err()
@@ -584,7 +611,8 @@ func (s *Store) Current(ctx context.Context, id string) (Info, []byte, error) {
 
 // Versions returns all versions of a mandate, oldest first, numbered from 1.
 func (s *Store) Versions(ctx context.Context, id string) ([]Version, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT digest, created_at, created_by FROM mandate_versions WHERE mandate_id = ? ORDER BY version`, id)
+	rows, err := s.db.QueryContext(ctx, `SELECT digest, created_at, created_by, origin, template_name, template_digest
+		FROM mandate_versions WHERE mandate_id = ? ORDER BY version`, id)
 	if err != nil {
 		return nil, fmt.Errorf("mandate: versions: %w", err)
 	}
@@ -593,7 +621,7 @@ func (s *Store) Versions(ctx context.Context, id string) ([]Version, error) {
 	for rows.Next() {
 		var v Version
 		var createdAt string
-		if err := rows.Scan(&v.Digest, &createdAt, &v.CreatedBy); err != nil {
+		if err := rows.Scan(&v.Digest, &createdAt, &v.CreatedBy, &v.Origin.Kind, &v.Origin.Template, &v.Origin.TemplateDigest); err != nil {
 			return nil, fmt.Errorf("mandate: versions: %w", err)
 		}
 		v.CreatedAt, _ = time.Parse(timeFormat, createdAt)
@@ -611,8 +639,9 @@ func (s *Store) VersionDocument(ctx context.Context, id string, number int) ([]b
 	v := Version{Number: number}
 	var document, createdAt string
 	// Versions are never deleted, so the position in creation order is the number.
-	err := s.db.QueryRowContext(ctx, `SELECT digest, document, created_at, created_by FROM mandate_versions
-		WHERE mandate_id = ? ORDER BY version LIMIT 1 OFFSET ?`, id, number-1).Scan(&v.Digest, &document, &createdAt, &v.CreatedBy)
+	err := s.db.QueryRowContext(ctx, `SELECT digest, document, created_at, created_by, origin, template_name, template_digest FROM mandate_versions
+		WHERE mandate_id = ? ORDER BY version LIMIT 1 OFFSET ?`, id, number-1).
+		Scan(&v.Digest, &document, &createdAt, &v.CreatedBy, &v.Origin.Kind, &v.Origin.Template, &v.Origin.TemplateDigest)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, Version{}, ErrNotFound
 	}

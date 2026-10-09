@@ -9,8 +9,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/home-mandate/home-mandate/internal/catalog"
-	"github.com/home-mandate/home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
 func newRenames(t *testing.T) (*catalog.Renames, func() *catalog.Renames) {

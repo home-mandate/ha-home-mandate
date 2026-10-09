@@ -14,7 +14,9 @@ import (
 	"slices"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/i18n"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
 
 var (
@@ -34,12 +36,10 @@ var (
 // maxDevices bounds the devices of one person.
 const maxDevices = 5
 
-var (
-	// userIDPattern matches Home Assistant user IDs and the approver strings a mandate
-	// may contain (SPEC-v0 schema).
-	userIDPattern        = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-	notifyServicePattern = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
-)
+// userIDPattern matches Home Assistant user IDs and the approver strings a mandate may
+// contain (SPEC-v0 schema). Devices must be notify services of the Companion App
+// (ha.ValidNotifyService).
+var userIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // Approver is a Home Assistant user who answers approval requests (decision F2): on
 // any of their devices, and if UI is set also in the Home-Mandate UI, there for
@@ -136,9 +136,9 @@ func (ap Approver) validate() error {
 		return fmt.Errorf("%w: more than %d devices", ErrInvalidApprover, maxDevices)
 	}
 	for i, d := range ap.Devices {
-		if !notifyServicePattern.MatchString(d.Service) ||
+		if !ha.ValidNotifyService(d.Service) ||
 			slices.ContainsFunc(ap.Devices[:i], func(other Device) bool { return other.Service == d.Service }) {
-			return fmt.Errorf("%w: device", ErrInvalidApprover)
+			return fmt.Errorf("%w: device %q: each device once, a notify service of the Companion App (mobile_app_…)", ErrInvalidApprover, d.Service)
 		}
 	}
 	switch {
@@ -155,25 +155,42 @@ func (ap Approver) validate() error {
 	return nil
 }
 
-// Approvers stores the approvers (local settings).
+// Recorder writes audit entries within a transaction (audit.Log).
+type Recorder interface {
+	AppendTx(ctx context.Context, tx *sql.Tx, e audit.Entry) (int64, error)
+}
+
+// Approvers stores the approvers. Adding and removing someone is recorded in the audit
+// log (approver.changed, SPEC-v0 section 11.1) in the transaction of the change; their
+// channels are local settings.
 type Approvers struct {
 	db  *sql.DB
+	rec Recorder
 	now func() time.Time
 }
 
-// NewApprovers returns the approvers in db.
-func NewApprovers(db *sql.DB) *Approvers {
-	return &Approvers{db: db, now: time.Now}
+// NewApprovers returns the approvers in db; rec records who was added or removed.
+func NewApprovers(db *sql.DB, rec Recorder) *Approvers {
+	return &Approvers{db: db, rec: rec, now: time.Now}
 }
 
-// Put adds or replaces an approver with all their channels.
-func (a *Approvers) Put(ctx context.Context, ap Approver) error {
-	return a.PutIf(ctx, ap, "")
+// Put adds or replaces an approver with all their channels; by made the change.
+func (a *Approvers) Put(ctx context.Context, ap Approver, by audit.Actor) error {
+	return a.PutIf(ctx, ap, "", by)
+}
+
+// record writes the approver.changed entry of a change within its transaction: if the
+// entry cannot be written, the change is rolled back with it.
+func (a *Approvers) record(ctx context.Context, tx *sql.Tx, by audit.Actor, change, userID string) error {
+	_, err := a.rec.AppendTx(ctx, tx, audit.Entry{Event: audit.EventApproverChanged, Actor: &by,
+		Approver: &audit.Approver{Change: change, ID: userID}})
+	return err
 }
 
 // PutIf is Put based on the version of the approvers the change started from; "" skips
-// the check (the command line). Another version means ErrApproversChanged.
-func (a *Approvers) PutIf(ctx context.Context, ap Approver, version string) error {
+// the check (the command line). Another version means ErrApproversChanged. Someone who
+// was no approver before is an approver.changed audit entry with by as actor.
+func (a *Approvers) PutIf(ctx context.Context, ap Approver, version string, by audit.Actor) error {
 	if err := ap.validate(); err != nil {
 		return err
 	}
@@ -184,6 +201,10 @@ func (a *Approvers) PutIf(ctx context.Context, ap Approver, version string) erro
 	defer func() { _ = tx.Rollback() }()
 	if err := checkVersion(ctx, tx, version); err != nil {
 		return err
+	}
+	var known int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM approvers WHERE user_id = ?`, ap.UserID).Scan(&known); err != nil {
+		return fmt.Errorf("approval: store approver: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO approvers (user_id, language, ui, ui_critical, created_at) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT (user_id) DO UPDATE SET language = excluded.language, ui = excluded.ui, ui_critical = excluded.ui_critical`,
@@ -197,6 +218,11 @@ func (a *Approvers) PutIf(ctx context.Context, ap Approver, version string) erro
 		if _, err := tx.ExecContext(ctx, `INSERT INTO approver_devices (user_id, notify_service, critical) VALUES (?, ?, ?)`,
 			ap.UserID, d.Service, d.Critical); err != nil {
 			return fmt.Errorf("approval: store devices: %w", err)
+		}
+	}
+	if known == 0 {
+		if err := a.record(ctx, tx, by, audit.ApproverAdded, ap.UserID); err != nil {
+			return err
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -287,13 +313,14 @@ func list(ctx context.Context, q querier) ([]Approver, error) {
 }
 
 // Remove deletes an approver with their devices; open requests to them stay open until
-// their timeout, but the UI no longer accepts their answer.
-func (a *Approvers) Remove(ctx context.Context, userID string) error {
-	return a.RemoveIf(ctx, userID, "")
+// their timeout, but the UI no longer accepts their answer. The removal is an
+// approver.changed audit entry with by as actor.
+func (a *Approvers) Remove(ctx context.Context, userID string, by audit.Actor) error {
+	return a.RemoveIf(ctx, userID, "", by)
 }
 
 // RemoveIf is Remove based on a version of the approvers, as PutIf.
-func (a *Approvers) RemoveIf(ctx context.Context, userID, version string) error {
+func (a *Approvers) RemoveIf(ctx context.Context, userID, version string, by audit.Actor) error {
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("approval: remove approver: %w", err)
@@ -308,6 +335,9 @@ func (a *Approvers) RemoveIf(ctx context.Context, userID, version string) error 
 	}
 	if n, err := res.RowsAffected(); err != nil || n == 0 {
 		return ErrApproverNotFound
+	}
+	if err := a.record(ctx, tx, by, audit.ApproverRemoved, userID); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("approval: remove approver: %w", err)

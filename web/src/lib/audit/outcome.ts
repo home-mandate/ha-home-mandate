@@ -22,15 +22,20 @@ const EVENTS: Record<AuditEvent, () => string> = {
   decision: () => m.event_decision(),
   'agent.registered': () => m.event_agent_approved(),
   'agent.revoked': () => m.event_agent_revoked(),
+  'agent.reconnected': () => m.event_agent_reconnected(),
+  'agent.removed': () => m.event_agent_removed(),
   'mandate.created': () => m.event_mandate_created(),
   'mandate.updated': () => m.event_mandate_changed(),
   'mandate.revoked': () => m.event_mandate_revoked(),
+  'mandate.removed': () => m.event_mandate_removed(),
   'emergency_stop.activated': () => m.event_estop_on(),
   'emergency_stop.released': () => m.event_estop_off(),
   'auth.rejected': () => m.event_login_rejected(),
   'log.truncated': () => m.event_log_pruned(),
   'log.checkpoint': () => m.event_log_checkpoint(),
   'directory.changed': () => m.event_directory_changed(),
+  'template.changed': () => m.event_template_changed(),
+  'approver.changed': () => m.event_approver_changed(),
 };
 
 const REASONS: Record<Reason, () => string> = {

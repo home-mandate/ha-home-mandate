@@ -33,6 +33,17 @@ body {
   }
 }
 
+/* While an editor shows its fixed save bar (issue #20, lib/ui/savebar.ts): room of the bar's
+   height at the end of the page, so its end stays reachable above the bar, and as scroll
+   padding, so focused or scrolled-to elements never land behind it (WCAG 2.4.11). */
+:root.hm-savebar {
+  scroll-padding-block-end: var(--hm-savebar-size, 0px);
+}
+
+:root.hm-savebar #app {
+  padding-block-end: var(--hm-savebar-size, 0px);
+}
+
 /* Visible focus on every interactive element (design README section 4). */
 :focus-visible {
   outline: var(--hm-focus-width) solid var(--hm-color-focus);

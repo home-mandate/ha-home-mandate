@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Home Assistant app repository: add https://github.com/home-mandate/ha-home-mandate in
+# Settings → Apps → App store → ⋮ → Repositories. The app itself is in app/.
+name: Home-Mandate
+url: https://github.com/home-mandate/ha-home-mandate
+maintainer: Home-Mandate <contact@home-mandate.org>

@@ -14,12 +14,12 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 )
 
-const mandateType = "https://mandate-spec.org/mandate/v0"
+const mandateType = "https://home-mandate.org/mandate/v0"
 
 var (
 	mandateIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{4,64}$`)
@@ -43,6 +43,27 @@ type wireMandateSummary struct {
 	UpdatedAt         string  `json:"updated_at"`
 	// StaleReferences are rules on devices or areas Home Assistant does not have.
 	StaleReferences []wireStaleReference `json:"stale_references"`
+	// RulesFrom is the template the rules were last taken from; nil if unknown.
+	RulesFrom *wireRulesFrom `json:"rules_from"`
+	// RemovedAt is set once the revoked mandate was removed from the lists.
+	RemovedAt *string `json:"removed_at"`
+}
+
+// wireRulesFrom says from which template the rules of a mandate were last taken.
+type wireRulesFrom struct {
+	Template       string `json:"template"`
+	TemplateDigest string `json:"template_digest"`
+	At             string `json:"at"`
+	// EditedSince is set when a later version came from an edit.
+	EditedSince bool `json:"edited_since"`
+}
+
+func rulesFrom(uses map[string]mandate.TemplateUse, id string) *wireRulesFrom {
+	u, ok := uses[id]
+	if !ok {
+		return nil
+	}
+	return &wireRulesFrom{Template: u.Template, TemplateDigest: u.TemplateDigest, At: *formatTime(u.At), EditedSince: u.EditedSince}
 }
 
 type wireVersion struct {
@@ -51,6 +72,11 @@ type wireVersion struct {
 	CreatedAt     string  `json:"created_at"`
 	CreatedBy     string  `json:"created_by"`
 	CreatedByName *string `json:"created_by_name"`
+	// Origin is where the rules came from: template, edit or unknown (stored before
+	// origins were kept); Template and TemplateDigest only for a template.
+	Origin         string  `json:"origin"`
+	Template       *string `json:"template"`
+	TemplateDigest *string `json:"template_digest"`
 }
 
 type wireMandateDetail struct {
@@ -82,7 +108,7 @@ func parseDoc(doc []byte) (docFields, error) {
 	return f, nil
 }
 
-func (s *Server) summary(info mandate.Info, doc []byte) (wireMandateSummary, error) {
+func (s *Server) summary(info mandate.Info, doc []byte, uses map[string]mandate.TemplateUse) (wireMandateSummary, error) {
 	f, err := parseDoc(doc)
 	if err != nil {
 		return wireMandateSummary{}, err
@@ -90,11 +116,15 @@ func (s *Server) summary(info mandate.Info, doc []byte) (wireMandateSummary, err
 	return wireMandateSummary{ID: info.ID, Name: nameOf(info), ClientID: info.ClientID, AgentDisplayName: f.AgentName.DisplayName,
 		Status: info.Status, Digest: info.Digest, RuleCount: len(f.Rules), ValidFrom: f.ValidFrom, Expires: optional(f.Expires),
 		MaxActionsPerHour: info.MaxActionsPerHour, UpdatedAt: *formatTime(info.UpdatedAt),
-		StaleReferences: s.staleReferences(info, doc)}, nil
+		StaleReferences: s.staleReferences(info, doc), RulesFrom: rulesFrom(uses, info.ID), RemovedAt: formatTime(info.RemovedAt)}, nil
 }
 
 func (s *Server) getMandates(r *request) (any, error) {
 	list, err := s.cfg.Mandates.List(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	uses, err := s.cfg.Mandates.TemplateUses(r.Context())
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +134,7 @@ func (s *Server) getMandates(r *request) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		sum, err := s.summary(info, doc)
+		sum, err := s.summary(info, doc, uses)
 		if err != nil {
 			return nil, err
 		}
@@ -130,7 +160,11 @@ func (s *Server) detail(ctx context.Context, id string) (wireMandateDetail, erro
 	if err != nil {
 		return wireMandateDetail{}, err
 	}
-	sum, err := s.summary(info, doc)
+	uses, err := s.cfg.Mandates.TemplateUses(ctx)
+	if err != nil {
+		return wireMandateDetail{}, err
+	}
+	sum, err := s.summary(info, doc, uses)
 	if err != nil {
 		return wireMandateDetail{}, err
 	}
@@ -140,8 +174,12 @@ func (s *Server) detail(ctx context.Context, id string) (wireMandateDetail, erro
 	}
 	out := wireMandateDetail{Summary: sum, Document: doc, Versions: make([]wireVersion, 0, len(versions))}
 	for _, v := range slices.Backward(versions) {
-		out.Versions = append(out.Versions, wireVersion{Number: v.Number, Digest: v.Digest, CreatedAt: *formatTime(v.CreatedAt),
-			CreatedBy: v.CreatedBy, CreatedByName: s.users.name(ctx, v.CreatedBy)})
+		w := wireVersion{Number: v.Number, Digest: v.Digest, CreatedAt: *formatTime(v.CreatedAt),
+			CreatedBy: v.CreatedBy, CreatedByName: s.users.name(ctx, v.CreatedBy), Origin: v.Origin.Kind}
+		if v.Origin.Kind == mandate.OriginTemplate {
+			w.Template, w.TemplateDigest = &v.Origin.Template, &v.Origin.TemplateDigest
+		}
+		out.Versions = append(out.Versions, w)
 	}
 	return out, nil
 }
@@ -345,38 +383,24 @@ func templateDraft(document []byte) (map[string]json.RawMessage, error) {
 	return t, nil
 }
 
-// applyTemplate makes the template's rules, approval settings and limits a new version
-// of the mandate (decision D3); dates and name stay. Same conflict and U9 rules as an edit.
-func (s *Server) applyTemplate(r *request) (any, error) {
-	id, err := mandateID(r)
-	if err != nil {
-		return nil, err
-	}
-	var in struct {
-		Template        string `json:"template"`
-		BaseDigest      string `json:"base_digest"`
-		ConfirmCritical bool   `json:"confirm_critical"`
-	}
-	if err := r.decode(&in); err != nil {
-		return nil, err
-	}
-	if !digestPattern.MatchString(in.BaseDigest) {
-		return nil, failField(codeInvalidInput, "/base_digest")
-	}
-	tdoc, err := s.cfg.Admission.Resolved(r.Context(), in.Template, s.actor(r))
-	switch {
-	case errors.Is(err, admission.ErrTemplateNotFound):
-		return nil, failField(codeInvalidInput, "/template")
-	case errors.Is(err, mandate.ErrNoApprovers):
-		return nil, fail(codeNoApprovers)
-	case err != nil:
-		return nil, mandateError(err, "/template", nil)
-	}
-	_, current, err := s.cfg.Mandates.Current(r.Context(), id)
-	if err != nil {
-		return nil, mandateError(err, "/template", nil)
-	}
-	tmpl, err := templateDraft(tdoc)
+// Results of applying a template to a mandate.
+const (
+	applyUpdated   = "updated"
+	applyUnchanged = "unchanged"
+)
+
+// wireApplyResult is the mandate after a template was applied, and whether that stored
+// a version.
+type wireApplyResult struct {
+	wireMandateDetail
+	Result string `json:"result"`
+}
+
+// templateMandate builds the document of a new version of a mandate from the current
+// one with the rules, approval settings and limits of a resolved template; validity and
+// identity stay (decision D3).
+func (s *Server) templateMandate(r *request, id string, current, template []byte) ([]byte, error) {
+	tmpl, err := templateDraft(template)
 	if err != nil {
 		return nil, err
 	}
@@ -398,16 +422,79 @@ func (s *Server) applyTemplate(r *request) (any, error) {
 		}
 	}
 	raw, _ := json.Marshal(edited)
-	doc, err := s.documentOf(r, id, current, raw)
+	return s.documentOf(r, id, current, raw)
+}
+
+// resolvedTemplate reads a template for applying it, as the human r is from.
+func (s *Server) resolvedTemplate(r *request, name string) ([]byte, string, error) {
+	doc, digest, err := s.cfg.Admission.Resolved(r.Context(), name, s.actor(r))
+	switch {
+	case errors.Is(err, admission.ErrTemplateNotFound):
+		return nil, "", failField(codeInvalidInput, "/template")
+	case errors.Is(err, mandate.ErrNoApprovers):
+		return nil, "", fail(codeNoApprovers)
+	case err != nil:
+		return nil, "", mandateError(err, "/template", nil)
+	}
+	return doc, digest, nil
+}
+
+// applyTemplate makes the template's rules, approval settings and limits a new version
+// of the mandate (decision D3); dates stay, and so does the name unless the request names
+// another. Same conflict and U9 rules as an edit. A template that brings nothing new
+// stores no version and answers "unchanged" (about the rules: a new name is still taken).
+func (s *Server) applyTemplate(r *request) (any, error) {
+	id, err := mandateID(r)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.cfg.Mandates.Update(r.Context(), id, doc, mandate.Change{BaseDigest: in.BaseDigest,
-		ConfirmCritical: in.ConfirmCritical}, s.actor(r)); err != nil {
+	var in struct {
+		Template        string  `json:"template"`
+		BaseDigest      string  `json:"base_digest"`
+		Name            *string `json:"name"`
+		ConfirmCritical bool    `json:"confirm_critical"`
+	}
+	if err := r.decode(&in); err != nil {
+		return nil, err
+	}
+	if !digestPattern.MatchString(in.BaseDigest) {
+		return nil, failField(codeInvalidInput, "/base_digest")
+	}
+	name := ""
+	if in.Name != nil {
+		var ok bool
+		if name, ok = validDisplayName(*in.Name); !ok {
+			return nil, failField(codeInvalidInput, "/name")
+		}
+	}
+	tdoc, tdigest, err := s.resolvedTemplate(r, in.Template)
+	if err != nil {
+		return nil, err
+	}
+	_, current, err := s.cfg.Mandates.Current(r.Context(), id)
+	if err != nil {
 		return nil, mandateError(err, "/template", nil)
 	}
+	doc, err := s.templateMandate(r, id, current, tdoc)
+	if err != nil {
+		return nil, err
+	}
+	info, err := s.cfg.Mandates.Update(r.Context(), id, doc, mandate.Change{BaseDigest: in.BaseDigest,
+		ConfirmCritical: in.ConfirmCritical, Name: name,
+		Origin: mandate.Origin{Kind: mandate.OriginTemplate, Template: in.Template, TemplateDigest: tdigest}}, s.actor(r))
+	if err != nil {
+		return nil, mandateError(err, "/template", nil)
+	}
+	result := applyUpdated
+	if info.Digest == in.BaseDigest {
+		result = applyUnchanged
+	}
 	s.publish(event{Type: "mandates.changed", ID: id})
-	return s.detail(r.Context(), id)
+	detail, err := s.detail(r.Context(), id)
+	if err != nil {
+		return nil, err
+	}
+	return wireApplyResult{wireMandateDetail: detail, Result: result}, nil
 }
 
 // createMandate gives an active agent without an active mandate a new one from a
@@ -470,5 +557,9 @@ func (s *Server) revokeMandate(r *request) (any, error) {
 	s.cfg.Approvals.CancelAgent(info.ClientID)
 	s.publish(event{Type: "mandates.changed", ID: id})
 	s.publish(event{Type: "agents.changed"})
-	return s.summary(info, doc)
+	uses, err := s.cfg.Mandates.TemplateUses(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	return s.summary(info, doc, uses)
 }

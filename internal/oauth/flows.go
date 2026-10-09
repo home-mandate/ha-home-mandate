@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/ha"
-	"github.com/home-mandate/home-mandate/internal/i18n"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
 
 const (
@@ -42,6 +42,9 @@ type decision struct {
 	mandateName     string
 	confirmCritical bool
 	by              string // Home Assistant user ID
+	// reconnect is the client ID of an existing agent the human chose to give new tokens
+	// instead of admitting a new agent (issue #22); empty for an admission.
+	reconnect string
 }
 
 // authCode is an authorization code waiting to be exchanged, at most codeTTL.
@@ -62,7 +65,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	client, err := s.cfg.Clients.Resolve(r.Context(), q["client_id"])
 	if err != nil || !client.Verified || !redirectAllowed(client.RedirectURIs, q["redirect_uri"]) {
-		s.cfg.Logger.Warn("authorization request refused: client or redirect URI", "error", err)
+		s.warn("authorization request refused: client or redirect URI", "error", err)
 		s.fail(w, r, http.StatusBadRequest, i18n.PageInvalidClient)
 		return
 	}
@@ -118,22 +121,19 @@ func (s *Server) redirectToClient(w http.ResponseWriter, r *http.Request, authz 
 }
 
 // callback receives the human from Home Assistant. Only an administrator continues,
-// with a new session cookie.
+// with a new session cookie. A failed attempt ends the sign-in.
 func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	id := s.sessionID(r)
 	q, ok := singleValues(r.URL.Query())
-	var haState, purpose string
-	found := s.sessions.with(id, func(sess *session) {
-		haState, purpose = sess.haState, sess.purpose
-		sess.haState = "" // one attempt per sign-in
-	})
-	if !found || !ok || !equalSecret(haState, q["state"]) {
+	purpose, stored, valid := s.signInState(id, q["state"])
+	if !ok || !valid {
+		s.endSession(w, id)
 		s.fail(w, r, http.StatusBadRequest, i18n.PageSessionExpired)
 		return
 	}
 	user, err := s.cfg.SignIn.SignIn(r.Context(), q["code"])
 	if err != nil {
-		s.cfg.Logger.Warn("sign-in through Home Assistant failed", "error", err)
+		s.warn("sign-in through Home Assistant failed", "error", err)
 		s.endSession(w, id)
 		s.fail(w, r, http.StatusBadGateway, i18n.PageSignInFailed)
 		return
@@ -144,18 +144,55 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, http.StatusForbidden, i18n.PageNotAdmin)
 		return
 	}
-	newID, ok := s.sessions.rotate(id)
-	if !ok {
+	newID, err := s.signedIn(r, id, stored, user)
+	switch {
+	case errors.Is(err, errTooManySessions):
+		s.endSession(w, id)
+		s.fail(w, r, http.StatusServiceUnavailable, i18n.PageBusy)
+		return
+	case err != nil:
+		s.endSession(w, id)
 		s.fail(w, r, http.StatusBadRequest, i18n.PageSessionExpired)
 		return
 	}
-	s.sessions.with(newID, func(sess *session) { sess.user = &user })
 	s.setCookie(w, newID)
 	next := ConsentPath
 	if purpose == purposePair {
 		next = PairPath
 	}
 	http.Redirect(w, r, next, http.StatusSeeOther)
+}
+
+// signInState checks the state Home Assistant sent back against the browser's sign-in:
+// its session, whose state the first attempt uses up, or else a pairState (stored false).
+func (s *Server) signInState(id, state string) (purpose string, stored, valid bool) {
+	var haState string
+	if s.sessions.with(id, func(sess *session) {
+		haState, purpose = sess.haState, sess.purpose
+		sess.haState = "" // one attempt per sign-in
+	}) {
+		return purpose, true, equalSecret(haState, state)
+	}
+	return purposePair, false, s.validPairState(id, state)
+}
+
+// signedIn gives the administrator a session with a new cookie value: the stored session
+// rotated, or a new one after a pairing sign-in, which had none.
+func (s *Server) signedIn(r *http.Request, id string, stored bool, user ha.User) (string, error) {
+	var newID string
+	if stored {
+		var ok bool
+		if newID, ok = s.sessions.rotate(id); !ok {
+			return "", errSessionExpired
+		}
+	} else {
+		var err error
+		if newID, _, err = s.sessions.create(s.clientAddr(r), purposePair, nil); err != nil {
+			return "", err
+		}
+	}
+	s.sessions.with(newID, func(sess *session) { sess.user, sess.haState = &user, "" })
+	return newID, nil
 }
 
 func (s *Server) endSession(w http.ResponseWriter, id string) {
@@ -171,6 +208,7 @@ type consentState struct {
 	device  string
 	grantID string
 	client  Client
+	sender  string // address the pairing request came from, as the UI shows it
 }
 
 // consentSession returns the signed-in session of r with an agent to admit.
@@ -192,7 +230,7 @@ func (s *Server) consentSession(r *http.Request) (consentState, bool) {
 		return st, true
 	}
 	g, ok := s.pendingGrant(st.device)
-	st.client, st.grantID = g.client, g.id
+	st.client, st.grantID, st.sender = g.client, g.id, normalizeAddr(g.sender)
 	return st, ok
 }
 
@@ -219,8 +257,16 @@ func (s *Server) renderConsent(w http.ResponseWriter, r *http.Request, st consen
 	if selected == "" {
 		selected = templates[0].Name // the most cautious comes first
 	}
+	templates = s.withApprovers(r.Context(), templates, st.user.ID)
 	p := page{Lang: language(r), Title: i18n.PageConsentTitle, User: st.user.Name, CSRF: st.csrf, Claimed: st.client.Name,
 		ClientID: st.client.ID, Verified: st.client.Verified, Name: name, Selected: selected, Templates: templates, Error: errKey}
+	if !st.client.Verified {
+		p.ReconnectUnverified, p.ReconnectFrom = true, st.sender
+	}
+	for _, c := range s.reconnectCandidates(r.Context(), st.client) {
+		p.Reconnect = append(p.Reconnect, reconnectOption{ClientID: c.ClientID, Name: c.DisplayName, Mandate: c.MandateName,
+			Admitted: c.AdmittedAt.UTC().Format(time.DateOnly)})
+	}
 	formTarget := ""
 	if u, err := url.Parse(st.client.ID); err == nil && st.client.Verified {
 		p.Host = u.Host
@@ -292,35 +338,51 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 			s.renderConsent(w, r, st, name, tmpl, i18n.PageConsentInvalid)
 			return
 		}
-		d := decision{name: name, template: tmpl, templateDigest: shown, by: st.user.ID}
-		if !s.decide(w, id, form["csrf"]) {
-			s.fail(w, r, http.StatusForbidden, i18n.PageSessionExpired)
+		s.carryOutConsent(w, r, st, id, form["csrf"], decision{name: name, template: tmpl, templateDigest: shown, by: st.user.ID})
+	case "reconnect":
+		// Only an agent offered on the page right now: same client, no valid token.
+		if !s.offered(r.Context(), st.client, form["agent"]) {
+			s.renderConsent(w, r, st, st.client.Name, "", i18n.PageReconnectInvalid)
 			return
 		}
-		if st.authz != nil {
-			code, err := s.issueCode(*st.authz, d)
-			if err != nil {
-				s.redirectToClient(w, r, st.authz, url.Values{"error": {"temporarily_unavailable"}}, http.StatusSeeOther)
-				return
-			}
-			s.redirectToClient(w, r, st.authz, url.Values{"code": {code}}, http.StatusSeeOther)
-			return
-		}
-		if _, err := s.admitGrant(r.Context(), st.device, st.grantID, d); err != nil {
-			switch {
-			case errors.Is(err, ErrPairingAdmission):
-				s.fail(w, r, http.StatusBadRequest, i18n.PageConsentInvalid)
-			case errors.Is(err, ErrPairingUnavailable):
-				s.fail(w, r, http.StatusServiceUnavailable, i18n.PageBusy)
-			default:
-				s.fail(w, r, http.StatusBadRequest, i18n.PagePairInvalid)
-			}
-			return
-		}
-		s.message(w, r, http.StatusOK, i18n.PageConsentTitle, i18n.PageAdmitted)
+		s.carryOutConsent(w, r, st, id, form["csrf"], decision{reconnect: form["agent"], by: st.user.ID})
 	default:
 		s.fail(w, r, http.StatusBadRequest, i18n.PageInvalidRequest)
 	}
+}
+
+// carryOutConsent ends the session for the decision d and carries it out: for a browser
+// sign-in as an authorization code for the agent, for a pairing code at once.
+func (s *Server) carryOutConsent(w http.ResponseWriter, r *http.Request, st consentState, id, csrf string, d decision) {
+	if !s.decide(w, id, csrf) {
+		s.fail(w, r, http.StatusForbidden, i18n.PageSessionExpired)
+		return
+	}
+	if st.authz != nil {
+		code, err := s.issueCode(*st.authz, d)
+		if err != nil {
+			s.redirectToClient(w, r, st.authz, url.Values{"error": {"temporarily_unavailable"}}, http.StatusSeeOther)
+			return
+		}
+		s.redirectToClient(w, r, st.authz, url.Values{"code": {code}}, http.StatusSeeOther)
+		return
+	}
+	if _, err := s.admitGrant(r.Context(), st.device, st.grantID, d); err != nil {
+		switch {
+		case errors.Is(err, ErrPairingAdmission):
+			s.fail(w, r, http.StatusBadRequest, i18n.PageConsentInvalid)
+		case errors.Is(err, ErrPairingUnavailable):
+			s.fail(w, r, http.StatusServiceUnavailable, i18n.PageBusy)
+		default:
+			s.fail(w, r, http.StatusBadRequest, i18n.PagePairInvalid)
+		}
+		return
+	}
+	done := i18n.PageAdmitted
+	if d.reconnect != "" {
+		done = i18n.PageReconnected
+	}
+	s.message(w, r, http.StatusOK, i18n.PageConsentTitle, done)
 }
 
 // decide ends the session for the decision; false if another request decided first.

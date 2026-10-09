@@ -1,5 +1,9 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-<!-- The two ways an agent signs in (design README 6.2): pairing code or browser sign-in, as link cards. -->
+<!--
+  The two ways an agent signs in (design README 6.2): pairing code or browser sign-in, as link
+  cards. The only place that links to a way directly: every other entry point leads here.
+  The heading can take the focus when the ways open on arrival.
+-->
 <script lang="ts">
   import { m } from '../../i18n.ts';
   import { href } from '../../router.ts';
@@ -19,7 +23,7 @@
 </script>
 
 <section aria-labelledby={headingId}>
-  <h2 id={headingId}>{m.agents_add_how()}</h2>
+  <h2 id={headingId} tabindex="-1">{m.agents_add_how()}</h2>
   <ul role="list">
     {#each ways as way (way.href)}
       <li>

@@ -311,15 +311,18 @@ describe('createHttpClient', () => {
   });
 
   it('calls every endpoint with the method, path and body of the contract', async () => {
-    const answers = Array.from({ length: 33 }, () => json({ ...sessionFixture }));
+    const answers = Array.from({ length: 40 }, () => json({ ...sessionFixture }));
     const { api: c, calls } = await signedIn(...answers);
     await c.setLanguage('de');
     await c.system();
     await c.agents();
     await c.revokeAgent('pair:kitchen');
+    await c.removeAgent({ client_id: 'pair:kitchen', revoke: true, mandates: true });
+    await c.removeRevoked();
     await c.pairingCheck('bcdf-ghjk');
     await c.pairingApprove({ code: 'BCDFGHJK', pairing_id: 'pg-1', display_name: 'Küche', template: 'voice', template_digest: 'sha256:ef' });
     await c.pairingDeny({ code: 'BCDFGHJK', pairing_id: 'pg-1' });
+    await c.pairingReconnect({ code: 'BCDFGHJK', pairing_id: 'pg-1', client_id: 'pair:kitchen' });
     await c.devices();
     await c.putDeviceCritical('switch.garden_gate', true);
     await c.mandates();
@@ -329,12 +332,16 @@ describe('createHttpClient', () => {
     await c.putMandate('m1', { name: 'Küche', draft, base_digest: 'sha256:ab', confirm_critical: true });
     await c.applyTemplate('m1', { template: 'voice', base_digest: 'sha256:ab' });
     await c.revokeMandate('m1');
+    await c.removeMandate('m1');
     await c.templates();
     await c.template('voice');
     await c.putTemplate('voice', { draft, base_digest: 'sha256:cd' });
     await c.putTemplate('guest', { draft, base_digest: null, confirm_critical: true });
     await c.deleteTemplate('voice');
     await c.setTemplateHidden('hm-read-only', true);
+    await c.templateApprovers('my voice');
+    await c.templateUsage('voice');
+    await c.applyTemplateToMandates('voice', { template_digest: 'sha256:cd', targets: [{ mandate_id: 'm 1', base_digest: 'sha256:ab' }], confirm_critical: true });
     await c.settings();
     await c.putSettings({ approval_timeout: 'PT2M', max_actions_per_hour: 60, bell: false });
     await c.approvals();
@@ -351,9 +358,12 @@ describe('createHttpClient', () => {
       'GET api/system',
       'GET api/agents',
       'POST api/agents/revoke {"client_id":"pair:kitchen"}',
+      'POST api/agents/remove {"client_id":"pair:kitchen","revoke":true,"mandates":true}',
+      'POST api/revoked/remove',
       'POST api/pairing/check {"code":"bcdf-ghjk"}',
       'POST api/pairing/approve {"code":"BCDFGHJK","pairing_id":"pg-1","display_name":"Küche","template":"voice","template_digest":"sha256:ef"}',
       'POST api/pairing/deny {"code":"BCDFGHJK","pairing_id":"pg-1"}',
+      'POST api/pairing/reconnect {"code":"BCDFGHJK","pairing_id":"pg-1","client_id":"pair:kitchen"}',
       'GET api/devices',
       'PUT api/devices/critical {"entity_id":"switch.garden_gate","critical":true}',
       'GET api/mandates',
@@ -363,12 +373,16 @@ describe('createHttpClient', () => {
       `PUT api/mandates/m1 ${JSON.stringify({ name: 'Küche', draft, base_digest: 'sha256:ab', confirm_critical: true })}`,
       'POST api/mandates/m1/apply-template {"template":"voice","base_digest":"sha256:ab"}',
       'POST api/mandates/m1/revoke',
+      'POST api/mandates/m1/remove',
       'GET api/templates',
       'GET api/templates/voice',
       `PUT api/templates/voice ${JSON.stringify({ draft, base_digest: 'sha256:cd' })}`,
       `PUT api/templates/guest ${JSON.stringify({ draft, base_digest: null, confirm_critical: true })}`,
       'DELETE api/templates/voice',
       'PUT api/templates/hm-read-only/hidden {"hidden":true}',
+      'GET api/templates/my%20voice/approvers',
+      'GET api/templates/voice/usage',
+      'POST api/templates/voice/apply {"template_digest":"sha256:cd","targets":[{"mandate_id":"m 1","base_digest":"sha256:ab"}],"confirm_critical":true}',
       'GET api/settings',
       'PUT api/settings {"approval_timeout":"PT2M","max_actions_per_hour":60,"bell":false}',
       'GET api/approvals',

@@ -19,13 +19,15 @@
     people: readonly { id: string; name: string }[];
     timeoutError?: string;
     approversError?: string;
+    /** The installation's upper limit for the timeout in seconds; null while unknown. */
+    maxTimeout?: number | null;
     disabled?: boolean;
     onchange: (approval: Approval) => void;
     /** A field was left or a person was switched. */
     ontouch?: (part: 'timeout' | 'approvers') => void;
   }
 
-  let { approval, people, timeoutError = '', approversError = '', disabled = false, onchange, ontouch }: Props = $props();
+  let { approval, people, timeoutError = '', approversError = '', maxTimeout = null, disabled = false, onchange, ontouch }: Props = $props();
 
   const id = $props.id();
   const MAX_INITIALS = 2;
@@ -49,6 +51,7 @@
   <TimeoutField
     timeout={approval.timeout}
     error={timeoutError}
+    max={maxTimeout}
     {disabled}
     onchange={(timeout) => onchange({ ...approval, timeout })}
     ontouch={() => ontouch?.('timeout')}

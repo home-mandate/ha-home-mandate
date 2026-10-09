@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
 // Source is what the catalog reads from Home Assistant.
@@ -64,11 +64,17 @@ var domainCategory = map[string]string{
 	"script":              "script",
 }
 
+// gateClasses are the device classes of a cover that may close an entrance of the
+// house: garage doors, gates, doors, and none at all, which Home Assistant gives cover
+// groups and many template covers. They are the critical category gate; every other
+// class (blinds, shades, shutters, curtains, awnings, windows, ...) is cover.
+var gateClasses = map[string]bool{"garage": true, "gate": true, "door": true, "": true}
+
 // Category returns the category of an entity from its domain and device_class.
 func Category(entityID, deviceClass string) string {
 	domain, _, _ := strings.Cut(entityID, ".")
 	if domain == "cover" {
-		if deviceClass == "garage" || deviceClass == "gate" {
+		if gateClasses[deviceClass] {
 			return "gate"
 		}
 		return "cover"
@@ -103,7 +109,25 @@ type Catalog struct {
 	onRefresh func([]Rename)
 
 	refresh chan struct{}
+	// changes counts registry changes, synced is the count the snapshot covers: while they
+	// differ, a change is not in the snapshot yet and nothing is decided on it.
+	changes, synced uint64
+	// loaded is when the snapshot's refresh started.
+	loaded time.Time
+	now    func() time.Time
+	resync time.Duration
 }
+
+const (
+	// MaxAge is the age of the snapshot beyond which the catalog is not ready: the
+	// registries are read only by a refresh, and events cannot tell that none was missed.
+	MaxAge = 30 * time.Minute
+	// resyncEvery is how often Run refreshes without a request, so that a failed refresh
+	// or two still leave the snapshot younger than MaxAge.
+	resyncEvery = 10 * time.Minute
+	// maxRetryDelay bounds the wait between attempts of a refresh that keeps failing.
+	maxRetryDelay = 5 * time.Second
+)
 
 // Rename is an entity ID that Home Assistant changed. Rules and marks name entities by
 // ID, so they no longer apply to the renamed entity (decision H-E1: report, never rewrite).
@@ -132,15 +156,17 @@ func New(src Source, log *slog.Logger) *Catalog {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Catalog{src: src, log: log, devices: map[string]Device{}, refresh: make(chan struct{}, 1)}
+	return &Catalog{src: src, log: log, devices: map[string]Device{}, refresh: make(chan struct{}, 1), now: time.Now, resync: resyncEvery}
 }
 
-// Ready reports whether the catalog was loaded at least once.
+// Ready reports whether decisions can be made on the snapshot: it was loaded, covers
+// every registry change so far and is at most MaxAge old.
 func (c *Catalog) Ready() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	// Renames that can no longer be held would be forgotten: nothing is decided then.
-	return c.ready && (c.aliases == nil || !c.aliases.Overflowing())
+	return c.ready && c.synced == c.changes && c.now().Sub(c.loaded) <= MaxAge &&
+		(c.aliases == nil || !c.aliases.Overflowing())
 }
 
 // Lookup returns a copy of the device with entityID.
@@ -233,10 +259,12 @@ func (c *Catalog) Invalidate() {
 	c.ready = false
 }
 
-// Refresh reloads states and registries. On failure the last snapshot stays.
+// Refresh reloads states and registries. On failure the last snapshot stays, and so does
+// a pending registry change.
 func (c *Catalog) Refresh(ctx context.Context) error {
 	c.mu.Lock()
 	c.refreshing, c.pending = true, nil
+	changes, started := c.changes, c.now()
 	c.mu.Unlock()
 	defer func() {
 		c.mu.Lock()
@@ -307,7 +335,8 @@ func (c *Catalog) Refresh(ctx context.Context) error {
 	for _, ch := range c.pending {
 		c.applyLocked(ch)
 	}
-	c.ready = true
+	// A registry change after the start may be missing: it waits for the next refresh.
+	c.ready, c.synced, c.loaded = true, changes, started
 	return nil
 }
 
@@ -318,9 +347,13 @@ func device(s ha.State, area string) Device {
 }
 
 // HandleEvent applies a state_changed event or schedules a refresh after a registry
-// change. It runs on the Home Assistant read loop and never blocks.
+// change; until that refresh succeeds the catalog is not ready. It runs on the Home
+// Assistant read loop and never blocks.
 func (c *Catalog) HandleEvent(e ha.Event) {
 	if strings.HasSuffix(e.EventType, "_registry_updated") {
+		c.mu.Lock()
+		c.changes++
+		c.mu.Unlock()
 		if e.EventType == "entity_registry_updated" {
 			c.noteRename(e.Data)
 		}
@@ -409,19 +442,15 @@ func (c *Catalog) RequestRefresh() {
 	}
 }
 
-// Run performs requested refreshes until ctx ends. It waits debounce after a request so
-// that a burst of registry events causes one refresh, and retries failed refreshes.
+// Run performs requested refreshes until ctx ends, and one every resyncEvery. It waits
+// debounce after a request so that a burst of registry events causes one refresh, and
+// retries a failed refresh, waiting twice as long after every failure up to
+// maxRetryDelay.
 func (c *Catalog) Run(ctx context.Context, debounce time.Duration) {
+	delay := debounce
 	for {
-		select {
-		case <-ctx.Done():
+		if !c.wait(ctx, delay) {
 			return
-		case <-c.refresh:
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(debounce):
 		}
 		select { // requests that arrived during the wait are covered by this refresh
 		case <-c.refresh:
@@ -432,9 +461,11 @@ func (c *Catalog) Run(ctx context.Context, debounce time.Duration) {
 			if ctx.Err() == nil {
 				c.log.Warn("catalog refresh failed, retrying", "error", err)
 				c.RequestRefresh()
+				delay = min(2*delay, max(maxRetryDelay, debounce))
 			}
 			continue
 		}
+		delay = debounce
 		c.mu.Lock()
 		renames, fn := c.renames, c.onRefresh
 		c.renames = nil
@@ -442,5 +473,23 @@ func (c *Catalog) Run(ctx context.Context, debounce time.Duration) {
 		if fn != nil {
 			fn(renames)
 		}
+	}
+}
+
+// wait waits for a requested refresh and then delay, or for the periodic one; false once
+// ctx ends.
+func (c *Catalog) wait(ctx context.Context, delay time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(c.resync):
+		return true
+	case <-c.refresh:
+	}
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(delay):
+		return true
 	}
 }

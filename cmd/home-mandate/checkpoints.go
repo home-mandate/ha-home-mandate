@@ -11,17 +11,19 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/approval"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/ha"
-	"github.com/home-mandate/home-mandate/internal/i18n"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
 
 const (
@@ -46,16 +48,24 @@ type settings interface {
 	SetSetting(ctx context.Context, key, value string) error
 }
 
-// loadSigner returns the signer for the checkpoints of the audit log (SPEC-v0 section
-// 9.5). The key is created on first use. It lies in the data directory by default: that
-// protects a copy of the database alone, not against someone who can read the whole
-// directory. HM_AUDIT_KEY_FILE names a place outside of it.
-func loadSigner(ctx context.Context, st settings, dataDir string, getenv func(string) string) (*audit.Signer, error) {
-	path := getenv(envAuditKeyFile)
-	if path == "" {
-		path = filepath.Join(dataDir, auditKeyFile)
+// keyPath is the file of the key for the checkpoints. It lies in the data directory by
+// default: that protects a copy of the database alone, not against someone who can read
+// the whole directory. HM_AUDIT_KEY_FILE names a place outside of it.
+func keyPath(dataDir string, getenv func(string) string) string {
+	if path := getenv(envAuditKeyFile); path != "" {
+		return path
 	}
-	key, err := readOrCreateKey(path)
+	return filepath.Join(dataDir, auditKeyFile)
+}
+
+// loadSigner returns the signer for the checkpoints of the audit log (SPEC-v0 section
+// 9.5) with the key at path. Only with create is a missing key created; otherwise the
+// error wraps fs.ErrNotExist.
+func loadSigner(ctx context.Context, st settings, path string, create bool) (*audit.Signer, error) {
+	key, err := readKey(path)
+	if errors.Is(err, fs.ErrNotExist) && create {
+		key, err = createKey(path)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("audit checkpoint key %s: %w", path, err)
 	}
@@ -73,26 +83,26 @@ func loadSigner(ctx context.Context, st settings, dataDir string, getenv func(st
 	return &audit.Signer{LogID: logID, KeyID: "log-" + hex.EncodeToString(sum[:8]), Key: key}, nil
 }
 
-// readOrCreateKey reads the Ed25519 seed from path, or creates the file, readable by
-// its owner only.
-func readOrCreateKey(path string) (ed25519.PrivateKey, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		seed := make([]byte, ed25519.SeedSize)
-		_, _ = rand.Read(seed) // crypto/rand.Read never fails (Go ≥ 1.24)
-		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := f.WriteString(base64.StdEncoding.EncodeToString(seed) + "\n"); err != nil {
-			_ = f.Close()
-			return nil, err
-		}
-		if err := f.Close(); err != nil {
-			return nil, err
-		}
-		return ed25519.NewKeyFromSeed(seed), nil
+// readKey reads the Ed25519 seed from path: a regular file (no symbolic link) of the user
+// Home-Mandate runs as, readable by that user only.
+func readKey(path string) (ed25519.PrivateKey, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
 	}
+	if err := checkKeyFile(info); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	// The file opened must be the one checked, not one put in its place since.
+	if opened, err := f.Stat(); err != nil || !os.SameFile(info, opened) {
+		return nil, errors.New("key file changed while reading it")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxKeyFile))
 	if err != nil {
 		return nil, err
 	}
@@ -101,6 +111,59 @@ func readOrCreateKey(path string) (ed25519.PrivateKey, error) {
 		return nil, errors.New("not an Ed25519 seed in base64")
 	}
 	return ed25519.NewKeyFromSeed(seed), nil
+}
+
+// maxKeyFile bounds what is read of the key file; the seed in base64 is 45 bytes.
+const maxKeyFile = 1024
+
+// checkKeyFile refuses a key file that is not a regular file, that others than its owner
+// may access, or that belongs to another user.
+func checkKeyFile(info fs.FileInfo) error {
+	if !info.Mode().IsRegular() {
+		return errors.New("not a regular file")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("mode %v lets others access it; it must be 0600", info.Mode().Perm())
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != os.Getuid() {
+		return errors.New("not owned by the user Home-Mandate runs as")
+	}
+	return nil
+}
+
+// createKey writes a new seed to path atomically: into a temporary file readable by its
+// owner only in the same directory, synced, then renamed into place, so that a crash
+// never leaves a partial key behind.
+func createKey(path string) (ed25519.PrivateKey, error) {
+	seed := make([]byte, ed25519.SeedSize)
+	_, _ = rand.Read(seed) // crypto/rand.Read never fails (Go ≥ 1.24)
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, ".audit-key-*") // mode 0600
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(f.Name())
+	_, err = f.WriteString(base64.StdEncoding.EncodeToString(seed) + "\n")
+	if err == nil {
+		err = f.Sync()
+	}
+	if err := errors.Join(err, f.Close()); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(f.Name(), path); err != nil {
+		return nil, err
+	}
+	return ed25519.NewKeyFromSeed(seed), syncDir(dir)
+}
+
+// syncDir makes a new directory entry durable.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 // newUUID returns a random UUID (version 4) in lower case.

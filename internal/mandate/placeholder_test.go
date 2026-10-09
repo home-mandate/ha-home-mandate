@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-mandate/home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 )
 
 // A mandate never names a placeholder as approver: nobody could approve then.

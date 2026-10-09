@@ -6,26 +6,34 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/mandate-spec/mandate-spec/jws"
+	"github.com/home-mandate/spec/jws"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
-	"github.com/mandate-spec/mandate-spec/evaluator"
+	"github.com/home-mandate/spec/evaluator"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/approval"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/config"
-	"github.com/home-mandate/home-mandate/internal/mandate"
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/config"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/removal"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 const databaseFile = "home-mandate.db"
+
+// removal removes revoked agents and mandates of the opened database.
+func (s *state) removal() *removal.Service {
+	return removal.New(s.store.DB(), s.agents, s.mandates)
+}
 
 // localAdmin is the actor of changes made with the administration commands.
 var localAdmin = audit.Actor{Kind: audit.ActorUser, ID: "local-admin"}
@@ -58,7 +66,8 @@ func openState(ctx context.Context, e env) (*state, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := attachSigner(ctx, s, dir, e.getenv); err != nil {
+	// The command line never creates the key: serve does on its first start.
+	if err := attachSigner(ctx, s, dir, e.getenv, false); err != nil {
 		_ = s.store.Close()
 		return nil, err
 	}
@@ -66,10 +75,22 @@ func openState(ctx context.Context, e env) (*state, error) {
 }
 
 // attachSigner gives the audit log the key for its checkpoints, so that it writes them
-// and verifies how far the log is anchored.
-func attachSigner(ctx context.Context, s *state, dataDir string, getenv func(string) string) error {
-	signer, err := loadSigner(ctx, s.store, dataDir, getenv)
+// and verifies how far the log is anchored. A missing key is created only with create
+// and only while the log has no checkpoints: a new key could not verify them. Without
+// create and without a key, the log stays without signer.
+func attachSigner(ctx context.Context, s *state, dataDir string, getenv func(string) string, create bool) error {
+	checkpoints, err := s.log.HasCheckpoints(ctx)
 	if err != nil {
+		return err
+	}
+	path := keyPath(dataDir, getenv)
+	signer, err := loadSigner(ctx, s.store, path, create && !checkpoints)
+	switch {
+	case errors.Is(err, fs.ErrNotExist) && checkpoints:
+		return fmt.Errorf("audit checkpoint key %s is missing although the audit log has checkpoints: restore the key; a new one could not verify them", path)
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
 		return err
 	}
 	s.signer = signer
@@ -94,8 +115,8 @@ func openStore(ctx context.Context, dataDir string) (*state, error) {
 	}
 	log := audit.New(st.DB(), household)
 	agents, mandates := agent.New(st.DB(), log), mandate.New(st.DB(), log, household, issuer)
-	approvers := approval.NewApprovers(st.DB())
-	adm := admission.New(st.DB(), agents, mandates, household)
+	approvers := approval.NewApprovers(st.DB(), log)
+	adm := admission.New(st.DB(), log, agents, mandates, household)
 	// The approvers placeholder of templates stands for them, with the admitting human.
 	adm.SetApprovers(func(ctx context.Context) ([]string, error) {
 		list, err := approvers.List(ctx)
@@ -126,7 +147,7 @@ func mandateIssuer(ctx context.Context, st *store.Store) (string, error) {
 func withState(ctx context.Context, e env, fn func(*state) error) int {
 	s, err := openState(ctx, e)
 	if err != nil {
-		fmt.Fprintln(e.stderr, "home-mandate:", err)
+		fmt.Fprintln(e.stderr, "home-mandate:", permissionHint(err, os.Getuid(), os.Getgid()))
 		return exitFailure
 	}
 	defer s.store.Close()
@@ -148,10 +169,12 @@ func agentCommand(ctx context.Context, e env, args []string) int {
 		return withState(ctx, e, func(s *state) error {
 			agents, err := s.agents.List(ctx)
 			for _, a := range agents {
-				fmt.Fprintf(e.stdout, "%s\t%s\t%s\n", a.ClientID, a.Status, a.DisplayName)
+				fmt.Fprintf(e.stdout, "%s\t%s\t%s\n", a.ClientID, listStatus(a.Status, a.RemovedAt), a.DisplayName)
 			}
 			return err
 		})
+	case "remove":
+		return removeAgentCommand(ctx, e, args[1:])
 	case "revoke":
 		if len(args) != 2 {
 			return usageError(e, "agent revoke needs CLIENT_ID")
@@ -160,6 +183,42 @@ func agentCommand(ctx context.Context, e env, args []string) int {
 	default:
 		return usageError(e, fmt.Sprintf("unknown agent subcommand %q", args[0]))
 	}
+}
+
+// removeAgentCommand removes a revoked agent, with --with-mandates its mandates too, or
+// with --all-revoked every revoked agent with its mandates and every other revoked
+// mandate, as "Remove all revoked" in the UI does (issue #21).
+func removeAgentCommand(ctx context.Context, e env, args []string) int {
+	switch {
+	case len(args) == 1 && args[0] == "--all-revoked":
+		return withState(ctx, e, func(s *state) error {
+			res, err := s.removal().RemoveRevoked(ctx, localAdmin)
+			fmt.Fprintf(e.stdout, "removed %d agents and %d mandates\n", len(res.Agents), len(res.Mandates))
+			return err
+		})
+	case len(args) == 1 && !strings.HasPrefix(args[0], "-"), len(args) == 2 && args[0] == "--with-mandates" && !strings.HasPrefix(args[1], "-"):
+		clientID := args[len(args)-1]
+		return withState(ctx, e, func(s *state) error {
+			res, err := s.removal().RemoveAgent(ctx, clientID, removal.AgentOptions{Mandates: len(args) == 2}, localAdmin)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(e.stdout, "removed agent", clientID)
+			for _, id := range res.Mandates {
+				fmt.Fprintln(e.stdout, "removed mandate", id)
+			}
+			return nil
+		})
+	}
+	return usageError(e, "agent remove needs [--with-mandates] CLIENT_ID or --all-revoked")
+}
+
+// listStatus is the status the lists print: removed for a removed one (it stays revoked).
+func listStatus(status string, removedAt time.Time) string {
+	if !removedAt.IsZero() {
+		return "removed"
+	}
+	return status
 }
 
 // emergencyStopCommand switches the emergency stop. It takes effect in a running gateway
@@ -212,6 +271,11 @@ func approverCommand(ctx context.Context, e env, args []string) int {
 	switch {
 	case (len(args) == 3 || len(args) == 4) && args[0] == "add":
 		ap := approval.Approver{UserID: args[1], Devices: parseDevices(args[2])}
+		for _, d := range ap.Devices {
+			if !ha.ValidNotifyService(d.Service) {
+				return usageError(e, fmt.Sprintf("%q is no device of the Companion App: approver add needs notify services like mobile_app_pixel_9", d.Service))
+			}
+		}
 		if len(args) == 4 {
 			ap.Language = args[3]
 		}
@@ -223,7 +287,7 @@ func approverCommand(ctx context.Context, e env, args []string) int {
 			if i := slices.IndexFunc(list, func(a approval.Approver) bool { return a.UserID == ap.UserID }); i >= 0 {
 				ap.UI, ap.UICritical = list[i].UI, list[i].UICritical
 			}
-			return s.approvers.Put(ctx, ap)
+			return s.approvers.Put(ctx, ap, localAdmin)
 		})
 	case len(args) == 1 && args[0] == "list":
 		return withState(ctx, e, func(s *state) error {
@@ -234,7 +298,7 @@ func approverCommand(ctx context.Context, e env, args []string) int {
 			return err
 		})
 	case len(args) == 2 && args[0] == "remove":
-		return withState(ctx, e, func(s *state) error { return s.approvers.Remove(ctx, args[1]) })
+		return withState(ctx, e, func(s *state) error { return s.approvers.Remove(ctx, args[1], localAdmin) })
 	default:
 		return usageError(e, "approver needs add USER_ID NOTIFY_SERVICE[:no-critical][,…] [de|en], list or remove USER_ID")
 	}
@@ -310,9 +374,20 @@ func mandateCommand(ctx context.Context, e env, args []string) int {
 		return withState(ctx, e, func(s *state) error {
 			list, err := s.mandates.List(ctx)
 			for _, m := range list {
-				fmt.Fprintf(e.stdout, "%s\t%s\t%s\t%s\n", m.ID, m.Status, m.ClientID, m.Digest)
+				fmt.Fprintf(e.stdout, "%s\t%s\t%s\t%s\n", m.ID, listStatus(m.Status, m.RemovedAt), m.ClientID, m.Digest)
 			}
 			return err
+		})
+	case "remove":
+		if len(args) != 2 || strings.HasPrefix(args[1], "-") {
+			return usageError(e, "mandate remove needs ID")
+		}
+		return withState(ctx, e, func(s *state) error {
+			if err := s.removal().RemoveMandate(ctx, args[1], localAdmin); err != nil {
+				return err
+			}
+			fmt.Fprintln(e.stdout, "removed mandate", args[1])
+			return nil
 		})
 	case "revoke":
 		if len(args) != 2 {
@@ -359,7 +434,7 @@ func templateCommand(ctx context.Context, e env, args []string) int {
 			return err
 		})
 	case len(args) == 2 && args[0] == "remove":
-		return withState(ctx, e, func(s *state) error { return s.admission.RemoveTemplate(ctx, args[1]) })
+		return withState(ctx, e, func(s *state) error { return s.admission.RemoveTemplate(ctx, args[1], localAdmin) })
 	default:
 		return usageError(e, "mandate template needs import NAME FILE|-, list or remove NAME")
 	}
@@ -380,30 +455,51 @@ func readDocument(e env, name string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(r, evaluator.MaxMandateBytes+1))
 }
 
+// verifyAudit prints the verification of the audit log. A deleted beginning that no
+// verified checkpoint covers fails it: the log.truncated entry needs no key.
+func verifyAudit(ctx context.Context, e env, s *state) error {
+	r, err := s.log.Verify(ctx)
+	if err != nil {
+		return err
+	}
+	switch {
+	case r.Truncation == audit.TruncationUnanchored:
+		fmt.Fprintf(e.stdout, "audit log beginning deleted without a verified checkpoint\nfirst_seq=%d\ntruncation=%s\n", r.FirstSeq, r.Truncation)
+		return errBrokenLog
+	case !r.Valid:
+		fmt.Fprintf(e.stdout, "audit log broken at seq %d (entry %d)\n", r.BrokenAt, r.Index+1)
+		if r.Truncation != "" {
+			fmt.Fprintf(e.stdout, "first_seq=%d\ntruncation=%s\n", r.FirstSeq, r.Truncation)
+		}
+		return errBrokenLog
+	}
+	fmt.Fprintln(e.stdout, "audit log valid")
+	// Entries after the last checkpoint are consistent but not anchored.
+	fmt.Fprintf(e.stdout, "entries=%d\nanchored_up_to=%d\nfirst_seq=%d\ntruncation=%s\n",
+		r.Entries, r.AnchoredSeq, r.FirstSeq, r.Truncation)
+	if s.signer != nil {
+		fmt.Fprintf(e.stdout, "log_id=%s\n", s.signer.LogID)
+	}
+	return nil
+}
+
+// errNoKey: before serve first started there is no key for the checkpoints.
+var errNoKey = errors.New("no audit checkpoint key yet: home-mandate serve creates it on its first start")
+
 func auditCommand(ctx context.Context, e env, args []string) int {
 	if len(args) != 1 {
 		return usageError(e, "audit needs verify, export, key or accept-clock")
 	}
 	switch args[0] {
 	case "verify":
-		return withState(ctx, e, func(s *state) error {
-			r, err := s.log.Verify(ctx)
-			if err != nil {
-				return err
-			}
-			if !r.Valid {
-				fmt.Fprintf(e.stdout, "audit log broken at seq %d (entry %d)\n", r.BrokenAt, r.Index+1)
-				return errBrokenLog
-			}
-			fmt.Fprintln(e.stdout, "audit log valid")
-			// Entries after the last checkpoint are consistent but not anchored.
-			fmt.Fprintf(e.stdout, "entries=%d\nanchored_up_to=%d\nlog_id=%s\n", r.Entries, r.AnchoredSeq, s.signer.LogID)
-			return nil
-		})
+		return withState(ctx, e, func(s *state) error { return verifyAudit(ctx, e, s) })
 	case "key":
 		// The public key and the log ID belong outside the device: with them, anyone can
 		// verify an exported log and its checkpoints (SPEC-v0 section 9.5).
 		return withState(ctx, e, func(s *state) error {
+			if s.signer == nil {
+				return errNoKey
+			}
 			set, err := jws.MarshalJWKS(jws.Keys{s.signer.KeyID: s.signer.Key.Public()})
 			if err != nil {
 				return err

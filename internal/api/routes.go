@@ -54,9 +54,12 @@ func (s *Server) routes() *http.ServeMux {
 
 	route("GET /api/agents", noBody, s.getAgents)
 	route("POST /api/agents/revoke", jsonBody, s.revokeAgent)
+	route("POST /api/agents/remove", jsonBody, s.removeAgent)
+	route("POST /api/revoked/remove", noBody, s.removeRevoked)
 	route("POST /api/pairing/check", jsonBody, s.pairingCheck)
 	route("POST /api/pairing/approve", jsonBody, s.pairingApprove)
 	route("POST /api/pairing/deny", jsonBody, s.pairingDeny)
+	route("POST /api/pairing/reconnect", jsonBody, s.pairingReconnect)
 
 	route("GET /api/devices", noBody, s.getDevices)
 	route("PUT /api/devices/critical", jsonBody, s.putDeviceCritical)
@@ -71,12 +74,16 @@ func (s *Server) routes() *http.ServeMux {
 	route("GET /api/mandates/{id}/versions/{number}", noBody, s.getMandateVersion)
 	route("POST /api/mandates/{id}/apply-template", jsonBody, s.applyTemplate)
 	route("POST /api/mandates/{id}/revoke", noBody, s.revokeMandate)
+	route("POST /api/mandates/{id}/remove", noBody, s.removeMandate)
 
 	route("GET /api/templates", noBody, s.getTemplates)
 	route("GET /api/templates/{name}", noBody, s.getTemplate)
 	route("PUT /api/templates/{name}", jsonBody, s.putTemplate)
 	route("DELETE /api/templates/{name}", noBody, s.deleteTemplate)
 	route("PUT /api/templates/{name}/hidden", jsonBody, s.putTemplateHidden)
+	route("GET /api/templates/{name}/approvers", noBody, s.getTemplateApprovers)
+	route("GET /api/templates/{name}/usage", noBody, s.getTemplateUsage)
+	route("POST /api/templates/{name}/apply", jsonBody, s.applyTemplateToMandates)
 
 	route("GET /api/settings", noBody, s.getSettings)
 	route("PUT /api/settings", jsonBody, s.putSettings)

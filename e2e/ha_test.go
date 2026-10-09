@@ -235,7 +235,7 @@ func watchNotifications(t *testing.T) <-chan notification {
 				} `json:"event"`
 			}
 			raw, _ := json.Marshal(m)
-			if json.Unmarshal(raw, &ev) != nil || ev.Event.Data.Domain != "notify" {
+			if json.Unmarshal(raw, &ev) != nil || ev.Event.Data.Domain != "notify" || !strings.HasPrefix(ev.Event.Data.Service, "mobile_app_") {
 				continue
 			}
 			n := notification{Service: ev.Event.Data.Service, Title: ev.Event.Data.ServiceData.Title, Message: ev.Event.Data.ServiceData.Message}

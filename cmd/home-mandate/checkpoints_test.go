@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/approval"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/ha"
-	"github.com/home-mandate/home-mandate/internal/i18n"
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/i18n"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 func testStore(t *testing.T) (*store.Store, string) {
@@ -36,15 +37,23 @@ func noEnv(string) string { return "" }
 func TestLoadSignerCreatesTheKeyOnceAndKeepsTheLogID(t *testing.T) {
 	st, dir := testStore(t)
 	ctx := context.Background()
-	first, err := loadSigner(ctx, st, dir, noEnv)
+	path := keyPath(dir, noEnv)
+	if _, err := loadSigner(ctx, st, path, false); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("loadSigner without creating = %v, want ErrNotExist", err)
+	}
+	first, err := loadSigner(ctx, st, path, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(filepath.Join(dir, auditKeyFile))
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("key file: %v, mode %v; want 0600", err, info.Mode().Perm())
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		t.Fatalf("key file: %v, mode %v; want a regular file with 0600", err, info.Mode())
 	}
-	again, err := loadSigner(ctx, st, dir, noEnv)
+	// Written to a temporary file and moved into place: nothing else is left behind.
+	if left, _ := filepath.Glob(filepath.Join(dir, ".audit-key-*")); len(left) != 0 {
+		t.Errorf("temporary files left: %v", left)
+	}
+	again, err := loadSigner(ctx, st, path, false)
 	if err != nil || again.LogID != first.LogID || again.KeyID != first.KeyID || !again.Key.Equal(first.Key) {
 		t.Errorf("second load differs: %v", err)
 	}
@@ -53,12 +62,10 @@ func TestLoadSignerCreatesTheKeyOnceAndKeepsTheLogID(t *testing.T) {
 	}
 	// A key outside the data directory, named by the environment.
 	outside := filepath.Join(t.TempDir(), "key")
-	other, err := loadSigner(ctx, st, dir, func(k string) string {
-		if k == envAuditKeyFile {
-			return outside
-		}
-		return ""
-	})
+	if got := keyPath(dir, func(k string) string { return map[string]string{envAuditKeyFile: outside}[k] }); got != outside {
+		t.Fatalf("keyPath = %s, want %s", got, outside)
+	}
+	other, err := loadSigner(ctx, st, outside, true)
 	if err != nil || other.Key.Equal(first.Key) || other.LogID != first.LogID {
 		t.Errorf("key from another place: %v", err)
 	}
@@ -67,23 +74,108 @@ func TestLoadSignerCreatesTheKeyOnceAndKeepsTheLogID(t *testing.T) {
 func TestLoadSignerRefusesABrokenKeyFile(t *testing.T) {
 	st, dir := testStore(t)
 	ctx := context.Background()
+	path := filepath.Join(dir, auditKeyFile)
 	for name, content := range map[string]string{"not base64": "???", "too short": "AQID"} {
-		if err := os.WriteFile(filepath.Join(dir, auditKeyFile), []byte(content), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := loadSigner(ctx, st, dir, noEnv); err == nil {
+		if _, err := loadSigner(ctx, st, path, true); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	if _, err := loadSigner(ctx, st, filepath.Join(dir, "missing-directory"), noEnv); err == nil {
+	if _, err := loadSigner(ctx, st, filepath.Join(dir, "missing-directory", auditKeyFile), true); err == nil {
 		t.Error("key in a directory that does not exist created")
 	}
-	if err := os.Remove(filepath.Join(dir, auditKeyFile)); err != nil {
+	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
 	_ = st.Close()
-	if _, err := loadSigner(ctx, st, dir, noEnv); err == nil {
+	if _, err := loadSigner(ctx, st, path, true); err == nil {
 		t.Error("loadSigner without the database succeeded")
+	}
+}
+
+// The key is read only from a regular file that nobody but its owner, the user
+// Home-Mandate runs as, can read: no symbolic link, no directory, no group or world access.
+func TestLoadSignerRefusesAnUnsafeKeyFile(t *testing.T) {
+	st, dir := testStore(t)
+	ctx := context.Background()
+	good := filepath.Join(dir, auditKeyFile)
+	if _, err := loadSigner(ctx, st, good, true); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.key")
+	if err := os.Symlink(good, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSigner(ctx, st, link, false); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Errorf("symbolic link: %v", err)
+	}
+	if _, err := loadSigner(ctx, st, t.TempDir(), false); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Errorf("directory: %v", err)
+	}
+	for _, mode := range []os.FileMode{0o640, 0o604, 0o644} {
+		if err := os.Chmod(good, mode); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadSigner(ctx, st, good, false); err == nil || !strings.Contains(err.Error(), "0600") {
+			t.Errorf("mode %v: %v", mode, err)
+		}
+	}
+	if err := os.Chmod(good, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSigner(ctx, st, good, false); err != nil {
+		t.Errorf("back to 0600: %v", err)
+	}
+}
+
+// The command line never creates the key, only serve on its first start; a log with
+// checkpoints whose key is missing stops both instead of getting a new key that could
+// not verify them.
+func TestOnlyServeCreatesTheKey(t *testing.T) {
+	c := newCLI(t)
+	c.register("A")
+	key := filepath.Join(c.envVars["HM_DATA_DIR"], auditKeyFile)
+	out := c.mustRun("", "audit", "verify")
+	if _, err := os.Lstat(key); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("audit verify created the key: %v", err)
+	}
+	if strings.Contains(out, "log_id=") {
+		t.Errorf("log_id without a key: %q", out)
+	}
+	if code, _, errOut := c.run("", "audit", "key"); code != exitFailure || !strings.Contains(errOut, "serve") {
+		t.Errorf("audit key without a key: exit %d, %q", code, errOut)
+	}
+
+	// serve creates it, then writes checkpoints.
+	ctx := context.Background()
+	s, err := openStore(ctx, c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.store.Close()
+	getenv := func(k string) string { return c.envVars[k] }
+	if err := attachSigner(ctx, s, c.envVars["HM_DATA_DIR"], getenv, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.log.Checkpoint(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(key); err != nil {
+		t.Fatal(err)
+	}
+	for _, create := range []bool{false, true} {
+		err := attachSigner(ctx, s, c.envVars["HM_DATA_DIR"], getenv, create)
+		if err == nil || !strings.Contains(err.Error(), "missing although the audit log has checkpoints") {
+			t.Errorf("create %v: %v", create, err)
+		}
+		if _, err := os.Lstat(key); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("create %v: a new key was created", create)
+		}
+	}
+	if code, _, errOut := c.run("", "audit", "verify"); code != exitFailure || !strings.Contains(errOut, "has checkpoints") {
+		t.Errorf("audit verify with checkpoints but no key: exit %d, %q", code, errOut)
 	}
 }
 
@@ -165,7 +257,7 @@ func TestCheckpointerAnchorsOncePerInterval(t *testing.T) {
 	st, dir := testStore(t)
 	ctx := context.Background()
 	log := audit.New(st.DB(), "household:t")
-	signer, err := loadSigner(ctx, st, dir, noEnv)
+	signer, err := loadSigner(ctx, st, keyPath(dir, noEnv), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +320,7 @@ func TestCheckpointerAnchorsOncePerInterval(t *testing.T) {
 func TestCheckpointerRunStopsWithTheContext(t *testing.T) {
 	st, dir := testStore(t)
 	log := audit.New(st.DB(), "household:t")
-	signer, err := loadSigner(context.Background(), st, dir, noEnv)
+	signer, err := loadSigner(context.Background(), st, keyPath(dir, noEnv), true)
 	if err != nil {
 		t.Fatal(err)
 	}

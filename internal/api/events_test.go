@@ -8,14 +8,15 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 
-	"github.com/home-mandate/home-mandate/internal/approval"
-	"github.com/home-mandate/home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 )
 
 // wsServer serves the API as the Supervisor would reach it.
@@ -281,14 +282,90 @@ func TestSlowClientIsClosed(t *testing.T) {
 	h.srv.publish(event{Type: "templates.changed"}) // closing twice must not panic
 	h.srv.hub.remove(c)
 	// Too many connections.
-	for range maxClients {
-		if _, ok := h.srv.hub.add(adminID, ""); !ok {
+	for i := range maxClients {
+		if _, ok := h.srv.hub.add("user"+strconv.Itoa(i), ""); !ok {
 			t.Fatal("refused below the limit")
 		}
 	}
 	srv := h.wsServer()
 	if _, resp, err := h.connect(srv, adminID, nil); err == nil || resp.StatusCode != http.StatusTooManyRequests {
 		t.Errorf("over the limit: %v", err)
+	}
+}
+
+func TestEventStreamAnnouncesDeviceChanges(t *testing.T) {
+	h := newHarness(t)
+	s := h.open(h.wsServer(), adminID)
+	h.srv.DevicesChanged()
+	s.until("devices.changed")
+	// An event too large to send makes the UI reconnect and reload.
+	h.srv.publish(event{Type: "approval.closed", ID: strings.Repeat("x", maxEventBytes)})
+	for {
+		if e, code := s.next(); e == nil {
+			if code != websocket.StatusTryAgainLater {
+				t.Errorf("closed with %d, want %d", code, websocket.StatusTryAgainLater)
+			}
+			break
+		}
+	}
+}
+
+// Without the system status the stream cannot start; a request that is no WebSocket
+// handshake gets none.
+func TestEventStreamWithoutSystemStatus(t *testing.T) {
+	h := newHarness(t)
+	srv := h.wsServer()
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/events", nil)
+	req.Header = http.Header{"X-Remote-User-Id": {adminID}, "Origin": {"https://ha.example.org"}, "Sec-Fetch-Site": {"same-origin"}}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode == http.StatusSwitchingProtocols || resp.StatusCode == http.StatusOK {
+		t.Errorf("plain request = %d", resp.StatusCode)
+	}
+
+	waiting, _, err := h.connect(srv, adminID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = h.st.Close()
+	waiting.send(`{"csrf":"` + h.srv.csrfToken(adminID, h.now.Now()) + `"}`)
+	if _, code := waiting.next(); code != websocket.StatusTryAgainLater {
+		t.Errorf("start without system status: closed with %d", code)
+	}
+}
+
+// One user, and in direct mode one session, cannot take every connection.
+func TestEventStreamsPerUserAndSession(t *testing.T) {
+	h := newHarness(t)
+	for range maxClientsPerUser {
+		if _, ok := h.srv.hub.add(adminID, ""); !ok {
+			t.Fatal("refused below the limit of a user")
+		}
+	}
+	if _, ok := h.srv.hub.add(adminID, ""); ok {
+		t.Error("a connection beyond the limit of a user")
+	}
+	srv := h.wsServer()
+	if _, resp, err := h.connect(srv, adminID, nil); err == nil || resp.StatusCode != http.StatusTooManyRequests ||
+		resp.Header.Get("Retry-After") == "" {
+		t.Errorf("over the limit of a user: %v", err)
+	}
+	for range maxClientsPerSession {
+		if _, ok := h.srv.hub.add(annaID, "session-1"); !ok {
+			t.Fatal("refused below the limit of a session")
+		}
+	}
+	if _, ok := h.srv.hub.add(annaID, "session-1"); ok {
+		t.Error("a connection beyond the limit of a session")
+	}
+	if _, ok := h.srv.hub.add(annaID, "session-2"); !ok {
+		t.Error("another session of the user refused")
+	}
+	if _, ok := h.srv.hub.add(guestID, ""); !ok {
+		t.Error("another user refused")
 	}
 }
 

@@ -32,6 +32,24 @@ export function timeoutIso(input: TimeoutInput): string {
   return `PT${Number(value)}${input.unit === 'm' ? 'M' : 'S'}`;
 }
 
+/**
+ * inputMax is the largest number the form offers in a unit for the installation's upper
+ * limit (approval_timeout_seconds); undefined while the limit is unknown.
+ */
+export function inputMax(maxSeconds: number | null, unit: TimeoutUnit): number | undefined {
+  if (maxSeconds === null) return undefined;
+  return unit === 'm' ? Math.max(1, Math.floor(maxSeconds / SECONDS_PER_MINUTE)) : maxSeconds;
+}
+
+/**
+ * cappedBy returns the installation's upper limit when a timeout exceeds it: the server
+ * then waits only that long (a mandate may only shorten it). Null otherwise.
+ */
+export function cappedBy(iso: string, maxSeconds: number | null): number | null {
+  const seconds = timeoutSeconds(iso);
+  return maxSeconds !== null && !Number.isNaN(seconds) && seconds > maxSeconds ? maxSeconds : null;
+}
+
 /** timeoutText writes a duration out, e.g. "2 minutes" or "90 seconds"; "" if invalid. */
 export function timeoutText(iso: string, locale: string): string {
   const { value, unit } = timeoutInput(iso);

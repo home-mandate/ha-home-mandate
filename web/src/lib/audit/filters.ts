@@ -34,15 +34,20 @@ export const EVENTS: readonly AuditEvent[] = [
   'decision',
   'agent.registered',
   'agent.revoked',
+  'agent.reconnected',
+  'agent.removed',
   'mandate.created',
   'mandate.updated',
   'mandate.revoked',
+  'mandate.removed',
   'emergency_stop.activated',
   'emergency_stop.released',
   'auth.rejected',
   'log.truncated',
   'log.checkpoint',
   'directory.changed',
+  'template.changed',
+  'approver.changed',
 ];
 
 const HOUR_MS = 3_600_000;

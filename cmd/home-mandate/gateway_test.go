@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -15,12 +16,13 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 
-	"github.com/home-mandate/home-mandate/internal/config"
+	"github.com/home-mandate/ha-home-mandate/internal/config"
 )
 
 const (
@@ -34,6 +36,22 @@ type fakeHomeAssistant struct {
 	mu sync.Mutex
 	// calls are the service calls received, as domain.service.
 	calls []string
+	// failConfig and failUser make that many get_config and auth/current_user commands
+	// fail; negative: all of them.
+	failConfig, failUser int
+}
+
+// fails tells whether the command with *remaining failures left fails now.
+func (f *fakeHomeAssistant) fails(remaining *int) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if *remaining == 0 {
+		return false
+	}
+	if *remaining > 0 {
+		*remaining--
+	}
+	return true
 }
 
 func (f *fakeHomeAssistant) serve(w http.ResponseWriter, r *http.Request) {
@@ -66,9 +84,17 @@ func (f *fakeHomeAssistant) serve(w http.ResponseWriter, r *http.Request) {
 			write(map[string]any{"id": id, "type": "pong"})
 			continue
 		case "get_config":
+			if f.fails(&f.failConfig) {
+				write(map[string]any{"id": id, "type": "result", "success": false, "error": map[string]any{"code": "unknown_error", "message": "starting"}})
+				continue
+			}
 			result = map[string]any{"version": "2026.9.4", "time_zone": "Europe/Berlin", "language": "de",
 				"unit_system": map[string]string{"temperature": "°C", "length": "km"}}
 		case "auth/current_user":
+			if f.fails(&f.failUser) {
+				write(map[string]any{"id": id, "type": "result", "success": false, "error": map[string]any{"code": "unknown_error", "message": "starting"}})
+				continue
+			}
 			result = map[string]any{"id": "5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b", "name": "Home-Mandate", "is_admin": true}
 		case "config/auth/list":
 			result = []map[string]any{{"id": ownerID, "name": "Markus", "is_owner": true, "is_active": true, "group_ids": []string{"system-admin"}},
@@ -207,8 +233,11 @@ func TestIngressListenerNeedsAFreeAddress(t *testing.T) {
 }
 
 func TestTLSStatusWithoutCertificate(t *testing.T) {
-	if st := (&gateway{}).tlsStatus(); st.Present || !st.ValidUntil.IsZero() || st.RenewalFailed {
+	if st := (&gateway{}).tlsStatus(); st.Present || !st.ValidUntil.IsZero() || st.RenewalFailed || st.Proxy {
 		t.Errorf("status = %+v", st)
+	}
+	if st := (&gateway{proxied: true}).tlsStatus(); st.Present || !st.Proxy {
+		t.Errorf("behind a proxy: status = %+v", st)
 	}
 }
 
@@ -291,5 +320,222 @@ func TestTrustedProxy(t *testing.T) {
 	}
 	if addrs, err := lookupHost(context.Background(), "localhost"); err != nil || len(addrs) == 0 {
 		t.Errorf("lookupHost(localhost) = %v, %v", addrs, err)
+	}
+}
+
+// startBehindProxy runs a gateway in container mode behind the reverse proxy at proxy,
+// without a certificate of its own, until the test ends.
+func startBehindProxy(t *testing.T, haURL, proxy string) *gateway {
+	t.Helper()
+	c := newCLI(t)
+	s, err := openStore(context.Background(), c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.store.Close() })
+	s.cfg = config.Config{Mode: config.ModeContainer, HAURL: "ws" + strings.TrimPrefix(haURL, "http") + "/api/websocket", HAToken: "t",
+		MCPAddr: "127.0.0.1:0", Proxy: netip.MustParseAddr(proxy), PublicURL: "https://hm.example.org",
+		HABrowserURL: "https://ha.example.org", HAHTTPURL: "https://ha.example.org", IngressAddr: "127.0.0.1:0",
+		IngressProxy: config.SupervisorAddr, ApprovalTimeout: 2 * time.Minute}
+	ctx, cancel := context.WithCancel(context.Background())
+	g, err := newGateway(ctx, s, slog.New(slog.DiscardHandler))
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	done := make(chan int, 1)
+	go func() { done <- g.run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	return g
+}
+
+// Behind a reverse proxy (HM_PROXY) the MCP listener speaks plaintext to the proxy only:
+// the UI runs in direct mode without a certificate of its own, the UI shows the MCP
+// address, and any other sender gets an empty 403.
+func TestGatewayBehindAProxy(t *testing.T) {
+	fake := &fakeHomeAssistant{t: t}
+	haSrv := httptest.NewServer(http.HandlerFunc(fake.serve))
+	defer haSrv.Close()
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+	t.Run("served to the proxy", func(t *testing.T) {
+		g := startBehindProxy(t, haSrv.URL, "127.0.0.1")
+		if g.certs != nil || g.direct == nil {
+			t.Fatalf("certificate %v, direct mode %v", g.certs, g.direct != nil)
+		}
+		base := "http://" + g.listener.Addr().String()
+		resp, err := noRedirect.Get(base + "/ui/signin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if loc := resp.Header.Get("Location"); resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(loc, "https://ha.example.org/auth/authorize?") ||
+			!strings.Contains(loc, "redirect_uri=https%3A%2F%2Fhm.example.org%2Fui%2Fsignin%2Fcallback") {
+			t.Errorf("sign-in = %d %q", resp.StatusCode, loc)
+		}
+		resp, err = http.Get(base + "/.well-known/oauth-authorization-server")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var meta struct{ Issuer string }
+		err = json.NewDecoder(resp.Body).Decode(&meta)
+		resp.Body.Close()
+		if err != nil || meta.Issuer != "https://hm.example.org" {
+			t.Errorf("issuer %q, %v", meta.Issuer, err)
+		}
+		// The administrator check asks Home Assistant: wait until the gateway is connected.
+		for deadline := time.Now().Add(10 * time.Second); !g.status().HAConnected; {
+			if time.Now().After(deadline) {
+				t.Fatal("gateway did not connect to Home Assistant")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		req := httptest.NewRequest(http.MethodGet, "/api/system", nil)
+		req.RemoteAddr = "172.30.32.2:1234"
+		req.Header.Set("X-Remote-User-Id", ownerID)
+		rec := httptest.NewRecorder()
+		g.ingress.Handler.ServeHTTP(rec, req)
+		var sys struct {
+			MCPURL *string `json:"mcp_url"`
+			TLS    struct {
+				Present, Proxy bool
+			} `json:"tls"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &sys); err != nil || sys.MCPURL == nil || *sys.MCPURL != "https://hm.example.org/mcp" ||
+			sys.TLS.Present || !sys.TLS.Proxy {
+			t.Errorf("system = %d %s", rec.Code, rec.Body)
+		}
+	})
+
+	t.Run("refused to anyone else", func(t *testing.T) {
+		g := startBehindProxy(t, haSrv.URL, "192.0.2.10")
+		for _, path := range []string{"/ui/signin", "/mcp", "/.well-known/oauth-authorization-server"} {
+			resp, err := noRedirect.Get("http://" + g.listener.Addr().String() + path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusForbidden || len(body) != 0 {
+				t.Errorf("%s from 127.0.0.1 with another proxy = %d %q", path, resp.StatusCode, body)
+			}
+		}
+	})
+}
+
+// Announcements started by Home Assistant's callbacks read the database; run returns only
+// after they ended, so that nothing reads it once it is closed.
+func TestRunWaitsForBackgroundAnnouncements(t *testing.T) {
+	fake := &fakeHomeAssistant{t: t}
+	haSrv := httptest.NewServer(http.HandlerFunc(fake.serve))
+	defer haSrv.Close()
+	c := newCLI(t)
+	s, err := openStore(context.Background(), c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.store.Close()
+	s.cfg = config.Config{Mode: config.ModeContainer, HAURL: "ws" + strings.TrimPrefix(haSrv.URL, "http") + "/api/websocket", HAToken: "t",
+		MCPAddr: "127.0.0.1:0", ApprovalTimeout: 2 * time.Minute}
+	ctx, cancel := context.WithCancel(context.Background())
+	g, err := newGateway(ctx, s, slog.New(slog.DiscardHandler))
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	done := make(chan int, 1)
+	go func() { done <- g.run(ctx) }()
+	var finished atomic.Bool
+	release := make(chan struct{})
+	g.background.Go(func() {
+		<-release
+		finished.Store(true)
+	})
+	cancel()
+	select {
+	case <-done:
+		t.Fatal("run returned while an announcement was still running")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	<-done
+	if !finished.Load() {
+		t.Error("announcement did not finish")
+	}
+}
+
+// startGateway runs a gateway against fake until the test ends; stop ends it early and
+// returns run's result.
+func startGateway(t *testing.T, fake *fakeHomeAssistant) (g *gateway, stop func() int) {
+	t.Helper()
+	haSrv := httptest.NewServer(http.HandlerFunc(fake.serve))
+	t.Cleanup(haSrv.Close)
+	c := newCLI(t)
+	s, err := openStore(context.Background(), c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.store.Close() })
+	s.cfg = config.Config{Mode: config.ModeContainer, HAURL: "ws" + strings.TrimPrefix(haSrv.URL, "http") + "/api/websocket", HAToken: "t",
+		MCPAddr: "127.0.0.1:0", ApprovalTimeout: 2 * time.Minute}
+	ctx, cancel := context.WithCancel(context.Background())
+	g, err = newGateway(ctx, s, slog.New(slog.DiscardHandler))
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	g.retryMin = 5 * time.Millisecond
+	done := make(chan int, 1)
+	go func() { done <- g.run(ctx) }()
+	var once sync.Once
+	code := 0
+	stop = func() int {
+		once.Do(func() {
+			cancel()
+			code = <-done
+		})
+		return code
+	}
+	t.Cleanup(func() { stop() })
+	return g, stop
+}
+
+// Nothing is decided without the household's time zone and Home-Mandate's own user: if
+// Home Assistant cannot answer at first, they are asked for again until it does.
+func TestConfigurationIsReadUntilHomeAssistantAnswers(t *testing.T) {
+	g, _ := startGateway(t, &fakeHomeAssistant{t: t, failConfig: 3, failUser: 3})
+	deadline := time.Now().Add(10 * time.Second)
+	for g.householdTimeZone() != "Europe/Berlin" || g.serviceUser() != "5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b" {
+		if time.Now().After(deadline) {
+			t.Fatalf("status %+v", g.status())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// The retries end with the connection: a stop does not wait for Home Assistant.
+func TestConfigurationRetriesEndWithTheConnection(t *testing.T) {
+	fake := &fakeHomeAssistant{t: t, failConfig: -1}
+	g, stop := startGateway(t, fake)
+	deadline := time.Now().Add(10 * time.Second)
+	for !g.status().HAConnected {
+		if time.Now().After(deadline) {
+			t.Fatal("not connected")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond) // a few attempts
+	stopped := make(chan int, 1)
+	go func() { stopped <- stop() }()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not return while the configuration was retried")
+	}
+	if g.householdTimeZone() != "" || g.serviceUser() != "" {
+		t.Errorf("status %+v", g.status())
 	}
 }

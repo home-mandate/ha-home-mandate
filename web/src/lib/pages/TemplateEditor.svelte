@@ -9,10 +9,10 @@
   are never changed; any template can be saved under a new name, base templates hidden.
 -->
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { ApiError } from '../api/client.ts';
-  import type { ApproverList, Defaults, DeviceCatalog, MandateDraft, Template, TemplateSummary } from '../api/types.ts';
+  import type { ApproverList, Defaults, DeviceCatalog, MandateDraft, Template, TemplateSummary, TemplateUser } from '../api/types.ts';
   import { Loader } from '../app/loader.svelte.ts';
   import type { AppState } from '../app/state.svelte.ts';
   import BackLink from '../components/BackLink.svelte';
@@ -27,6 +27,8 @@
   import TemplateHeader from '../components/mandate/TemplateHeader.svelte';
   import TemplateLoadDialog from '../components/mandate/TemplateLoadDialog.svelte';
   import TemplateSaveAsDialog from '../components/mandate/TemplateSaveAsDialog.svelte';
+  import TemplateRolloutDialog from '../components/mandate/TemplateRolloutDialog.svelte';
+  import UnsavedBar from '../components/mandate/UnsavedBar.svelte';
   import { needsCriticalConfirmation } from '../engine/vocabulary.ts';
   import { m } from '../i18n.ts';
   import { countChanges, type Edited } from '../mandate/changes.ts';
@@ -98,6 +100,8 @@
   const touched = new SvelteSet<string>();
   let saveOpen = $state(false);
   let saving = $state(false);
+  /** After saving: the mandates whose rules came from the template, to take the change over (#18). */
+  let rollout = $state.raw<{ template: Template; users: TemplateUser[] } | null>(null);
   let saveError = $state('');
   let saveAsOpen = $state(false);
   let saveAsError = $state('');
@@ -106,8 +110,13 @@
   let deleteError = $state('');
   let loadOpen = $state(false);
   let busy = $state(false);
+  /** The edit was left earlier and picked up again (app.unsavedTemplates): not saved yet (issue #20). */
+  let restored = $state(false);
+  /** The undo of the last discard, while nothing changed since: the draft it left. */
+  let discarded = $state.raw<{ toast: number; draft: MandateDraft } | null>(null);
   let workspace: DraftWorkspace | undefined = $state();
   let summary: HTMLElement | undefined = $state();
+  let heading: HTMLElement | undefined = $state();
 
   const ctx = $derived({ locale: getLocale(), timeZone: app.session?.household.time_zone ?? 'UTC' });
   const catalog = $derived(page.data?.catalog ?? NO_CATALOG);
@@ -121,7 +130,7 @@
   const saveable = $derived(own && newer === null);
   /** Where the unsaved edit is kept while the app is open. */
   const key = $derived(name ?? NEW_TEMPLATE_KEY);
-  const dialogOpen = $derived(saveOpen || saveAsOpen || deleteOpen || loadOpen);
+  const dialogOpen = $derived(saveOpen || saveAsOpen || deleteOpen || loadOpen || rollout !== null);
 
   const problems = $derived(draft ? describeProblems(title, draft).filter((p) => p.part !== NAME_PART) : []);
   const ruleKey = (index: number) => `rule:${draft?.rules[index]?.id ?? index}`;
@@ -160,6 +169,7 @@
     newer = null;
     attempted = false;
     touched.clear();
+    restored = false;
   }
 
   // An unsaved edit survives leaving the page (back link, navigation) while the app is open.
@@ -181,6 +191,7 @@
       stored = kept.stored;
       origin = kept.origin;
       draft = kept.draft;
+      restored = true;
     }
     if (fresh === null) return; // a new template: nothing on the server yet
     if (fresh === GONE) {
@@ -272,6 +283,7 @@
       adopt(saved, page.data?.defaults ?? FALLBACK_DEFAULTS);
       saveOpen = false;
       toasts.show({ kind: 'success', text: m.template_saved_toast() });
+      await offerRollout(saved);
     } catch (err) {
       // Changed or deleted meanwhile: the reload shows which, and the edit stays.
       conflict = err instanceof ApiError && (err.code === 'conflict' || err.code === 'not_found');
@@ -284,6 +296,19 @@
       saveOpen = false;
       await reload();
       if (!newer) toasts.show({ kind: 'error', text: m.toast_save_failed() });
+    }
+  }
+
+  /**
+   * offerRollout asks what the change should affect when mandates took their rules from
+   * the template; nothing is asked when none did or all are already up to date.
+   */
+  async function offerRollout(saved: Template) {
+    try {
+      const usage = await app.api.templateUsage(saved.name);
+      if (usage.digest === saved.digest && usage.mandates.some((u) => !u.up_to_date)) rollout = { template: saved, users: usage.mandates };
+    } catch {
+      toasts.show({ kind: 'error', text: m.rollout_usage_failed() });
     }
   }
 
@@ -350,20 +375,63 @@
     }
   }
 
+  // Any change after discarding (an edit, a newer version) ends the undo.
+  $effect(() => {
+    if (discarded && draft !== discarded.draft) dropDiscardUndo();
+  });
+  onDestroy(() => dropDiscardUndo());
+
+  function dropDiscardUndo() {
+    if (discarded) toasts.dismiss(discarded.toast);
+    discarded = null;
+  }
+
+  /**
+   * discard goes back to what the edit started from (an empty draft for a new template),
+   * with an undo while nothing changed since. The focus moves to the heading.
+   */
+  async function discard() {
+    if (!origin || !draft || changes === 0) return;
+    const before = draft;
+    workspace?.forget();
+    draft = origin;
+    attempted = false;
+    touched.clear();
+    restored = false;
+    const toast = toasts.show({
+      kind: 'undo',
+      text: m.unsaved_discarded_toast(),
+      action: {
+        label: m.common_undo(),
+        run: () => {
+          if (discarded?.toast !== toast) return;
+          discarded = null;
+          draft = before;
+        },
+      },
+    });
+    discarded = { toast, draft: origin };
+    await tick();
+    heading?.focus();
+  }
+
+  /** Saves in place where that is possible, else as a new template. */
+  function saveOrSaveAs() {
+    void (saveable ? trySave() : trySaveAs());
+  }
+
   function keydown(event: KeyboardEvent) {
     if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 's') return;
     event.preventDefault();
     // Never a second dialog over an open one (delete, load, save).
     if (dialogOpen) return;
-    void (saveable ? trySave() : trySaveAs());
+    saveOrSaveAs();
   }
 
-  function beforeunload(event: BeforeUnloadEvent) {
-    if (changes > 0) event.preventDefault();
-  }
 </script>
 
-<svelte:window onkeydown={keydown} onbeforeunload={beforeunload} />
+<!-- Leaving the app with unsaved changes asks first: App.svelte, for every mandate and template. -->
+<svelte:window onkeydown={keydown} />
 
 {#if page.status === 'error' && page.code === 'not_found'}
   <EmptyState icon="search" title={m.template_not_found_title()} body={m.template_not_found_body()}>
@@ -393,7 +461,12 @@
     onhidden={(hidden) => void setHidden(hidden)}
     onshow={(p) => void workspace?.show(p)}
     bind:summary
+    bind:heading
   />
+
+  {#if restored && changes > 0}
+    <Banner kind="warning" title={m.unsaved_restored_title()} body={m.unsaved_restored_template()} />
+  {/if}
 
   {#if stored?.builtin}
     <Banner kind="info" quiet body={stored.hidden ? m.template_builtin_hidden_note() : m.template_builtin_note()} />
@@ -418,6 +491,7 @@
     {catalogMissing}
     readonly={false}
     {people}
+    maxTimeout={app.system?.approval_timeout_seconds ?? null}
     {agent}
     locale={ctx.locale}
     timeZone={ctx.timeZone}
@@ -427,6 +501,8 @@
     settingsTitle={m.editor_basics()}
     onchange={(next) => (draft = next)}
     ontouch={touch}
+    unsavedHint={(n) => m.unsaved_rule_hint_template({ n })}
+    onsave={saveOrSaveAs}
   >
     {#snippet settings()}
       {#if draft}
@@ -443,6 +519,16 @@
       {/if}
     {/snippet}
   </DraftWorkspace>
+
+  {#if changes > 0}
+    <UnsavedBar
+      count={changes}
+      note={m.unsaved_bar_note_template()}
+      saveLabel={saveable ? m.unsaved_bar_save() : m.unsaved_bar_save_as()}
+      onsave={saveOrSaveAs}
+      ondiscard={() => void discard()}
+    />
+  {/if}
 
   <SaveDialog
     open={saveOpen}
@@ -472,6 +558,17 @@
     onclose={() => (saveAsOpen = false)}
     onconfirm={(target) => void saveAs(target)}
   />
+  {#if rollout}
+    <TemplateRolloutDialog
+      open={rollout !== null}
+      api={app.api}
+      template={rollout.template}
+      users={rollout.users}
+      {catalog}
+      {ctx}
+      onclose={() => (rollout = null)}
+    />
+  {/if}
   <TemplateDeleteDialog open={deleteOpen} {title} {busy} error={deleteError} onclose={() => (deleteOpen = false)} ondelete={() => void remove()} />
   <TemplateLoadDialog open={loadOpen} templates={page.data.list} current={name} {changes} onclose={() => (loadOpen = false)} />
 {/if}

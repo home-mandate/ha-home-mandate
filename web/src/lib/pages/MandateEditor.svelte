@@ -5,9 +5,11 @@
   both from the UI's own evaluation. Saving goes through a summary and never overwrites
   silently: if someone else stored a version meanwhile, the editor says so and keeps the
   edit. The server checks every version again and decides every real request itself.
+  A revoked mandate is read-only and can be removed from the lists (#21); a removed one
+  stays readable.
 -->
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { ApiError } from '../api/client.ts';
   import type { ApproverList, DeviceCatalog, MandateDetail, MandateDraft, Rename } from '../api/types.ts';
@@ -23,6 +25,10 @@
   import BasicsForm from '../components/mandate/BasicsForm.svelte';
   import DraftWorkspace from '../components/mandate/DraftWorkspace.svelte';
   import SaveDialog from '../components/mandate/SaveDialog.svelte';
+  import UnsavedBar from '../components/mandate/UnsavedBar.svelte';
+  import RemoveDialog from '../components/RemoveDialog.svelte';
+  import { formatDateTime } from '../format.ts';
+  import { MARK } from '../ui/sentence.ts';
   import { needsCriticalConfirmation } from '../engine/vocabulary.ts';
   import { m } from '../i18n.ts';
   import { countChanges, type Edited } from '../mandate/changes.ts';
@@ -87,8 +93,33 @@
   let saveError = $state('');
   /** A reload asked for while a save was running; it runs afterwards. */
   let reloadPending = false;
+  /** The edit was left earlier and picked up again (app.unsaved): not in force yet (issue #20). */
+  let restored = $state(false);
   let workspace: DraftWorkspace | undefined = $state();
   let summary: HTMLElement | undefined = $state();
+  let heading: HTMLElement | undefined = $state();
+  let removing = $state(false);
+  let removeBusy = $state(false);
+  let removeError = $state('');
+
+  /** remove takes the revoked mandate off the lists (#21); it stays readable here. */
+  async function remove() {
+    if (removeBusy) return;
+    removeBusy = true;
+    removeError = '';
+    try {
+      await app.api.removeMandate(id);
+      removing = false;
+      toasts.show({ kind: 'success', text: m.mandate_removed_toast() });
+      await reload();
+      await tick();
+      heading?.focus();
+    } catch {
+      removeError = m.remove_failed();
+    } finally {
+      removeBusy = false;
+    }
+  }
 
   const ctx = $derived({ locale: getLocale(), timeZone: app.session?.household.time_zone ?? 'UTC' });
   const catalog = $derived(page.data?.catalog ?? NO_CATALOG);
@@ -145,6 +176,7 @@
     draft = draftOf(detail.document);
     attempted = false;
     touched.clear();
+    restored = false;
   }
 
   /** incoming handles a version loaded from the server, at first and while the editor is open. */
@@ -160,11 +192,15 @@
       current = stored = kept.stored;
       name = kept.name;
       draft = kept.draft;
+      restored = true;
     }
     if (detail.summary.digest === current.summary.digest) {
-      // The same version; name or status may have changed without a new one. Keeping the
+      // The same version; name, status or removal may have changed without a new one. Keeping the
       // stored object otherwise keeps the evaluation's cache for it.
-      const same = detail.summary.name === current.summary.name && detail.summary.status === current.summary.status;
+      const same =
+        detail.summary.name === current.summary.name &&
+        detail.summary.status === current.summary.status &&
+        detail.summary.removed_at === current.summary.removed_at;
       const untouched = name === current.summary.name;
       if (!same) stored = detail;
       if (untouched) name = detail.summary.name;
@@ -287,20 +323,56 @@
     if (result.dropped) void workspace?.announce(m.critical_override_reset());
   }
 
+  /** The undo of the last discard, while nothing changed since: the draft it left. */
+  let discarded = $state.raw<{ toast: number; draft: MandateDraft } | null>(null);
+  // Any change after discarding (an edit, a newer version) ends the undo.
+  $effect(() => {
+    if (discarded && draft !== discarded.draft) dropDiscardUndo();
+  });
+  onDestroy(() => dropDiscardUndo());
+
+  function dropDiscardUndo() {
+    if (discarded) toasts.dismiss(discarded.toast);
+    discarded = null;
+  }
+
+  /**
+   * discard goes back to the stored version the edit was based on, with an undo while
+   * nothing changed since. The focus moves to the heading: the bar's button is gone.
+   */
+  async function discard() {
+    if (!stored || !draft || changes === 0) return;
+    const before = { name, draft };
+    adopt(stored);
+    const toast = toasts.show({
+      kind: 'undo',
+      text: m.unsaved_discarded_toast(),
+      action: {
+        label: m.common_undo(),
+        run: () => {
+          if (discarded?.toast !== toast) return;
+          discarded = null;
+          name = before.name;
+          draft = before.draft;
+        },
+      },
+    });
+    discarded = { toast, draft: draft as MandateDraft };
+    await tick();
+    heading?.focus();
+  }
+
   function keydown(event: KeyboardEvent) {
     if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 's') return;
     event.preventDefault();
     void trySave();
   }
 
-  function beforeunload(event: BeforeUnloadEvent) {
-    if (changes > 0) event.preventDefault();
-  }
-
   const touchSetting = (part: Part) => touch(`setting:${part}`);
 </script>
 
-<svelte:window onkeydown={keydown} onbeforeunload={beforeunload} />
+<!-- Leaving the app with unsaved changes asks first: App.svelte, for every mandate and template. -->
+<svelte:window onkeydown={keydown} />
 
 {#if page.status === 'error' && page.code === 'not_found'}
   <EmptyState icon="search" title={m.editor_not_found_title()} body={m.editor_not_found_body()}>
@@ -326,10 +398,17 @@
     onsave={() => void trySave()}
     onshow={(p) => void workspace?.show(p)}
     bind:summary
+    bind:heading
   />
 
-  {#if readonly}
-    <Banner kind="info" body={m.editor_revoked_note()} />
+  {#if restored && changes > 0}
+    <Banner kind="warning" title={m.unsaved_restored_title()} body={m.unsaved_restored_mandate()} />
+  {/if}
+
+  {#if readonly && stored.summary.removed_at !== null}
+    <Banner kind="info" body={m.editor_removed_note({ date: formatDateTime(new Date(stored.summary.removed_at), ctx) })} />
+  {:else if readonly}
+    <Banner kind="info" body={m.editor_revoked_note()} action={{ label: m.remove_more(), onclick: () => (removing = true) }} />
   {:else if storedInvalid}
     <Banner kind="critical" body={m.code_invalid_mandate()} />
   {/if}
@@ -349,6 +428,7 @@
     {catalogMissing}
     {readonly}
     {people}
+    maxTimeout={app.system?.approval_timeout_seconds ?? null}
     {agent}
     locale={ctx.locale}
     timeZone={ctx.timeZone}
@@ -359,6 +439,8 @@
     settingsTitle={m.editor_basics()}
     onchange={(next) => (draft = next)}
     ontouch={touch}
+    unsavedHint={(n) => m.unsaved_rule_hint_mandate({ n })}
+    onsave={() => void trySave()}
   >
     {#snippet settings()}
       {#if draft && stored}
@@ -376,6 +458,27 @@
       {/if}
     {/snippet}
   </DraftWorkspace>
+
+  {#if !readonly && changes > 0}
+    <UnsavedBar count={changes} note={m.unsaved_bar_note_mandate()} saveLabel={m.unsaved_bar_save()} onsave={() => void trySave()} ondiscard={() => void discard()} />
+  {/if}
+
+  <RemoveDialog
+    open={removing}
+    title={m.remove_mandate_title({ mandate: MARK })}
+    name={stored.summary.name}
+    body={[m.remove_mandate_body(), m.remove_keeps()]}
+    confirm={m.remove_button()}
+    busy={removeBusy}
+    error={removeError}
+    onclose={() => {
+      if (!removeBusy) {
+        removing = false;
+        removeError = '';
+      }
+    }}
+    onconfirm={() => void remove()}
+  />
 
   <SaveDialog
     open={saveOpen}

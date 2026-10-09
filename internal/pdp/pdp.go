@@ -17,10 +17,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mandate-spec/mandate-spec/evaluator"
+	"github.com/home-mandate/spec/evaluator"
 
-	"github.com/home-mandate/home-mandate/internal/catalog"
-	"github.com/home-mandate/home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 )
 
 const (
@@ -45,7 +45,10 @@ type Config struct {
 	Catalog   Catalog
 	// TimeZone returns the household's IANA time zone from Home Assistant.
 	TimeZone func() string
-	Now      func() time.Time
+	// Ready tells whether decisions are possible now (household time zone known, device
+	// directory current), as for the MCP endpoint; nil means always.
+	Ready func() bool
+	Now   func() time.Time
 }
 
 // PDP evaluates requests.
@@ -313,6 +316,12 @@ func (p *PDP) Handler() http.Handler {
 		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBytes))
 		if err := dec.Decode(&req); err != nil || dec.Decode(&struct{}{}) != io.EOF {
 			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		// No decision while the inputs are not known: AuthZEN has no reason for that, and an
+		// error is no permission for the caller.
+		if p.cfg.Ready != nil && !p.cfg.Ready() {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

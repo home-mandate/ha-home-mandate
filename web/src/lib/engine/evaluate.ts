@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Evaluation rule of mandate-spec SPEC-v0 section 4, ported from the reference evaluator
-// (mandate-spec/evaluator) for the editor: preview matrix, save summary, version compare.
-// It passes every conformance case of the pinned mandate-spec version (evaluate.test.ts).
+// Evaluation rule of SPEC-v0 section 4, ported from the reference evaluator
+// (spec/evaluator) for the editor: preview matrix, save summary, version compare.
+// It passes every conformance case of the pinned version of the specification (evaluate.test.ts).
 // It never decides anything real: every agent request is decided by the PDP on the server.
 
 import type { Approval, Decision, MandateDraft, Reason, Rule, Weekday } from '../api/types.ts';

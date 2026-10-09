@@ -21,15 +21,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/approval"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/catalog"
-	"github.com/home-mandate/home-mandate/internal/ha"
-	"github.com/home-mandate/home-mandate/internal/mandate"
-	"github.com/home-mandate/home-mandate/internal/oauth"
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/oauth"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 // Interfaces to the rest of Home-Mandate, as far as the API uses them.
@@ -63,6 +63,7 @@ type (
 		Check(ctx context.Context, session, code string) (oauth.PairingCandidate, error)
 		Approve(ctx context.Context, session string, a oauth.PairingApproval) (agent.Agent, error)
 		Deny(ctx context.Context, session, code, pairingID string) error
+		Reconnect(ctx context.Context, session string, r oauth.PairingReconnect) (agent.Agent, error)
 	}
 )
 
@@ -128,6 +129,10 @@ type Config struct {
 	// TLS reports the certificate of the MCP endpoint.
 	TLS       func() TLSStatus
 	Retention time.Duration
+	// ApprovalTimeout is the installation's upper limit for an approval wait
+	// (approval_timeout_seconds, HM_APPROVAL_TIMEOUT); a mandate may only shorten it.
+	// Zero means the default.
+	ApprovalTimeout time.Duration
 
 	Logger *slog.Logger
 	Now    func() time.Time
@@ -139,6 +144,8 @@ type TLSStatus struct {
 	ValidUntil time.Time
 	// RenewalFailed: renewed files could not be taken over; the previous pair is in use.
 	RenewalFailed bool
+	// Proxy: TLS ends at the reverse proxy in front (HM_PROXY), which holds the certificate.
+	Proxy bool
 }
 
 // Server is the API.
@@ -151,6 +158,7 @@ type Server struct {
 	chain   *chainStatus
 	answers *waiters
 	ui      *uiSessions
+	signing chan struct{} // sign-ins waiting for Home Assistant (direct mode)
 	bell    bellSetting
 	mux     *http.ServeMux
 
@@ -198,7 +206,8 @@ func New(cfg Config) *Server {
 	key := make([]byte, 32)
 	_, _ = rand.Read(key) // crypto/rand.Read never fails (Go ≥ 1.24)
 	s := &Server{cfg: cfg, users: newUsers(cfg.HA, cfg.Now), csrfKey: key, limits: newLimits(cfg.Now), hub: newHub(),
-		chain: &chainStatus{}, answers: newWaiters(), ui: newUISessions(cfg.Now), hooks: make(chan func(), hookQueue)}
+		chain: &chainStatus{}, answers: newWaiters(), ui: newUISessions(cfg.Now), signing: make(chan struct{}, signInAtOnce),
+		hooks: make(chan func(), hookQueue)}
 	s.mux = s.routes()
 	go s.runHooks() // lives as long as the process
 	return s

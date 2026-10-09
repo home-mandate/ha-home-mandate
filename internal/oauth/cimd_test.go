@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -111,6 +112,70 @@ func TestResolveRejectsBadDocuments(t *testing.T) {
 	}
 }
 
+// A failed fetch is remembered for a short while, so that repeated requests for a slow
+// or broken document do not tie up the fetch slots; failures that are not the
+// document's are never remembered.
+func TestResolveRemembersFailuresBriefly(t *testing.T) {
+	c, r := newCIMDServer(t)
+	now := time.Now()
+	r.now = func() time.Time { return now }
+	var broken atomic.Bool
+	broken.Store(true)
+	c.docs["/flaky.json"] = func(w http.ResponseWriter, id string) {
+		if broken.Load() {
+			http.Error(w, "down", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(strings.ReplaceAll(goodDoc, "$ID", id)))
+	}
+	id := c.srv.URL + "/flaky.json"
+	for range 3 {
+		if _, err := r.Resolve(context.Background(), id); !errors.Is(err, ErrInvalidClient) {
+			t.Fatalf("broken document: %v", err)
+		}
+	}
+	broken.Store(false)
+	if _, err := r.Resolve(context.Background(), id); !errors.Is(err, ErrInvalidClient) || c.fetches.Load() != 1 {
+		t.Errorf("within the failure time: fetches = %d, %v", c.fetches.Load(), err)
+	}
+	now = now.Add(cimdFailTTL)
+	if _, err := r.Resolve(context.Background(), id); err != nil || c.fetches.Load() != 2 {
+		t.Errorf("after the failure time: fetches = %d, %v", c.fetches.Load(), err)
+	}
+
+	// The caller gave up, or all fetch slots were busy: not the document's failure.
+	good := c.json("/good.json", goodDoc)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := r.Resolve(cancelled, good); !errors.Is(err, ErrInvalidClient) {
+		t.Errorf("cancelled: %v", err)
+	}
+	for range cimdParallel {
+		r.fetching <- struct{}{}
+	}
+	other := c.json("/other.json", goodDoc)
+	if _, err := r.Resolve(context.Background(), other); !errors.Is(err, ErrInvalidClient) {
+		t.Errorf("all slots busy: %v", err)
+	}
+	for range cimdParallel {
+		<-r.fetching
+	}
+	for _, id := range []string{good, other} {
+		if _, err := r.Resolve(context.Background(), id); err != nil {
+			t.Errorf("%s afterwards: %v", id, err)
+		}
+	}
+
+	// The memory of failures is bounded.
+	for i := range cimdFailSize + 10 {
+		_, _ = r.Resolve(context.Background(), fmt.Sprintf("%s/missing-%d", c.srv.URL, i))
+	}
+	if n := len(r.failed); n > cimdFailSize {
+		t.Errorf("%d failures remembered", n)
+	}
+}
+
 func TestResolveSanitizesTheName(t *testing.T) {
 	c, r := newCIMDServer(t)
 	for name, doc := range map[string]string{
@@ -154,6 +219,8 @@ func TestResolverRefusesNonPublicAddresses(t *testing.T) {
 		"172.16.0.1:443": false, "169.254.169.254:443": false, "100.64.0.1:443": false, "0.0.0.0:443": false,
 		"[fd00::1]:443": false, "[fe80::1]:443": false, "[::ffff:127.0.0.1]:443": false, "[64:ff9b::a00:1]:443": false,
 		"224.0.0.1:443": false, "198.18.0.1:443": false, "not-an-ip:443": false,
+		"[::a00:1]:443": false, "[fec0::1]:443": false, "[2001:0:4136:e378:8000:63bf:3fff:fdd2]:443": false,
+		"192.88.99.10:443": true, // deprecated 6to4 relay anycast, the E2E suite's public stand-in
 	} {
 		if err := r.control("tcp", addr, nil); (err == nil) != ok {
 			t.Errorf("%s: %v", addr, err)

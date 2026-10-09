@@ -10,8 +10,8 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/home-mandate/home-mandate/internal/catalog"
-	"github.com/home-mandate/home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 )
 
 // wireRename is an entity Home Assistant renamed while active mandates still name a

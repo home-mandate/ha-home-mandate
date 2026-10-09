@@ -20,6 +20,8 @@
 
   interface Props {
     defaults: Defaults;
+    /** The installation's upper limit for the approval timeout in seconds; null while unknown. */
+    maxTimeout?: number | null;
     /** The person's language setting; null means the browser's. */
     language: Language | null;
     /** The language the browser would give, for "Automatic (browser: …)". */
@@ -28,7 +30,7 @@
     onlanguage: (language: Language | null) => Promise<void>;
   }
 
-  let { defaults, language, browserLanguage, onsave, onlanguage }: Props = $props();
+  let { defaults, maxTimeout = null, language, browserLanguage, onsave, onlanguage }: Props = $props();
 
   const id = $props.id();
   const SAVE_DELAY_MS = 400;
@@ -122,6 +124,7 @@
     {timeout}
     error={timeoutError}
     help={m.set_approvals_desc()}
+    max={maxTimeout}
     onchange={(t) => {
       timeout = t;
       schedule();

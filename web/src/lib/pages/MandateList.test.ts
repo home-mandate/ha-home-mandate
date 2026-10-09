@@ -9,6 +9,7 @@ import { ApiError } from '../api/client.ts';
 import { AppState } from '../app/state.svelte.ts';
 import { setLocale } from '../paraglide/runtime.js';
 import MandateList from './MandateList.svelte';
+import { cleanUntrusted } from '../untrusted.ts';
 import { addCriticalTemplate, DOORS } from '../test/critical.ts';
 
 beforeEach(() => setLocale('en', { reload: false }));
@@ -42,6 +43,20 @@ describe('MandateList', () => {
     expect(first.getByText('5 rules')).toBeTruthy();
     expect(first.getByText('no end date')).toBeTruthy();
     expect(first.getByText('Active')).toBeTruthy();
+  });
+
+  it('says from which template the rules of a mandate were last taken (#16)', async () => {
+    await start({}, async (api) => {
+      const { summary } = await api.mandate('mandate-claude');
+      await api.applyTemplate('mandate-claude', { template: 'hm-read-only', base_digest: summary.digest });
+    });
+    const table = await screen.findByRole('table', { name: 'Mandates' });
+    const rows = within(table).getAllByRole('row');
+    const plain = (el: Element | undefined) => (el?.textContent ?? '').replace(/[\u2068\u2069]/g, '');
+    expect(plain(rows[1])).toContain('Rules last taken from the template voice-assistant on');
+    expect(plain(rows[2])).toContain('Rules last taken from the template Read only on');
+    // Mandates of before origins were kept say nothing.
+    expect(plain(rows[3])).not.toContain('Rules last taken');
   });
 
   it('shows agent names without hidden characters and as text', async () => {
@@ -279,7 +294,7 @@ describe('new mandate', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'New mandate' }));
     const dialog = await screen.findByRole('dialog', { name: 'New mandate' });
     expect(within(dialog).getByText(/Every active agent already has a mandate/)).toBeTruthy();
-    expect(within(dialog).getByRole('link', { name: 'Go to agents' }).getAttribute('href')).toBe('#/agents');
+    expect(within(dialog).getByRole('link', { name: 'Go to agents' }).getAttribute('href')).toBe('#/agents?add');
     expect(within(dialog).queryByRole('button', { name: 'Create mandate' })).toBeNull();
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -293,12 +308,13 @@ describe('new mandate', () => {
     const template = within(dialog).getByLabelText('Template') as HTMLSelectElement;
     expect(template.value).toBe('hm-read-only');
     const name = within(dialog).getByLabelText('Display name') as HTMLInputElement;
-    expect(name.value).toBe('Read only');
+    const agentName = (await api.agents()).find((a) => a.client_id === 'pair:long')?.display_name ?? '';
+    // Named after the agent (#16), cleaned of hidden characters; another template keeps it.
+    expect(name.value).toBe(cleanUntrusted(agentName));
     // The chosen template is shown in plain words.
     expect(within(dialog).getByRole('group', { name: 'What the template Read only allows' }).textContent).toContain('All devices: read');
-    // The name follows the template until someone types one.
     await fireEvent.change(template, { target: { value: 'empty' } });
-    expect(name.value).toBe('empty');
+    expect(name.value).toBe(cleanUntrusted(agentName));
     await fireEvent.input(name, { target: { value: 'Tablet' } });
     await fireEvent.change(template, { target: { value: 'hm-read-only' } });
     expect(name.value).toBe('Tablet');
@@ -374,5 +390,24 @@ describe('new mandate', () => {
     };
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Create mandate' }));
     expect(await within(dialog).findByText('Couldn’t create the mandate. Please try again.')).toBeTruthy();
+  });
+});
+
+describe('removing (#21)', () => {
+  it('hides removed mandates unless asked, and removes all revoked after a confirmation', async () => {
+    const { api } = await start({}, async (a) => {
+      await a.revokeMandate('mandate-claude');
+    });
+    const table = await screen.findByRole('table', { name: 'Mandates' });
+    const before = within(table).getAllByRole('row').length;
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove all revoked …' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(within(screen.getByRole('table', { name: 'Mandates' })).getAllByRole('row')).toHaveLength(before - 1));
+    expect((await api.mandate('mandate-claude')).summary.removed_at).not.toBeNull();
+    await fireEvent.click(screen.getByRole('switch', { name: /Show removed/ }));
+    const rows = within(screen.getByRole('table', { name: 'Mandates' })).getAllByRole('row');
+    expect(rows).toHaveLength(before);
+    expect(screen.getByText('Removed')).toBeTruthy();
   });
 });

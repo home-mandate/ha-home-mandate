@@ -33,10 +33,65 @@ func files(m map[string]string) func(string) ([]byte, error) {
 	}
 }
 
+// fileInfo is a file of the given mode, for Env.Stat.
+type fileInfo fs.FileMode
+
+func (m fileInfo) Name() string       { return "file" }
+func (m fileInfo) Size() int64        { return 0 }
+func (m fileInfo) Mode() fs.FileMode  { return fs.FileMode(m) }
+func (m fileInfo) ModTime() time.Time { return time.Time{} }
+func (m fileInfo) IsDir() bool        { return fs.FileMode(m).IsDir() }
+func (m fileInfo) Sys() any           { return nil }
+
+func statAs(mode fs.FileMode) func(string) (fs.FileInfo, error) {
+	return func(string) (fs.FileInfo, error) { return fileInfo(mode), nil }
+}
+
+// load is Load with every file readable by its owner only and an environment that
+// stays as it is.
+func load(getenv func(string) string, readFile func(string) ([]byte, error)) (Config, error) {
+	return Load(Env{Getenv: getenv, ReadFile: readFile, Stat: statAs(0o600), Unsetenv: func(string) error { return nil }})
+}
+
+// The token file must be a regular file that neither group nor others can read.
+func TestTokenFileMustBePrivate(t *testing.T) {
+	getenv := env(map[string]string{"HM_HA_URL": "ws://localhost:8123/api/websocket", "HM_HA_TOKEN_FILE": "/run/secrets/ha"})
+	readFile := files(map[string]string{"/run/secrets/ha": "from-file\n"})
+	for mode, ok := range map[fs.FileMode]bool{
+		0o600: true, 0o400: true, 0o620: true,
+		0o640: false, 0o604: false, 0o644: false, fs.ModeDir | 0o700: false, fs.ModeNamedPipe | 0o600: false,
+	} {
+		cfg, err := Load(Env{Getenv: getenv, ReadFile: readFile, Stat: statAs(mode), Unsetenv: func(string) error { return nil }})
+		if ok && (err != nil || cfg.HAToken != "from-file") || !ok && !errors.Is(err, ErrInvalid) {
+			t.Errorf("mode %v: %v", mode, err)
+		}
+	}
+	missing := func(string) (fs.FileInfo, error) { return nil, fs.ErrNotExist }
+	if _, err := Load(Env{Getenv: getenv, ReadFile: readFile, Stat: missing, Unsetenv: func(string) error { return nil }}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("missing file: %v", err)
+	}
+}
+
+// HM_HA_TOKEN is taken out of the environment once read, so that nothing started later
+// inherits it; the file is preferred.
+func TestTokenIsRemovedFromTheEnvironment(t *testing.T) {
+	var unset []string
+	unsetenv := func(k string) error { unset = append(unset, k); return nil }
+	getenv := env(map[string]string{"HM_HA_URL": "ws://localhost:8123/api/websocket", "HM_HA_TOKEN": "from-env"})
+	cfg, err := Load(Env{Getenv: getenv, ReadFile: files(nil), Stat: statAs(0o600), Unsetenv: unsetenv})
+	if err != nil || cfg.HAToken != "from-env" || len(unset) != 1 || unset[0] != "HM_HA_TOKEN" {
+		t.Errorf("config %v, %v; unset %v", cfg, err, unset)
+	}
+	failing := func(string) error { return errors.New("cannot") }
+	if _, err := Load(Env{Getenv: getenv, ReadFile: files(nil), Stat: statAs(0o600), Unsetenv: failing}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("unset failed: %v", err)
+	}
+}
+
 const options = `{"tls_certfile":"fullchain.pem","tls_keyfile":"privkey.pem","approval_timeout_seconds":120,"log_level":"info"}`
 
 func TestLoadAppMode(t *testing.T) {
-	cfg, err := Load(env(map[string]string{"SUPERVISOR_TOKEN": "sup-secret"}), files(map[string]string{"/data/options.json": options}))
+	cfg, err := load(env(map[string]string{"SUPERVISOR_TOKEN": "sup-secret"}), files(map[string]string{"/data/options.json": options}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +121,7 @@ func TestLoadAppModeRejectsBadOptions(t *testing.T) {
 			if opts != "" {
 				fsys["/data/options.json"] = opts
 			}
-			_, err := Load(env(map[string]string{"SUPERVISOR_TOKEN": "sup-secret"}), files(fsys))
+			_, err := load(env(map[string]string{"SUPERVISOR_TOKEN": "sup-secret"}), files(fsys))
 			if !errors.Is(err, ErrInvalid) {
 				t.Errorf("Load = %v, want ErrInvalid", err)
 			}
@@ -76,7 +131,7 @@ func TestLoadAppModeRejectsBadOptions(t *testing.T) {
 
 func TestLoadAppModeWithoutTLSListensOnLoopback(t *testing.T) {
 	opts := `{"tls_certfile":"","tls_keyfile":"","approval_timeout_seconds":120,"log_level":"debug"}`
-	cfg, err := Load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": opts}))
+	cfg, err := load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": opts}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +141,7 @@ func TestLoadAppModeWithoutTLSListensOnLoopback(t *testing.T) {
 }
 
 func TestLoadContainerMode(t *testing.T) {
-	cfg, err := Load(env(map[string]string{
+	cfg, err := load(env(map[string]string{
 		"HM_HA_URL":    "wss://ha.example.org/api/websocket",
 		"HM_HA_TOKEN":  "long-lived",
 		"HM_DATA_DIR":  "/var/lib/home-mandate",
@@ -106,7 +161,7 @@ func TestLoadContainerMode(t *testing.T) {
 }
 
 func TestLoadContainerModeTokenFile(t *testing.T) {
-	cfg, err := Load(env(map[string]string{"HM_HA_URL": "ws://localhost:8123/api/websocket", "HM_HA_TOKEN_FILE": "/run/secrets/ha"}),
+	cfg, err := load(env(map[string]string{"HM_HA_URL": "ws://localhost:8123/api/websocket", "HM_HA_TOKEN_FILE": "/run/secrets/ha"}),
 		files(map[string]string{"/run/secrets/ha": "from-file\n"}))
 	if err != nil {
 		t.Fatal(err)
@@ -145,7 +200,7 @@ func TestLoadContainerModeRejects(t *testing.T) {
 	}
 	for name, m := range tests {
 		t.Run(name, func(t *testing.T) {
-			_, err := Load(env(m), files(nil))
+			_, err := load(env(m), files(nil))
 			if !errors.Is(err, ErrInvalid) {
 				t.Errorf("Load = %v, want ErrInvalid", err)
 			}
@@ -154,11 +209,11 @@ func TestLoadContainerModeRejects(t *testing.T) {
 }
 
 func TestErrorsNeverContainTheToken(t *testing.T) {
-	_, err := Load(env(map[string]string{"HM_HA_URL": "http://x", "HM_HA_TOKEN": "very-secret-token"}), files(nil))
+	_, err := load(env(map[string]string{"HM_HA_URL": "http://x", "HM_HA_TOKEN": "very-secret-token"}), files(nil))
 	if err == nil || strings.Contains(err.Error(), "very-secret-token") {
 		t.Errorf("error = %v", err)
 	}
-	cfg, _ := Load(env(map[string]string{"HM_HA_URL": "ws://localhost/api/websocket", "HM_HA_TOKEN": "very-secret-token"}), files(nil))
+	cfg, _ := load(env(map[string]string{"HM_HA_URL": "ws://localhost/api/websocket", "HM_HA_TOKEN": "very-secret-token"}), files(nil))
 	if strings.Contains(cfg.String(), "very-secret-token") {
 		t.Errorf("String() leaks the token: %s", cfg.String())
 	}
@@ -189,7 +244,7 @@ func TestLoadContainerModeCAFile(t *testing.T) {
 		}
 		return m
 	}
-	cfg, err := Load(env(base), files(nil))
+	cfg, err := load(env(base), files(nil))
 	if err != nil || cfg.HARootCAs != nil {
 		t.Fatalf("without CA file: %v, %v", cfg.HARootCAs, err)
 	}
@@ -207,7 +262,7 @@ func TestLoadContainerModeCAFile(t *testing.T) {
 		if tc.content != "" {
 			fsys[tc.file] = tc.content
 		}
-		cfg, err := Load(env(with("HM_HA_CA_FILE", tc.file)), files(fsys))
+		cfg, err := load(env(with("HM_HA_CA_FILE", tc.file)), files(fsys))
 		if tc.ok != (err == nil) || tc.ok && cfg.HARootCAs == nil {
 			t.Errorf("%s: %v, %v", name, cfg.HARootCAs, err)
 		}
@@ -242,7 +297,7 @@ func TestPDPAddrMustBeLoopback(t *testing.T) {
 		for k, v := range base {
 			m[k] = v
 		}
-		cfg, err := Load(env(m), files(nil))
+		cfg, err := load(env(m), files(nil))
 		if (err == nil) != ok || ok && cfg.PDPAddr != addr {
 			t.Errorf("HM_PDP_ADDR=%s: %+v, %v", addr, cfg.PDPAddr, err)
 		}
@@ -273,7 +328,7 @@ func TestIngressAddr(t *testing.T) {
 		for k, v := range base {
 			m[k] = v
 		}
-		cfg, err := Load(env(m), files(nil))
+		cfg, err := load(env(m), files(nil))
 		if (err == nil) != ok || ok && cfg.IngressAddr != addr || !ok && !errors.Is(err, ErrInvalid) {
 			t.Errorf("HM_INGRESS_ADDR=%q: %q, %v", addr, cfg.IngressAddr, err)
 		}
@@ -305,9 +360,69 @@ func TestIngressProxy(t *testing.T) {
 		for k, v := range base {
 			m[k] = v
 		}
-		cfg, err := Load(env(m), files(nil))
+		cfg, err := load(env(m), files(nil))
 		if (err == nil) != tc.ok || tc.ok && cfg.IngressProxy.String() != tc.want || !tc.ok && !errors.Is(err, ErrInvalid) {
 			t.Errorf("%+v: %v, %v", tc, cfg.IngressProxy, err)
 		}
+	}
+}
+
+// Behind a reverse proxy (HM_PROXY) the proxy ends TLS: the listener may then serve
+// plaintext beyond loopback, but only to that one address, and the public URL is https.
+func TestProxy(t *testing.T) {
+	base := map[string]string{"HM_HA_URL": "ws://localhost:8123/api/websocket", "HM_HA_TOKEN": "t",
+		"HM_PUBLIC_URL": "https://hm.example.org"}
+	for _, tc := range []struct {
+		name               string
+		set                map[string]string
+		wantProxy, wantMCP string
+		ok                 bool
+	}{
+		{"default address", map[string]string{"HM_PROXY": "192.0.2.10"}, "192.0.2.10", ":8765", true},
+		{"plaintext on the lan", map[string]string{"HM_PROXY": "192.0.2.10", "HM_MCP_ADDR": "0.0.0.0:8765"}, "192.0.2.10", "0.0.0.0:8765", true},
+		{"ipv4-mapped", map[string]string{"HM_PROXY": "::ffff:192.0.2.10"}, "192.0.2.10", ":8765", true},
+		{"ipv6", map[string]string{"HM_PROXY": "2001:db8::10"}, "2001:db8::10", ":8765", true},
+		{"with a certificate too", map[string]string{"HM_PROXY": "192.0.2.10", "HM_TLS_CERT": "/c.pem", "HM_TLS_KEY": "/k.pem"}, "192.0.2.10", ":8765", true},
+		{"no proxy", nil, "", "127.0.0.1:8765", true},
+		{"range", map[string]string{"HM_PROXY": "192.0.2.0/24"}, "", "", false},
+		{"two addresses", map[string]string{"HM_PROXY": "192.0.2.10,192.0.2.11"}, "", "", false},
+		{"unspecified", map[string]string{"HM_PROXY": "0.0.0.0"}, "", "", false},
+		{"zone", map[string]string{"HM_PROXY": "fe80::1%eth0"}, "", "", false},
+		{"multicast", map[string]string{"HM_PROXY": "224.0.0.1"}, "", "", false},
+		{"mapped unspecified", map[string]string{"HM_PROXY": "::ffff:0.0.0.0"}, "", "", false},
+		{"mapped multicast", map[string]string{"HM_PROXY": "::ffff:224.0.0.1"}, "", "", false},
+		{"host name", map[string]string{"HM_PROXY": "traefik"}, "", "", false},
+		{"no public url", map[string]string{"HM_PROXY": "192.0.2.10", "HM_PUBLIC_URL": ""}, "", "", false},
+		{"plaintext public url", map[string]string{"HM_PROXY": "127.0.0.1", "HM_PUBLIC_URL": "http://localhost:8765"}, "", "", false},
+		{"bad address", map[string]string{"HM_PROXY": "192.0.2.10", "HM_MCP_ADDR": "nonsense"}, "", "", false},
+	} {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for k, v := range tc.set {
+			m[k] = v
+		}
+		cfg, err := load(env(m), files(nil))
+		if (err == nil) != tc.ok || !tc.ok && !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		got := ""
+		if cfg.Proxy.IsValid() {
+			got = cfg.Proxy.String()
+		}
+		if tc.ok && (got != tc.wantProxy || cfg.MCPAddr != tc.wantMCP) {
+			t.Errorf("%s: proxy %v, mcp %q", tc.name, cfg.Proxy, cfg.MCPAddr)
+		}
+	}
+}
+
+// HM_PROXY is not available in app mode yet; set there, it stops the start rather than
+// being ignored.
+func TestProxyRefusedInAppMode(t *testing.T) {
+	_, err := load(env(map[string]string{"SUPERVISOR_TOKEN": "s", "HM_PROXY": "192.0.2.10"}), files(map[string]string{appOptions: options}))
+	if !errors.Is(err, ErrInvalid) {
+		t.Errorf("Load = %v, want ErrInvalid", err)
 	}
 }

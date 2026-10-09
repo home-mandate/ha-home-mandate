@@ -3,15 +3,17 @@
 package api
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"slices"
 	"testing"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/approval"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/catalog"
-	"github.com/home-mandate/home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
 func TestSession(t *testing.T) {
@@ -54,7 +56,7 @@ func TestSession(t *testing.T) {
 	// Before Home Assistant answered: UTC, and the ID when the name is unknown.
 	h.status.TimeZone = ""
 	h.ha.set(func(f *fakeHA) {
-		f.users = append(f.users, ha.AuthUser{ID: "noname0000000000000000000000000", IsOwner: true})
+		f.users = append(f.users, ha.AuthUser{ID: "noname0000000000000000000000000", IsOwner: true, IsActive: true})
 	})
 	h.now.Add(usersTTL)
 	h.ok(http.MethodGet, "/api/session", nil, &s, as("noname0000000000000000000000000"))
@@ -73,8 +75,14 @@ func TestSystem(t *testing.T) {
 		*sys.HA.UserName != "Home-Mandate" || !slices.Contains(sys.HA.Commands, "config/auth/list") ||
 		*sys.MCPURL != "https://hm.example.org:8765/mcp" || !sys.TLS.Present || *sys.TLS.ValidUntil != "2027-01-01T10:00:00.000Z" ||
 		sys.EmergencyStop.Active || sys.EmergencyStop.Since != nil || !sys.Chain.Valid || sys.Chain.CheckedAt != nil ||
-		sys.ApproversConfigured != 1 || sys.ClockBehind {
+		sys.ApproversConfigured != 1 || sys.ClockBehind || sys.ApprovalTimeoutSeconds != 300 {
 		t.Errorf("system = %+v", sys)
+	}
+	// Without a configured upper limit, the approval package's default applies (120 s).
+	h.srv.cfg.ApprovalTimeout = 0
+	h.ok(http.MethodGet, "/api/system", nil, &sys)
+	if sys.ApprovalTimeoutSeconds != 120 {
+		t.Errorf("approval_timeout_seconds without configuration = %d", sys.ApprovalTimeoutSeconds)
 	}
 	// A clock behind the newest audit entry is reported (SPEC-v0 section 11.4).
 	if _, err := h.srv.cfg.Log.Append(t.Context(), audit.Entry{Event: audit.EventEmergencyStopReleased,
@@ -94,6 +102,11 @@ func TestSystem(t *testing.T) {
 	h.ok(http.MethodGet, "/api/system", nil, &sys)
 	if !sys.TLS.Present || !sys.TLS.RenewalFailed {
 		t.Errorf("renewal failure not reported: %+v", sys.TLS)
+	}
+	h.srv.cfg.TLS = func() TLSStatus { return TLSStatus{Proxy: true} }
+	h.ok(http.MethodGet, "/api/system", nil, &sys)
+	if sys.TLS.Present || !sys.TLS.Proxy || sys.TLS.ValidUntil != nil {
+		t.Errorf("TLS at the reverse proxy not reported: %+v", sys.TLS)
 	}
 	h.srv.cfg.TLS = func() TLSStatus { return TLSStatus{} }
 	h.srv.cfg.MCPURL = ""
@@ -140,6 +153,24 @@ func TestVerify(t *testing.T) {
 	}
 }
 
+// A deleted beginning that no verified checkpoint covers is reported as a broken chain
+// at the first remaining entry: the log.truncated entry needs no key.
+func TestVerifyReportsAnUnanchoredTruncation(t *testing.T) {
+	h := newHarness(t)
+	h.admit("Voice")
+	h.admit("Lights")
+	if _, err := h.log.Truncate(t.Context(), time.Now().AddDate(10, 0, 0), audit.Actor{Kind: audit.ActorSystem, ID: "retention"}); err != nil {
+		t.Fatal(err)
+	}
+	var first int64
+	_ = h.st.DB().QueryRow(`SELECT min(seq) FROM audit_log`).Scan(&first)
+	var v wireVerification
+	h.ok(http.MethodPost, "/api/audit/verify", nil, &v)
+	if v.Valid || v.BrokenAtSeq == nil || *v.BrokenAtSeq != first {
+		t.Errorf("verification = %+v, want broken at %d", v, first)
+	}
+}
+
 func TestRunVerifierAndRunTailStop(t *testing.T) {
 	h := newHarness(t)
 	old := verifyEvery
@@ -164,6 +195,40 @@ func TestRunVerifierAndRunTailStop(t *testing.T) {
 			t.Fatal("did not stop")
 		}
 	}
+}
+
+// logRecorder passes the messages of a slog.Logger on, dropping them when nobody reads.
+type logRecorder struct{ messages chan string }
+
+func (l logRecorder) Enabled(context.Context, slog.Level) bool { return true }
+func (l logRecorder) WithAttrs([]slog.Attr) slog.Handler       { return l }
+func (l logRecorder) WithGroup(string) slog.Handler            { return l }
+func (l logRecorder) Handle(_ context.Context, r slog.Record) error {
+	select {
+	case l.messages <- r.Message:
+	default:
+	}
+	return nil
+}
+
+func TestRunVerifierReportsWhenTheLogCannotBeRead(t *testing.T) {
+	h := newHarness(t)
+	rec := logRecorder{messages: make(chan string, 16)}
+	h.srv.cfg.Logger = slog.New(rec)
+	_ = h.st.Close()
+	ctx, cancel := context_(t)
+	done := make(chan struct{})
+	go func() { h.srv.RunVerifier(ctx); close(done) }()
+	for found := false; !found; {
+		select {
+		case msg := <-rec.messages:
+			found = msg == "verifying the audit log failed"
+		case <-time.After(5 * time.Second):
+			t.Fatal("the failure was not reported")
+		}
+	}
+	cancel()
+	<-done
 }
 
 // failingRenames reports that storing renames fails.

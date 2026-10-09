@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Package audit writes the hash-chained audit log of SPEC-v0 section 9 into the store
-// and verifies it with the reference implementation from mandate-spec. Entries never
-// contain tokens, nonces, credentials or the content of a mandate.
+// and verifies it with the reference implementation from the specification. Entries never
+// contain tokens, nonces, credentials or the content of a mandate or a template.
 package audit
 
 import (
@@ -17,15 +17,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"time"
 
-	specaudit "github.com/mandate-spec/mandate-spec/audit"
-	"github.com/mandate-spec/mandate-spec/jcs"
-	"github.com/mandate-spec/mandate-spec/jws"
+	specaudit "github.com/home-mandate/spec/audit"
+	"github.com/home-mandate/spec/jcs"
+	"github.com/home-mandate/spec/jws"
 
-	"github.com/home-mandate/home-mandate/internal/untrusted"
+	"github.com/home-mandate/ha-home-mandate/internal/untrusted"
 )
 
 // ErrInvalidEntry means an entry does not conform to the audit schema; it is not written.
@@ -37,14 +38,19 @@ const (
 	EventMandateCreated         = "mandate.created"
 	EventMandateUpdated         = "mandate.updated"
 	EventMandateRevoked         = "mandate.revoked"
+	EventMandateRemoved         = "mandate.removed"
 	EventAgentRegistered        = "agent.registered"
 	EventAgentRevoked           = "agent.revoked"
+	EventAgentReconnected       = "agent.reconnected"
+	EventAgentRemoved           = "agent.removed"
 	EventEmergencyStopActivated = "emergency_stop.activated"
 	EventEmergencyStopReleased  = "emergency_stop.released"
 	EventAuthRejected           = "auth.rejected"
 	EventLogTruncated           = "log.truncated"
 	EventLogCheckpoint          = "log.checkpoint"
 	EventDirectoryChanged       = "directory.changed"
+	EventTemplateChanged        = "template.changed"
+	EventApproverChanged        = "approver.changed"
 )
 
 // Changes of the resource directory (SPEC-v0 sections 9.1 and 11.4).
@@ -56,8 +62,22 @@ const (
 	DirectoryRenameDismissed  = "rename_dismissed"
 )
 
+// Changes of a template (SPEC-v0 section 9.1).
 const (
-	entryType  = "https://mandate-spec.org/audit/v0"
+	TemplateStored  = "stored"
+	TemplateRemoved = "removed"
+	TemplateHidden  = "hidden"
+	TemplateShown   = "shown"
+)
+
+// Changes of the approvers (SPEC-v0 sections 9.1 and 11.1).
+const (
+	ApproverAdded   = "added"
+	ApproverRemoved = "removed"
+)
+
+const (
+	entryType  = "https://home-mandate.org/audit/v0"
 	timeFormat = "2006-01-02T15:04:05.000Z07:00"
 )
 
@@ -94,6 +114,8 @@ type Entry struct {
 	Result     *Result
 	Truncated  *Truncated
 	Directory  *Directory
+	Template   *Template
+	Approver   *Approver
 	// checkpoint marks an entry of Checkpoint; its signature is made when the entry
 	// gets its place in the chain.
 	checkpoint bool
@@ -200,6 +222,24 @@ type Directory struct {
 	PreviousEntityID string `json:"previous_entity_id,omitempty"`
 }
 
+// Template is a change of a mandate template: stored (created or changed), removed,
+// hidden or shown again. Digest is that of the new content for stored, of the last
+// content for removed, and optionally of the current content otherwise; PreviousDigest
+// only for stored, when the template had other content before. Never the content itself.
+type Template struct {
+	Change         string `json:"change"`
+	Name           string `json:"name"`
+	Digest         string `json:"digest,omitempty"`
+	PreviousDigest string `json:"previous_digest,omitempty"`
+}
+
+// Approver is a person added to or removed from those who answer approval requests;
+// ID is their user ID in Home Assistant, as in approval.by.
+type Approver struct {
+	Change string `json:"change"`
+	ID     string `json:"id"`
+}
+
 // Truncated marks deleted entries (SPEC-v0 section 9.4).
 type Truncated struct {
 	UpToSeq    int64  `json:"up_to_seq"`
@@ -222,6 +262,8 @@ type wire struct {
 	Result     *Result     `json:"result,omitempty"`
 	Truncated  *Truncated  `json:"truncated,omitempty"`
 	Directory  *Directory  `json:"directory,omitempty"`
+	Template   *Template   `json:"template,omitempty"`
+	Approver   *Approver   `json:"approver,omitempty"`
 	Checkpoint *checkpoint `json:"checkpoint,omitempty"`
 	Prev       *string     `json:"prev"`
 }
@@ -399,6 +441,7 @@ func (l *Log) AppendTx(ctx context.Context, tx *sql.Tx, e Entry) (int64, error) 
 		Type: entryType, ID: newUUIDv7(now), Seq: lastSeq + 1, RecordedAt: now.UTC().Format(timeFormat),
 		Event: e.Event, Principal: l.principal, Actor: e.Actor, Agent: e.Agent, Request: e.Request,
 		Mandate: e.Mandate, Evaluation: e.Evaluation, Approval: e.Approval, Result: e.Result, Truncated: e.Truncated, Directory: e.Directory,
+		Template: e.Template, Approver: e.Approver,
 	}
 	if lastSeq > 0 {
 		w.Prev = &lastDigest
@@ -441,7 +484,7 @@ func searchText(a *Agent, r *Request) string {
 }
 
 // encode returns the canonical form (RFC 8785) and digest of w after checking it
-// against the audit schema of mandate-spec.
+// against the audit schema of the specification.
 func encode(w wire) ([]byte, string, error) {
 	canonical, err := canonicalJSON(w)
 	if err == nil {
@@ -454,7 +497,7 @@ func encode(w wire) ([]byte, string, error) {
 	return canonical, "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-// canonicalJSON encodes v and canonicalizes it with mandate-spec/jcs, the same code
+// canonicalJSON encodes v and canonicalizes it with spec/jcs, the same code
 // that computes digests during verification.
 func canonicalJSON(v any) ([]byte, error) {
 	data, err := json.Marshal(v)
@@ -496,29 +539,79 @@ func validate(w wire) error {
 	return nil
 }
 
-// Verify checks the whole stored log with mandate-spec (SPEC-v0 section 9.4).
-func (l *Log) Verify(ctx context.Context) (specaudit.Result, error) {
+// How the beginning of a log that verifies with the specification is accounted for.
+const (
+	// TruncationNone: the log starts at seq 1.
+	TruncationNone = "none"
+	// TruncationAnchored: a verified checkpoint covers the log.truncated entry.
+	TruncationAnchored = "anchored"
+	// TruncationUnanchored: no checkpoint covers it, and the log has none at all.
+	TruncationUnanchored = "unanchored"
+	// TruncationTampered: no checkpoint covers it although the log has checkpoints;
+	// Home-Mandate writes one after every truncation of its own.
+	TruncationTampered = "tampered"
+)
+
+// Verification is the result of verifying the stored log. It is stricter than the specification,
+// which accepts any log.truncated entry for a deleted beginning (SPEC-v0 section 9.4):
+// that entry needs no key, so Home-Mandate counts a truncation as valid only if a
+// verified checkpoint covers it. Otherwise Valid is false and BrokenAt is FirstSeq.
+type Verification struct {
+	specaudit.Result
+	// Truncation is one of the Truncation constants; empty if the chain is broken.
+	Truncation string
+}
+
+// Verify checks the whole stored log with the specification (SPEC-v0 section 9.4).
+func (l *Log) Verify(ctx context.Context) (Verification, error) {
 	r, _, err := l.Check(ctx)
 	return r, err
 }
 
 // Check is Verify that also returns how many entries it checked.
-func (l *Log) Check(ctx context.Context) (specaudit.Result, int, error) {
+func (l *Log) Check(ctx context.Context) (Verification, int, error) {
 	var entries [][]byte
 	err := l.each(ctx, func(entry []byte) error {
 		entries = append(entries, entry)
 		return nil
 	})
 	if err != nil {
-		return specaudit.Result{}, 0, err
+		return Verification{}, 0, err
 	}
+	r, err := l.verifyEntries(entries)
+	if err != nil || !r.Valid {
+		return Verification{Result: r}, len(entries), err
+	}
+	strict, err := l.truncation(ctx, r)
+	return strict, len(entries), err
+}
+
+func (l *Log) verifyEntries(entries [][]byte) (specaudit.Result, error) {
 	if signer := l.signer(); signer != nil {
-		r, err := specaudit.VerifyAnchored(entries, specaudit.Anchor{
+		return specaudit.VerifyAnchored(entries, specaudit.Anchor{
 			Keys: jws.Keys{signer.KeyID: signer.Key.Public()}, LogID: signer.LogID})
-		return r, len(entries), err
 	}
-	r, err := specaudit.Verify(entries)
-	return r, len(entries), err
+	return specaudit.Verify(entries)
+}
+
+// truncation applies Home-Mandate's own rule for a deleted beginning to a valid log.
+func (l *Log) truncation(ctx context.Context, r specaudit.Result) (Verification, error) {
+	switch {
+	case r.FirstSeq <= 1:
+		return Verification{Result: r, Truncation: TruncationNone}, nil
+	case r.TruncationAnchored:
+		return Verification{Result: r, Truncation: TruncationAnchored}, nil
+	}
+	checkpoints, err := l.HasCheckpoints(ctx)
+	if err != nil {
+		return Verification{}, err
+	}
+	out := Verification{Result: specaudit.Result{Index: 0, BrokenAt: r.FirstSeq, FirstSeq: r.FirstSeq, LogID: r.LogID},
+		Truncation: TruncationUnanchored}
+	if checkpoints {
+		out.Truncation = TruncationTampered
+	}
+	return out, nil
 }
 
 // Export writes the log as JSON Lines, the exchange format of SPEC-v0 section 9.4.
@@ -549,19 +642,67 @@ func (l *Log) each(ctx context.Context, fn func([]byte) error) error {
 	return rows.Err()
 }
 
+// ErrClockBehind means the clock lies more than ClockTolerance before the newest entry.
+var ErrClockBehind = errors.New("audit: clock behind the newest entry")
+
+// expireShare: one run of Expire deletes at most this share of the entries (one in ten),
+// so that a wrong clock cannot wipe the log at once.
+const expireShare = 10
+
+// Expire deletes the entries older than retention, as the retention of the gateway does.
+// Age counts back from the newest entry Home-Mandate did not write for its own upkeep
+// (log.truncated, log.checkpoint), or from the clock if that is earlier: a clock that
+// jumped ahead neither ages the log by itself nor through the entries Expire writes. It
+// deletes at most a tenth of the entries per run and nothing while ClockBehind holds
+// (ErrClockBehind; the next run tries again).
+func (l *Log) Expire(ctx context.Context, retention time.Duration, actor Actor) (int64, error) {
+	behind, err := l.ClockBehind(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if behind {
+		return 0, ErrClockBehind
+	}
+	var first, last sql.NullInt64
+	var newest sql.NullString
+	if err := l.db.QueryRowContext(ctx, `SELECT min(seq), max(seq),
+		(SELECT max(recorded_at) FROM audit_log WHERE event NOT IN (?, ?)) FROM audit_log`,
+		EventLogTruncated, EventLogCheckpoint).Scan(&first, &last, &newest); err != nil {
+		return 0, fmt.Errorf("audit: read: %w", err)
+	}
+	if !newest.Valid {
+		return 0, nil
+	}
+	cutoff, err := time.Parse(timeFormat, newest.String)
+	if err != nil {
+		return 0, fmt.Errorf("audit: newest entry: %w", err)
+	}
+	if now := l.clock(); now.Before(cutoff) {
+		cutoff = now
+	}
+	return l.truncate(ctx, cutoff.Add(-retention), (last.Int64-first.Int64+1)/expireShare, actor)
+}
+
 // Truncate deletes entries recorded before cutoff, after appending a log.truncated
 // entry that keeps the log verifiable (SPEC-v0 section 9.4). The newest entry is never
 // deleted. It returns the number of deleted entries.
 func (l *Log) Truncate(ctx context.Context, cutoff time.Time, actor Actor) (int64, error) {
+	return l.truncate(ctx, cutoff, math.MaxInt32, actor)
+}
+
+// truncate is Truncate that deletes at most limit entries.
+func (l *Log) truncate(ctx context.Context, cutoff time.Time, limit int64, actor Actor) (int64, error) {
 	var removed int64
 	err := l.inTx(ctx, func(tx *sql.Tx) error {
-		// n: the newest old entry, but never the newest entry of the log.
+		// n: the newest old entry, but never the newest entry of the log, nor more than
+		// limit entries.
 		var n sql.NullInt64
 		var lastDigest sql.NullString
 		err := tx.QueryRowContext(ctx, `WITH bounds AS (
-				SELECT min((SELECT max(seq) FROM audit_log WHERE recorded_at < ?), (SELECT max(seq) FROM audit_log) - 1) AS n)
+				SELECT min((SELECT max(seq) FROM audit_log WHERE recorded_at < ?), (SELECT max(seq) FROM audit_log) - 1,
+					(SELECT min(seq) FROM audit_log) - 1 + ?) AS n)
 			SELECT n, (SELECT digest FROM audit_log WHERE seq = n) FROM bounds`,
-			cutoff.UTC().Format(timeFormat)).Scan(&n, &lastDigest)
+			cutoff.UTC().Format(timeFormat), limit).Scan(&n, &lastDigest)
 		if err != nil {
 			return fmt.Errorf("audit: find old entries: %w", err)
 		}
@@ -585,7 +726,10 @@ func (l *Log) Truncate(ctx context.Context, cutoff time.Time, actor Actor) (int6
 		}
 		return nil
 	})
-	return removed, err
+	if err != nil {
+		return 0, err // rolled back: nothing was deleted
+	}
+	return removed, nil
 }
 
 // newUUIDv7 returns a UUIDv7 (RFC 9562): 48-bit Unix milliseconds, version, variant,

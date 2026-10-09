@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Playwright against the real gateway behind the Ingress stand-in of the E2E environment
-// (e2e/ui_test.go starts everything and sets HM_LIVE_*; make e2e-ui). Not part of
-// `pnpm e2e`, which runs against the static mock build.
+// Playwright against the real gateway of the E2E environment, behind the Ingress stand-in
+// and on the sign-in pages (e2e/ui_test.go and e2e/oauth_test.go start everything and set
+// HM_LIVE_*; make e2e-ui). Not part of `pnpm e2e`, which runs against the static mock build.
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({

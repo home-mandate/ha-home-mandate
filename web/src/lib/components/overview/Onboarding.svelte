@@ -24,7 +24,7 @@
     <li>
       <span class="step" aria-hidden="true">1</span>
       <div class="text"><strong>{m.onboarding_step1_title()}</strong><span>{m.onboarding_step1_body()}</span></div>
-      <a class="primary" href={href({ name: 'pair' })}><Icon name="plus" />{m.onboarding_step1_action()}</a>
+      <a class="primary" href={href({ name: 'agents', add: true })}><Icon name="plus" />{m.onboarding_step1_action()}</a>
     </li>
     <li>
       <span class="step" aria-hidden="true">2</span>

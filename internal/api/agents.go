@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 )
 
 type wireAgentMandate struct {
@@ -19,6 +19,10 @@ type wireAgentMandate struct {
 	Status            string `json:"status"`
 	MaxActionsPerHour *int   `json:"max_actions_per_hour"`
 	Digest            string `json:"digest"`
+	// RulesFrom is the template the rules were last taken from; nil if unknown.
+	RulesFrom *wireRulesFrom `json:"rules_from"`
+	// RemovedAt is set once the revoked mandate was removed from the lists.
+	RemovedAt *string `json:"removed_at"`
 }
 
 type wireAgent struct {
@@ -34,6 +38,9 @@ type wireAgent struct {
 	RedirectURIs    []string          `json:"redirect_uris"`
 	RevokedAt       *string           `json:"revoked_at"`
 	RevokedByName   *string           `json:"revoked_by_name"`
+	RemovedAt       *string           `json:"removed_at"`
+	RemovedByName   *string           `json:"removed_by_name"`
+	Connected       bool              `json:"connected"`
 	RequestsToday   int               `json:"requests_today"`
 	ActionsLastHour int               `json:"actions_last_hour"`
 	Mandate         *wireAgentMandate `json:"mandate"`
@@ -70,10 +77,16 @@ func (s *Server) presentAgents(ctx context.Context, list []agent.Agent) ([]wireA
 	if err != nil {
 		return nil, err
 	}
-	// The current mandate per agent: the active one, else the newest (List is in creation order).
+	uses, err := s.cfg.Mandates.TemplateUses(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// The current mandate per agent: the active one, else the newest that is not removed,
+	// else the newest (List is in creation order).
 	current := map[string]mandate.Info{}
 	for _, m := range mandates {
-		if prev, ok := current[m.ClientID]; !ok || prev.Status != mandate.StatusActive {
+		prev, ok := current[m.ClientID]
+		if !ok || prev.Status != mandate.StatusActive && (m.RemovedAt.IsZero() || !prev.RemovedAt.IsZero()) {
 			current[m.ClientID] = m
 		}
 	}
@@ -81,19 +94,24 @@ func (s *Server) presentAgents(ctx context.Context, list []agent.Agent) ([]wireA
 	for _, a := range list {
 		w := wireAgent{ClientID: a.ClientID, DisplayName: a.DisplayName, Status: a.Status, CreatedAt: *formatTime(a.CreatedAt),
 			CreatedBy: a.CreatedBy, CreatedByName: s.users.name(ctx, a.CreatedBy), OAuthClient: a.OAuthClient,
-			ClientVerified: a.ClientVerified, RedirectURIs: a.RedirectURIs, RevokedAt: formatTime(a.RevokedAt)}
+			ClientVerified: a.ClientVerified, RedirectURIs: a.RedirectURIs, RevokedAt: formatTime(a.RevokedAt),
+			RemovedAt: formatTime(a.RemovedAt), Connected: a.Connected}
 		if w.RedirectURIs == nil {
 			w.RedirectURIs = []string{}
 		}
 		if a.Status == agent.StatusRevoked {
 			w.RevokedByName = s.users.name(ctx, a.RevokedBy)
 		}
+		if !a.RemovedAt.IsZero() {
+			w.RemovedByName = s.users.name(ctx, a.RemovedBy)
+		}
 		if act, ok := activity[a.ClientID]; ok {
 			w.LastActiveAt, w.RequestsToday, w.ActionsLastHour = formatTime(act.LastAt), act.Since, act.Counted
 		}
 		if m, ok := current[a.ClientID]; ok {
 			limit := m.MaxActionsPerHour
-			w.Mandate = &wireAgentMandate{ID: m.ID, Name: nameOf(m), Status: m.Status, MaxActionsPerHour: &limit, Digest: m.Digest}
+			w.Mandate = &wireAgentMandate{ID: m.ID, Name: nameOf(m), Status: m.Status, MaxActionsPerHour: &limit, Digest: m.Digest,
+				RulesFrom: rulesFrom(uses, m.ID), RemovedAt: formatTime(m.RemovedAt)}
 		}
 		out = append(out, w)
 	}
@@ -168,5 +186,5 @@ func (s *Server) presentAgent(ctx context.Context, a agent.Agent) wireAgent {
 	}
 	return wireAgent{ClientID: a.ClientID, DisplayName: a.DisplayName, Status: a.Status, CreatedAt: *formatTime(a.CreatedAt),
 		CreatedBy: a.CreatedBy, OAuthClient: a.OAuthClient, ClientVerified: a.ClientVerified, RedirectURIs: uris,
-		RevokedAt: formatTime(a.RevokedAt)}
+		RevokedAt: formatTime(a.RevokedAt), RemovedAt: formatTime(a.RemovedAt), Connected: a.Connected}
 }

@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	mandatespec "github.com/mandate-spec/mandate-spec"
+	"github.com/home-mandate/spec"
 )
 
 // uiClient is a person signed in through the Ingress stand-in (Home Assistant's real
@@ -321,7 +321,7 @@ func haService(t *testing.T, domain, service, entityID string) {
 // approver.
 func agentWithApprover(t *testing.T, name, approver string) string {
 	t.Helper()
-	data, err := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -485,18 +485,32 @@ func stripVolatile(agents string) string {
 // The UI in a real browser against the gateway (Playwright, de and en), when asked for:
 // make e2e-ui.
 func TestUIInTheBrowser(t *testing.T) {
-	if os.Getenv("E2E_PLAYWRIGHT") == "" {
-		t.Skip("set E2E_PLAYWRIGHT=1 (make e2e-ui)")
-	}
+	playwright(t, "e2e-live/live.spec.ts")
+}
+
+// playwright runs one spec of web/e2e-live against this environment, when asked for:
+// make e2e-ui. extra are further NAME=value pairs for the spec.
+func playwright(t *testing.T, spec string, extra ...string) {
+	t.Helper()
+	requirePlaywright(t)
 	u := env.users[adminApprover]
-	cmd := exec.Command("pnpm", "exec", "playwright", "test", "-c", "playwright.live.config.ts")
+	cmd := exec.Command("pnpm", "exec", "playwright", "test", "-c", "playwright.live.config.ts", spec)
 	cmd.Dir = "../web"
 	cmd.Env = append(os.Environ(), "HM_LIVE_URL="+env.uiURL, "HM_LIVE_PATH="+env.uiPath+"/", "HM_LIVE_USER="+u.name,
 		"HM_LIVE_PASSWORD="+u.password, "HM_LIVE_PLAIN_USER="+env.users[userPlain].name,
 		"HM_LIVE_PLAIN_PASSWORD="+env.users[userPlain].password)
+	cmd.Env = append(cmd.Env, extra...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("playwright: %v\n%s", err, out)
 	}
 	fmt.Fprintf(os.Stderr, "%s", out)
+}
+
+// requirePlaywright skips a browser test unless asked for: make e2e-ui.
+func requirePlaywright(t *testing.T) {
+	t.Helper()
+	if os.Getenv("E2E_PLAYWRIGHT") == "" {
+		t.Skip("set E2E_PLAYWRIGHT=1 (make e2e-ui)")
+	}
 }

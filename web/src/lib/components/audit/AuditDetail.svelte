@@ -6,7 +6,7 @@
 -->
 <script lang="ts">
   import type { AuditEntry, DeviceCatalog } from '../../api/types.ts';
-  import { decisionOf, deviceName, directoryText } from '../../audit/describe.ts';
+  import { approverText, decisionOf, deviceName, directoryText, templateText } from '../../audit/describe.ts';
   import { answeredAfter, approvalText, eventLabel, outcomeOf, reasonText } from '../../audit/outcome.ts';
   import { formatDateTime, formatNumber, type FormatContext } from '../../format.ts';
   import { m } from '../../i18n.ts';
@@ -78,6 +78,18 @@
     <dt>{m.audit_field_device()}</dt>
     <dd><bdi>{deviceName(entry.directory.entity_id, catalog)}</bdi><code>{cleanUntrusted(entry.directory.entity_id)}</code></dd>
   {/if}
+  {#if entry.template}
+    <dt>{m.audit_field_directory()}</dt>
+    <dd><bdi>{templateText(entry)}</bdi></dd>
+    <dt>{m.audit_field_template()}</dt>
+    <dd><code>{cleanUntrusted(entry.template.name)}</code></dd>
+  {/if}
+  {#if entry.approver}
+    <dt>{m.audit_field_directory()}</dt>
+    <dd><bdi>{approverText(entry)}</bdi></dd>
+    <dt>{m.audit_field_person()}</dt>
+    <dd>{#if entry.approver.name}<bdi>{cleanUntrusted(entry.approver.name)}</bdi>{/if}<code>{cleanUntrusted(entry.approver.id)}</code></dd>
+  {/if}
   {#if entry.request}
     <dt>{m.audit_field_device()}</dt>
     <dd><bdi>{deviceName(entry.request.resource.entity_id, catalog)}</bdi><code>{cleanUntrusted(entry.request.resource.entity_id)}</code></dd>
@@ -93,6 +105,10 @@
     {/if}
   {/if}
   {#if entry.mandate}
+    {#if entry.mandate.name}
+      <dt>{m.audit_field_mandate()}</dt>
+      <dd><bdi>{cleanUntrusted(entry.mandate.name)}</bdi></dd>
+    {/if}
     <dt>{m.audit_mandate_version()}</dt>
     <dd>
       <a href={href({ name: 'mandate_versions', id: entry.mandate.id })}

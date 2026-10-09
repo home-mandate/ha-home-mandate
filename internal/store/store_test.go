@@ -9,11 +9,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
 
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 func openTemp(t *testing.T) (*store.Store, string) {
@@ -160,40 +161,41 @@ func TestOpenRejectsInsecurePermissions(t *testing.T) {
 	tests := []struct {
 		name  string
 		setup func(t *testing.T, dir, path string)
+		fix   string // the command the error names, if one fixes it
 	}{
 		{"directory writable by others", func(t *testing.T, dir, _ string) {
 			chmod(t, dir, 0o777)
-		}},
+		}, "chmod go-w "},
 		{"directory writable by group", func(t *testing.T, dir, _ string) {
 			chmod(t, dir, 0o770)
-		}},
+		}, "chmod go-w "},
 		{"database has a second hard link", func(t *testing.T, dir, path string) {
 			writeFile(t, path, 0o600)
 			if err := os.Link(path, filepath.Join(dir, "copy.db")); err != nil {
 				t.Fatal(err)
 			}
-		}},
+		}, ""},
 		{"database readable by group", func(t *testing.T, _, path string) {
 			writeFile(t, path, 0o640)
-		}},
+		}, "chmod 600 "},
 		{"database readable by others", func(t *testing.T, _, path string) {
 			writeFile(t, path, 0o604)
-		}},
+		}, "chmod 600 "},
 		{"wal file readable by others", func(t *testing.T, _, path string) {
 			writeFile(t, path+"-wal", 0o644)
-		}},
+		}, "chmod 600 "},
 		{"database is a symlink", func(t *testing.T, dir, path string) {
 			target := filepath.Join(dir, "elsewhere.db")
 			writeFile(t, target, 0o600)
 			if err := os.Symlink(target, path); err != nil {
 				t.Fatal(err)
 			}
-		}},
+		}, ""},
 		{"database is not a regular file", func(t *testing.T, _, path string) {
 			if err := syscall.Mkfifo(path, 0o600); err != nil {
 				t.Fatal(err)
 			}
-		}},
+		}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -208,6 +210,9 @@ func TestOpenRejectsInsecurePermissions(t *testing.T) {
 			}
 			if !errors.Is(err, store.ErrInsecurePermissions) {
 				t.Errorf("error = %v, want ErrInsecurePermissions", err)
+			}
+			if tt.fix != "" && !strings.Contains(err.Error(), tt.fix) {
+				t.Errorf("error = %q, want it to name %q", err, tt.fix)
 			}
 		})
 	}

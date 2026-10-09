@@ -13,12 +13,12 @@ import (
 	"strings"
 	"testing"
 
-	mandatespec "github.com/mandate-spec/mandate-spec"
+	"github.com/home-mandate/spec"
 )
 
 func example(t *testing.T) string {
 	t.Helper()
-	data, err := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func exchange(t *testing.T, requests ...any) []map[string]any {
 
 func TestProcessBindingAnswersEveryOperation(t *testing.T) {
 	m := example(t)
-	keys, err := fs.ReadFile(mandatespec.FS(), "conformance/keys/test-keys.json")
+	keys, err := fs.ReadFile(spec.FS(), "conformance/keys/test-keys.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,18 +216,18 @@ func TestHTTPBindingRefusesWeakTokensAndOtherAddresses(t *testing.T) {
 
 // SPEC-v0 section 10.1: the test interface is never part of the release. The binary and
 // the image are built from cmd/home-mandate, which must not depend on this tool or on
-// the test harness of mandate-spec.
+// the test harness of the specification.
 func TestTheReleaseBinaryHasNoTestInterface(t *testing.T) {
-	out, err := exec.Command("go", "list", "-deps", "github.com/home-mandate/home-mandate/cmd/home-mandate").Output()
+	out, err := exec.Command("go", "list", "-deps", "github.com/home-mandate/ha-home-mandate/cmd/home-mandate").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, pkg := range strings.Fields(string(out)) {
-		if strings.HasSuffix(pkg, "/tools/conformance") || strings.Contains(pkg, "mandate-spec/internal/harness") {
+		if strings.HasSuffix(pkg, "/tools/conformance") || strings.Contains(pkg, "github.com/home-mandate/spec/internal/harness") {
 			t.Errorf("the release binary depends on %s", pkg)
 		}
 	}
-	if !strings.Contains(string(out), "github.com/home-mandate/home-mandate/internal/pdp") {
+	if !strings.Contains(string(out), "github.com/home-mandate/ha-home-mandate/internal/pdp") {
 		t.Error("go list did not list the binary's packages")
 	}
 }

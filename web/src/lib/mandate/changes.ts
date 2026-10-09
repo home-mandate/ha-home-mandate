@@ -34,6 +34,17 @@ export function ruleChanges(prev: MandateDraft, next: MandateDraft): RuleChange[
   return changes;
 }
 
+/**
+ * ruleUnsaved says whether the rule with this id differs from the stored version (changed or
+ * added); false when the draft no longer has it. Decides the hint after "Done" (issue #20).
+ */
+export function ruleUnsaved(prev: MandateDraft, next: MandateDraft, id: string): boolean {
+  const rule = next.rules.find((r) => r.id === id);
+  if (!rule) return false;
+  const old = prev.rules.find((r) => r.id === id);
+  return !old || canonical(old) !== canonical(rule);
+}
+
 /** A mandate as the editor holds it: the draft and the display name next to it. */
 export interface Edited {
   name: string;

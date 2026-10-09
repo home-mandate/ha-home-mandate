@@ -12,6 +12,7 @@
   import { overrides, ruleMatches } from '../../engine/analysis.ts';
   import { canonical } from '../../engine/vocabulary.ts';
   import { m } from '../../i18n.ts';
+  import { ruleUnsaved } from '../../mandate/changes.ts';
   import { appendRule, insertRule, moveRule, removeRule, replaceRule, withDefaults } from '../../mandate/edit.ts';
   import { decisionLabel } from '../../mandate/labels.ts';
   import { ruleNotes } from '../../mandate/notes.ts';
@@ -41,6 +42,8 @@
     readonly: boolean;
     /** People who can approve, by Home Assistant user id (or the placeholder of templates). */
     people: readonly { id: string; name: string }[];
+    /** The installation's upper limit for the approval timeout in seconds; null while unknown. */
+    maxTimeout: number | null;
     /** The agent, cleaned and isolated for use inside a sentence. */
     agent: string;
     locale: string;
@@ -59,6 +62,9 @@
     onchange: (draft: MandateDraft) => void;
     /** A form was left: "rule:<id>" or "setting:<part>". */
     ontouch: (key: string) => void;
+    /** After "Done" on a changed rule: what the hint says (issue #20), and the way to saving. */
+    unsavedHint?: (n: number) => string;
+    onsave?: () => void;
   }
 
   let {
@@ -69,6 +75,7 @@
     catalogMissing,
     readonly,
     people,
+    maxTimeout,
     agent,
     locale,
     timeZone,
@@ -80,6 +87,8 @@
     settings,
     onchange,
     ontouch,
+    unsavedHint,
+    onsave,
   }: Props = $props();
 
   const uid = $props.id();
@@ -99,6 +108,8 @@
   let live = $state('');
   /** The last deleted rule, while nothing else was edited since: it can be put back. */
   let removed = $state.raw<{ rule: Rule; index: number; after: MandateDraft; toast: number } | null>(null);
+  /** Id of the rule closed with "Done" while it differs from the stored version. */
+  let hinted = $state<string | null>(null);
   let search = $state('');
   let tab = $state<Tab>('rules');
   let dragged: number | null = null;
@@ -110,6 +121,8 @@
   const openers: Record<string, HTMLButtonElement | undefined> = $state({});
   const tabButtons: HTMLButtonElement[] = $state([]);
 
+  /** The hint stays while the rule differs from the stored version (saving or undoing ends it). */
+  const hintFor = $derived(hinted !== null && unsavedHint && !readonly && ruleUnsaved(previous, draft, hinted) ? hinted : null);
   const undoable = $derived(removed !== null && removed.after === draft ? removed : null);
   const ruleKey = (index: number) => `rule:${draft.rules[index]?.id ?? index}`;
   const texts = $derived(draft.rules.map((r) => ruleText(r, catalog, locale)));
@@ -142,6 +155,7 @@
   export function forget() {
     if (removed) toasts.dismiss(removed.toast);
     removed = null;
+    hinted = null;
   }
 
   function changeRule(index: number, rule: Rule) {
@@ -164,6 +178,7 @@
 
   async function edit(ruleId: string) {
     editing = ruleId;
+    hinted = null;
     tab = 'rules';
     await tick();
     form?.focusFirst();
@@ -173,6 +188,10 @@
     const ruleId = editing;
     editing = null;
     if (ruleId !== null) ontouch(`rule:${ruleId}`);
+    // A changed rule is not in force until it is saved: say so where it was edited (issue #20).
+    hinted = ruleId !== null && unsavedHint && ruleUnsaved(previous, draft, ruleId) ? ruleId : null;
+    const index = draft.rules.findIndex((r) => r.id === hinted);
+    if (unsavedHint && hinted !== null) void announce(unsavedHint(index + 1));
     await tick();
     if (ruleId !== null) openers[ruleId]?.focus();
   }
@@ -289,6 +308,7 @@
         {people}
         timeoutError={visible.find((p) => p.rule === null && p.part === 'timeout')?.text ?? ''}
         approversError={visible.find((p) => p.rule === null && p.part === 'approvers')?.text ?? ''}
+        {maxTimeout}
         disabled={readonly}
         onchange={(approval) => onchange(withDefaults(draft, approval))}
         ontouch={touchSetting}
@@ -336,6 +356,7 @@
               matches={matchText(index)}
               defaults={draft.approval}
               {people}
+              {maxTimeout}
               {agent}
               {locale}
               {timeZone}
@@ -344,6 +365,15 @@
               onremove={() => void remove(index)}
               ondone={() => void done()}
             />
+            {#snippet after()}
+              {#if hintFor === rule.id && unsavedHint}
+                <p class="unsaved">
+                  <Icon name="info" size={16} />
+                  <span>{unsavedHint(index + 1)}</span>
+                  {#if onsave}<Button size="lg" onclick={onsave}>{m.unsaved_rule_hint_save()}</Button>{/if}
+                </p>
+              {/if}
+            {/snippet}
           </RuleCard>
         {/each}
         {#if shownRules.length === 0 && draft.rules.length > 0}
@@ -423,6 +453,10 @@
     overflow-y: auto;
     border-radius: var(--hm-radius-lg);
   }
+  /* The end of the preview stays above the save bar. */
+  :global(:root.hm-savebar) .wide .right {
+    max-block-size: calc(100dvh - 2 * var(--hm-space-4) - var(--hm-savebar-size, 0px));
+  }
   .left {
     display: flex;
     flex-direction: column;
@@ -494,6 +528,25 @@
   }
   .default span {
     flex: 1 1 140px;
+  }
+  .unsaved {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hm-space-1) var(--hm-space-2);
+    margin: 0;
+    padding: var(--hm-space-2) var(--hm-space-4);
+    border-block-start: var(--hm-border-width) solid var(--hm-color-warning-border);
+    border-end-start-radius: var(--hm-radius-lg);
+    border-end-end-radius: var(--hm-radius-lg);
+    background: var(--hm-color-warning-bg);
+    color: var(--hm-color-warning-fg);
+    font-size: var(--hm-font-size-sm);
+  }
+  .unsaved span {
+    flex: 1 1 200px;
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
   }
   .nothing {
     padding: var(--hm-space-3) var(--hm-space-4);

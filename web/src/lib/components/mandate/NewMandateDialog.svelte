@@ -56,7 +56,7 @@
     untrack(() => {
       agent = agents[0]?.client_id ?? '';
       chosen = template ?? templates[0]?.name ?? '';
-      name = titleOf(chosen, templates);
+      name = nameOf(agent);
       named = false;
       checked = false;
       busy = false;
@@ -78,9 +78,17 @@
   const nameError = $derived(checked && (length < 1 || length > NAME_MAX) ? m.validation_name({ max: NAME_MAX }) : '');
   const possible = $derived(agents.length > 0 && templates.length > 0);
 
-  function pickTemplate(next: string) {
+  /** The default name of the new mandate: its agent's (#16), as the server would name it. */
+  function nameOf(clientId: string): string {
+    return cleanUntrusted(agents.find((a) => a.client_id === clientId)?.display_name);
+  }
+
+  function pickTemplate() {
     confirming = null; // another template: its own confirmation
-    if (!named) name = titleOf(next, templates);
+  }
+
+  function pickAgent(next: string) {
+    if (!named) name = nameOf(next);
   }
 
   const agentName = $derived(agents.find((a) => a.client_id === agent)?.display_name ?? '');
@@ -131,7 +139,7 @@
     <h2 id="{id}-title">{m.mandates_new()}</h2>
     {#if possible}
       <p id="{id}-body">{m.mandates_new_body()}</p>
-      <SelectField label={m.mandates_new_agent()} bind:value={agent} options={agentOptions} />
+      <SelectField label={m.mandates_new_agent()} bind:value={agent} options={agentOptions} onchange={pickAgent} />
       <SelectField label={m.mandates_new_template()} bind:value={chosen} options={templateOptions} onchange={pickTemplate} />
       {#if picked}
         <div class="picked" role="group" aria-label={m.template_what({ template: templateTitle(picked) })}>
@@ -142,7 +150,7 @@
       <TextField label={m.editor_name()} bind:value={name} bind:element={nameField} error={nameError} maxlength={NAME_MAX} oninput={() => (named = true)} />
     {:else}
       <p id="{id}-body">{m.mandates_new_none()}</p>
-      <a href={href({ name: 'agents' })} onclick={onclose}>{m.mandates_agents_link()}</a>
+      <a href={href({ name: 'agents', add: true })} onclick={onclose}>{m.mandates_agents_link()}</a>
     {/if}
     {#if confirming}
       <CriticalTemplateConfirm

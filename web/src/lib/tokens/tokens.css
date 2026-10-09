@@ -3,7 +3,10 @@
    only var(--hm-*), never literal colours, sizes or durations. */
 /* Home-Mandate · design tokens v0.1
    Target: web/src/lib/tokens/tokens.css — CSS custom properties only.
-   Theme: prefers-color-scheme; [data-hm-theme] forces a theme (used by previews / tests). */
+   Theme: prefers-color-scheme; [data-hm-theme] forces a theme. The colour scheme switch in
+   the header sets it on the root element (src/lib/app/theme.ts); without it the system
+   scheme applies. The dark values exist twice (forced and system); tokens.test.ts keeps
+   them equal and checks the contrast of both schemes. */
 
 :root {
   color-scheme: light dark;
@@ -222,7 +225,6 @@
   --hm-shadow-lg: 0 16px 40px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.4);
 }
 
-
 @media (prefers-color-scheme: dark) {
   :root:not([data-hm-theme="light"]) {
     --hm-color-bg: #111419;
@@ -286,6 +288,13 @@
     --hm-shadow-md: 0 4px 12px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.3);
     --hm-shadow-lg: 0 16px 40px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.4);
   }
+}
+/* A forced theme also switches the browser's own parts (scroll bars, form controls). */
+[data-hm-theme="light"] {
+  color-scheme: light;
+}
+[data-hm-theme="dark"] {
+  color-scheme: dark;
 }
 
 /* RTL: icons that imply direction carry data-rtl-mirror */

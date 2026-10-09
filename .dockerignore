@@ -13,13 +13,15 @@ web/test-results
 web/playwright-report
 web/src/lib/paraglide
 
-# Never send secrets or local data to a (possibly remote) builder.
-.env*
-*.pem
-*.key
-*.db
-*.db-*
-data/
+# Never send secrets or local data to a (possibly remote) builder, at any depth.
+**/.env*
+**/*.pem
+**/*.key
+**/*.db
+**/*.db-*
+/data/
+# A stale local UI build; the image builds its own.
+internal/webui/dist/*
 web/dist-pseudo
 web/dist-mock
 web/.env*.local

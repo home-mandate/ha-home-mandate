@@ -13,10 +13,13 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
-	mandatespec "github.com/mandate-spec/mandate-spec"
+	"github.com/home-mandate/spec"
+	specaudit "github.com/home-mandate/spec/audit"
 
-	"github.com/home-mandate/home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 )
 
 // cli runs commands against one temporary data directory in container mode.
@@ -44,6 +47,8 @@ func (c *cli) env(stdin string) (env, *bytes.Buffer, *bytes.Buffer) {
 	return env{
 		getenv:   func(k string) string { return c.envVars[k] },
 		readFile: os.ReadFile,
+		stat:     os.Stat,
+		unsetenv: func(string) error { return nil },
 		stdin:    strings.NewReader(stdin),
 		stdout:   &stdout,
 		stderr:   &stderr,
@@ -93,7 +98,7 @@ func field(t *testing.T, out, key string) string {
 
 func mandateFor(t *testing.T, household, clientID string) string {
 	t.Helper()
-	data, err := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,6 +181,65 @@ func TestAuditVerifyReportsABrokenChain(t *testing.T) {
 	}
 }
 
+// forgeTruncation deletes the beginning of the audit log behind the gateway's back and
+// accounts for it with a log.truncated entry, which needs no key. With checkpoints, the
+// log had a checkpoint before.
+func forgeTruncation(t *testing.T, c *cli, checkpoints bool) {
+	t.Helper()
+	ctx := context.Background()
+	dir := c.envVars["HM_DATA_DIR"]
+	s, err := openStore(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.store.Close()
+	// Later entries two hours after the existing ones, so that only those are deleted and
+	// a checkpoint after them stays.
+	later := time.Now().Add(2 * time.Hour)
+	s.log.SetClock(func() time.Time { return later })
+	if checkpoints {
+		if err := attachSigner(ctx, s, dir, func(k string) string { return c.envVars[k] }, true); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.log.Checkpoint(ctx); err != nil {
+			t.Fatal(err)
+		}
+		s.log.SetSigner(nil)
+	}
+	if _, err := s.log.Append(ctx, audit.Entry{Event: audit.EventEmergencyStopActivated, Actor: &localAdmin}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.log.Truncate(ctx, later.Add(-time.Hour), audit.Actor{Kind: audit.ActorSystem, ID: "retention"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// audit verify says where the log starts and whether a verified checkpoint covers a
+// deleted beginning; without one, verify fails.
+func TestAuditVerifyReportsTheTruncation(t *testing.T) {
+	c := newCLI(t)
+	c.register("A")
+	out := c.mustRun("", "audit", "verify")
+	if field(t, out, "first_seq") != "1" || field(t, out, "truncation") != "none" {
+		t.Errorf("audit verify of a whole log: %q", out)
+	}
+
+	forgeTruncation(t, c, false)
+	code, out, _ := c.run("", "audit", "verify")
+	if code != exitFailure || field(t, out, "truncation") != "unanchored" || field(t, out, "first_seq") == "1" ||
+		!strings.Contains(out, "without a verified checkpoint") {
+		t.Errorf("unanchored truncation: exit %d, %q", code, out)
+	}
+
+	c = newCLI(t)
+	c.register("A")
+	forgeTruncation(t, c, true)
+	code, out, _ = c.run("", "audit", "verify")
+	if code != exitFailure || field(t, out, "truncation") != "tampered" || !strings.Contains(out, "broken at seq") {
+		t.Errorf("truncation behind the checkpoints: exit %d, %q", code, out)
+	}
+}
+
 func TestCommandErrors(t *testing.T) {
 	c := newCLI(t)
 	tests := []struct {
@@ -187,12 +251,13 @@ func TestCommandErrors(t *testing.T) {
 		{[]string{"agent", "add", "--name", "x"}, exitUsage}, // agents are admitted via OAuth only
 		{[]string{"emergency-stop"}, exitUsage},
 		{[]string{"approver"}, exitUsage},
+		{[]string{"approver", "add", "4d5e6f", "mobile_app_pixel,telegram_family"}, exitUsage}, // Companion App devices only
 		{[]string{"approver", "add", "u1"}, exitUsage},
-		{[]string{"approver", "add", "u1", "notify.x"}, exitFailure},
+		{[]string{"approver", "add", "u1", "notify.x"}, exitUsage}, // not a Companion App device: refused before the database
 		{[]string{"approver", "add", "u1", "mobile_app_a,mobile_app_a"}, exitFailure},
-		{[]string{"approver", "add", "u1", ","}, exitFailure},
-		{[]string{"approver", "add", "u1", "mobile_app_a:critical"}, exitFailure},
-		{[]string{"approver", "add", "u1", "mobile_app_a:no-critical:no-critical"}, exitFailure},
+		{[]string{"approver", "add", "u1", ","}, exitUsage},
+		{[]string{"approver", "add", "u1", "mobile_app_a:critical"}, exitUsage},
+		{[]string{"approver", "add", "u1", "mobile_app_a:no-critical:no-critical"}, exitUsage},
 		{[]string{"approver", "remove", "none"}, exitFailure},
 		{[]string{"emergency-stop", "maybe"}, exitUsage},
 		{[]string{"emergency-stop", "on", "now"}, exitUsage},
@@ -306,7 +371,7 @@ func TestApproverCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.approvers.Put(context.Background(), approval.Approver{UserID: "4d5e6f", Devices: []approval.Device{{Service: "mobile_app_iphone", Critical: true}},
-		UI: true, UICritical: true}); err != nil {
+		UI: true, UICritical: true}, localAdmin); err != nil {
 		t.Fatal(err)
 	}
 	_ = s.store.Close()
@@ -352,6 +417,7 @@ func TestMandateCheck(t *testing.T) {
 func TestAuditKeyAndAnchoredVerify(t *testing.T) {
 	c := newCLI(t)
 	c.register("Voice assistant")
+	c.createKey()
 	key := c.mustRun("", "audit", "key")
 	logID := field(t, key, "log_id")
 	if len(logID) != 36 || !strings.Contains(key, `"kty": "OKP"`) || strings.Contains(key, `"d"`) {
@@ -364,9 +430,25 @@ func TestAuditKeyAndAnchoredVerify(t *testing.T) {
 	if again := c.mustRun("", "audit", "key"); again != key {
 		t.Error("the key or the log ID changed between two calls")
 	}
-	c.envVars[envAuditKeyFile] = filepath.Join(c.envVars["HM_DATA_DIR"], "no-such-directory", "key")
+	if err := os.Chmod(filepath.Join(c.envVars["HM_DATA_DIR"], auditKeyFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if code, _, errOut := c.run("", "audit", "verify"); code != exitFailure || !strings.Contains(errOut, "audit checkpoint key") {
-		t.Errorf("key file that cannot be created: exit %d, %q", code, errOut)
+		t.Errorf("key file readable by others: exit %d, %q", code, errOut)
+	}
+}
+
+// createKey creates the key of the checkpoints, as serve does on its first start.
+func (c *cli) createKey() {
+	c.t.Helper()
+	ctx := context.Background()
+	s, err := openStore(ctx, c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	defer s.store.Close()
+	if err := attachSigner(ctx, s, c.envVars["HM_DATA_DIR"], func(k string) string { return c.envVars[k] }, true); err != nil {
+		c.t.Fatal(err)
 	}
 }
 
@@ -389,5 +471,120 @@ func TestTheMandateIssuerStaysTheSame(t *testing.T) {
 	if !regexp.MustCompile(`^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(issuers[0]) ||
 		issuers[0] != issuers[1] {
 		t.Errorf("issuers = %v", issuers)
+	}
+}
+
+// Template and approver changes on the command line are in the audit log with local-admin
+// as actor, once per change; unchanged and refused changes are not. audit verify and the
+// export include them, and the export verifies with the specification.
+func TestTemplateAndApproverCommandsAreAudited(t *testing.T) {
+	c := newCLI(t)
+	household := strings.TrimSpace(c.mustRun("", "household"))
+	doc := mandateFor(t, household, "hm-client:placeholder-00000000")
+	c.mustRun(doc, "mandate", "template", "import", "voice-assistant", "-")
+	c.mustRun(doc, "mandate", "template", "import", "voice-assistant", "-") // unchanged
+	c.mustRun("", "mandate", "template", "remove", "voice-assistant")
+	c.mustRun("", "approver", "add", "1a2b3c", "mobile_app_pixel_9")
+	c.mustRun("", "approver", "add", "1a2b3c", "mobile_app_mac") // other devices: still the same approver
+	c.mustRun("", "approver", "remove", "1a2b3c")
+	for _, refused := range [][]string{
+		{"mandate", "template", "remove", "voice-assistant"},
+		{"mandate", "template", "remove", "hm-read-only"},
+		{"approver", "remove", "1a2b3c"},
+		{"approver", "add", "4d5e6f", "Not A Service"},
+		{"approver", "add", "4d5e6f", "telegram_family"},
+	} {
+		if code, _, _ := c.run("", refused...); code == exitOK {
+			t.Errorf("%v succeeded", refused)
+		}
+	}
+	if out := c.mustRun("", "audit", "verify"); !strings.HasPrefix(out, "audit log valid\n") || field(t, out, "entries") != "4" {
+		t.Errorf("audit verify = %q", out)
+	}
+	export := c.mustRun("", "audit", "export")
+	var lines [][]byte
+	var got []string
+	for _, line := range strings.Split(strings.TrimSpace(export), "\n") {
+		lines = append(lines, []byte(line))
+		var e struct {
+			Event    string            `json:"event"`
+			Actor    map[string]string `json:"actor"`
+			Template map[string]string `json:"template"`
+			Approver map[string]string `json:"approver"`
+		}
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatal(err)
+		}
+		if e.Event == "log.checkpoint" {
+			continue
+		}
+		if e.Actor["kind"] != "user" || e.Actor["id"] != "local-admin" {
+			t.Errorf("actor = %v", e.Actor)
+		}
+		got = append(got, e.Event+" "+e.Template["change"]+e.Approver["change"])
+	}
+	want := []string{"template.changed stored", "template.changed removed", "approver.changed added", "approver.changed removed"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("entries = %v, want %v", got, want)
+	}
+	if r, err := specaudit.Verify(lines); err != nil || !r.Valid {
+		t.Errorf("spec verifier = %+v, %v", r, err)
+	}
+}
+
+// Removing revoked agents and mandates on the command line, audited as local-admin
+// (needs a specification with mandate.removed and agent.removed, v0.1.0-alpha.3).
+func TestRemoveCommands(t *testing.T) {
+	c := newCLI(t)
+	household := strings.TrimSpace(c.mustRun("", "household"))
+	clientID := c.register("Voice assistant")
+	c.mustRun(mandateFor(t, household, clientID), "mandate", "import", "-")
+	if code, _, stderr := c.run("", "mandate", "remove", "m-voice-assistant"); code != exitFailure || !strings.Contains(stderr, "not revoked") {
+		t.Errorf("remove active mandate = %d %q", code, stderr)
+	}
+	if code, _, stderr := c.run("", "agent", "remove", clientID); code != exitFailure || !strings.Contains(stderr, "not revoked") {
+		t.Errorf("remove active agent = %d %q", code, stderr)
+	}
+	c.mustRun("", "mandate", "revoke", "m-voice-assistant")
+	if out := c.mustRun("", "mandate", "remove", "m-voice-assistant"); !strings.Contains(out, "removed") {
+		t.Errorf("mandate remove = %q", out)
+	}
+	if list := c.mustRun("", "mandate", "list"); !strings.Contains(list, "m-voice-assistant\tremoved\t") {
+		t.Errorf("mandate list: %q", list)
+	}
+	c.mustRun("", "agent", "revoke", clientID)
+	if out := c.mustRun("", "agent", "remove", "--with-mandates", clientID); !strings.Contains(out, "removed agent "+clientID) {
+		t.Errorf("agent remove = %q", out)
+	}
+	if list := c.mustRun("", "agent", "list"); !strings.Contains(list, clientID+"\tremoved\t") {
+		t.Errorf("agent list: %q", list)
+	}
+	other := c.register("Other")
+	c.mustRun("", "agent", "revoke", other)
+	if out := c.mustRun("", "agent", "remove", "--all-revoked"); !strings.Contains(out, "removed 1 agents and 0 mandates") {
+		t.Errorf("remove all revoked = %q", out)
+	}
+	export := c.mustRun("", "audit", "export")
+	if strings.Count(export, `"event":"mandate.removed"`) != 1 || strings.Count(export, `"event":"agent.removed"`) != 2 ||
+		strings.Contains(export, `"kind":"system"`) {
+		t.Errorf("audit export:\n%s", export)
+	}
+	if out := c.mustRun("", "audit", "verify"); !strings.Contains(out, "valid") {
+		t.Errorf("audit verify: %q", out)
+	}
+	for _, args := range [][]string{
+		{"agent", "remove"},
+		{"agent", "remove", "--all-revoked", clientID},
+		{"agent", "remove", "--with-mandates"},
+		{"agent", "remove", "--unknown", clientID},
+		{"mandate", "remove"},
+		{"mandate", "remove", "a", "b"},
+	} {
+		if code, _, _ := c.run("", args...); code != exitUsage {
+			t.Errorf("%v: exit %d, want usage", args, code)
+		}
+	}
+	if code, _, _ := c.run("", "mandate", "remove", "m-none"); code != exitFailure {
+		t.Errorf("remove unknown mandate: exit %d", code)
 	}
 }

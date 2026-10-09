@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	specaudit "github.com/mandate-spec/mandate-spec/audit"
+	specaudit "github.com/home-mandate/spec/audit"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 const principal = "household:hm-0123456789ab"
@@ -35,7 +35,7 @@ func newLog(t *testing.T) (*audit.Log, *sql.DB) {
 func str(s string) *string { return &s }
 
 // samples covers every event this implementation writes, so that each shape is
-// checked against the schema of mandate-spec.
+// checked against the schema of the specification.
 func samples() []audit.Entry {
 	agent := &audit.Agent{ClientID: "hm-client:voice-7c21e9a4", DisplayName: "Voice assistant"}
 	user := &audit.Actor{Kind: audit.ActorUser, ID: "user-1"}
@@ -79,7 +79,7 @@ func appendAll(t *testing.T, l *audit.Log, entries []audit.Entry) {
 	}
 }
 
-func verify(t *testing.T, l *audit.Log) specaudit.Result {
+func verify(t *testing.T, l *audit.Log) audit.Verification {
 	t.Helper()
 	r, err := l.Verify(context.Background())
 	if err != nil {
@@ -121,7 +121,7 @@ func TestEntriesHaveTheSpecShape(t *testing.T) {
 	}
 }
 
-func TestExportIsVerifiableWithMandateSpec(t *testing.T) {
+func TestExportIsVerifiableWithSpec(t *testing.T) {
 	l, _ := newLog(t)
 	appendAll(t, l, samples())
 	var buf bytes.Buffer
@@ -223,6 +223,7 @@ func TestTruncateKeepsTheLogVerifiable(t *testing.T) {
 	appendAll(t, l, samples()[:3])
 	l.SetClock(func() time.Time { return now })
 	appendAll(t, l, samples()[3:5])
+	l.SetSigner(signer()) // as in the gateway: the truncation is anchored by a checkpoint
 
 	removed, err := l.Truncate(ctx, now.Add(-30*24*time.Hour), audit.Actor{Kind: audit.ActorSystem, ID: "retention"})
 	if err != nil || removed != 3 {
@@ -233,8 +234,8 @@ func TestTruncateKeepsTheLogVerifiable(t *testing.T) {
 	}
 	var minSeq, maxSeq int64
 	_ = db.QueryRow(`SELECT min(seq), max(seq) FROM audit_log`).Scan(&minSeq, &maxSeq)
-	if minSeq != 4 || maxSeq != 6 {
-		t.Errorf("seq range = %d..%d, want 4..6", minSeq, maxSeq)
+	if minSeq != 4 || maxSeq != 7 { // 6 log.truncated, 7 log.checkpoint
+		t.Errorf("seq range = %d..%d, want 4..7", minSeq, maxSeq)
 	}
 	if removed, err := l.Truncate(ctx, now.Add(-30*24*time.Hour), audit.Actor{Kind: audit.ActorSystem, ID: "retention"}); err != nil || removed != 0 {
 		t.Errorf("second Truncate = %d, %v; want no-op", removed, err)
@@ -357,5 +358,58 @@ func TestDirectoryChanges(t *testing.T) {
 	}
 	if r, err := l.Verify(ctx); err != nil || !r.Valid || r.Entries != 5 {
 		t.Errorf("log = %+v, %v", r, err)
+	}
+}
+
+// SPEC-v0 sections 9.1, 9.2 and 11.1: changes of templates and of the approvers are
+// recorded, by a user or the system, never by an agent; previous_digest only for stored
+// and different from digest.
+func TestTemplateAndApproverChanges(t *testing.T) {
+	l, _ := newLog(t)
+	ctx := context.Background()
+	user := &audit.Actor{Kind: audit.ActorUser, ID: "user-1"}
+	system := &audit.Actor{Kind: audit.ActorSystem, ID: "local-admin"}
+	d1 := "sha256:" + string(bytes.Repeat([]byte("a"), 64))
+	d2 := "sha256:" + string(bytes.Repeat([]byte("b"), 64))
+	for _, e := range []audit.Entry{
+		{Event: audit.EventTemplateChanged, Actor: user, Template: &audit.Template{Change: audit.TemplateStored, Name: "evening", Digest: d1}},
+		{Event: audit.EventTemplateChanged, Actor: user, Template: &audit.Template{Change: audit.TemplateStored, Name: "evening", Digest: d2, PreviousDigest: d1}},
+		{Event: audit.EventTemplateChanged, Actor: system, Template: &audit.Template{Change: audit.TemplateRemoved, Name: "evening", Digest: d2}},
+		{Event: audit.EventTemplateChanged, Actor: user, Template: &audit.Template{Change: audit.TemplateHidden, Name: "hm-read-only", Digest: d1}},
+		{Event: audit.EventTemplateChanged, Actor: user, Template: &audit.Template{Change: audit.TemplateShown, Name: "hm-read-only"}},
+		{Event: audit.EventApproverChanged, Actor: user, Approver: &audit.Approver{Change: audit.ApproverAdded, ID: "0123456789abcdef0123456789abcdef"}},
+		{Event: audit.EventApproverChanged, Actor: system, Approver: &audit.Approver{Change: audit.ApproverRemoved, ID: "0123456789abcdef0123456789abcdef"}},
+	} {
+		if _, err := l.Append(ctx, e); err != nil {
+			t.Fatalf("%s: %v", e.Event, err)
+		}
+	}
+	agentActor := &audit.Actor{Kind: audit.ActorAgent, ID: "hm-client:x"}
+	for name, e := range map[string]audit.Entry{
+		"template by an agent":       {Event: audit.EventTemplateChanged, Actor: agentActor, Template: &audit.Template{Change: audit.TemplateRemoved, Name: "a", Digest: d1}},
+		"template without member":    {Event: audit.EventTemplateChanged, Actor: user},
+		"stored without digest":      {Event: audit.EventTemplateChanged, Actor: user, Template: &audit.Template{Change: audit.TemplateStored, Name: "a"}},
+		"previous equal to digest":   {Event: audit.EventTemplateChanged, Actor: user, Template: &audit.Template{Change: audit.TemplateStored, Name: "a", Digest: d1, PreviousDigest: d1}},
+		"previous on removed":        {Event: audit.EventTemplateChanged, Actor: user, Template: &audit.Template{Change: audit.TemplateRemoved, Name: "a", Digest: d2, PreviousDigest: d1}},
+		"template on another event":  {Event: audit.EventEmergencyStopActivated, Actor: user, Template: &audit.Template{Change: audit.TemplateShown, Name: "a"}},
+		"approver by an agent":       {Event: audit.EventApproverChanged, Actor: agentActor, Approver: &audit.Approver{Change: audit.ApproverAdded, ID: "u1"}},
+		"approver without member":    {Event: audit.EventApproverChanged, Actor: user},
+		"approver with hidden chars": {Event: audit.EventApproverChanged, Actor: user, Approver: &audit.Approver{Change: audit.ApproverAdded, ID: "u\u202E1"}},
+		"approver on another event":  {Event: audit.EventEmergencyStopActivated, Actor: user, Approver: &audit.Approver{Change: audit.ApproverAdded, ID: "u1"}},
+	} {
+		if _, err := l.Append(ctx, e); !errors.Is(err, audit.ErrInvalidEntry) {
+			t.Errorf("%s: err = %v, want ErrInvalidEntry", name, err)
+		}
+	}
+	if r, err := l.Verify(ctx); err != nil || !r.Valid || r.Entries != 7 {
+		t.Errorf("log = %+v, %v", r, err)
+	}
+	var export bytes.Buffer
+	if err := l.Export(ctx, &export); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(export.Bytes(), []byte(`"template":{"change":"stored","digest":"`+d2+`","name":"evening","previous_digest":"`+d1+`"}`)) ||
+		!bytes.Contains(export.Bytes(), []byte(`"approver":{"change":"removed","id":"0123456789abcdef0123456789abcdef"}`)) {
+		t.Errorf("export lacks the members:\n%s", export.String())
 	}
 }

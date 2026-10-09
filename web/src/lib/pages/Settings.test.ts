@@ -365,6 +365,15 @@ describe('Settings: critical devices', () => {
     expect(toggle('Gartentor-Öffner').getAttribute('aria-checked')).toBe('false');
   });
 
+  it('shows a default approval timeout above the installation limit as capped', async () => {
+    const { api } = await start();
+    await screen.findByLabelText('Default rate limit');
+    await api.putSettings({ approval_timeout: 'PT10M', max_actions_per_hour: 60, bell: false });
+    const defaults = region('Defaults');
+    expect(await within(defaults).findByText('Capped: this installation waits at most 2 minutes. After that, the request counts as declined.')).toBeTruthy();
+    expect(within(defaults).getByRole('spinbutton', { name: 'Approval timeout' }).getAttribute('max')).toBe('2');
+  });
+
   it('follows a change made elsewhere', async () => {
     const { api } = await start({ section: 'critical' });
     await waitFor(() => expect(toggle('Gartentor-Öffner').getAttribute('aria-checked')).toBe('false'));
@@ -444,18 +453,75 @@ describe('Settings: system sections', () => {
     expect(ha.textContent).toContain('Home-Mandate');
     expect(within(ha).getByText('call_service')).toBeTruthy();
     expect(within(ha).queryByLabelText(/token/i)).toBeNull();
+    expect(ha.textContent).toContain('runs as a Home Assistant app');
+  });
+
+  it('says in container mode that Home-Mandate connects with the token of its own user', async () => {
+    await start({
+      prepare: (api) => {
+        const system = api.system.bind(api);
+        api.system = async () => ({ ...(await system()), mode: 'container' });
+      },
+    });
+    const ha = region('Home Assistant connection');
+    expect(ha.textContent).not.toContain('Home Assistant app');
+    expect(ha.textContent).toContain('runs as a container');
+    expect(ha.textContent).toContain('access token of its own Home Assistant user');
   });
 
   it('shows the MCP address and the certificate, amber when it is missing', async () => {
     await start({
       prepare: (api) => {
         const system = api.system.bind(api);
-        api.system = async () => ({ ...(await system()), tls: { present: false, valid_until: null, renewal_failed: false } });
+        api.system = async () => ({ ...(await system()), tls: { present: false, valid_until: null, renewal_failed: false, proxy: false } });
       },
     });
     const mcp = region('MCP endpoint');
     expect((within(mcp).getByLabelText('MCP endpoint address') as HTMLInputElement).value).toBe('https://home.example:8765/mcp');
     expect(within(mcp).getByText(/No certificate found/)).toBeTruthy();
+    expect(within(mcp).getByText(/in \/ssl/)).toBeTruthy();
+  });
+
+  it('names the container settings for a missing certificate in container mode, not /ssl', async () => {
+    await start({
+      prepare: (api) => {
+        const system = api.system.bind(api);
+        api.system = async () => ({ ...(await system()), mode: 'container', tls: { present: false, valid_until: null, renewal_failed: false, proxy: false } });
+      },
+    });
+    const mcp = region('MCP endpoint');
+    const warning = within(mcp).getByText(/No certificate found/);
+    expect(warning.textContent).toContain('HM_TLS_CERT');
+    expect(warning.textContent).toContain('HM_TLS_KEY');
+    expect(warning.textContent).toContain('HM_PROXY');
+    expect(warning.textContent).not.toContain('/ssl');
+  });
+
+  it('names where the certificate comes from in each mode', async () => {
+    await start();
+    expect(within(region('MCP endpoint')).getByText(/from \/ssl\/fullchain\.pem/)).toBeTruthy();
+    cleanup();
+    await start({
+      prepare: (api) => {
+        const system = api.system.bind(api);
+        api.system = async () => ({ ...(await system()), mode: 'container' });
+      },
+    });
+    const mcp = region('MCP endpoint');
+    expect(within(mcp).getByText(/from HM_TLS_CERT/)).toBeTruthy();
+    expect(mcp.textContent).not.toContain('/ssl');
+  });
+
+  it('says that the reverse proxy holds the certificate, without a warning', async () => {
+    await start({
+      prepare: (api) => {
+        const system = api.system.bind(api);
+        api.system = async () => ({ ...(await system()), tls: { present: false, valid_until: null, renewal_failed: false, proxy: true } });
+      },
+    });
+    const mcp = region('MCP endpoint');
+    expect(within(mcp).getByText(/At your reverse proxy/)).toBeTruthy();
+    expect(within(mcp).queryByText(/No certificate found/)).toBeNull();
   });
 
   it('triggers the emergency stop through the frame and lifts it after an inline confirmation', async () => {
@@ -476,7 +542,7 @@ describe('Settings: system sections', () => {
   it('names version, commit, license with the source code and the package licenses', async () => {
     await start();
     const about = region('About');
-    expect(within(about).getByRole('link', { name: /^Source code/ }).getAttribute('href')).toBe('https://github.com/home-mandate/home-mandate');
+    expect(within(about).getByRole('link', { name: /^Source code/ }).getAttribute('href')).toBe('https://github.com/home-mandate/ha-home-mandate');
     expect(within(about).getByRole('link', { name: /^Licenses of the included packages/ }).getAttribute('href')).toBe('./licenses.txt');
     expect(about.textContent).toContain('AGPL-3.0-or-later');
   });

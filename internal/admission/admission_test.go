@@ -15,13 +15,13 @@ import (
 	"testing"
 	"time"
 
-	mandatespec "github.com/mandate-spec/mandate-spec"
+	"github.com/home-mandate/spec"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/mandate"
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 const (
@@ -53,15 +53,15 @@ func newEnv(t *testing.T) env {
 	log := audit.New(st.DB(), household)
 	agents := agent.New(st.DB(), log)
 	mandates := mandate.New(st.DB(), log, household, "urn:uuid:5b0c9f4e-8f1a-4c2e-9d3b-7a6e5f4d3c2b")
-	adm := admission.New(st.DB(), agents, mandates, household)
+	adm := admission.New(st.DB(), log, agents, mandates, household)
 	adm.SetClock(func() time.Time { return now })
 	return env{adm: adm, agents: agents, mandates: mandates, log: log, db: st.DB()}
 }
 
-// template is the voice assistant example of mandate-spec, edited by edit.
+// template is the voice assistant example of the specification, edited by edit.
 func template(t *testing.T, edit func(map[string]any)) []byte {
 	t.Helper()
-	data, err := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,10 +108,10 @@ func TestTemplates(t *testing.T) {
 	if err := e.adm.PutTemplate(ctx, "voice-assistant", template(t, nil), admin); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.adm.RemoveTemplate(ctx, "lights-only"); err != nil {
+	if err := e.adm.RemoveTemplate(ctx, "lights-only", admin); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.adm.RemoveTemplate(ctx, "lights-only"); !errors.Is(err, admission.ErrTemplateNotFound) {
+	if err := e.adm.RemoveTemplate(ctx, "lights-only", admin); !errors.Is(err, admission.ErrTemplateNotFound) {
 		t.Errorf("second remove = %v", err)
 	}
 	if list, _ := e.adm.Templates(ctx); len(own(list)) != 1 {
@@ -201,7 +201,7 @@ func TestAdmit(t *testing.T) {
 	_ = e.log.Export(ctx, &buf)
 	out := buf.String()
 	if !strings.Contains(out, `"event":"agent.registered"`) || !strings.Contains(out, `"event":"mandate.created"`) ||
-		strings.Count(out, `"id":"`+admin.ID+`"`) != 2 {
+		strings.Count(out, `"id":"`+admin.ID+`"`) != 3 { // the template stored, the agent and its mandate
 		t.Errorf("audit log:\n%s", out)
 	}
 }
@@ -269,7 +269,7 @@ func TestAdmissionReportsDatabaseErrors(t *testing.T) {
 	if _, err := e.adm.Templates(ctx); err == nil {
 		t.Error("Templates succeeded")
 	}
-	if err := e.adm.RemoveTemplate(ctx, "x"); err == nil || errors.Is(err, admission.ErrTemplateNotFound) {
+	if err := e.adm.RemoveTemplate(ctx, "x", admin); err == nil || errors.Is(err, admission.ErrTemplateNotFound) {
 		t.Errorf("RemoveTemplate = %v", err)
 	}
 	if _, _, err := e.adm.Admit(ctx, request()); err == nil {
@@ -315,10 +315,16 @@ func TestAdmitNeedsConfirmationForCriticalTemplates(t *testing.T) {
 	}
 }
 
-func TestAdmitNamesTheMandateAfterTheTemplate(t *testing.T) {
+// A new mandate is named after its agent unless the human gives another name; its first
+// version names the template and the digest of its content.
+func TestAdmitNamesTheMandateAfterTheAgent(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	if err := e.adm.PutTemplate(ctx, "voice-assistant", template(t, nil), admin); err != nil {
+		t.Fatal(err)
+	}
+	_, tmpl, err := e.adm.TemplateDocument(ctx, "voice-assistant")
+	if err != nil {
 		t.Fatal(err)
 	}
 	req := request()
@@ -328,11 +334,30 @@ func TestAdmitNamesTheMandateAfterTheTemplate(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, _ := e.mandates.List(ctx)
-	if len(list) != 1 || list[0].Name != "voice-assistant" {
+	if len(list) != 1 || list[0].Name != "Claude" {
 		t.Errorf("mandates = %+v", list)
 	}
 	if got, _ := e.agents.Get(ctx, a.ClientID); len(got.RedirectURIs) != 1 {
 		t.Errorf("redirect URIs = %v", got.RedirectURIs)
+	}
+	want := mandate.Origin{Kind: mandate.OriginTemplate, Template: "voice-assistant", TemplateDigest: tmpl.Digest}
+	if v, err := e.mandates.Versions(ctx, list[0].ID); err != nil || len(v) != 1 || v[0].Origin != want {
+		t.Errorf("versions = %+v, %v; want origin %+v", v, err, want)
+	}
+	// A name the human gives wins, for a base template too.
+	named := request()
+	named.DisplayName, named.OAuthClient, named.Template, named.MandateName = "Garten", "garden", "hm-read-only", "  Nur lesen  "
+	b, _, err := e.adm.Admit(ctx, named)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ := e.mandates.ForAgent(ctx, b.ClientID)
+	_, base, _ := e.adm.TemplateDocument(ctx, "hm-read-only")
+	if got, _ := e.mandates.Get(ctx, m.Info.ID); got.Name != "Nur lesen" {
+		t.Errorf("named mandate = %+v", got)
+	}
+	if v, _ := e.mandates.Versions(ctx, m.Info.ID); len(v) != 1 || v[0].Origin != (mandate.Origin{Kind: mandate.OriginTemplate, Template: "hm-read-only", TemplateDigest: base.Digest}) {
+		t.Errorf("origin from a base template = %+v", v)
 	}
 }
 
@@ -370,12 +395,22 @@ func TestNewMandate(t *testing.T) {
 	if info.ID == first.Info.ID || !strings.HasPrefix(info.ID, first.Info.ID+"-") || info.Name != "Zweites" {
 		t.Errorf("new mandate = %+v (first %s)", info, first.Info.ID)
 	}
+	if v, _ := e.mandates.Versions(ctx, info.ID); len(v) != 1 || v[0].Origin.Kind != mandate.OriginTemplate || v[0].Origin.Template != "voice-assistant" {
+		t.Errorf("origin of the new mandate = %+v", v)
+	}
 	now, _ := e.mandates.ForAgent(ctx, a.ClientID)
 	if now.Info.ID != info.ID || now.Info.Status != mandate.StatusActive {
 		t.Errorf("ForAgent = %+v, want the new mandate", now.Info)
 	}
 	if _, err := e.adm.NewMandate(ctx, a.ClientID, "voice-assistant", "", false, admin); !errors.Is(err, mandate.ErrConflict) {
 		t.Errorf("third mandate = %v", err)
+	}
+	// Without a name, the new mandate is named after the agent.
+	if err := e.mandates.Revoke(ctx, info.ID, admin); err != nil {
+		t.Fatal(err)
+	}
+	if third, err := e.adm.NewMandate(ctx, a.ClientID, "voice-assistant", " ", false, admin); err != nil || third.Name != a.DisplayName {
+		t.Errorf("new mandate without a name = %+v, %v; want the name %q", third, err, a.DisplayName)
 	}
 	if err := e.agents.Revoke(ctx, a.ClientID, admin); err != nil {
 		t.Fatal(err)
@@ -439,7 +474,7 @@ func TestUpdateTemplateNeedsTheVersionTheEditStartedFrom(t *testing.T) {
 	if err := e.adm.UpdateTemplate(ctx, "mine", template(t, nil), first.Digest, false, admin); !errors.Is(err, mandate.ErrConflict) {
 		t.Errorf("edit of an outdated version = %v", err)
 	}
-	if err := e.adm.RemoveTemplate(ctx, "mine"); err != nil {
+	if err := e.adm.RemoveTemplate(ctx, "mine", admin); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.adm.UpdateTemplate(ctx, "mine", edited, first.Digest, false, admin); !errors.Is(err, mandate.ErrConflict) {

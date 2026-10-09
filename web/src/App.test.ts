@@ -275,7 +275,7 @@ describe('App frame', () => {
     const api = createMockClient();
     const system = api.system.bind(api);
     const soon = new Date(Date.now() + 3 * 24 * 3_600_000).toISOString();
-    api.system = async () => ({ ...(await system()), tls: { present: true, valid_until: soon, renewal_failed: true } });
+    api.system = async () => ({ ...(await system()), tls: { present: true, valid_until: soon, renewal_failed: true, proxy: false } });
     const app = new AppState(api);
     render(App, { app });
     await app.start();
@@ -289,7 +289,7 @@ describe('App frame', () => {
     const api = createMockClient();
     const system = api.system.bind(api);
     const past = new Date(Date.now() - 24 * 3_600_000).toISOString();
-    api.system = async () => ({ ...(await system()), tls: { present: true, valid_until: past, renewal_failed: false } });
+    api.system = async () => ({ ...(await system()), tls: { present: true, valid_until: past, renewal_failed: false, proxy: false } });
     const app = new AppState(api);
     render(App, { app });
     await app.start();
@@ -299,11 +299,47 @@ describe('App frame', () => {
     expect(titles).not.toContain('TLS certificate expires soon');
   });
 
+  it('tells how to add a missing certificate in the way of the installation', async () => {
+    const bodyOf = (mode: 'app' | 'container') => {
+      const api = createMockClient();
+      const system = api.system.bind(api);
+      api.system = async () => ({ ...(await system()), mode, tls: { present: false, valid_until: null, renewal_failed: false, proxy: false } });
+      return api;
+    };
+    const bannerText = async (api: ReturnType<typeof createMockClient>) => {
+      const app = new AppState(api);
+      render(App, { app });
+      await app.start();
+      await tick();
+      const banner = screen.getAllByRole('alert').find((a) => a.querySelector('strong')?.textContent === 'No TLS certificate');
+      return banner?.textContent ?? '';
+    };
+    const app = await bannerText(bodyOf('app'));
+    expect(app).toContain('/ssl');
+    cleanup();
+    const container = await bannerText(bodyOf('container'));
+    expect(container).toContain('HM_TLS_CERT');
+    expect(container).toContain('HM_PROXY');
+    expect(container).not.toContain('/ssl');
+  });
+
+  it('does not warn about a missing certificate when the reverse proxy holds it', async () => {
+    const api = createMockClient();
+    const system = api.system.bind(api);
+    api.system = async () => ({ ...(await system()), tls: { present: false, valid_until: null, renewal_failed: false, proxy: true } });
+    const app = new AppState(api);
+    render(App, { app });
+    await app.start();
+    await tick();
+    const titles = screen.queryAllByRole('alert').map((a) => a.querySelector('strong')?.textContent);
+    expect(titles).not.toContain('No TLS certificate');
+  });
+
   it('does not warn about a certificate valid for longer than 14 days', async () => {
     const api = createMockClient();
     const system = api.system.bind(api);
     const later = new Date(Date.now() + 30 * 24 * 3_600_000).toISOString();
-    api.system = async () => ({ ...(await system()), tls: { present: true, valid_until: later, renewal_failed: false } });
+    api.system = async () => ({ ...(await system()), tls: { present: true, valid_until: later, renewal_failed: false, proxy: false } });
     const app = new AppState(api);
     render(App, { app });
     await app.start();
@@ -342,10 +378,68 @@ describe('App frame', () => {
     expect(document.title).toBe('Agents – Home-Mandate');
   });
 
+  it('opens the ways to add an agent with the focus on their heading, not the page heading (issue #15)', async () => {
+    await start();
+    await navigate('#/agents?add');
+    const heading = await screen.findByRole('heading', { level: 2, name: 'How does your agent sign in?' });
+    await vi.waitFor(() => expect(document.activeElement).toBe(heading));
+    expect(screen.getByRole('link', { name: /With a pairing code/ }).getAttribute('href')).toBe('#/agents/pair');
+    expect(screen.getByRole('link', { name: /With browser sign-in/ }).getAttribute('href')).toBe('#/agents/browser');
+  });
+
+  it('opens the ways when going from the agents page to add an agent (issue #15)', async () => {
+    await start({}, '#/agents');
+    await screen.findByRole('button', { name: 'Add agent' });
+    await navigate('#/agents?add');
+    const heading = await screen.findByRole('heading', { level: 2, name: 'How does your agent sign in?' });
+    await vi.waitFor(() => expect(document.activeElement).toBe(heading));
+  });
+
   it('moves focus to the content with the skip link', async () => {
     await start();
     await fireEvent.click(screen.getByRole('link', { name: 'Skip to content' }));
     expect(document.activeElement?.id).toBe('main');
     expect(window.location.hash).toBe('');
+  });
+});
+
+describe('leaving the app with unsaved changes (issue #20)', () => {
+  /** leave fires beforeunload as a reload or closing the tab would; true if the browser would ask. */
+  function leave(): boolean {
+    const event = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  }
+
+  it('asks while any mandate has unsaved changes, also after leaving its editor, and no longer once they are discarded', async () => {
+    await start({}, '#/mandates/mandate-voice');
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit: Rule 1' }));
+    expect(leave()).toBe(false);
+    await fireEvent.click(screen.getByRole('radio', { name: 'Ask' }));
+    await tick();
+    expect(leave()).toBe(true);
+
+    await navigate('#/mandates');
+    await screen.findByRole('heading', { level: 1, name: 'Mandates' });
+    expect(leave()).toBe(true);
+
+    await navigate('#/mandates/mandate-voice');
+    const bar = await screen.findByRole('region', { name: '1 unsaved change' });
+    await fireEvent.click(within(bar).getByRole('button', { name: 'Discard changes' }));
+    await tick();
+    expect(leave()).toBe(false);
+  });
+
+  it('asks while a template has unsaved changes, and no longer once they are saved', async () => {
+    await start({}, '#/templates/voice-assistant');
+    const field = (await screen.findByLabelText('Rate limit')) as HTMLInputElement;
+    expect(leave()).toBe(false);
+    await fireEvent.input(field, { target: { value: '20' } });
+    await tick();
+    expect(leave()).toBe(true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Save …' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Save changes?' });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Save template' }));
+    await vi.waitFor(() => expect(leave()).toBe(false));
   });
 });

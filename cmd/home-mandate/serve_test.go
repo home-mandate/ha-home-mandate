@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -18,6 +19,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,11 +27,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/config"
-	"github.com/home-mandate/home-mandate/internal/pdp"
-	"github.com/home-mandate/home-mandate/internal/store"
-	"github.com/home-mandate/home-mandate/internal/tlscert"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/config"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/pdp"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/tlscert"
 )
 
 // selfSigned writes a certificate for 127.0.0.1 and hm.example.org and its key into dir.
@@ -271,6 +274,42 @@ func TestWithOAuth(t *testing.T) {
 	if _, _, err := withOAuth(s, mcpHandler, ui, "https://hm.example.org/mcp", logger); err == nil {
 		t.Error("plaintext Home Assistant accepted")
 	}
+
+	// In app mode Home Assistant is reached in plaintext on the Supervisor's network.
+	options := `{"approval_timeout_seconds":120,"public_url":"https://hm.example.org","ha_browser_url":"https://ha.example.org"}`
+	s.cfg, err = config.Load(config.Env{Getenv: func(k string) string { return map[string]string{"SUPERVISOR_TOKEN": "s"}[k] },
+		ReadFile: func(string) ([]byte, error) { return []byte(options), nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if as, _, err := withOAuth(s, mcpHandler, ui, "https://hm.example.org/mcp", logger); err != nil || as == nil {
+		t.Errorf("app mode with public_url: %v", err)
+	}
+}
+
+// The retention waits while the clock lies behind the newest entry: a warning, no
+// deletion, the next run tries again.
+func TestRetentionWaitsForTheClock(t *testing.T) {
+	c := newCLI(t)
+	c.register("A")
+	s, err := openStore(context.Background(), c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.store.Close()
+	var out bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&out, nil))
+	s.log.SetClock(func() time.Time { return time.Now().Add(-time.Hour) })
+	expireLog(context.Background(), s.log, logger)
+	if !strings.Contains(out.String(), `"level":"WARN","msg":"audit log retention postponed: the clock lies behind the newest entry"`) {
+		t.Errorf("log = %s", out.String())
+	}
+	out.Reset()
+	s.log.SetClock(time.Now)
+	expireLog(context.Background(), s.log, logger)
+	if out.Len() != 0 {
+		t.Errorf("nothing old, nothing logged: %s", out.String())
+	}
 }
 
 func TestPublicHostNeverTurnsTheCheckOff(t *testing.T) {
@@ -287,7 +326,7 @@ func TestPublicHostNeverTurnsTheCheckOff(t *testing.T) {
 	}
 }
 
-func TestDirectModeNeedsContainerModeACertificateAndHTTPS(t *testing.T) {
+func TestDirectModeNeedsContainerModeTLSAndHTTPS(t *testing.T) {
 	certFile, keyFile := selfSigned(t, t.TempDir())
 	certs, err := tlscert.New(tlscert.Config{CertFile: certFile, KeyFile: keyFile})
 	if err != nil {
@@ -304,6 +343,10 @@ func TestDirectModeNeedsContainerModeACertificateAndHTTPS(t *testing.T) {
 		{"plaintext public URL", config.Config{Mode: config.ModeContainer, PublicURL: "http://localhost:8765"}, certs, false},
 		{"no public URL", config.Config{Mode: config.ModeContainer}, certs, false},
 		{"app mode: Ingress", config.Config{Mode: config.ModeApp, PublicURL: "https://hm.example.org:8765"}, certs, false},
+		{"behind a proxy, no certificate", config.Config{Mode: config.ModeContainer, PublicURL: "https://hm.example.org",
+			Proxy: netip.MustParseAddr("192.0.2.10")}, nil, true},
+		{"app mode behind a proxy", config.Config{Mode: config.ModeApp, PublicURL: "https://hm.example.org",
+			Proxy: netip.MustParseAddr("192.0.2.10")}, nil, false},
 	} {
 		if got := directMode(tc.cfg, tc.certs); got != tc.want {
 			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
@@ -399,5 +442,85 @@ func TestRestoredLimiterCountsTheLastHour(t *testing.T) {
 	_ = st.Close()
 	if !restoredLimiter(ctx, log, func() time.Time { return now }, logger).Allow("hm-client:a", 1) {
 		t.Error("limiter unusable after a failed restore")
+	}
+}
+
+// In app mode with a public URL, the addresses of Home Assistant for signing humans in come
+// from the Supervisor: port and TLS are settings of the household. With TLS, the
+// certificate is checked against the name the browser uses.
+func TestAppHomeAssistantFromTheSupervisor(t *testing.T) {
+	app := config.Config{Mode: config.ModeApp, HAToken: "sup", PublicURL: "https://hm.example.org:8765",
+		HABrowserURL: "https://ha.example.org:8123", HAHTTPURL: "http://homeassistant:8123", HAUserURL: "ws://homeassistant:8123/api/websocket"}
+	for _, tc := range []struct {
+		name               string
+		cfg                config.Config
+		port               int
+		tls                bool
+		infoErr            error
+		http, user, server string
+		ok, asked          bool
+	}{
+		{"plaintext on another port", app, 80, false, nil, "http://homeassistant:80", "ws://homeassistant:80/api/websocket", "", true, true},
+		{"own certificate", app, 8123, true, nil, "https://homeassistant:8123", "wss://homeassistant:8123/api/websocket", "ha.example.org", true, true},
+		{"supervisor fails", app, 0, false, errors.New("refused"), "", "", "", false, true},
+		{"no public URL: OAuth off", config.Config{Mode: config.ModeApp}, 0, false, nil, "", "", "", true, false},
+		{"container mode", config.Config{Mode: config.ModeContainer, PublicURL: "https://hm.example.org", HAHTTPURL: "https://ha.example.org"},
+			0, false, nil, "https://ha.example.org", "", "", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			asked := false
+			info := func(_ context.Context, supervisor string, token ha.Secret, _ ha.Plaintext) (int, bool, error) {
+				asked = true
+				if supervisor != "http://supervisor" || token != "sup" {
+					t.Errorf("asked %q with %q", supervisor, token)
+				}
+				return tc.port, tc.tls, tc.infoErr
+			}
+			got, err := appHomeAssistant(t.Context(), tc.cfg, info)
+			if (err == nil) != tc.ok || asked != tc.asked {
+				t.Fatalf("err %v, asked %v", err, asked)
+			}
+			if tc.ok && (got.HAHTTPURL != tc.http || got.HAUserURL != tc.user || got.HAServerName != tc.server) {
+				t.Errorf("http %q, user %q, server name %q", got.HAHTTPURL, got.HAUserURL, got.HAServerName)
+			}
+		})
+	}
+}
+
+// After the log retention, the retention removes revoked agents no entry refers to any
+// more, as the system, and logs what it did (needs a specification with agent.removed,
+// v0.1.0-alpha.3).
+func TestRetentionRemovesRevokedAgents(t *testing.T) {
+	c := newCLI(t)
+	clientID := c.register("A")
+	c.mustRun("", "agent", "revoke", clientID)
+	s, err := openStore(context.Background(), c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.store.Close()
+	var out bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&out, nil))
+	expireRemovals(context.Background(), s, logger)
+	if out.Len() != 0 {
+		t.Errorf("entries refer to the agent, nothing removed: %s", out.String())
+	}
+	if _, err := s.log.Append(context.Background(), audit.Entry{Event: audit.EventEmergencyStopReleased, Actor: &localAdmin}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.log.Truncate(context.Background(), time.Now().Add(time.Hour), audit.Actor{Kind: audit.ActorSystem, ID: "retention"}); err != nil {
+		t.Fatal(err)
+	}
+	expireRemovals(context.Background(), s, logger)
+	if !strings.Contains(out.String(), `"msg":"revoked agents and mandates removed","agents":1,"mandates":0`) {
+		t.Errorf("log = %s", out.String())
+	}
+	if a, err := s.agents.Get(context.Background(), clientID); err != nil || a.RemovedBy != "retention" {
+		t.Errorf("agent = %+v, %v", a, err)
+	}
+	_ = s.store.Close()
+	expireRemovals(context.Background(), s, logger)
+	if !strings.Contains(out.String(), `"level":"ERROR","msg":"removing revoked agents and mandates failed"`) {
+		t.Errorf("log = %s", out.String())
 	}
 }

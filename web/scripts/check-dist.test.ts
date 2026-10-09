@@ -51,9 +51,9 @@ describe('checkFile', () => {
 
 describe('check-dist exceptions', () => {
   it('allows the source code link only for the project repository', () => {
-    expect(isAllowedUrl('https://github.com/home-mandate/home-mandate')).toBe(true);
-    expect(isAllowedUrl('https://github.com/home-mandate/home-mandate/tree/main')).toBe(true);
-    expect(isAllowedUrl('https://github.com/home-mandate/home-mandate-evil')).toBe(false);
+    expect(isAllowedUrl('https://github.com/home-mandate/ha-home-mandate')).toBe(true);
+    expect(isAllowedUrl('https://github.com/home-mandate/ha-home-mandate/tree/main')).toBe(true);
+    expect(isAllowedUrl('https://github.com/home-mandate/ha-home-mandate-evil')).toBe(false);
     expect(isAllowedUrl('https://github.com/other/repo')).toBe(false);
   });
 
@@ -107,7 +107,7 @@ describe('run', () => {
   });
 
   it('allows the fixture hosts in the mock chunk of a test build, and nothing else', () => {
-    withMockChunk('"https://home.example:8765/mcp" "https://claude.ai/oauth/x" "https://mandate-spec.org/mandate/v0"', (dist) => {
+    withMockChunk('"https://home.example:8765/mcp" "https://claude.ai/oauth/x" "https://home-mandate.org/mandate/v0"', (dist) => {
       expect(run(dist, { fixtures: true })).toEqual([]);
     });
     withMockChunk('"https://evil.example.com/x.js"', (dist) => {

@@ -6,10 +6,10 @@
 // with the texts of their LICENSE, LICENCE, COPYING and NOTICE files. A module without
 // a license text stops the build: its notice must ship. The only exception is a module
 // named with -pending and its SPDX license, for a module that declares its license but
-// does not ship the file yet (mandate-spec until its release); the flag goes once it does.
+// does not ship the file yet (the specification until its release); the flag goes once it does.
 //
 //	go run ./tools/golicenses -file internal/webui/dist/licenses.txt \
-//	  -pending github.com/mandate-spec/mandate-spec=Apache-2.0
+//	  -pending github.com/home-mandate/spec=Apache-2.0
 package main
 
 import (

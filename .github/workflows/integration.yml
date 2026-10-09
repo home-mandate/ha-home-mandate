@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Check against the pinned mandate-spec version, never a workspace.
+  # Check against the pinned version of the specification, never a workspace.
   GOWORK: "off"
 
 jobs:

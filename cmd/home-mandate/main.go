@@ -20,6 +20,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/signal"
 	"syscall"
@@ -40,10 +41,10 @@ const (
 const usage = `Usage:
   home-mandate [-version] [serve]
   home-mandate household
-  home-mandate agent list | revoke CLIENT_ID
+  home-mandate agent list | revoke CLIENT_ID | remove [--with-mandates] CLIENT_ID | remove --all-revoked
   home-mandate emergency-stop on | off | status
   home-mandate approver add USER_ID NOTIFY_SERVICE [de|en] | list | remove USER_ID
-  home-mandate mandate import FILE|- | list | revoke ID | check
+  home-mandate mandate import FILE|- | list | revoke ID | remove ID | check
   home-mandate mandate template import NAME FILE|- | list | remove NAME
   home-mandate audit verify | export | key | accept-clock
 `
@@ -52,6 +53,8 @@ const usage = `Usage:
 type env struct {
 	getenv   func(string) string
 	readFile func(string) ([]byte, error)
+	stat     func(string) (fs.FileInfo, error)
+	unsetenv func(string) error
 	stdin    io.Reader
 	stdout   io.Writer
 	stderr   io.Writer
@@ -59,7 +62,7 @@ type env struct {
 
 func main() {
 	os.Exit(runUntilSignal(os.Args[1:], env{
-		getenv: os.Getenv, readFile: os.ReadFile, stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr,
+		getenv: os.Getenv, readFile: os.ReadFile, stat: os.Stat, unsetenv: os.Unsetenv, stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr,
 	}))
 }
 

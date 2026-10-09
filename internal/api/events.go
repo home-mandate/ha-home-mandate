@@ -13,7 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 )
 
 // Live events over the WebSocket api/events (decision D6, B5). The connection only
@@ -24,11 +24,13 @@ const (
 	closeForbidden = 4403 // the user is no administrator (any more): no further attempts
 	closeCSRF      = 4419 // no or a wrong CSRF token: reload the session, then reconnect
 
-	writeTimeout  = 10 * time.Second
-	clientBuffer  = 64
-	maxClients    = 50
-	tailBatch     = 500
-	maxEventBytes = 256 << 10
+	writeTimeout         = 10 * time.Second
+	clientBuffer         = 64
+	maxClients           = 50
+	maxClientsPerUser    = 10
+	maxClientsPerSession = 5
+	tailBatch            = 500
+	maxEventBytes        = 256 << 10
 )
 
 // Intervals of the event stream; variables so that tests can shorten them.
@@ -72,6 +74,19 @@ func (h *hub) add(user, token string) (*client, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if len(h.clients) >= maxClients {
+		return nil, false
+	}
+	// One user, and in direct mode one session, cannot take every connection.
+	perUser, perSession := 0, 0
+	for c := range h.clients {
+		if c.user == user {
+			perUser++
+		}
+		if token != "" && c.token == token {
+			perSession++
+		}
+	}
+	if perUser >= maxClientsPerUser || perSession >= maxClientsPerSession {
 		return nil, false
 	}
 	c := &client{user: user, token: token, send: make(chan []byte, clientBuffer), overflow: make(chan struct{}), ended: make(chan struct{})}

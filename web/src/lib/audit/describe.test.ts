@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AuditEntry, DeviceCatalog } from '../api/types.ts';
 import { auditFixture, devicesFixture } from '../api/fixtures.ts';
-import { decisionOf, deviceName, isAdminEvent, isCriticalRequest, directoryText } from './describe.ts';
+import { approverText, decisionOf, deviceName, isAdminEvent, isCriticalRequest, directoryText, templateText } from './describe.ts';
 
 const bySeq = (seq: number): AuditEntry => {
   const entry = auditFixture.find((e) => e.seq === seq);
@@ -91,5 +91,44 @@ describe('directoryText', () => {
     );
     expect(directoryText(entry({ change: 'rename_dismissed', entity_id: 'lock.gone', previous_entity_id: 'lock.old' }), null)).toMatch(/not taken over$/);
     expect(directoryText({ ...entry(undefined), event: 'decision' }, catalog)).toBe('');
+  });
+});
+
+describe('templateText', () => {
+  const D1 = 'sha256:' + 'a'.repeat(64);
+  const D2 = 'sha256:' + 'b'.repeat(64);
+  const entry = (template: AuditEntry['template']): AuditEntry => ({
+    id: 'x', seq: 1, recorded_at: '2026-10-05T08:00:00.000Z', event: 'template.changed',
+    actor: { kind: 'user', id: 'u1', name: 'Markus' }, template, digest: 'sha256:x', prev: null,
+  });
+  it('says how a template changed: created, changed, removed, hidden or offered again', () => {
+    expect(templateText(entry({ change: 'stored', name: 'garden', digest: D1 }))).toMatch(/^Template .garden. created$/);
+    expect(templateText(entry({ change: 'stored', name: 'garden', digest: D2, previous_digest: D1 }))).toMatch(/^Template .garden. changed$/);
+    expect(templateText(entry({ change: 'removed', name: 'garden', digest: D2 }))).toMatch(/^Template .garden. removed$/);
+    expect(templateText(entry({ change: 'hidden', name: 'hm-read-only' }))).toMatch(/^Template .hm-read-only. hidden when admitting agents$/);
+    expect(templateText(entry({ change: 'shown', name: 'hm-read-only' }))).toMatch(/^Template .hm-read-only. offered again when admitting agents$/);
+  });
+  it('shows the name as text without hidden characters and is empty for other entries', () => {
+    const text = templateText(entry({ change: 'removed', name: 'evil\u202Eeman', digest: D1 }));
+    expect(text).not.toContain('\u202E');
+    expect(text).toContain('evileman');
+    expect(templateText({ ...entry(undefined), event: 'decision' })).toBe('');
+    expect(templateText(entry({ change: 'renamed' as 'stored', name: 'x' }))).toBe('');
+  });
+});
+
+describe('approverText', () => {
+  const entry = (approver: AuditEntry['approver']): AuditEntry => ({
+    id: 'x', seq: 1, recorded_at: '2026-10-05T08:00:00.000Z', event: 'approver.changed',
+    actor: { kind: 'user', id: 'u1', name: 'Markus' }, approver, digest: 'sha256:x', prev: null,
+  });
+  it('names who was added to or removed from the approvers, by name if known, else by ID', () => {
+    expect(approverText(entry({ change: 'added', id: 'u2', name: 'Anna' }))).toMatch(/^.Anna. can now answer approval requests$/);
+    expect(approverText(entry({ change: 'removed', id: 'u2' }))).toMatch(/^.u2. no longer answers approval requests$/);
+  });
+  it('never shows hidden characters of a name and is empty for other entries', () => {
+    expect(approverText(entry({ change: 'added', id: 'u2', name: 'An\u202Ena' }))).not.toContain('\u202E');
+    expect(approverText({ ...entry(undefined), event: 'decision' })).toBe('');
+    expect(approverText(entry({ change: 'changed' as 'added', id: 'u2' }))).toBe('');
   });
 });

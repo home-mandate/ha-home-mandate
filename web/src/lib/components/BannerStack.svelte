@@ -40,6 +40,7 @@
   const tlsLeft = $derived(tlsUntil !== null && !Number.isNaN(tlsUntil.getTime()) ? tlsUntil.getTime() - now : null);
   const tlsExpired = $derived(tlsLeft !== null && tlsLeft <= 0);
   const tlsExpiring = $derived(tlsLeft !== null && tlsLeft > 0 && tlsLeft < TLS_WARNING_MS);
+  const tlsMissing = $derived(system.mode === 'container' ? m.set_tls_missing_container() : m.set_tls_missing());
   const connectionLost = $derived(downSince !== null && now - downSince >= CONNECTION_GRACE_MS);
 </script>
 
@@ -79,8 +80,8 @@
   {#if !system.ha.connected}
     <Banner flush kind="warning" title={m.banner_ha_title()} body={m.banner_ha_body({ time: at(system.ha.since) })} />
   {/if}
-  {#if !system.tls.present}
-    <Banner flush kind="warning" title={m.banner_tls_title()} body={m.set_tls_missing()} />
+  {#if !system.tls.present && !system.tls.proxy}
+    <Banner flush kind="warning" title={m.banner_tls_title()} body={tlsMissing} />
   {/if}
   {#if system.tls.present && system.tls.renewal_failed}
     <Banner flush kind="warning" title={m.banner_tls_renewal_title()} body={m.banner_tls_renewal_body()} />

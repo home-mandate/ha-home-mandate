@@ -1,4 +1,4 @@
-# Local workspace with ../mandate-spec (see Makefile)
+# Local workspace with ../spec (see Makefile)
 go.work
 go.work.sum
 

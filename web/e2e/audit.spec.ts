@@ -97,3 +97,44 @@ test('on a short window the end of the selected entry stays reachable (review a1
   await technical.scrollIntoViewIfNeeded();
   await expect(technical).toBeInViewport();
 });
+
+// #11: template and approver changes are in the audit log, with their own labels and
+// filters, in both languages. go navigates without a reload, so the mock keeps its state.
+const changes = {
+  de: { hide: 'Ausblenden', type: 'Ereignistyp', templateEvent: 'Vorlage geändert', approverEvent: 'Freigebende geändert', events: 'Ereignisse',
+    hidden: /Vorlage .hm-light-climate. beim Zulassen ausgeblendet/, remove: /Markus.* entfernen/, removeAnyway: 'Trotzdem entfernen',
+    removed: /Markus. beantwortet keine Rückfragen mehr/, one: '1 Eintrag' },
+  en: { hide: 'Hide', type: 'Event type', templateEvent: 'Template changed', approverEvent: 'Approvers changed', events: 'Events',
+    hidden: /Template .hm-light-climate. hidden when admitting agents/, remove: /Remove .*Markus/, removeAnyway: 'Remove anyway',
+    removed: /Markus. no longer answers approval requests/, one: '1 entry' },
+} as const;
+
+async function go(page: import('@playwright/test').Page, hash: string) {
+  await page.evaluate((h) => (window.location.hash = h), hash);
+}
+
+test('a hidden base template is in the audit log, found by its event type (#11)', async ({ page }, info) => {
+  const t = changes[info.project.name as Lang];
+  await page.goto('./#/templates/hm-light-climate');
+  await page.getByRole('button', { name: t.hide }).click();
+  await go(page, '#/audit');
+  await page.getByLabel(t.type).selectOption({ label: t.templateEvent });
+  await expect(page).toHaveURL(/#\/audit\?type=template\.changed$/);
+  await expect(page.getByRole('search').getByRole('status')).toHaveText(t.one);
+  const row = page.getByRole('region', { name: t.events }).getByRole('link').filter({ hasText: t.hidden });
+  await expect(row).toBeVisible();
+  await expect(row).toContainText(t.templateEvent);
+});
+
+test('a removed approver is in the audit log, found by its event type (#11)', async ({ page }, info) => {
+  const t = changes[info.project.name as Lang];
+  await page.goto('./#/settings/approvers');
+  await page.getByRole('button', { name: t.remove }).click();
+  await page.getByRole('button', { name: t.removeAnyway }).click();
+  await go(page, '#/audit?type=approver.changed');
+  await expect(page.getByRole('search').getByRole('status')).toHaveText(t.one);
+  const row = page.getByRole('region', { name: t.events }).getByRole('link').filter({ hasText: t.removed });
+  await expect(row).toContainText(t.approverEvent);
+  await row.click();
+  await expect(page.getByText('u-admin', { exact: true })).toBeVisible();
+});

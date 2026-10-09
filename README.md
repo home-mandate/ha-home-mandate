@@ -1,201 +1,159 @@
-# Home-Mandate
+# Home-Mandate for Home Assistant
 
-Mandates for AI agents in Home Assistant: every agent gets its own identity and clear limits.
-Actions are allowed, sent to your phone for confirmation, or forbidden, and every request is
-logged.
+Home-Mandate is an authorization gateway between AI agents and Home Assistant. Every agent
+gets its own identity and a **mandate**: which devices it may read or control, where a
+human has to approve first, and what it may never do. Approval requests go to your phone
+through the Home Assistant Companion app, an emergency stop blocks every agent at once,
+and every request is recorded in a tamper-evident audit log.
 
-**Status:** in development.
+**Status: experimental.** 0.1.0-rc.1 is the first release candidate. Expect rough edges,
+read the [limits of this version](#limits-of-this-version) and keep backups.
 
-## Repository layout
+## Why
 
-| Path | Contents |
-|---|---|
-| `docs/ARCHITECTURE.md` | Architecture v0.1: gateway, local UI, flows, decisions |
-| `docs/TESTING.md` | Test strategy: unit, negative, fuzzing, E2E, UI, i18n, coverage thresholds |
-| `SECURITY.md` | Reporting vulnerabilities, threat model |
-| `app/config.yaml` | Draft of the Home Assistant app configuration |
-| `Dockerfile` | Multi-stage build: UI (Vite) → Go binary with embedded UI |
+An AI agent that holds a Home Assistant token can do everything that token can: unlock the
+front door, disarm the alarm, open the garage. A prompt injection in an e-mail or a web
+page the agent reads is enough to make it try. Home-Mandate keeps Home Assistant's
+credentials to itself and decides every request with fixed rules outside the language
+model, so no agent can talk itself into more.
 
-Planned code structure: `cmd/home-mandate` (gateway), `cmd/relay` (cloud relay),
-`internal/…` (see architecture), `web/` (local UI, Svelte + Vite), `e2e/`.
+## How it works
 
-## Development
+1. An agent connects to Home-Mandate's MCP endpoint (MCP over HTTPS) and signs in with
+   OAuth 2.1; a Home Assistant administrator admits it and picks its mandate.
+2. The agent sees four tools: list devices, read a state, perform an action, list its own
+   permissions.
+3. For every request, Home-Mandate looks up the device in Home Assistant (category, area,
+   critical or not) and evaluates the agent's mandate: **allow**, **ask** or **deny**.
+4. *Allow* calls Home Assistant; *ask* sends a notification with **Allow** and **Deny** to
+   the approvers' phones and waits; *deny*, a refusal, a timeout or no answer means no.
+5. Every decision, approval and change is written to a hash-chained audit log with signed
+   checkpoints.
 
-Requirements: Go 1.27.1, Node 24 LTS with corepack (`corepack enable pnpm`).
+## Features
 
-```bash
-make check                  # vet, staticcheck, race tests, coverage per package, govulncheck, actionlint
-make web-install web-check  # UI: lint, svelte-check, Vitest, i18n checks, build, pnpm audit
-make web-e2e                # Playwright in German and English under a random Ingress path
-make webui build            # binary with the embedded UI (without webui: a placeholder page)
-```
+- Mandates with **allow, ask, deny** per device, area, category and action, with time
+  windows, weekdays, value limits (brightness, temperature, position, volume) and a rate
+  limit per hour
+- Critical actions (unlocking, opening a gate or garage door, disarming the alarm, running
+  scripts, activating scenes, camera snapshots) need an approval even where a rule allows
+  them, unless a rule explicitly allows them without approval
+- Covers that may close an entrance (garage, gate, door, and covers without a class) count
+  as gates; blinds, shades and windows stay covers
+- Approval requests on the approvers' phones (Companion app), optionally also in the
+  Home-Mandate UI; cooldown after a refusal, at most two waiting requests per agent
+- Emergency stop for all agents at once, revoking single agents, both effective with the
+  next request; after the stop, an administrator reconnects each agent to its existing
+  entry and mandate when it signs in again
+- Revoked agents and mandates can be removed from the lists (one at a time or all at once);
+  the audit log keeps every entry and an old mandate version is never accepted again
+- Mandate templates (three built in), versioned mandates with a preview of what an agent
+  may do, and a comparison of versions
+- Audit log with hash chain, signed checkpoints, a daily checkpoint notification to the
+  approvers, verification in the UI and on the command line, 30 days retention
+- Web UI in English and German; command line administration
+- Agents over MCP (Streamable HTTP) with OAuth 2.1: browser sign-in (Authorization Code with
+  PKCE and Client ID Metadata Documents) or a pairing code (Device Authorization Grant);
+  no open client registration
+- One static binary in a `FROM scratch` image for `amd64` and `aarch64`, signed with cosign
 
-Checks run against the `mandate-spec` version pinned in `go.mod`. To develop against a
-local checkout, create an untracked `go.work` (`go work init . ../mandate-spec`) and pass
-`GOWORK=$PWD/go.work` to `make`.
+## Installation
 
-UI dependencies are installed from the lockfile without install scripts and only in
-versions published at least seven days ago (`web/pnpm-workspace.yaml`). Playwright's
-browsers are not npm packages: `pnpm exec playwright install chromium` downloads them
-from Playwright's CDN, for tests only.
+There are two ways to run Home-Mandate. Both use the same image.
+
+| | Home Assistant OS app | Container mode |
+|---|---|---|
+| For | Home Assistant OS | Home Assistant Container (Docker or Podman Compose) |
+| Install | Add this repository in Home Assistant's app store | Compose file next to Home Assistant |
+| UI | Home Assistant sidebar (Ingress) | `https://<your host>/ui/`, signed in through Home Assistant |
+| Access to Home Assistant | Through the Supervisor, nothing to configure | Long-lived token of a dedicated Home Assistant user |
+| Guide | [docs/install-ha-os.md](docs/install-ha-os.md) | [docs/install-container.md](docs/install-container.md) |
+
+Then continue with [docs/usage.md](docs/usage.md) to set up approvers and mandates, and
+[docs/agents.md](docs/agents.md) to connect your first agent.
 
 ## Running in container mode
 
-| Variable | Meaning |
-|---|---|
-| `HM_HA_URL` | WebSocket API of Home Assistant: `ws://localhost:8123/api/websocket` or `wss://…` (plaintext only to localhost) |
-| `HM_HA_TOKEN` or `HM_HA_TOKEN_FILE` | Long-lived token of Home-Mandate's own Home Assistant user |
-| `HM_HA_CA_FILE` | Optional PEM file with a CA to trust for `wss://` (self-signed Home Assistant certificate) |
-| `HM_DATA_DIR` | Data directory, default `/data` |
-| `HM_TLS_CERT`, `HM_TLS_KEY` | Certificate for the MCP endpoint and the UI (TLS 1.3); without it, MCP listens on localhost only. Renewed files are taken over without a restart; the certificate must cover the host of `HM_PUBLIC_URL` |
-| `HM_MCP_ADDR` | Listen address of the MCP endpoint, default `:8765` with TLS, `127.0.0.1:8765` without |
-| `HM_PDP_ADDR` | Optional loopback address for the AuthZEN evaluation endpoint, for other gateways on the same host |
-| `HM_PUBLIC_URL` | Origin agents and browsers reach Home-Mandate at, e.g. `https://hm.example.org:8765` (`http://` only for `localhost`). Without it, OAuth is off and no agent can be admitted |
-| `HM_HA_BROWSER_URL` | Home Assistant as the human's browser reaches it, for signing in; default: the origin of `HM_HA_URL` |
-| `HM_APPROVAL_TIMEOUT` | Upper limit in seconds for waiting for an approval, 30–600, default 120; a mandate may only shorten it |
-| `HM_LOG_LEVEL` | `debug`, `info`, `warning` or `error` |
-| `HM_INGRESS_ADDR` | Optional listen address of the UI, e.g. `:8099`, for a proxy that does what Home Assistant's Supervisor does (signs people in, sets `X-Remote-User-Id`, removes client copies of it), and for the E2E tests. Not needed for the UI in direct mode (below) |
-| `HM_INGRESS_PROXY` | Required with `HM_INGRESS_ADDR`: the one IP address of that proxy. Requests from any other address get nothing; the user must be a Home Assistant administrator |
+The complete guide is [docs/install-container.md](docs/install-container.md): the
+dedicated Home Assistant user, the token file, running without root as `65532:65532`
+([data directory ownership](docs/install-container.md#run-without-root)), the three ways to
+expose Home-Mandate, the annotated Compose file and the
+[reference of all environment variables](docs/install-container.md#environment-variables).
+Error messages about file permissions point here; the fixes are in
+[docs/troubleshooting.md](docs/troubleshooting.md#start-up-errors).
 
-Agents connect to `https://<host>:8765/mcp` with an OAuth access token.
+## Security in short
 
-`docs/deploy/compose.yaml` is an example next to Home Assistant Container on the same host
-(`make image` builds the image). The certificate must be valid for the host of
-`HM_PUBLIC_URL`; Home-Mandate looks at the files once a minute and takes a renewed pair over
-without a restart.
+- Agents never see a Home Assistant token. They get short-lived OAuth tokens (10 minutes,
+  refresh tokens 30 days, rotated) bound to Home-Mandate.
+- No agent is admitted without a Home Assistant administrator who signs in through Home
+  Assistant and picks the mandate.
+- The decision is made by fixed rules (the reference evaluator of the Home-Mandate
+  specification), never by a language model. The default is deny.
+- Devices an agent may not read do not exist for it: they are neither listed nor named in
+  errors.
+- The UI is for Home Assistant administrators only; the check is repeated on every request.
+- TLS 1.3 only; no plaintext outside `localhost`, unless you put a TLS-ending reverse proxy
+  in front and name it (`HM_PROXY`, container mode).
+- In container mode Home-Mandate needs a Home Assistant user with **administrator rights**.
+  The only reason is that Home Assistant lets only administrators subscribe to
+  `mobile_app_notification_action`, the event that carries the answers to approval
+  requests. Home-Mandate sends only a fixed list of WebSocket commands
+  ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), section 11, decision 2); the UI shows
+  that list under Settings → Home Assistant connection.
 
-## The local UI
+The threat model and how to report vulnerabilities: [SECURITY.md](SECURITY.md).
 
-In app mode (Home Assistant OS) the UI is in Home Assistant's sidebar through Ingress. Every
-Home Assistant user can open Ingress panels, so Home-Mandate checks each request itself: it
-must come from the Supervisor, and the user must be a Home Assistant administrator at that
-moment (asked every 30 seconds; if Home Assistant cannot answer, nobody is let in). See
-`docs/ARCHITECTURE.md`, sections 8 and 12.
+## Limits of this version
 
-In container mode with a certificate and `HM_PUBLIC_URL`, the UI is at
-`https://<host>:8765/ui/` (direct mode). You sign in with your Home Assistant account;
-only administrators get in, and the check is repeated on every request. A session ends
-after 30 minutes without use, after 12 hours, on sign-out and with every restart. Without
-a certificate there is no UI in container mode, only the command line.
-
-## Admitting agents
-
-Agents find everything through `https://<host>:8765/.well-known/oauth-protected-resource/mcp`
-(RFC 9728). There is no open registration; a human of the household admits every agent. The
-human signs in with their Home Assistant account (administrators only), gives the agent a
-name and picks a mandate template.
-
-- **Agents with a browser** use Authorization Code with PKCE. They identify themselves with a
-  Client ID Metadata Document: an `https://` URL on a public address that names the agent's
-  redirect URIs.
-- **Agents without a browser** use a pairing code (Device Authorization Grant): the agent
-  shows a code like `BCDF-GHJK`, the human opens `https://<host>:8765/pair`, signs in and
-  enters it. Five wrong codes lock the session, thirty within ten minutes lock pairing for
-  everyone for ten minutes.
-
-- **Local MCP clients without OAuth of their own** (Claude Desktop with a local server
-  entry, other stdio clients) connect through [`mcp-remote`](https://github.com/geelen/mcp-remote),
-  which runs on the same computer and signs in with Authorization Code and PKCE. Home-Mandate
-  publishes a Client ID Metadata Document for it at
-  `https://home-mandate.com/clients/mcp-remote.json` (redirect to
-  `http://localhost:33418/oauth/callback`). Example for Claude Desktop
-  (`claude_desktop_config.json`, Node.js 18 or later):
-
-  ```json
-  {
-    "mcpServers": {
-      "home-mandate": {
-        "command": "npx",
-        "args": ["-y", "mcp-remote@0.14.3", "https://hm.example.org:8765/mcp", "33418",
-                 "--client-metadata-url", "https://home-mandate.com/clients/mcp-remote.json"]
-      }
-    }
-  }
-  ```
-
-  The browser opens Home-Mandate's sign-in; an administrator admits the agent as with any
-  other. The tokens stay on that computer, with `mcp-remote`.
-
-Access tokens are valid for 10 minutes, refresh tokens for 30 days; every refresh token can
-be used once, and presenting a used one again revokes all tokens of that admission.
-
-## Approval requests
-
-Actions with the decision `ask` wait for a human. Home-Mandate sends a notification with
-"Allow" and "Deny" to every device of every approver of the mandate who is set up here; the
-answer must come from that approver's Home Assistant account. No answer within the timeout,
-an answer from anyone else, or no reachable approver means deny. An answer from someone who
-may not approve also warns the approvers. The agent's reason is shown as its claim, never as
-a fact. The first answer counts.
-
-```bash
-home-mandate approver add USER_ID mobile_app_pixel_9,mobile_app_mac:no-critical [de|en]   # up to 5 devices
-```
-
-`USER_ID` is the Home Assistant user ID; it must also be listed in the mandate's
-`approvers`. Without a language, the language of the Home Assistant configuration applies.
-Any device with the Home Assistant Companion App counts, including the Mac app. Critical
-actions (unlocking a door, disarming the alarm …) go only to devices without
-`:no-critical`: an iPhone asks for unlocking before a button counts, the Mac app and Android
-do not. The UI proposes `no-critical` for the Mac app.
-
-Approvers who are Home Assistant administrators can additionally answer in the Home-Mandate
-UI; this is switched on per person in the UI, for critical actions separately, because a
-browser session asks for no unlocking the way a phone does.
-
-## Administration on the command line
-
-The administration commands work on the local database only; they are not reachable over
-the network and need no Home Assistant credentials, only `HM_DATA_DIR`. Run them inside the container, e.g. `docker exec -i home-mandate /home-mandate …`.
-
-```bash
-home-mandate household                       # principal to use in mandates
-home-mandate mandate template import NAME template.json   # templates humans pick when admitting
-home-mandate mandate template list | remove NAME
-home-mandate agent list | revoke CLIENT_ID   # revoking takes effect with the next request
-home-mandate mandate import mandate.json     # or - for stdin; validated against mandate-spec
-home-mandate mandate list | revoke ID
-home-mandate mandate check                   # lists stored mandates and templates the evaluator rejects, e.g. after an update
-home-mandate approver add USER_ID NOTIFY_SERVICE[:no-critical][,…] [de|en] | list | remove USER_ID
-home-mandate emergency-stop on | off | status   # on: all tokens revoked, all agents blocked
-home-mandate audit verify | export           # hash chain and checkpoint check, JSON Lines export
-home-mandate audit key                       # log ID and public key of the checkpoints; keep them outside this device
-```
-
-A template is a mandate whose `id`, `principal`, `agent`, `created_by`, `created_at`,
-`valid_from` and `expires` are filled in when an agent is admitted.
-
-## Limits of the current development version
-
-- Camera snapshots and `set` on entities of category `other` are evaluated and logged but
+- Experimental release candidate. The Home Assistant OS app is first tested on real
+  installations with this release candidate; container mode is covered by the end-to-end
+  tests against a real Home Assistant.
+- Camera snapshots and `set` on devices of the category `other` are evaluated and logged but
   not executed: Home Assistant offers no safe way to perform them for one entity.
-- Reading a device with the decision `ask` is refused; only actions are confirmed by a human.
-- A mandate's approval timeout is capped by `HM_APPROVAL_TIMEOUT` (at most 10 minutes),
-  although the specification allows up to one hour: the agent's request waits for the answer.
-- Open approval requests live in memory: after a restart they are gone and their requests
-  have ended without execution.
-- In app mode (Home Assistant OS), admitting agents is not available yet.
-- Changes to mandate templates and approvers are local settings: the specification has no
-  audit event for them, so they do not appear in the audit log.
-- In container mode, the UI needs a certificate and an `https://` public URL (direct mode);
-  without them, only the command line manages Home-Mandate.
-- There is no test clock: time windows are tested against the real household time (E2E
-  scenario 9) and at their boundaries by unit tests.
+- Reading a device with the decision *ask* is refused; only actions are confirmed by a
+  human.
+- An approval waits at most 10 minutes (the approval timeout setting, 30 to 600 seconds),
+  although a mandate may name up to an hour: the agent's request waits for the answer.
+- Open approval requests live in memory: a restart ends them without execution.
+- Reconnecting after an emergency stop is offered only for agents of the same OAuth client
+  without valid access, and only on the sign-in or pairing page when the agent signs in
+  again; the administrator chooses the agent, Home-Mandate never matches one by itself.
+- Removed agents and mandates are hidden at once; their data is deleted only once the audit
+  log no longer mentions them (30 days after their last entry), not on request.
+- In the Home Assistant OS app, a reverse proxy that ends TLS (`HM_PROXY`) is not available;
+  agents from outside need a TLS passthrough or a port forward
+  ([docs/install-ha-os.md](docs/install-ha-os.md#reaching-home-mandate-from-outside)).
+- In container mode the UI needs a certificate or a reverse proxy and an `https://` public
+  URL; without them only the command line manages Home-Mandate.
 
-## Home Assistant permissions
+## Documentation
 
-In container mode, Home-Mandate uses a dedicated Home Assistant user with **admin rights**.
-The only reason is that Home Assistant allows subscribing to the
-`mobile_app_notification_action` event, which carries the answers to approval requests, only
-for admins. Home-Mandate sends only a fixed, allowlisted set of WebSocket commands; see
-`docs/ARCHITECTURE.md`, section 11.
+| Document | Contents |
+|---|---|
+| [docs/install-ha-os.md](docs/install-ha-os.md) | Install, configure, update, back up and remove the Home Assistant OS app |
+| [docs/install-container.md](docs/install-container.md) | Container mode with Docker or Podman Compose, all environment variables |
+| [docs/deploy/reverse-proxy.md](docs/deploy/reverse-proxy.md) | Reaching Home-Mandate from outside behind Traefik, nginx, Nginx Proxy Manager or Caddy |
+| [docs/usage.md](docs/usage.md) | Concepts, first steps in the UI, approvals, emergency stop, audit log, command line |
+| [docs/agents.md](docs/agents.md) | Connecting agents: Claude Desktop, Claude Code, claude.ai, other MCP clients; tools and errors |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Start-up errors, sign-in, approvals, unavailable answers, rate limits |
+| [SECURITY.md](SECURITY.md) | Threat model, reporting vulnerabilities |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architecture and design decisions (for developers and reviewers) |
+| [docs/TESTING.md](docs/TESTING.md) | Test strategy (for developers and reviewers) |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Repository layout, development setup, checks, building the image |
+| [app/CHANGELOG.md](app/CHANGELOG.md) | Changes per version |
 
 ## Related repositories
 
 | Repository | Contents | License |
 |---|---|---|
-| `mandate-spec` | Vendor-neutral specification, schema, conformance cases, reference evaluation, test tool | CC BY 4.0 / Apache 2.0 |
-| `home-mandate` (this one) | Gateway, local UI, Home Assistant app, relay | AGPL-3.0 |
+| `home-mandate/spec` | Home-Mandate specification: vendor-neutral specification, schema, conformance cases, reference evaluator, test tool | CC BY 4.0 / Apache 2.0 |
+| `home-mandate/ha-home-mandate` (this one) | Gateway, local UI, Home Assistant app | AGPL-3.0-or-later |
 
-Home-Mandate embeds the reference evaluation from `mandate-spec` as a Go module and must pass
-all conformance cases.
+Home-Mandate embeds the reference evaluator of `home-mandate/spec` as a Go module and must
+pass all its conformance cases.
+
+## License
+
+AGPL-3.0-or-later, see [LICENSE](LICENSE). The licenses of all included components are in
+the UI under Settings → About → Licenses of the included packages.

@@ -2,7 +2,9 @@
 <!--
   MCP endpoint (design README 6.11 section 4): the address agents connect to, to copy, and
   the TLS certificate. A missing certificate is amber with exact instructions, not red:
-  agents on this machine still work.
+  agents on this machine still work. The instructions follow the mode: /ssl for the app,
+  HM_TLS_CERT/HM_TLS_KEY or HM_PROXY for the container. Behind a reverse proxy (HM_PROXY)
+  the proxy holds it.
 -->
 <script lang="ts">
   import type { SystemStatus } from '../../api/types.ts';
@@ -18,6 +20,8 @@
   }
 
   let { system, ctx }: Props = $props();
+
+  const container = $derived(system.mode === 'container');
 </script>
 
 {#if system.mcp_url}
@@ -27,10 +31,14 @@
   <span class="label">{m.set_tls()}</span>
   {#if system.tls.present}
     <StatusPill tone="positive"
-      >{system.tls.valid_until ? m.set_tls_ok({ date: formatDate(new Date(system.tls.valid_until), ctx) }) : m.status_active()}</StatusPill
+      >{#if system.tls.valid_until}{@const date = formatDate(new Date(system.tls.valid_until), ctx)}{container
+          ? m.set_tls_ok_container({ date })
+          : m.set_tls_ok({ date })}{:else}{m.status_active()}{/if}</StatusPill
     >
+  {:else if system.tls.proxy}
+    <StatusPill tone="positive">{m.set_tls_proxy()}</StatusPill>
   {:else}
-    <Banner kind="warning" body={m.set_tls_missing()} />
+    <Banner kind="warning" body={container ? m.set_tls_missing_container() : m.set_tls_missing()} />
   {/if}
 </div>
 

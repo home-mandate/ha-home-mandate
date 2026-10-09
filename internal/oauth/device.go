@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/ha"
-	"github.com/home-mandate/home-mandate/internal/i18n"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
 
 // Device Authorization Grant (RFC 8628): the pairing code.
@@ -259,17 +259,14 @@ func (s *Server) pairSession(r *http.Request) (pairSession, bool) {
 	return ps, found
 }
 
-// pairPage shows the code entry to a signed-in administrator, or starts the sign-in.
+// pairPage shows the code entry to a signed-in administrator, or starts the sign-in
+// without a session (pairState).
 func (s *Server) pairPage(w http.ResponseWriter, r *http.Request) {
 	ps, found := s.pairSession(r)
 	if !found || ps.user == nil {
-		id, sess, err := s.sessions.create(s.clientAddr(r), purposePair, nil)
-		if err != nil {
-			s.fail(w, r, http.StatusServiceUnavailable, i18n.PageBusy)
-			return
-		}
-		s.setCookie(w, id)
-		http.Redirect(w, r, s.cfg.SignIn.AuthorizeURL(sess.haState), http.StatusFound)
+		nonce := newSecret()
+		s.setCookie(w, nonce)
+		http.Redirect(w, r, s.cfg.SignIn.AuthorizeURL(s.pairState(nonce, s.cfg.Now().Add(sessionTTL))), http.StatusFound)
 		return
 	}
 	if ps.failures >= pairSessionMax || s.pairingLocked() {

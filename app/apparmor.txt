@@ -1,0 +1,35 @@
+#include <tunables/global>
+
+# Home-Mandate: one static binary in a scratch image. It reads its options and writes its
+# database under /data, reads certificates from /ssl, and talks TCP/UDP (Home Assistant
+# through the Supervisor, agents, DNS). Nothing else: no shell, no other programs.
+profile home_mandate flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+
+  # Docker's runtime stops the app with SIGTERM.
+  signal (receive) set=(term, kill, int),
+
+  /home-mandate rix,
+  /etc/ssl/certs/ca-certificates.crt r,
+  /etc/{hosts,resolv.conf,nsswitch.conf,hostname} r,
+
+  # Options, database, audit keys
+  /data/ r,
+  /data/** rwk,
+  # Certificates for the MCP endpoint, read only
+  /ssl/ r,
+  /ssl/** r,
+
+  # Go runtime: CPU limits, huge pages, listen backlog
+  @{PROC}/sys/net/core/somaxconn r,
+  @{PROC}/@{pid}/cgroup r,
+  @{PROC}/@{pid}/mountinfo r,
+  owner @{PROC}/@{pid}/stat r,
+  /sys/kernel/mm/transparent_hugepage/hpage_pmd_size r,
+  /sys/fs/cgroup/** r,
+}

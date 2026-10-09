@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
 )
 
 func TestSummarize(t *testing.T) {

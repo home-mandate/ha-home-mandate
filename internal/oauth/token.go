@@ -3,16 +3,13 @@
 package oauth
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"net/http"
 	"regexp"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
 )
 
 // verifierPattern is a PKCE code verifier (RFC 7636 section 4.1).
@@ -72,15 +69,12 @@ func pkceMatches(verifier, challenge string) bool {
 // reports whether the failure was on the server side, so that a pairing can be retried;
 // the admission is not cancelled when the agent disconnects.
 func (s *Server) admit(w http.ResponseWriter, r *http.Request, client Client, resource string, d decision) (serverError bool) {
-	a, tokens, err := s.cfg.Admission.Admit(context.WithoutCancel(r.Context()), admission.Request{DisplayName: d.name, Template: d.template, TemplateDigest: d.templateDigest,
-		OAuthClient: client.ID, ClientVerified: client.Verified, RedirectURIs: client.RedirectURIs, Resource: resource,
-		By: audit.Actor{Kind: audit.ActorUser, ID: d.by}})
+	_, tokens, err := s.carryOut(r.Context(), client, resource, d)
 	switch {
 	case err == nil:
-		s.cfg.Logger.Info("agent admitted", "client_id", a.ClientID, "oauth_client", client.ID, "by", d.by)
 		writeTokens(w, tokens)
 	case refused(err):
-		s.cfg.Logger.Warn("admission refused", "oauth_client", client.ID, "error", err)
+		s.warn("admission refused", "oauth_client", client.ID, "error", err)
 		oauthError(w, http.StatusBadRequest, "invalid_grant")
 	default:
 		s.cfg.Logger.Error("admission failed", "oauth_client", client.ID, "error", err)
@@ -104,8 +98,11 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request, form map[string
 	case err == nil:
 		writeTokens(w, tokens)
 	case errors.Is(err, agent.ErrInvalidGrant):
-		if errors.Is(err, agent.ErrRefreshReused) {
-			s.cfg.Logger.Warn("refresh token reused, token family revoked", "oauth_client", form["client_id"])
+		switch {
+		case errors.Is(err, agent.ErrRefreshReused):
+			s.warn("refresh token reused, token family revoked", "oauth_client", form["client_id"])
+		case errors.Is(err, agent.ErrRefreshWrongClient):
+			s.warn("refresh token of another client refused", "oauth_client", form["client_id"])
 		}
 		oauthError(w, http.StatusBadRequest, "invalid_grant")
 	default:

@@ -15,9 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/ha"
-	"github.com/home-mandate/home-mandate/internal/i18n"
-	"github.com/home-mandate/home-mandate/internal/store"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/i18n"
+	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 var update = flag.Bool("update", false, "rewrite the reference notifications in testdata")
@@ -97,10 +98,10 @@ func newEnv(t *testing.T, maxTimeout time.Duration) env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	approvers := NewApprovers(st.DB())
+	approvers := NewApprovers(st.DB(), audit.New(st.DB(), "household:hm-0123456789ab"))
 	for _, a := range []Approver{{UserID: u1, Devices: phones("mobile_app_markus"), Language: "de"},
 		{UserID: u2, Devices: phones("mobile_app_anna")}, {UserID: u3, Devices: phones("mobile_app_guest")}} {
-		if err := approvers.Put(context.Background(), a); err != nil {
+		if err := approvers.Put(context.Background(), a, changer); err != nil {
 			t.Fatal(err)
 		}
 	}

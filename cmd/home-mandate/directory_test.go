@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
 )
 
 type fakeStorer struct {

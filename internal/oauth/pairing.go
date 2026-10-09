@@ -10,10 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 )
 
 // Pairing in the Home-Mandate UI (decision D5): the same pending device grants as the
@@ -54,6 +53,9 @@ type PairingCandidate struct {
 	RequestedAt    time.Time
 	ExpiresAt      time.Time
 	RequestedFrom  string
+	// Reconnect are the existing agents of this client without a valid token, which the
+	// administrator may reconnect instead of admitting a new agent (issue #22).
+	Reconnect []ReconnectCandidate
 }
 
 // PairingApproval is an administrator's decision to admit the agent behind a code.
@@ -207,7 +209,7 @@ func (s *Server) Check(ctx context.Context, session, code string) (PairingCandid
 		return PairingCandidate{}, err
 	}
 	return PairingCandidate{PairingID: g.id, ClaimedName: g.client.Name, Client: g.client.ID, ClientVerified: g.client.Verified,
-		RequestedAt: g.created, ExpiresAt: g.expires, RequestedFrom: normalizeAddr(g.sender)}, nil
+		RequestedAt: g.created, ExpiresAt: g.expires, RequestedFrom: normalizeAddr(g.sender), Reconnect: s.reconnectCandidates(ctx, g.client)}, nil
 }
 
 // Approve admits the agent behind a code at once; its tokens wait for its next poll. If
@@ -257,9 +259,7 @@ func (s *Server) admitGrant(ctx context.Context, key, id string, d decision) (ag
 	client, resource := g.client, g.resource
 	s.mu.Unlock()
 
-	a, tokens, err := s.cfg.Admission.Admit(context.WithoutCancel(ctx), admission.Request{DisplayName: d.name, Template: d.template, TemplateDigest: d.templateDigest,
-		OAuthClient: client.ID, ClientVerified: client.Verified, RedirectURIs: client.RedirectURIs, Resource: resource,
-		MandateName: d.mandateName, ConfirmCritical: d.confirmCritical, By: audit.Actor{Kind: audit.ActorUser, ID: d.by}})
+	a, tokens, err := s.carryOut(ctx, client, resource, d)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err != nil {
@@ -275,7 +275,6 @@ func (s *Server) admitGrant(ctx context.Context, key, id string, d decision) (ag
 	if min := s.cfg.Now().Add(issuedGrace); g.expires.Before(min) {
 		g.expires = min
 	}
-	s.cfg.Logger.Info("agent admitted", "client_id", a.ClientID, "oauth_client", client.ID, "by", d.by)
 	return a, nil
 }
 
@@ -284,5 +283,5 @@ func refused(err error) bool {
 	return errors.Is(err, agent.ErrEmergencyStop) || errors.Is(err, admission.ErrTemplateNotFound) ||
 		errors.Is(err, agent.ErrInvalidName) || errors.Is(err, mandate.ErrInvalid) ||
 		errors.Is(err, mandate.ErrCriticalConfirmation) || errors.Is(err, mandate.ErrConflict) ||
-		errors.Is(err, mandate.ErrNoApprovers)
+		errors.Is(err, mandate.ErrNoApprovers) || refusedReconnect(err)
 }

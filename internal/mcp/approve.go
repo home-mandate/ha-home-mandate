@@ -5,17 +5,18 @@ package mcp
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mandate-spec/mandate-spec/evaluator"
+	"github.com/home-mandate/spec/evaluator"
 
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/approval"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/ha"
-	"github.com/home-mandate/home-mandate/internal/pdp"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/pdp"
 )
 
 // errAsk tells performAction that a human must confirm; it never reaches the agent.
@@ -30,8 +31,13 @@ const (
 )
 
 // askHuman asks the approvers of the mandate and executes only after a valid
-// confirmation. Every outcome is in the audit log with the approval.
+// confirmation. Every outcome is in the audit log with the approval. An agent whose last
+// request for the device was not approved waits before anyone is asked again.
 func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, reason string) (*sdk.CallToolResult, actionOut, error) {
+	if g.cooling(a.ClientID, d.Resource.EntityID) > 0 {
+		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval, Error: "approval_cooldown"})
+		return nil, actionOut{}, errors.New(codeDenied + ": approval_cooldown")
+	}
 	g.mu.Lock()
 	if g.pendingAsks[a.ClientID] >= maxPendingAsks {
 		g.mu.Unlock()
@@ -49,7 +55,7 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 	}()
 
 	req := approval.Request{ClientID: a.ClientID, Agent: a.DisplayName, EntityID: d.Resource.EntityID, Area: d.Resource.Area,
-		Device: d.Resource.EntityID, Action: d.Action, Reason: reason, Params: call.Data, Critical: criticalRequest(d)}
+		Device: d.Resource.EntityID, Action: d.Action, Reason: reason, Params: shownParams(d, call), Critical: criticalRequest(d)}
 	if dev, ok := g.cfg.Catalog.Lookup(d.Resource.EntityID); ok {
 		if name, _ := dev.Attributes["friendly_name"].(string); name != "" {
 			req.Device = name
@@ -70,10 +76,13 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 		return g.cancelled(ctx, a, d, res.ID)
 	}
 	appr := approvalRef{approval: &audit.Approval{Outcome: res.Outcome, By: res.By, Via: res.Via, At: res.At}, id: res.ID}
+	if res.Outcome == approval.OutcomeApproved {
+		g.forgive(a.ClientID, d.Resource.EntityID)
+		return g.afterApproval(ctx, a, token, d, call, appr, res.At.Add(g.approvalValidity(req.Timeout)))
+	}
+	g.coolDown(a.ClientID, d.Resource.EntityID)
 	var code string
 	switch res.Outcome {
-	case approval.OutcomeApproved:
-		return g.afterApproval(ctx, a, token, d, call, appr, res.At.Add(g.approvalValidity(req.Timeout)))
 	case approval.OutcomeRejected:
 		code = "approval_rejected"
 	case approval.OutcomeInvalidResponse:
@@ -83,6 +92,15 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 	}
 	_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}, appr)
 	return nil, actionOut{}, errors.New(codeDenied + ": " + code)
+}
+
+// shownParams is what the human sees of the call besides device and action: its service
+// data, and for arming the alarm the mode, which is part of the service, not of the data.
+func shownParams(d pdp.Decision, call ha.ServiceCall) map[string]any {
+	if d.Resource.Category == "alarm" && d.Action == "arm" {
+		return map[string]any{"mode": strings.TrimPrefix(call.Service, vocabulary["alarm"]["arm"].service)}
+	}
+	return call.Data
 }
 
 // approvalRef is the outcome of an approval request for its audit entry: the approval
@@ -107,7 +125,7 @@ func (g *Gateway) cancelled(ctx context.Context, a agent.Agent, d pdp.Decision, 
 
 // afterApproval checks again what may have changed while the human decided: the
 // emergency stop, the agent's token (revoked, e.g. after refresh token reuse), the
-// mandate (a revoked agent's mandate denies) and the connection.
+// mandate (a revoked agent's mandate denies) and the availability.
 //
 // A confirmation is valid until expires, its timeout after it was given (SPEC-v0 section
 // 11.1 item 5): it is checked right before the call, and the call to Home Assistant ends
@@ -134,8 +152,8 @@ func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate}, appr)
 		return nil, actionOut{}, errors.New(codeDenied + ": mandate_changed")
 	}
-	if !g.available() {
-		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: "ha_unavailable"}, appr)
+	if code := g.unavailable(); code != "" {
+		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: code}, appr)
 		return nil, actionOut{}, errors.New(codeUnavailable)
 	}
 	if g.clockWrong(ctx) {

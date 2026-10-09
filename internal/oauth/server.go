@@ -9,17 +9,16 @@ import (
 	"encoding/json"
 	"html/template"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/i18n"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
 
 // Endpoints (relative to the public URL).
@@ -46,6 +45,10 @@ type (
 		Admit(ctx context.Context, req admission.Request) (agent.Agent, agent.TokenPair, error)
 		Templates(ctx context.Context) ([]admission.Template, error)
 		TemplateDocument(ctx context.Context, name string) ([]byte, admission.Template, error)
+		// Reconnectable and Reconnect offer and carry out reconnecting an existing agent
+		// instead of admitting a new one (issue #22).
+		Reconnectable(ctx context.Context, client agent.Client) ([]admission.Reconnectable, error)
+		Reconnect(ctx context.Context, req admission.ReconnectRequest) (agent.Agent, agent.TokenPair, error)
 	}
 	// Refresher rotates refresh tokens.
 	Refresher interface {
@@ -79,8 +82,14 @@ type Server struct {
 	secure   bool   // cookies only over TLS
 	cookie   string // session cookie name
 
-	// clientAddr identifies the sender of a request for per-sender limits.
+	// clientAddr identifies the sender of a request for per-sender limits (senderKey).
 	clientAddr func(*http.Request) string
+	// onboarding and tokens limit the requests of the browser endpoints and of the
+	// token endpoint (limits.go).
+	onboarding, tokens *rateLimit
+	warned             warnings
+	// pairKey signs the state of pairing sign-ins (pairState); new at every start.
+	pairKey []byte
 
 	mu         sync.Mutex
 	codes      map[string]*authCode
@@ -88,6 +97,7 @@ type Server struct {
 	pairing    pairingLimit
 	uiFailures map[string]*uiFailures  // wrong codes per UI session (pairing.go)
 	uiLocks    map[string]*sessionLock // attempts in progress per UI session
+	approvers  ApproverPreview         // who may approve, for the consent page (approvers.go)
 }
 
 //go:embed pages
@@ -113,7 +123,9 @@ func New(cfg Config) *Server {
 	}
 	s := &Server{cfg: cfg, sessions: newSessions(cfg.Now), codes: map[string]*authCode{},
 		grants: map[string]*deviceGrant{}, uiFailures: map[string]*uiFailures{},
-		uiLocks: map[string]*sessionLock{}, clientAddr: remoteHost}
+		uiLocks: map[string]*sessionLock{}, clientAddr: senderKey,
+		onboarding: newRateLimit(onboardingPerSender, onboardingGlobal), tokens: newRateLimit(tokenPerSender, tokenGlobal),
+		warned: warnings{last: map[string]time.Time{}}, pairKey: newPairKey()}
 	s.secure = strings.HasPrefix(cfg.PublicURL, "https://")
 	s.cookie = "hm_session"
 	if s.secure {
@@ -122,20 +134,21 @@ func New(cfg Config) *Server {
 	return s
 }
 
-// Handler serves the metadata, the OAuth endpoints and the pages.
+// Handler serves the metadata, the OAuth endpoints and the pages. Every endpoint
+// reachable without a token is rate limited; the metadata and the style sheet are static.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+MetadataPath, s.metadata)
 	mux.HandleFunc("GET "+ResourceMetadataPath, s.resourceMetadata)
 	mux.HandleFunc("GET "+ResourceMetadataPath+"/mcp", s.resourceMetadata)
-	mux.HandleFunc("GET "+AuthorizePath, s.authorize)
-	mux.HandleFunc("GET "+CallbackPath, s.callback)
-	mux.HandleFunc("GET "+ConsentPath, s.consentPage)
-	mux.HandleFunc("POST "+ConsentPath, s.consent)
-	mux.HandleFunc("POST "+TokenPath, s.token)
-	mux.HandleFunc("POST "+DevicePath, s.deviceAuthorization)
-	mux.HandleFunc("GET "+PairPath, s.pairPage)
-	mux.HandleFunc("POST "+PairPath, s.pair)
+	mux.HandleFunc("GET "+AuthorizePath, s.limited(s.onboarding, false, s.authorize))
+	mux.HandleFunc("GET "+CallbackPath, s.limited(s.onboarding, false, s.callback))
+	mux.HandleFunc("GET "+ConsentPath, s.limited(s.onboarding, false, s.consentPage))
+	mux.HandleFunc("POST "+ConsentPath, s.limited(s.onboarding, false, s.consent))
+	mux.HandleFunc("POST "+TokenPath, s.limited(s.tokens, true, s.token))
+	mux.HandleFunc("POST "+DevicePath, s.limited(s.onboarding, true, s.deviceAuthorization))
+	mux.HandleFunc("GET "+PairPath, s.limited(s.onboarding, false, s.pairPage))
+	mux.HandleFunc("POST "+PairPath, s.limited(s.onboarding, false, s.pair))
 	mux.HandleFunc("GET "+stylePath, s.style)
 	return mux
 }
@@ -199,6 +212,18 @@ type page struct {
 	Verified                            bool
 	Name, Selected                      string
 	Templates                           []consentTemplate
+	// Reconnect are the existing agents of the client the human may reconnect instead.
+	Reconnect []reconnectOption
+	// ReconnectFrom is the sender of a pairing request whose client ID is only the name
+	// the agent gave itself; empty for a verified client.
+	ReconnectFrom string
+	// ReconnectUnverified: the candidates match only that self-chosen name.
+	ReconnectUnverified bool
+}
+
+// reconnectOption is an agent to reconnect as the consent page shows it.
+type reconnectOption struct {
+	ClientID, Name, Mandate, Admitted string
 }
 
 // T translates key with name/value pairs as arguments.
@@ -229,7 +254,10 @@ func (s *Server) render(w http.ResponseWriter, status int, name string, p page, 
 		"; frame-ancestors 'none'; base-uri 'none'")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Referrer-Policy", "no-referrer")
+	// same-origin, not no-referrer: under no-referrer browsers send "Origin: null" with a
+	// form post, which the same-origin check of the consent and pairing forms refuses.
+	// Towards other origins (the agent, Home Assistant) no referrer is sent either way.
+	h.Set("Referrer-Policy", "same-origin")
 	h.Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_, _ = w.Write(buf.Bytes())
@@ -287,15 +315,6 @@ func (s *Server) setCookie(w http.ResponseWriter, value string) {
 func (s *Server) clearCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{Name: s.cookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.secure,
 		SameSite: http.SameSiteLaxMode})
-}
-
-// remoteHost is the IP address of the sender, without the port.
-func remoteHost(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
 
 func (s *Server) sessionID(r *http.Request) string {

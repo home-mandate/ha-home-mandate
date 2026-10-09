@@ -15,13 +15,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/admission"
-	"github.com/home-mandate/home-mandate/internal/agent"
-	"github.com/home-mandate/home-mandate/internal/approval"
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/catalog"
-	"github.com/home-mandate/home-mandate/internal/mandate"
-	"github.com/home-mandate/home-mandate/internal/oauth"
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
+	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/oauth"
 )
 
 func decisionAt(clientID, name string, withEvaluation bool) audit.Entry {
@@ -57,7 +57,7 @@ func TestAgents(t *testing.T) {
 	if a.ClientID != voice.ClientID || a.Status != "active" || a.CreatedByName == nil || *a.CreatedByName != "Markus" ||
 		a.OAuthClient != "n8n-voice" || a.ClientVerified || a.RedirectURIs == nil || len(a.RedirectURIs) != 0 ||
 		a.RequestsToday != 3 || a.ActionsLastHour != 1 || a.LastActiveAt == nil || *a.LastActiveAt != "2026-10-03T09:50:00.000Z" ||
-		a.RevokedAt != nil || a.Mandate == nil || a.Mandate.Status != "active" || a.Mandate.Name != "voice-assistant" ||
+		a.RevokedAt != nil || a.Mandate == nil || a.Mandate.Status != "active" || a.Mandate.Name != "Voice" || a.Mandate.RulesFrom == nil ||
 		*a.Mandate.MaxActionsPerHour != 60 || !strings.HasPrefix(a.Mandate.Digest, "sha256:") {
 		t.Errorf("agent = %+v, mandate %+v", a, a.Mandate)
 	}
@@ -113,6 +113,9 @@ func TestRevokeAgent(t *testing.T) {
 		if r := h.do(http.MethodPost, "/api/agents/revoke", map[string]any{"client_id": bad}); r.field() != "/client_id" {
 			t.Errorf("client_id %q = %d %s", bad, r.code, r.body)
 		}
+	}
+	if r := h.do(http.MethodPost, "/api/agents/revoke", map[string]any{"client_id": other.ClientID, "all": true}); r.field() != "/all" {
+		t.Errorf("unknown field = %d %s", r.code, r.body)
 	}
 	// A failing transaction revokes nothing: the agent stays active.
 	if _, err := h.st.DB().Exec(`CREATE TRIGGER no_revoke BEFORE UPDATE ON mandates BEGIN SELECT RAISE(ABORT, 'x'); END`); err != nil {
@@ -180,9 +183,14 @@ func (f *fakePairing) Deny(_ context.Context, session, code, id string) error {
 	return f.err
 }
 
+func (f *fakePairing) Reconnect(_ context.Context, session string, r oauth.PairingReconnect) (agent.Agent, error) {
+	f.calls = append(f.calls, "reconnect:"+session+":"+r.ClientID)
+	return f.agent, f.err
+}
+
 func TestPairingWithoutOAuth(t *testing.T) {
 	h := newHarness(t)
-	for _, path := range []string{"/api/pairing/check", "/api/pairing/approve", "/api/pairing/deny"} {
+	for _, path := range []string{"/api/pairing/check", "/api/pairing/approve", "/api/pairing/deny", "/api/pairing/reconnect"} {
 		if r := h.do(http.MethodPost, path, map[string]any{"code": "BCDF-GHJK"}); r.errCode() != codeUnavailable {
 			t.Errorf("%s = %d", path, r.code)
 		}
@@ -264,6 +272,10 @@ func TestPairingHandlers(t *testing.T) {
 		}
 		if r := h.do(http.MethodPost, "/api/pairing/deny", map[string]any{"code": "BCDF-GHJK", "pairing_id": "p1"}); r.code != tc.status {
 			t.Errorf("deny with %v = %d", tc.err, r.code)
+		}
+		if r := h.do(http.MethodPost, "/api/pairing/reconnect", map[string]any{"code": "BCDF-GHJK", "pairing_id": "p1",
+			"client_id": "hm-client:a"}); r.code != tc.status {
+			t.Errorf("reconnect with %v = %d", tc.err, r.code)
 		}
 	}
 }

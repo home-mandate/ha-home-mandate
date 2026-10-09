@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 env:
-  # Check against the pinned mandate-spec version, never a workspace.
+  # Check against the pinned version of the specification, never a workspace.
   GOWORK: "off"
 
 jobs:

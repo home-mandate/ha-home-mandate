@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/mandate"
-	"github.com/home-mandate/home-mandate/internal/untrusted"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/untrusted"
 )
 
 const (
@@ -23,8 +23,10 @@ const (
 
 var (
 	auditEvents = []string{audit.EventDecision, audit.EventMandateCreated, audit.EventMandateUpdated, audit.EventMandateRevoked,
-		audit.EventAgentRegistered, audit.EventAgentRevoked, audit.EventEmergencyStopActivated, audit.EventEmergencyStopReleased,
-		audit.EventAuthRejected, audit.EventLogTruncated, audit.EventLogCheckpoint, audit.EventDirectoryChanged}
+		audit.EventMandateRemoved, audit.EventAgentRegistered, audit.EventAgentRevoked, audit.EventAgentReconnected,
+		audit.EventAgentRemoved, audit.EventEmergencyStopActivated, audit.EventEmergencyStopReleased,
+		audit.EventAuthRejected, audit.EventLogTruncated, audit.EventLogCheckpoint, audit.EventDirectoryChanged,
+		audit.EventTemplateChanged, audit.EventApproverChanged}
 	auditDecisions = []string{"allow", "ask", "deny", "default"}
 	// queryKeys are the parameters of GET api/audit; every one but decision at most once.
 	queryKeys = []string{"before", "limit", "since", "until", "agent", "device", "q", "group", "event", "decision"}
@@ -189,7 +191,7 @@ func (s *Server) getAudit(r *request) (any, error) {
 }
 
 // presentEntry is a stored entry as the UI shows it: with its digest, the names of the
-// people in it and the number of the mandate version (decision F4). These additions are
+// people in it (actor, approval and approver) and the number of the mandate version (decision F4). These additions are
 // not part of the entry and its chain; type and principal are left out.
 func (s *Server) presentEntry(ctx context.Context, e audit.Stored, versions *versionIndex) (map[string]any, error) {
 	var entry map[string]any
@@ -216,11 +218,22 @@ func (s *Server) presentEntry(ctx context.Context, e audit.Stored, versions *ver
 			}
 		}
 	}
+	if ap, ok := entry["approver"].(map[string]any); ok {
+		if id, _ := ap["id"].(string); id != "" {
+			if name := s.users.name(ctx, id); name != nil {
+				ap["name"] = *name
+			}
+		}
+	}
 	if m, ok := entry["mandate"].(map[string]any); ok {
 		id, _ := m["id"].(string)
 		digest, _ := m["digest"].(string)
 		if n := versions.number(ctx, id, digest, e.RecordedAt); n > 0 {
 			m["version"] = n
+		}
+		// Also of a removed mandate whose data is deleted (its tombstone keeps the name).
+		if name, err := s.cfg.Mandates.Name(ctx, id); err == nil {
+			m["name"] = name
 		}
 	}
 	return entry, nil

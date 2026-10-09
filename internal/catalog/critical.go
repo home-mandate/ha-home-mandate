@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 )
 
 // maxEntityIDLength is the limit of a resource identifier (SPEC-v0 section 3.4).

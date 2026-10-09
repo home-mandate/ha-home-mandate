@@ -100,7 +100,7 @@ func TestTheBinaryHasLicensesForEverything(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(text, "github.com/mandate-spec/mandate-spec") || !strings.Contains(text, "modernc.org/sqlite") {
+	if !strings.Contains(text, "github.com/home-mandate/spec") || !strings.Contains(text, "modernc.org/sqlite") {
 		t.Errorf("licenses miss modules:\n%.500s", text)
 	}
 }

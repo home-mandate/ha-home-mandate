@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	mandatespec "github.com/mandate-spec/mandate-spec"
+	"github.com/home-mandate/spec"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 )
 
 const uiSession = "8f2b1c0d9e7a4b3c8f2b1c0d9e7a4b3c" // a Home Assistant user ID
@@ -203,7 +203,7 @@ func TestPairingExpiredCodeInTheUI(t *testing.T) {
 func TestPairingWithACriticalTemplate(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
-	data, err := fs.ReadFile(mandatespec.FS(), "examples/voice-assistant.json")
+	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
 		t.Fatal(err)
 	}

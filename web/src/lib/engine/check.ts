@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// checkDraft finds what makes a mandate draft invalid per mandate-spec SPEC-v0 section 3.1,
+// checkDraft finds what makes a mandate draft invalid per SPEC-v0 section 3.1,
 // as far as the editor can produce it, with a JSON pointer per problem so the editor can
 // show it at the field. The server is the authority: it parses every stored version with
-// mandate-spec/evaluator and rejects anything this check misses.
+// spec/evaluator and rejects anything this check misses.
 
 import type { Approval, MandateDraft, Rule } from '../api/types.ts';
 import { displayable } from './displaytext.ts';

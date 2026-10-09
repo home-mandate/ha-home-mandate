@@ -20,8 +20,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/home-mandate/home-mandate/internal/audit"
-	"github.com/home-mandate/home-mandate/internal/untrusted"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/untrusted"
 )
 
 var (
@@ -66,6 +66,13 @@ type Agent struct {
 	// RevokedAt and RevokedBy are set once the agent is revoked.
 	RevokedAt time.Time
 	RevokedBy string
+	// RemovedAt and RemovedBy are set once a revoked agent is removed from the lists
+	// (SPEC-v0 section 11.3); it stays revoked.
+	RemovedAt time.Time
+	RemovedBy string
+	// Connected says whether the agent holds a token that is still valid: an access
+	// token, or a refresh token not used yet. An emergency stop withdraws all of them.
+	Connected bool
 }
 
 // Client is the OAuth client an agent is admitted with.
@@ -185,7 +192,7 @@ func (s *Store) RevokeTx(ctx context.Context, tx *sql.Tx, clientID string, by au
 
 // Get returns the agent with clientID.
 func (s *Store) Get(ctx context.Context, clientID string) (Agent, error) {
-	rows, err := s.query(ctx, `WHERE client_id = ?`, clientID)
+	rows, err := s.query(ctx, `WHERE a.client_id = ?`, clientID)
 	if err != nil {
 		return Agent{}, err
 	}
@@ -195,15 +202,27 @@ func (s *Store) Get(ctx context.Context, clientID string) (Agent, error) {
 	return rows[0], nil
 }
 
-// List returns all agents in registration order.
+// List returns all agents in registration order, removed ones included; agents whose
+// data was deleted after their removal (tombstones) are left out.
 func (s *Store) List(ctx context.Context) ([]Agent, error) {
 	return s.query(ctx, ``)
 }
 
+// validToken is the condition on tokens t that are still valid at the time ?: an access
+// token, or a refresh token not used yet, neither revoked nor expired.
+const validToken = `t.revoked_at IS NULL AND t.expires_at > ? AND (t.kind = 'access' OR t.used_at IS NULL)`
+
 func (s *Store) query(ctx context.Context, where string, args ...any) ([]Agent, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT client_id, display_name, status, created_at, created_by, oauth_client, client_verified,
-			redirect_uris, coalesce(revoked_at, ''), revoked_by
-		FROM agents `+where+` ORDER BY rowid`, args...)
+	if where == "" {
+		where = `WHERE a.purged_at IS NULL`
+	} else {
+		where += ` AND a.purged_at IS NULL`
+	}
+	args = append([]any{s.clock().Format(timeFormat)}, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT a.client_id, a.display_name, a.status, a.created_at, a.created_by, a.oauth_client,
+			a.client_verified, a.redirect_uris, coalesce(a.revoked_at, ''), a.revoked_by, coalesce(a.removed_at, ''), a.removed_by,
+			EXISTS (SELECT 1 FROM tokens t WHERE t.client_id = a.client_id AND `+validToken+`)
+		FROM agents a `+where+` ORDER BY a.rowid`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("agent: query: %w", err)
 	}
@@ -211,13 +230,14 @@ func (s *Store) query(ctx context.Context, where string, args ...any) ([]Agent, 
 	var agents []Agent
 	for rows.Next() {
 		var a Agent
-		var createdAt, uris, revokedAt string
+		var createdAt, uris, revokedAt, removedAt string
 		if err := rows.Scan(&a.ClientID, &a.DisplayName, &a.Status, &createdAt, &a.CreatedBy, &a.OAuthClient, &a.ClientVerified,
-			&uris, &revokedAt, &a.RevokedBy); err != nil {
+			&uris, &revokedAt, &a.RevokedBy, &removedAt, &a.RemovedBy, &a.Connected); err != nil {
 			return nil, fmt.Errorf("agent: query: %w", err)
 		}
 		a.CreatedAt, _ = time.Parse(timeFormat, createdAt)
 		a.RevokedAt, _ = time.Parse(timeFormat, revokedAt)
+		a.RemovedAt, _ = time.Parse(timeFormat, removedAt)
 		if err := json.Unmarshal([]byte(uris), &a.RedirectURIs); err != nil {
 			return nil, fmt.Errorf("agent: redirect URIs of %s: %w", a.ClientID, err)
 		}

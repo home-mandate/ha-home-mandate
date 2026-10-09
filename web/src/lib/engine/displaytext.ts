@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Text displayed to humans (mandate-spec SPEC-v0 section 3.1 item 8), checked against the
+// Text displayed to humans (SPEC-v0 section 3.1 item 8), checked against the
 // code point list of the specification instead of the Unicode tables of the browser, so
 // that the editor and the server agree.
 

@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
+  import { LeaveGuard } from './lib/app/leave.ts';
   import { BrowserNotifier } from './lib/app/notifier.svelte.ts';
   import type { AppState } from './lib/app/state.svelte.ts';
   import BannerStack from './lib/components/BannerStack.svelte';
@@ -78,9 +79,15 @@
     ),
   );
 
+  // Reloading, closing the tab or leaving the page asks first while any mandate or template
+  // has unsaved changes, kept by its editor also after leaving it (issue #20).
+  const leave = new LeaveGuard(window);
+  $effect(() => leave.set(app.unsaved.size > 0 || app.unsavedTemplates.size > 0));
+
   const timer = setInterval(() => (now = Date.now()), TICK_MS);
   onDestroy(() => {
     clearInterval(timer);
+    leave.set(false);
     app.stop();
   });
 
@@ -106,6 +113,8 @@
   async function focusPage() {
     await tick();
     if (sheet) return;
+    // Arriving to add an agent, the agents page moves the focus to the ways itself once loaded (issue #15).
+    if (route.name === 'agents' && route.add) return;
     const heading = main?.querySelector<HTMLElement>('h1');
     if (!heading) {
       main?.focus();
@@ -232,7 +241,7 @@
   {:else if route.name === 'audit_entry'}
     {#key route.seq}<AuditEntry {app} seq={route.seq} />{/key}
   {:else if route.name === 'agents'}
-    <Agents {app} {now} />
+    <Agents {app} {now} add={route.add === true} />
   {:else if route.name === 'pair'}
     <AgentPair {app} {now} />
   {:else if route.name === 'agent'}
