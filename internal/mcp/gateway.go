@@ -124,6 +124,12 @@ type Config struct {
 	Approvals Approver
 	Logger    *slog.Logger
 	Version   string
+	// TimeZone returns the household's time zone and ServiceUser Home-Mandate's own Home
+	// Assistant user, both read from Home Assistant. While either is unknown (nil or
+	// empty) nothing is decided: time windows would be evaluated in the host's zone, and
+	// approval requests could not leave Home-Mandate's own user out.
+	TimeZone    func() string
+	ServiceUser func() string
 	// TemperatureUnit returns the unit Home Assistant uses for temperatures ("°C" or
 	// "°F"); nil or empty counts as degrees Celsius.
 	TemperatureUnit func() string
@@ -246,9 +252,26 @@ func agentOf(req *sdk.CallToolRequest) (agent.Agent, error) {
 	return a, nil
 }
 
-// available reports whether requests can be decided and executed now.
-func (g *Gateway) available() bool {
-	return g.cfg.HA.Connected() && g.cfg.Catalog.Ready()
+// unavailable tells why requests cannot be decided and executed now, as the error of
+// their audit entry; empty if they can.
+func (g *Gateway) unavailable() string {
+	switch {
+	case !g.cfg.HA.Connected() || !g.cfg.Catalog.Ready():
+		return "ha_unavailable"
+	case known(g.cfg.TimeZone) == "":
+		return "timezone_unknown"
+	case known(g.cfg.ServiceUser) == "":
+		return "service_user_unknown"
+	}
+	return ""
+}
+
+// known returns what value returns; empty without it.
+func known(value func() string) string {
+	if value == nil {
+		return ""
+	}
+	return value()
 }
 
 // clockWrong reports whether the clock lies behind the newest audit entry: validity
@@ -357,7 +380,7 @@ func (g *Gateway) listSnapshot(ctx context.Context, req *sdk.CallToolRequest) (*
 	if g.stopped(ctx) {
 		return nil, errors.New(codeDenied + ": emergency_stop")
 	}
-	if !g.available() || g.clockWrong(ctx) {
+	if g.unavailable() != "" || g.clockWrong(ctx) {
 		return nil, errors.New(codeUnavailable)
 	}
 	snap, err := g.cfg.PDP.Snapshot(ctx, a.ClientID)
@@ -519,9 +542,9 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop})
 		return pdp.Decision{}, errors.New(codeDenied + ": emergency_stop")
 	}
-	if !g.available() {
+	if code := g.unavailable(); code != "" {
 		d := pdp.Decision{Time: g.cfg.Now(), Resource: evaluator.Resource{EntityID: entityID}, Action: action}
-		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusFailed, Error: "ha_unavailable"})
+		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusFailed, Error: code})
 		return pdp.Decision{}, errors.New(codeUnavailable)
 	}
 	if g.clockWrong(ctx) {

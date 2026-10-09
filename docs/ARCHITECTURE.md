@@ -79,7 +79,14 @@ existence in lists or error messages).
 
 1. The agent calls `perform_action(entity_id="lock.front_door", action="unlock")`.
 2. `mcp` checks the token (valid, not revoked, issued for this resource).
-3. The clock is checked against the audit log, then the rate limit, counted per mandate
+3. Availability: Home Assistant connected, the resource directory ready, and the
+   household's time zone (`get_config`) and Home-Mandate's own Home Assistant user
+   (`auth/current_user`) known; otherwise every tool, the lists included, answers
+   `unavailable`. Without the time zone, time windows would be evaluated in the host's
+   zone; without its own user, Home-Mandate could not leave it out of the approvers. Both
+   are read at every connection and, if Home Assistant cannot answer yet, again after 1,
+   2, 4 … seconds (at most every minute) until it does or the connection ends.
+   The clock is checked against the audit log, then the rate limit, counted per mandate
    (SPEC-v0 section 11.2). Exceeded → refusal, logged.
 4. `catalog` resolves the entity exactly as Home Assistant spells it: category `lock`, area
    `hallway`, and whether the household marked it as critical. An entity it does not know

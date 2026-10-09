@@ -151,14 +151,29 @@ type harness struct {
 	approver Approver
 	decider  Decider // replaces pdp when set
 
-	mu sync.Mutex
-	tz string
+	mu   sync.Mutex
+	tz   string
+	self string // Home-Mandate's own Home Assistant user
 }
 
 func (h *harness) timeZone() string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.tz
+}
+
+func (h *harness) serviceUser() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.self
+}
+
+// setHousehold sets what Home Assistant's configuration told: the time zone and
+// Home-Mandate's own user.
+func (h *harness) setHousehold(tz, self string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.tz, h.self = tz, self
 }
 
 // newHarness runs the gateway on real stores with the voice assistant mandate of
@@ -187,7 +202,7 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 		t.Fatal(err)
 	}
 
-	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin", clock: &fakeClock{},
+	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin", self: "hm-service-user", clock: &fakeClock{},
 		ha: &fakeHA{connected: true},
 		catalog: &fakeCatalog{ready: true, devices: map[string]catalog.Device{
 			"light.kitchen":            {EntityID: "light.kitchen", Category: "light", Area: "kitchen", State: "off", Attributes: map[string]any{"friendly_name": "Kitchen"}},
@@ -208,7 +223,8 @@ func (h *harness) serve(auditor Auditor) string {
 	if h.decider != nil {
 		decider = h.decider
 	}
-	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test"})
+	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test",
+		TimeZone: h.timeZone, ServiceUser: h.serviceUser})
 	g.cfg.Clock = h.clock
 	srv := httptest.NewServer(g.Handler())
 	h.t.Cleanup(srv.Close)
@@ -482,14 +498,28 @@ func TestCatalogNotLoadedOrTimeZoneUnknown(t *testing.T) {
 		t.Errorf("catalog not ready: %q", errText)
 	}
 	h.catalog.setReady(true)
-	h.mu.Lock()
-	h.tz = ""
-	h.mu.Unlock()
-	if _, errText := h.call(s, "perform_action", map[string]any{"entity_id": "light.kitchen", "action": "turn_on"}); errText != "unavailable" {
-		t.Errorf("time zone unknown: %q", errText)
+	for _, tc := range []struct{ tz, self, code string }{
+		{"", "hm-service-user", "timezone_unknown"},
+		{"Europe/Berlin", "", "service_user_unknown"},
+	} {
+		h.setHousehold(tc.tz, tc.self)
+		// Lists too: time windows would be evaluated in the host's zone.
+		for tool, args := range map[string]map[string]any{
+			"perform_action":      {"entity_id": "light.kitchen", "action": "turn_on"},
+			"get_state":           {"entity_id": "light.kitchen"},
+			"list_devices":        nil,
+			"list_my_permissions": nil,
+		} {
+			if _, errText := h.call(s, tool, args); errText != "unavailable" {
+				t.Errorf("%s unknown, %s: %q", tc.code, tool, errText)
+			}
+		}
+		if e := h.lastEntry(); path(e, "result", "error") != tc.code {
+			t.Errorf("audit entry = %v", e)
+		}
 	}
-	if e := h.lastEntry(); path(e, "result", "error") != "timezone_unknown" {
-		t.Errorf("audit entry = %v", e)
+	if len(h.ha.recorded()) != 0 {
+		t.Error("executed without the household's configuration")
 	}
 }
 

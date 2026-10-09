@@ -36,6 +36,22 @@ type fakeHomeAssistant struct {
 	mu sync.Mutex
 	// calls are the service calls received, as domain.service.
 	calls []string
+	// failConfig and failUser make that many get_config and auth/current_user commands
+	// fail; negative: all of them.
+	failConfig, failUser int
+}
+
+// fails tells whether the command with *remaining failures left fails now.
+func (f *fakeHomeAssistant) fails(remaining *int) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if *remaining == 0 {
+		return false
+	}
+	if *remaining > 0 {
+		*remaining--
+	}
+	return true
 }
 
 func (f *fakeHomeAssistant) serve(w http.ResponseWriter, r *http.Request) {
@@ -68,9 +84,17 @@ func (f *fakeHomeAssistant) serve(w http.ResponseWriter, r *http.Request) {
 			write(map[string]any{"id": id, "type": "pong"})
 			continue
 		case "get_config":
+			if f.fails(&f.failConfig) {
+				write(map[string]any{"id": id, "type": "result", "success": false, "error": map[string]any{"code": "unknown_error", "message": "starting"}})
+				continue
+			}
 			result = map[string]any{"version": "2026.9.4", "time_zone": "Europe/Berlin", "language": "de",
 				"unit_system": map[string]string{"temperature": "°C", "length": "km"}}
 		case "auth/current_user":
+			if f.fails(&f.failUser) {
+				write(map[string]any{"id": id, "type": "result", "success": false, "error": map[string]any{"code": "unknown_error", "message": "starting"}})
+				continue
+			}
 			result = map[string]any{"id": "5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b", "name": "Home-Mandate", "is_admin": true}
 		case "config/auth/list":
 			result = []map[string]any{{"id": ownerID, "name": "Markus", "is_owner": true, "is_active": true, "group_ids": []string{"system-admin"}},
@@ -440,5 +464,78 @@ func TestRunWaitsForBackgroundAnnouncements(t *testing.T) {
 	<-done
 	if !finished.Load() {
 		t.Error("announcement did not finish")
+	}
+}
+
+// startGateway runs a gateway against fake until the test ends; stop ends it early and
+// returns run's result.
+func startGateway(t *testing.T, fake *fakeHomeAssistant) (g *gateway, stop func() int) {
+	t.Helper()
+	haSrv := httptest.NewServer(http.HandlerFunc(fake.serve))
+	t.Cleanup(haSrv.Close)
+	c := newCLI(t)
+	s, err := openStore(context.Background(), c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.store.Close() })
+	s.cfg = config.Config{Mode: config.ModeContainer, HAURL: "ws" + strings.TrimPrefix(haSrv.URL, "http") + "/api/websocket", HAToken: "t",
+		MCPAddr: "127.0.0.1:0", ApprovalTimeout: 2 * time.Minute}
+	ctx, cancel := context.WithCancel(context.Background())
+	g, err = newGateway(ctx, s, slog.New(slog.DiscardHandler))
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	g.retryMin = 5 * time.Millisecond
+	done := make(chan int, 1)
+	go func() { done <- g.run(ctx) }()
+	var once sync.Once
+	code := 0
+	stop = func() int {
+		once.Do(func() {
+			cancel()
+			code = <-done
+		})
+		return code
+	}
+	t.Cleanup(func() { stop() })
+	return g, stop
+}
+
+// Nothing is decided without the household's time zone and Home-Mandate's own user: if
+// Home Assistant cannot answer at first, they are asked for again until it does.
+func TestConfigurationIsReadUntilHomeAssistantAnswers(t *testing.T) {
+	g, _ := startGateway(t, &fakeHomeAssistant{t: t, failConfig: 3, failUser: 3})
+	deadline := time.Now().Add(10 * time.Second)
+	for g.householdTimeZone() != "Europe/Berlin" || g.serviceUser() != "5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b" {
+		if time.Now().After(deadline) {
+			t.Fatalf("status %+v", g.status())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// The retries end with the connection: a stop does not wait for Home Assistant.
+func TestConfigurationRetriesEndWithTheConnection(t *testing.T) {
+	fake := &fakeHomeAssistant{t: t, failConfig: -1}
+	g, stop := startGateway(t, fake)
+	deadline := time.Now().Add(10 * time.Second)
+	for !g.status().HAConnected {
+		if time.Now().After(deadline) {
+			t.Fatal("not connected")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond) // a few attempts
+	stopped := make(chan int, 1)
+	go func() { stopped <- stop() }()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not return while the configuration was retried")
+	}
+	if g.householdTimeZone() != "" || g.serviceUser() != "" {
+		t.Errorf("status %+v", g.status())
 	}
 }

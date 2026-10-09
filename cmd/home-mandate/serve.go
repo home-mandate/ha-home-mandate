@@ -42,6 +42,10 @@ const (
 	minWriteTimeout = 60 * time.Second
 	approvalSlack   = 30 * time.Second
 	bellCleanup     = 10 * time.Second
+	// configRetryMin and configRetryMax bound the wait between attempts to read Home
+	// Assistant's configuration and Home-Mandate's own user; nothing is decided without.
+	configRetryMin = time.Second
+	configRetryMax = time.Minute
 )
 
 // registryEvents keep the catalog current (ARCHITECTURE section 11.2).
@@ -129,9 +133,10 @@ type gateway struct {
 	client   *ha.Client
 	catalog  *catalog.Catalog
 	api      *api.Server
-	timeZone atomic.Value // string; empty until Home Assistant answered get_config
-	language atomic.Value // string; household language from get_config
-	self     atomic.Value // string; Home-Mandate's own Home Assistant user
+	timeZone atomic.Value  // string; empty until Home Assistant answered get_config
+	language atomic.Value  // string; household language from get_config
+	self     atomic.Value  // string; Home-Mandate's own Home Assistant user
+	retryMin time.Duration // first wait before the configuration is read again
 
 	mu        sync.Mutex
 	haSince   time.Time // when the connection was made or lost
@@ -154,7 +159,7 @@ type gateway struct {
 }
 
 func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, error) {
-	g := &gateway{state: s, logger: logger, haSince: time.Now()}
+	g := &gateway{state: s, logger: logger, haSince: time.Now(), retryMin: configRetryMin}
 	g.timeZone.Store("")
 	g.language.Store("")
 	g.self.Store("")
@@ -231,8 +236,8 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		resource, metadata = s.cfg.PublicURL+mcp.Path, s.cfg.PublicURL+"/.well-known/oauth-protected-resource"+mcp.Path
 	}
 	gw := mcp.New(mcp.Config{Resource: resource, ResourceMetadataURL: metadata, Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
-		TemperatureUnit: g.temperatureUnit,
-		Limiter:         restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, Clock: s.log, Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
+		TemperatureUnit: g.temperatureUnit, TimeZone: g.householdTimeZone, ServiceUser: g.serviceUser,
+		Limiter: restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, Clock: s.log, Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
 	as, handler, err := withOAuth(s, gw.Handler(), http.HandlerFunc(g.serveDirect), resource, logger)
 	if err != nil {
 		return nil, err
@@ -500,7 +505,10 @@ func (g *gateway) onDisconnect() {
 	}
 }
 
-// onConnect reloads what may have changed while disconnected.
+// onConnect reloads what may have changed while disconnected. The configuration and
+// Home-Mandate's own user are read until Home Assistant answers or the connection ends
+// (ctx): nothing is decided without them. The client waits for onConnect before it
+// reconnects or Run returns, so no attempt outlives the connection.
 func (g *gateway) onConnect(ctx context.Context) {
 	g.mu.Lock()
 	g.haSince = time.Now()
@@ -511,22 +519,58 @@ func (g *gateway) onConnect(ctx context.Context) {
 			g.background.Go(g.api.SystemChanged)
 		}
 	}()
+	if !g.retry(ctx, "cannot read the Home Assistant configuration", g.readConfig) ||
+		!g.retry(ctx, "cannot read Home-Mandate's own Home Assistant user", g.readSelf) {
+		return
+	}
+	g.bellClean.Do(func() { go g.clearBells() })
+}
+
+// readConfig takes over the household's time zone, language, units and Home Assistant's
+// version.
+func (g *gateway) readConfig(ctx context.Context) error {
 	cfg, err := g.client.GetConfig(ctx)
 	if err != nil {
-		g.logger.Warn("cannot read the Home Assistant configuration", "error", err)
-		return
+		return err
 	}
 	g.timeZone.Store(cfg.TimeZone)
 	g.language.Store(cfg.Language)
 	g.mu.Lock()
 	g.haVersion, g.units = cfg.Version, maps.Clone(cfg.UnitSystem)
 	g.mu.Unlock()
-	if u, err := g.client.CurrentUser(ctx); err != nil {
-		g.logger.Warn("cannot read Home-Mandate's own Home Assistant user", "error", err)
-	} else {
-		g.self.Store(u.ID)
+	return nil
+}
+
+// readSelf takes over Home-Mandate's own Home Assistant user.
+func (g *gateway) readSelf(ctx context.Context) error {
+	u, err := g.client.CurrentUser(ctx)
+	if err != nil {
+		return err
 	}
-	g.bellClean.Do(func() { go g.clearBells() })
+	g.self.Store(u.ID)
+	return nil
+}
+
+// retry runs read until it succeeds, waiting twice as long after every failure from
+// retryMin up to configRetryMax; false once ctx ends.
+func (g *gateway) retry(ctx context.Context, failure string, read func(context.Context) error) bool {
+	delay := g.retryMin
+	for {
+		err := read(ctx)
+		if err == nil {
+			return true
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+		g.logger.Warn(failure+", retrying", "error", err, "retry_in", delay)
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(delay):
+		}
+		delay = min(2*delay, configRetryMax)
+	}
 }
 
 // clearBells removes hints of approval requests a crash left in Home Assistant's

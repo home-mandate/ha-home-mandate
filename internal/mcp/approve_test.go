@@ -473,3 +473,30 @@ func TestAskRequestsCountTowardsTheRateLimit(t *testing.T) {
 		t.Errorf("approvers asked %d times, want 2", len(asked))
 	}
 }
+
+// Home-Mandate's own user must be known before approvers are asked: it never approves.
+func TestNoApprovalRequestWithoutTheServiceUser(t *testing.T) {
+	f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: answeredAt}}
+	h := approvalHarness(t, f)
+	h.setHousehold("Europe/Berlin", "")
+	if errText := unlock(h, nil); errText != "unavailable" {
+		t.Errorf("perform_action = %q", errText)
+	}
+	if len(f.requests()) != 0 || len(h.ha.recorded()) != 0 {
+		t.Error("asked or executed without the service user")
+	}
+}
+
+// What changes while a human decides is checked again, the household's configuration
+// too (lost with the connection).
+func TestConfigurationLostWhileTheHumanDecides(t *testing.T) {
+	f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: answeredAt}}
+	h := approvalHarness(t, f)
+	f.during = func() { h.setHousehold("", "hm-service-user") }
+	if errText := unlock(h, nil); errText != "unavailable" {
+		t.Errorf("perform_action = %q", errText)
+	}
+	if e := h.lastEntry(); path(e, "result", "error") != "timezone_unknown" || len(h.ha.recorded()) != 0 {
+		t.Errorf("audit entry = %v", e)
+	}
+}

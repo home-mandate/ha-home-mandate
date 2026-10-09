@@ -107,7 +107,7 @@ func (g *Gateway) cancelled(ctx context.Context, a agent.Agent, d pdp.Decision, 
 
 // afterApproval checks again what may have changed while the human decided: the
 // emergency stop, the agent's token (revoked, e.g. after refresh token reuse), the
-// mandate (a revoked agent's mandate denies) and the connection.
+// mandate (a revoked agent's mandate denies) and the availability.
 //
 // A confirmation is valid until expires, its timeout after it was given (SPEC-v0 section
 // 11.1 item 5): it is checked right before the call, and the call to Home Assistant ends
@@ -134,8 +134,8 @@ func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate}, appr)
 		return nil, actionOut{}, errors.New(codeDenied + ": mandate_changed")
 	}
-	if !g.available() {
-		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: "ha_unavailable"}, appr)
+	if code := g.unavailable(); code != "" {
+		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: code}, appr)
 		return nil, actionOut{}, errors.New(codeUnavailable)
 	}
 	if g.clockWrong(ctx) {
