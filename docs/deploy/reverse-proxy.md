@@ -91,7 +91,7 @@ services:
         ipv4_address: 172.31.250.2
 
   home-mandate:
-    user: "65532:65532" # without root; owns its data directory (README, "Without root")
+    user: "65532:65532" # without root; owns its data directory (docs/install-container.md)
     networks: [proxy]
     environment:
       HM_PROXY: 172.31.250.2
@@ -270,14 +270,17 @@ In the sidebar of Home Assistant the UI is already reachable wherever Home Assis
 through Ingress. For agents from outside, set a certificate from `/ssl` and `public_url`
 (the proxy's address without a port, `https://hm.example.org`) in the app's options and
 pass TLS through as in way B; `HM_PROXY` is not available in
-app mode yet.
+app mode yet, so a proxy that ends TLS (such as the NGINX SSL proxy app) cannot be used
+for Home-Mandate. See [install-ha-os.md](../install-ha-os.md#reaching-home-mandate-from-outside).
 
 ## Check
 
 1. `https://hm.example.org/.well-known/oauth-authorization-server` shows
    `"issuer": "https://hm.example.org"`.
-2. `https://hm.example.org/ui/` sends you to Home Assistant's sign-in and back.
-3. The UI shows `https://hm.example.org/mcp` as the address for agents.
+2. Container mode: `https://hm.example.org/ui/` sends you to Home Assistant's sign-in and
+   back.
+3. The UI shows `https://hm.example.org/mcp` as the address for agents (Settings → MCP
+   endpoint).
 4. Home-Mandate's port answers nobody but the proxy (way A: empty 403 from any other
    machine).
 
@@ -287,4 +290,4 @@ Everything on `hm.example.org`: the MCP endpoint (only with an access token), th
 endpoints (only a Home Assistant administrator, signed in through Home Assistant, admits
 an agent), the UI (only Home Assistant administrators, signed in through Home Assistant). The proxy sees all
 traffic in plaintext, access tokens included; run it on a machine you trust. See
-`SECURITY.md` for the threat model.
+[SECURITY.md](../../SECURITY.md) for the threat model.

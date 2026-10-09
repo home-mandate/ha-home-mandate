@@ -26,7 +26,7 @@ No agent can read or change its own permissions, or "talk itself into" more.
  │               ▼                                                                      │
  │            ha client ──► Home Assistant (WebSocket API)                              │
  │                                                                                      │
- │  audit (hash-chained) · ratelimit · ui (Ingress or own port)                         │
+ │  audit (hash-chained) · ratelimit · ui (Ingress, or direct mode on the MCP port)     │
  └──────────────────────────────────────────────────────────────────────────────────────┘
         │
         ▼
@@ -414,7 +414,7 @@ runs the gateway with a token and checks that no file of the data directory cont
 
 ## 11. Decisions (resolved 2026-10-01)
 
-Decided by Markus on 2026-10-01.
+Decided by the maintainer on 2026-10-01.
 
 1. **TLS for the MCP endpoint on the LAN.** Many clients reject self-signed certificates.
    **Decision: as proposed.** Use an existing certificate from `/ssl` (common on HA OS
@@ -464,7 +464,7 @@ Decided by Markus on 2026-10-01.
    Result: everything except receiving the answers to approval requests works without admin
    rights.
 
-   **Decision (Markus, 2026-10-01): admin user.** The sole reason is the subscription to
+   **Decision (maintainer, 2026-10-01): admin user.** The sole reason is the subscription to
    `mobile_app_notification_action` for the approval answers. The alternative, an HA
    automation forwarding answers to a webhook, was rejected: the proof of who approved a door
    (`context.user_id`) must come directly from Home Assistant and not depend on an automation
@@ -472,7 +472,7 @@ Decided by Markus on 2026-10-01.
 
    To keep the need-to-know principle anyway:
    - A dedicated HA user only for Home-Mandate (e.g. "Home-Mandate"), not a human's user;
-     sign-in via long-lived token, stored encrypted (section 9).
+     sign-in via long-lived token, which is never stored (section 9).
    - `internal/ha` sends only the WebSocket commands from the table above (fixed allowlist in
      the code); any other command is rejected before it is sent. A negative test checks this,
      and the table here is the source of the list.

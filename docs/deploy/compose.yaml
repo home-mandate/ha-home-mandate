@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Example: Home-Mandate in container mode next to Home Assistant Container, with the UI in
-# direct mode (README, "Running in container mode"). Replace every example value; the
-# names and addresses below (hm.example.org, 192.0.2.10) are placeholders.
+# direct mode (docs/install-container.md). Replace every example value; the names and
+# addresses below (hm.example.org, 192.0.2.10) are placeholders.
 #
 # Assumptions of this example:
 # - Home Assistant runs on the same host in the host network (network_mode: host), so
@@ -14,15 +14,17 @@
 #   the first start, and when upgrading from a container that ran as root:
 #     mkdir -p data && sudo chown -R 65532:65532 data && sudo chmod 700 data
 #     sudo chown 65532:65532 ha-token certs/privkey.pem
-#   The key and the token must stay readable by that user after a renewal (README,
-#   "Running in container mode", "Without root").
+#   The key and the token must stay readable by that user after a renewal
+#   (docs/install-container.md, "Run without root").
 #
 # Behind a reverse proxy (Traefik, nginx, Caddy) for access from the internet, see
 # docs/deploy/reverse-proxy.md.
 
 services:
   home-mandate:
-    image: home-mandate:latest # built with `make image`, or a released image
+    # A released image (signed, see docs/install-container.md, "Updates"), or
+    # home-mandate:dev built with `make image`.
+    image: ghcr.io/home-mandate/ha-home-mandate:0.1.0-rc.1
     container_name: home-mandate
     restart: unless-stopped
     user: "65532:65532" # owns ./data; port 8765 needs no privilege

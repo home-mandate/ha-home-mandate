@@ -10,4 +10,4 @@ first, and what it may never do. Every decision is recorded in a tamper-evident 
 
 Agents connect over MCP with OAuth; Home-Mandate never hands them a Home Assistant token.
 
-This is an experimental first version. See the Documentation tab before you install it.
+This is an experimental release candidate. See the Documentation tab before you install it.

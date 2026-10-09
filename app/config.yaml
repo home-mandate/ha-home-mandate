@@ -2,7 +2,7 @@
 # Home Assistant app (formerly "add-on"). Reference:
 # https://developers.home-assistant.io/docs/apps/configuration/
 name: Home-Mandate
-version: "0.1.0"
+version: "0.1.0-rc.1"
 slug: home_mandate
 description: Mandates for AI agents in Home Assistant – allow, ask, deny, log.
 url: https://github.com/home-mandate/ha-home-mandate
