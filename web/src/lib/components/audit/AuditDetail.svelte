@@ -105,6 +105,10 @@
     {/if}
   {/if}
   {#if entry.mandate}
+    {#if entry.mandate.name}
+      <dt>{m.audit_field_mandate()}</dt>
+      <dd><bdi>{cleanUntrusted(entry.mandate.name)}</bdi></dd>
+    {/if}
     <dt>{m.audit_mandate_version()}</dt>
     <dd>
       <a href={href({ name: 'mandate_versions', id: entry.mandate.id })}

@@ -7,6 +7,7 @@
 import { connectEvents, eventsUrl, type EventSocket, type EventsConnection, type EventsState } from './events.ts';
 import type {
   Agent,
+  AgentRemove,
   ApiErrorBody,
   ApiErrorCode,
   Rename,
@@ -32,6 +33,8 @@ import type {
   PairingApprove,
   PairingCandidate,
   PairingDecision,
+  PairingReconnect,
+  RemovedCount,
   ServerEvent,
   Session,
   SystemStatus,
@@ -59,10 +62,16 @@ export interface ApiClient {
 
   agents(): Promise<Agent[]>;
   revokeAgent(clientId: string): Promise<Agent>;
+  /** Removes a revoked agent (with revoke: revokes it first), with mandates its mandates too (#21). */
+  removeAgent(remove: AgentRemove): Promise<Agent>;
+  /** Removes every revoked agent with its mandates and every other revoked mandate (#21). */
+  removeRevoked(): Promise<RemovedCount>;
   pairingCheck(code: string): Promise<PairingCandidate>;
   /** Admits the agent; answers with it (and its new mandate). */
   pairingApprove(approve: PairingApprove): Promise<Agent>;
   pairingDeny(decision: PairingDecision): Promise<void>;
+  /** Gives an existing agent the check offered new tokens instead of admitting a new one (#22). */
+  pairingReconnect(reconnect: PairingReconnect): Promise<Agent>;
 
   devices(): Promise<DeviceCatalog>;
   /** Marks a device as critical or removes the mark. */
@@ -82,6 +91,8 @@ export interface ApiClient {
   putMandate(id: string, update: MandateUpdate): Promise<MandateDetail>;
   applyTemplate(id: string, apply: ApplyTemplate): Promise<ApplyTemplateResult>;
   revokeMandate(id: string): Promise<MandateSummary>;
+  /** Removes a revoked mandate from the lists (#21). */
+  removeMandate(id: string): Promise<MandateSummary>;
 
   templates(): Promise<TemplateSummary[]>;
   template(name: string): Promise<Template>;
@@ -346,9 +357,12 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
 
     agents: () => get('agents'),
     revokeAgent: (clientId) => request('POST', 'agents/revoke', { client_id: clientId }),
+    removeAgent: (remove) => request('POST', 'agents/remove', remove),
+    removeRevoked: () => request('POST', 'revoked/remove'),
     pairingCheck: (code) => request('POST', 'pairing/check', { code }),
     pairingApprove: (approve) => request('POST', 'pairing/approve', approve),
     pairingDeny: (decision) => request('POST', 'pairing/deny', decision),
+    pairingReconnect: (reconnect) => request('POST', 'pairing/reconnect', reconnect),
 
     devices: () => get('devices'),
     putDeviceCritical: (entityId, critical) => request('PUT', 'devices/critical', { entity_id: entityId, critical }),
@@ -364,6 +378,7 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
     putMandate: async (id, update) => request('PUT', `mandates/${segment(id)}`, update),
     applyTemplate: async (id, apply) => request('POST', `mandates/${segment(id)}/apply-template`, apply),
     revokeMandate: async (id) => request('POST', `mandates/${segment(id)}/revoke`),
+    removeMandate: async (id) => request('POST', `mandates/${segment(id)}/remove`),
 
     templates: () => get('templates'),
     template: async (name) => get(`templates/${segment(name)}`),

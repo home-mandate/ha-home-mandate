@@ -107,5 +107,15 @@
   "category_sensor": "Sensoren",
   "category_scene": "Szenen",
   "category_script": "Skripte",
-  "category_other": "Sonstiges"
+  "category_other": "Sonstiges",
+  "page_admit_new": "Als neuen Agenten aufnehmen",
+  "page_reconnect_title": "Bestehenden Agenten wieder verbinden",
+  "page_reconnect_intro": "Diese Agenten haben sich schon einmal mit demselben Client angemeldet und haben seitdem keinen Zugang mehr (etwa nach einem Not-Aus). Ist es einer davon, verbinde ihn wieder: Er behält seinen Eintrag, sein Mandat und seinen Verlauf und bekommt neuen Zugang. Mehrere Assistenten können denselben Client nutzen – wähle nur, wenn du sicher bist, dass es derselbe ist. Im Zweifel nimm oben einen neuen Agenten auf.",
+  "page_reconnect_choose": "Wieder zu verbindender Agent",
+  "page_reconnect_details": "Mandat: {mandate} · aufgenommen am {admitted}",
+  "page_reconnect_no_mandate": "kein aktives Mandat",
+  "page_reconnect_submit": "Wieder verbinden",
+  "page_reconnect_invalid": "Wähle einen der aufgeführten Agenten zum Wiederverbinden. Die Liste kann sich geändert haben: Sie zeigt nur Agenten dieses Clients ohne Zugang.",
+  "page_reconnected": "Der Agent ist wieder mit seinem bestehenden Eintrag verbunden. Du kannst dieses Fenster schließen.",
+  "page_reconnect_unverified": "Diese Anfrage kommt von {address}. Sie nutzt einen Kopplungscode, daher passen diese Agenten nur über den Namen, den sich der Agent selbst gegeben hat – den kann jeder Agent angeben. Verbinde nur wieder, wenn du sicher bist, dass die Anfrage wirklich von diesem Agenten kommt."
 }

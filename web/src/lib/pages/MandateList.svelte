@@ -2,7 +2,8 @@
 <!--
   Mandates (design README 6.4): templates to start from and the list of mandates, a table
   on desktop and cards on mobile. A load error says that existing mandates keep applying;
-  it must never look as if protection were off.
+  it must never look as if protection were off. Removed mandates (#21) are hidden unless
+  "Show removed" is on; "Remove all revoked" removes every revoked mandate (and agent).
 -->
 <script lang="ts">
   import { onMount, tick } from 'svelte';
@@ -16,6 +17,8 @@
   import Icon from '../components/Icon.svelte';
   import MandateStatus from '../components/mandate/MandateStatus.svelte';
   import NewMandateDialog from '../components/mandate/NewMandateDialog.svelte';
+  import RemoveRevoked from '../components/RemoveRevoked.svelte';
+  import Switch from '../components/Switch.svelte';
   import RenamesNotice from '../components/mandate/RenamesNotice.svelte';
   import TemplateCard from '../components/mandate/TemplateCard.svelte';
   import { formatDate } from '../format.ts';
@@ -67,6 +70,8 @@
   });
 
   let dialog = $state(false);
+  /** Removed mandates are shown too (read-only). */
+  let showRemoved = $state(false);
   let template = $state<string | null>(null);
 
   const reload = () => void list.run();
@@ -84,7 +89,10 @@
 
   const ctx = $derived({ locale: getLocale(), timeZone: app.session?.household.time_zone ?? 'UTC' });
   const serverNow = $derived(now - app.offsetMs);
-  const data = $derived(list.data);
+  const loaded = $derived(list.data);
+  const removedCount = $derived(loaded?.mandates.filter((x) => x.removed_at !== null).length ?? 0);
+  const revokedListed = $derived(loaded?.mandates.some((x) => x.status === 'revoked' && x.removed_at === null) ?? false);
+  const data = $derived(loaded && { ...loaded, mandates: loaded.mandates.filter((x) => showRemoved || x.removed_at === null) });
   const eligible = $derived(data?.agents.filter((a) => a.status === 'active' && a.mandate?.status !== 'active') ?? []);
 
   /** The last moment the mandate applies, as a date in the household time zone. */
@@ -138,6 +146,15 @@
     <EmptyState icon="logo" title={m.mandates_empty_title()} body={m.mandates_empty_body()} />
   {/if}
 
+  {#if removedCount > 0 || revokedListed}
+    <div class="tools">
+      {#if removedCount > 0}
+        <Switch checked={showRemoved} label={m.show_removed({ count: removedCount })} onchange={(on) => (showRemoved = on)} />
+      {/if}
+      {#if revokedListed}<RemoveRevoked api={app.api} onremoved={reload} />{/if}
+    </div>
+  {/if}
+
   {#if data.templates.length > 0}
     <section class="templates" aria-labelledby="{id}-templates">
       <div class="templates-head">
@@ -177,6 +194,7 @@
               <td class="muted">{until(mandate)}</td>
               <td>
                 <MandateStatus status={effectiveStatus(mandate, serverNow)} />
+                {#if mandate.removed_at !== null}<span class="removed">{m.status_removed()}</span>{/if}
                 {#if mandate.stale_references.length > 0}
                   <span class="stale"><Icon name="warning" /><span>{m.mandates_stale({ count: mandate.stale_references.length })}</span></span>
                 {/if}
@@ -196,6 +214,7 @@
             {#if mandate.rules_from}<span class="origin">{rulesFromText(mandate.rules_from, data.templates, ctx)}</span>{/if}
             <span class="facts">
               <MandateStatus status={effectiveStatus(mandate, serverNow)} compact />
+              {#if mandate.removed_at !== null}<span>{m.status_removed()}</span>{/if}
               <span>{m.mandates_rules_count({ count: mandate.rule_count })} · {m.mandates_valid_until_date({ date: until(mandate) })}</span>
             </span>
             {#if mandate.stale_references.length > 0}
@@ -216,6 +235,19 @@
     margin-block-start: var(--hm-space-1);
     font-size: var(--hm-font-size-sm);
     font-weight: var(--hm-font-weight-regular);
+    color: var(--hm-color-text-muted);
+  }
+  .tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--hm-space-3) var(--hm-space-4);
+  }
+  .removed {
+    display: block;
+    margin-block-start: var(--hm-space-1);
+    font-size: var(--hm-font-size-sm);
     color: var(--hm-color-text-muted);
   }
   .stale {

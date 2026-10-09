@@ -486,3 +486,41 @@ func TestAppHomeAssistantFromTheSupervisor(t *testing.T) {
 		})
 	}
 }
+
+// After the log retention, the retention removes revoked agents no entry refers to any
+// more, as the system, and logs what it did (needs a specification with agent.removed,
+// v0.1.0-alpha.3).
+func TestRetentionRemovesRevokedAgents(t *testing.T) {
+	c := newCLI(t)
+	clientID := c.register("A")
+	c.mustRun("", "agent", "revoke", clientID)
+	s, err := openStore(context.Background(), c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.store.Close()
+	var out bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&out, nil))
+	expireRemovals(context.Background(), s, logger)
+	if out.Len() != 0 {
+		t.Errorf("entries refer to the agent, nothing removed: %s", out.String())
+	}
+	if _, err := s.log.Append(context.Background(), audit.Entry{Event: audit.EventEmergencyStopReleased, Actor: &localAdmin}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.log.Truncate(context.Background(), time.Now().Add(time.Hour), audit.Actor{Kind: audit.ActorSystem, ID: "retention"}); err != nil {
+		t.Fatal(err)
+	}
+	expireRemovals(context.Background(), s, logger)
+	if !strings.Contains(out.String(), `"msg":"revoked agents and mandates removed","agents":1,"mandates":0`) {
+		t.Errorf("log = %s", out.String())
+	}
+	if a, err := s.agents.Get(context.Background(), clientID); err != nil || a.RemovedBy != "retention" {
+		t.Errorf("agent = %+v, %v", a, err)
+	}
+	_ = s.store.Close()
+	expireRemovals(context.Background(), s, logger)
+	if !strings.Contains(out.String(), `"level":"ERROR","msg":"removing revoked agents and mandates failed"`) {
+		t.Errorf("log = %s", out.String())
+	}
+}

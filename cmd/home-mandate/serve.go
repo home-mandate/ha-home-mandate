@@ -669,10 +669,28 @@ func expireLog(ctx context.Context, log *audit.Log, logger *slog.Logger) {
 	}
 }
 
-// retention truncates the audit log and deletes expired tokens, at start and then daily.
+// expireRemovals runs after the log retention: it deletes the data of removed agents and
+// mandates no audit entry refers to any more and removes, as the system, revoked ones no
+// entry refers to (removal.Service.Expire).
+func expireRemovals(ctx context.Context, s *state, logger *slog.Logger) {
+	res, err := s.removal().Expire(ctx)
+	if n := len(res.Removed.Agents) + len(res.Removed.Mandates); n > 0 {
+		logger.Info("revoked agents and mandates removed", "agents", len(res.Removed.Agents), "mandates", len(res.Removed.Mandates))
+	}
+	if n := len(res.Purged.Agents) + len(res.Purged.Mandates); n > 0 {
+		logger.Info("data of removed agents and mandates deleted", "agents", len(res.Purged.Agents), "mandates", len(res.Purged.Mandates))
+	}
+	if err != nil {
+		logger.Error("removing revoked agents and mandates failed", "error", err)
+	}
+}
+
+// retention truncates the audit log, removes what no entry refers to any more and
+// deletes expired tokens, at start and then daily.
 func (g *gateway) retention(ctx context.Context) {
 	for {
 		expireLog(ctx, g.state.log, g.logger)
+		expireRemovals(ctx, g.state, g.logger)
 		if n, err := g.state.agents.PurgeExpiredTokens(ctx, time.Now()); err != nil {
 			g.logger.Error("deleting expired tokens failed", "error", err)
 		} else if n > 0 {

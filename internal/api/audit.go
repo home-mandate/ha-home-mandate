@@ -23,7 +23,8 @@ const (
 
 var (
 	auditEvents = []string{audit.EventDecision, audit.EventMandateCreated, audit.EventMandateUpdated, audit.EventMandateRevoked,
-		audit.EventAgentRegistered, audit.EventAgentRevoked, audit.EventEmergencyStopActivated, audit.EventEmergencyStopReleased,
+		audit.EventMandateRemoved, audit.EventAgentRegistered, audit.EventAgentRevoked, audit.EventAgentReconnected,
+		audit.EventAgentRemoved, audit.EventEmergencyStopActivated, audit.EventEmergencyStopReleased,
 		audit.EventAuthRejected, audit.EventLogTruncated, audit.EventLogCheckpoint, audit.EventDirectoryChanged,
 		audit.EventTemplateChanged, audit.EventApproverChanged}
 	auditDecisions = []string{"allow", "ask", "deny", "default"}
@@ -229,6 +230,10 @@ func (s *Server) presentEntry(ctx context.Context, e audit.Stored, versions *ver
 		digest, _ := m["digest"].(string)
 		if n := versions.number(ctx, id, digest, e.RecordedAt); n > 0 {
 			m["version"] = n
+		}
+		// Also of a removed mandate whose data is deleted (its tombstone keeps the name).
+		if name, err := s.cfg.Mandates.Name(ctx, id); err == nil {
+			m["name"] = name
 		}
 	}
 	return entry, nil

@@ -375,6 +375,75 @@ func TestMandateVersionOriginMigration(t *testing.T) {
 	}
 }
 
+// TestRemovalMigration: existing agents and mandates are not removed; a removed one
+// stays revoked; audit entries are found by the mandate they name.
+func TestRemovalMigration(t *testing.T) {
+	ctx := context.Background()
+	db := openRaw(t)
+	if err := migrate(ctx, db, upTo(t, 14)); err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO agents (client_id, display_name, status, created_at, created_by) VALUES ('hm-client:a', 'A', 'revoked', 't', 'u')`,
+		`INSERT INTO agents (client_id, display_name, status, created_at, created_by) VALUES ('hm-client:b', 'B', 'active', 't', 'u')`,
+		`INSERT INTO mandates (id, client_id, status, current_digest, max_actions_per_hour, created_at, updated_at)
+			VALUES ('m-a', 'hm-client:a', 'revoked', 'sha256:1', 60, 't1', 't2')`,
+		`INSERT INTO mandates (id, client_id, status, current_digest, max_actions_per_hour, created_at, updated_at)
+			VALUES ('m-b', 'hm-client:b', 'active', 'sha256:2', 60, 't1', 't2')`,
+		`INSERT INTO audit_log (seq, recorded_at, event, entry, digest)
+			VALUES (1, 't', 'mandate.revoked', '{"mandate":{"id":"m-a","digest":"sha256:1"}}', 'sha256:e')`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrate(ctx, db, embeddedMigrations()); err != nil {
+		t.Fatal(err)
+	}
+	var removed int
+	if err := db.QueryRow(`SELECT (SELECT count(*) FROM agents WHERE removed_at IS NOT NULL OR purged_at IS NOT NULL OR removed_by <> '')
+		+ (SELECT count(*) FROM mandates WHERE removed_at IS NOT NULL OR purged_at IS NOT NULL OR removed_by <> '')`).Scan(&removed); err != nil {
+		t.Fatal(err)
+	}
+	if removed != 0 {
+		t.Errorf("%d rows removed by the migration", removed)
+	}
+	var seq int
+	if err := db.QueryRow(`SELECT seq FROM audit_log WHERE mandate_id = 'm-a'`).Scan(&seq); err != nil || seq != 1 {
+		t.Errorf("entry by mandate: seq %d, %v", seq, err)
+	}
+	for _, tc := range []struct {
+		stmt string
+		ok   bool
+	}{
+		{`UPDATE agents SET removed_at = 't' WHERE client_id = 'hm-client:a'`, true},
+		{`UPDATE agents SET removed_at = 't' WHERE client_id = 'hm-client:b'`, false},
+		{`UPDATE agents SET status = 'active' WHERE client_id = 'hm-client:a'`, false},
+		{`UPDATE mandates SET removed_at = 't' WHERE id = 'm-a'`, true},
+		{`UPDATE mandates SET removed_at = 't' WHERE id = 'm-b'`, false},
+		{`UPDATE mandates SET status = 'active' WHERE id = 'm-a'`, false},
+		// Inserted already removed: only revoked.
+		{`INSERT INTO agents (client_id, display_name, status, created_at, created_by, removed_at) VALUES ('hm-client:c', 'C', 'active', 't', 'u', 't')`, false},
+		{`INSERT INTO agents (client_id, display_name, status, created_at, created_by, removed_at) VALUES ('hm-client:d', 'D', 'revoked', 't', 'u', 't')`, true},
+		{`INSERT INTO mandates (id, client_id, status, current_digest, max_actions_per_hour, created_at, updated_at, removed_at)
+			VALUES ('m-c', 'hm-client:a', 'active', 'sha256:3', 60, 't1', 't2', 't')`, false},
+		{`INSERT INTO mandates (id, client_id, status, current_digest, max_actions_per_hour, created_at, updated_at, removed_at)
+			VALUES ('m-d', 'hm-client:d', 'revoked', 'sha256:4', 60, 't1', 't2', 't')`, true},
+		// A removal and a purge are never undone.
+		{`UPDATE agents SET removed_at = NULL WHERE client_id = 'hm-client:a'`, false},
+		{`UPDATE mandates SET removed_at = NULL WHERE id = 'm-a'`, false},
+		{`UPDATE agents SET purged_at = 't' WHERE client_id = 'hm-client:a'`, true},
+		{`UPDATE mandates SET purged_at = 't' WHERE id = 'm-a'`, true},
+		{`UPDATE agents SET purged_at = NULL WHERE client_id = 'hm-client:a'`, false},
+		{`UPDATE mandates SET purged_at = NULL WHERE id = 'm-a'`, false},
+		{`UPDATE agents SET removed_at = 't2', purged_at = 't2' WHERE client_id = 'hm-client:a'`, true},
+	} {
+		if _, err := db.Exec(tc.stmt); (err == nil) != tc.ok {
+			t.Errorf("%s: err = %v, want ok %v", tc.stmt, err, tc.ok)
+		}
+	}
+}
+
 // releasedMigrations are the checksums of migrations that installations have applied.
 // An applied migration must never change, not even in a comment: Migrate refuses to
 // start with ErrMigrationChanged. Add every new migration here once it is installed
@@ -394,6 +463,7 @@ var releasedMigrations = map[string]string{
 	"0012_entity_renames.sql":         "aae965a7b15e1eaa9524b4da25db1dcff697eed8e0df8a4bb09478af4b7cc7ec",
 	"0013_audit_directory.sql":        "f2dbbab4ba6ac677b45b72b5aaaf6239162ef8c2cab41700959278547c5d06d2",
 	"0014_mandate_version_origin.sql": "74ef985cbb3a5f900c04ecdc8cac36c822d5069044055ebc8250fd0132b8d7b7",
+	"0015_removal.sql":                "9244ae0d94900ef483696837d304167ce0b989024e112cc86a7a996b9a495b44",
 }
 
 func TestReleasedMigrationsAreFrozen(t *testing.T) {

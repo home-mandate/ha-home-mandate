@@ -24,10 +24,16 @@ import (
 	"github.com/home-mandate/ha-home-mandate/internal/config"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 	"github.com/home-mandate/ha-home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/removal"
 	"github.com/home-mandate/ha-home-mandate/internal/store"
 )
 
 const databaseFile = "home-mandate.db"
+
+// removal removes revoked agents and mandates of the opened database.
+func (s *state) removal() *removal.Service {
+	return removal.New(s.store.DB(), s.agents, s.mandates)
+}
 
 // localAdmin is the actor of changes made with the administration commands.
 var localAdmin = audit.Actor{Kind: audit.ActorUser, ID: "local-admin"}
@@ -163,10 +169,12 @@ func agentCommand(ctx context.Context, e env, args []string) int {
 		return withState(ctx, e, func(s *state) error {
 			agents, err := s.agents.List(ctx)
 			for _, a := range agents {
-				fmt.Fprintf(e.stdout, "%s\t%s\t%s\n", a.ClientID, a.Status, a.DisplayName)
+				fmt.Fprintf(e.stdout, "%s\t%s\t%s\n", a.ClientID, listStatus(a.Status, a.RemovedAt), a.DisplayName)
 			}
 			return err
 		})
+	case "remove":
+		return removeAgentCommand(ctx, e, args[1:])
 	case "revoke":
 		if len(args) != 2 {
 			return usageError(e, "agent revoke needs CLIENT_ID")
@@ -175,6 +183,42 @@ func agentCommand(ctx context.Context, e env, args []string) int {
 	default:
 		return usageError(e, fmt.Sprintf("unknown agent subcommand %q", args[0]))
 	}
+}
+
+// removeAgentCommand removes a revoked agent, with --with-mandates its mandates too, or
+// with --all-revoked every revoked agent with its mandates and every other revoked
+// mandate, as "Remove all revoked" in the UI does (issue #21).
+func removeAgentCommand(ctx context.Context, e env, args []string) int {
+	switch {
+	case len(args) == 1 && args[0] == "--all-revoked":
+		return withState(ctx, e, func(s *state) error {
+			res, err := s.removal().RemoveRevoked(ctx, localAdmin)
+			fmt.Fprintf(e.stdout, "removed %d agents and %d mandates\n", len(res.Agents), len(res.Mandates))
+			return err
+		})
+	case len(args) == 1 && !strings.HasPrefix(args[0], "-"), len(args) == 2 && args[0] == "--with-mandates" && !strings.HasPrefix(args[1], "-"):
+		clientID := args[len(args)-1]
+		return withState(ctx, e, func(s *state) error {
+			res, err := s.removal().RemoveAgent(ctx, clientID, removal.AgentOptions{Mandates: len(args) == 2}, localAdmin)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(e.stdout, "removed agent", clientID)
+			for _, id := range res.Mandates {
+				fmt.Fprintln(e.stdout, "removed mandate", id)
+			}
+			return nil
+		})
+	}
+	return usageError(e, "agent remove needs [--with-mandates] CLIENT_ID or --all-revoked")
+}
+
+// listStatus is the status the lists print: removed for a removed one (it stays revoked).
+func listStatus(status string, removedAt time.Time) string {
+	if !removedAt.IsZero() {
+		return "removed"
+	}
+	return status
 }
 
 // emergencyStopCommand switches the emergency stop. It takes effect in a running gateway
@@ -330,9 +374,20 @@ func mandateCommand(ctx context.Context, e env, args []string) int {
 		return withState(ctx, e, func(s *state) error {
 			list, err := s.mandates.List(ctx)
 			for _, m := range list {
-				fmt.Fprintf(e.stdout, "%s\t%s\t%s\t%s\n", m.ID, m.Status, m.ClientID, m.Digest)
+				fmt.Fprintf(e.stdout, "%s\t%s\t%s\t%s\n", m.ID, listStatus(m.Status, m.RemovedAt), m.ClientID, m.Digest)
 			}
 			return err
+		})
+	case "remove":
+		if len(args) != 2 || strings.HasPrefix(args[1], "-") {
+			return usageError(e, "mandate remove needs ID")
+		}
+		return withState(ctx, e, func(s *state) error {
+			if err := s.removal().RemoveMandate(ctx, args[1], localAdmin); err != nil {
+				return err
+			}
+			fmt.Fprintln(e.stdout, "removed mandate", args[1])
+			return nil
 		})
 	case "revoke":
 		if len(args) != 2 {

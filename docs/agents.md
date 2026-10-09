@@ -48,7 +48,16 @@ points to the resource metadata, and from there it finds the authorization serve
 
 Tokens: access tokens are valid for 10 minutes, refresh tokens for 30 days. Every refresh
 token can be used once; presenting a used one again revokes all tokens of that admission.
-Revoking the agent or the emergency stop takes effect with its next request.
+Revoking the agent or the emergency stop takes effect with its next request. After an
+emergency stop the agent signs in again as at its first admission; the administrator then
+reconnects it to its existing entry (same client ID inside Home-Mandate, same mandate and
+history) instead of admitting a new agent. Only active agents without valid tokens that
+were admitted with the same OAuth client are offered: for a browser sign-in that is the
+verified client (the same Client ID Metadata Document URL); for a pairing code it is only
+the identifier the agent chose itself, which any agent can give. The pairing step therefore
+says so and shows the address the request came from; the administrator's explicit choice
+is what decides, and admitting a new agent stays the default. An agent whose
+refresh token expired after 30 days without use is offered the same way.
 
 ## Admitting: browser sign-in or pairing code
 
@@ -214,8 +223,9 @@ Tool errors are short codes without internal details. Every refusal is in the au
 On the HTTP level:
 
 - `401` with `WWW-Authenticate`: no token, or the token is expired, revoked or for
-  another resource. The client refreshes or signs in again; after an emergency stop or a
-  revocation, an administrator must admit it again.
+  another resource. The client refreshes or signs in again; after an emergency stop an
+  administrator reconnects it to its existing entry when it signs in, after a revocation
+  an administrator must admit it again.
 - `429` with `Retry-After` on the OAuth endpoints and pages: too many sign-ins, pairings or
   token requests from one address (an IPv6 address counts as its /64 network) or from
   everyone together, per minute. Wait the number of seconds in `Retry-After`.

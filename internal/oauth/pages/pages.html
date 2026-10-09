@@ -30,6 +30,7 @@
 {{if .Verified}}<p>{{.T "page_consent_verified" "host" .Host}}</p>{{else}}<p class="warn">{{.T "page_consent_unverified" "client" .ClientID}}</p>{{end}}
 {{if .ReturnHost}}<p>{{.T "page_consent_return" "host" .ReturnHost}}</p>{{end}}
 {{if .Error}}<p class="error" role="alert">{{.T .Error}}</p>{{end}}
+{{if .Reconnect}}<h2>{{.T "page_admit_new"}}</h2>{{end}}
 <form method="post" action="/oauth/consent">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <label for="name">{{.T "page_consent_name"}}</label>
@@ -60,6 +61,26 @@
 <button type="submit" name="action" value="deny" class="secondary">{{.T "page_consent_deny"}}</button>
 </div>
 </form>
+{{if .Reconnect}}<h2 id="reconnect-title">{{.T "page_reconnect_title"}}</h2>
+<p id="reconnect-intro">{{.T "page_reconnect_intro"}}</p>
+{{if .ReconnectUnverified}}<p class="warn">{{.T "page_reconnect_unverified" "address" .ReconnectFrom}}</p>{{end}}
+<form method="post" action="/oauth/consent" aria-labelledby="reconnect-title" aria-describedby="reconnect-intro">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<fieldset class="templates">
+<legend>{{.T "page_reconnect_choose"}}</legend>
+{{range $i, $a := .Reconnect}}<div class="template">
+<input type="radio" id="reconnect-{{$i}}" name="agent" value="{{$a.ClientID}}" aria-describedby="reconnect-{{$i}}-details" required>
+<label for="reconnect-{{$i}}">{{$a.Name}}</label>
+<div class="details" id="reconnect-{{$i}}-details">
+<p>{{if $a.Mandate}}{{$.T "page_reconnect_details" "mandate" $a.Mandate "admitted" $a.Admitted}}{{else}}{{$.T "page_reconnect_details" "mandate" ($.T "page_reconnect_no_mandate") "admitted" $a.Admitted}}{{end}}</p>
+<p><code>{{$a.ClientID}}</code></p>
+</div>
+</div>
+{{end}}</fieldset>
+<div class="actions">
+<button type="submit" name="action" value="reconnect" class="secondary">{{.T "page_reconnect_submit"}}</button>
+</div>
+</form>{{end}}
 {{template "foot" .}}{{end}}
 
 {{define "pair"}}{{template "head" .}}

@@ -15,7 +15,11 @@ const text = {
     takeOver: 'Regeln aus einer Vorlage übernehmen', apply: 'Übernehmen',
     origin: /Regeln zuletzt aus der Vorlage .*voice-assistant.* übernommen am/, unchanged: 'Keine Änderungen – schon auf dem neuesten Stand',
     nameGroup: 'Name des Mandats', take: /^Umbenennen in/, keep: /behalten$/, saved: /Mandat gespeichert/, fromTemplate: /Aus der Vorlage .*read-only/,
-    rename: 'Namen ändern', mandateHeading: 'Mandat' },
+    rename: 'Namen ändern', mandateHeading: 'Mandat',
+    removeAll: 'Alle entzogenen entfernen …', remove: 'Entfernen', showRemoved: 'Entfernte zeigen (1)', removed: 'Entfernt',
+    reconnectRegion: 'Oder einen bestehenden Agenten wieder verbinden', reconnect: 'Wieder verbinden', tablet: /Küchen-Tablet/,
+    alsoRemove: 'Agent und seine Mandate auch aus den Listen entfernen', revokeRemove: 'Entziehen und entfernen',
+    removedBanner: /aus den Listen entfernt/, existing: /bestehenden Eintrag/ },
   en: { agents: 'Agents', add: 'Add agent', code: /With a pairing code/, field: 'Pairing code', verify: 'Is this the right agent?',
     voice: /Voice assistant/, done: /is connected/, open: 'Go to agent', revoke: 'Revoke access', cancel: 'Cancel',
     identity: 'Identity', revoked: /Revoked on/, approvers: 'Who may approve', you: '(you)',
@@ -24,7 +28,11 @@ const text = {
     takeOver: 'Take over rules from a template', apply: 'Apply',
     origin: /Rules last taken from the template .*voice-assistant.* on/, unchanged: 'No changes — already up to date',
     nameGroup: 'Name of the mandate', take: /^Rename to/, keep: /^Keep/, saved: /Mandate saved/, fromTemplate: /From the template .*read-only/,
-    rename: 'Change name', mandateHeading: 'Mandate' },
+    rename: 'Change name', mandateHeading: 'Mandate',
+    removeAll: 'Remove all revoked …', remove: 'Remove', showRemoved: 'Show removed (1)', removed: 'Removed',
+    reconnectRegion: 'Or reconnect an existing agent', reconnect: 'Reconnect', tablet: /Küchen-Tablet/,
+    alsoRemove: 'Also remove the agent and its mandates from the lists', revokeRemove: 'Revoke and remove',
+    removedBanner: /Removed from the lists/, existing: /existing entry/ },
 } as const;
 
 type Lang = keyof typeof text;
@@ -170,3 +178,48 @@ test('mobile: list, pairing and detail without sideways scrolling', async ({ pag
     expect(await pageScroll(page), path).toBe(0);
   }
 });
+
+test('removes all revoked agents with the keyboard and shows them again on request (#21)', async ({ page }, info) => {
+  const t = text[info.project.name as Lang];
+  await page.goto('./#/agents');
+  const table = page.getByRole('table', { name: t.agents });
+  await expect(table.getByRole('row')).toHaveCount(6);
+  await page.getByRole('button', { name: t.removeAll }).focus();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('alertdialog');
+  await expect(dialog.getByRole('button', { name: t.cancel })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Enter');
+  await expect(dialog).toHaveCount(0);
+  await expect(table.getByRole('row')).toHaveCount(5);
+  await page.getByRole('switch', { name: t.showRemoved }).click();
+  await expect(table.getByRole('row')).toHaveCount(6);
+  await expect(table.getByText(t.removed, { exact: true })).toBeVisible();
+});
+
+test('revokes and removes a leftover agent in one step (#21, #22)', async ({ page }, info) => {
+  const t = text[info.project.name as Lang];
+  await page.goto(`./#/agents/id/${CLAUDE}`);
+  await page.getByRole('button', { name: t.revoke }).click();
+  const dialog = page.getByRole('alertdialog');
+  await dialog.getByRole('checkbox', { name: t.alsoRemove }).check();
+  await dialog.getByRole('button', { name: t.revokeRemove }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText(t.removedBanner)).toBeVisible();
+});
+
+test('reconnects an agent to its entry after an emergency stop instead of admitting it anew (#22)', async ({ page }, info) => {
+  const lang = info.project.name as Lang;
+  const t = text[lang];
+  await toTemplates(page, { afterStop: true }, lang);
+  const region = page.getByRole('region', { name: t.reconnectRegion });
+  await expect(region.getByRole('radio', { name: t.tablet })).not.toBeChecked();
+  await region.getByRole('radio', { name: t.tablet }).check();
+  await region.getByRole('button', { name: t.reconnect }).click();
+  await expect(page.getByRole('heading', { name: t.done })).toBeFocused();
+  await expect(page.getByText(t.existing)).toBeVisible();
+  await page.goto('./#/agents');
+  // No new entry: the five agents of the household plus the reconnected tablet.
+  await expect(page.getByRole('table', { name: t.agents }).getByRole('row')).toHaveCount(7);
+});
+

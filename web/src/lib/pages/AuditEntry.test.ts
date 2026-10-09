@@ -60,3 +60,18 @@ describe('AuditEntry', () => {
     expect(await screen.findByText('Couldn’t load the audit log')).toBeTruthy();
   });
 });
+
+describe('removed mandates (#21)', () => {
+  it('names the mandate of an entry, also after it was removed', async () => {
+    const api = createMockClient({ now: () => new Date(NOW) });
+    await api.revokeAgent('pair:voice-assistant');
+    await api.removeAgent({ client_id: 'pair:voice-assistant', mandates: true });
+    const seq = (await api.audit({ event: 'mandate.removed' })).entries[0]?.seq ?? 0;
+    const app = new AppState(api, () => Date.parse(NOW));
+    await app.start();
+    render(AuditEntry, { app, seq });
+    const detail = await screen.findByRole('article', { name: `Entry no. ${seq}` });
+    expect(within(detail).getByText('Mandate removed')).toBeTruthy();
+    expect(within(detail).getByText('Sprachassistent Küche')).toBeTruthy();
+  });
+});

@@ -105,6 +105,33 @@ const SCREENS: Screen[] = [
   { name: 'agents, adding to an empty household', path: './#/agents?add', mock: { empty: true } },
   { name: 'agent detail', path: `./#/agents/id/${CLAUDE}` },
   { name: 'agent detail, revoked', path: './#/agents/id/pair%3Aold-bot' },
+  {
+    name: 'agent detail, revoked, removing (#21)',
+    path: './#/agents/id/pair%3Aold-bot',
+    setup: async (page) => {
+      await page.locator('main .end button').click();
+      await expect(page.getByRole('alertdialog').getByRole('checkbox')).toBeVisible();
+    },
+  },
+  { name: 'agent detail, not signed in after an emergency stop (#22)', path: `./#/agents/id/${CLAUDE}`, mock: { afterStop: true } },
+  {
+    name: 'agent detail, revoke and remove (#21)',
+    path: `./#/agents/id/${CLAUDE}`,
+    setup: async (page) => {
+      await page.locator('main .end button').click();
+      await page.getByRole('alertdialog').getByRole('checkbox').check();
+    },
+  },
+  {
+    name: 'agents, removed shown (#21)',
+    path: './#/agents',
+    setup: async (page) => {
+      await page.locator('main .tools button.btn').click();
+      await page.getByRole('alertdialog').locator('button.btn.danger').click();
+      await page.getByRole('switch').click();
+      await expect(page.getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+    },
+  },
   { name: 'agent detail, long name', path: './#/agents/id/pair%3Along' },
   { name: 'agent detail, bidi name', path: './#/agents/id/pair%3Abidi' },
   { name: 'pairing', path: './#/agents/pair' },
@@ -134,6 +161,20 @@ const SCREENS: Screen[] = [
       await page.keyboard.press('Enter');
       await page.locator('input[type="radio"][value="hm-voice-cautious"]').check();
       await expect(page.locator('a[href="#/settings/approvers"]')).toBeVisible();
+    },
+  },
+  {
+    name: 'pairing, reconnect after an emergency stop (#22)',
+    path: './#/agents/pair',
+    mock: { afterStop: true },
+    setup: async (page) => {
+      await page.getByRole('textbox').first().fill('bcdf ghjk');
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('heading', { level: 2 })).toBeFocused();
+      await page.keyboard.press('Tab'); // "This isn't my agent"
+      await page.keyboard.press('Tab'); // Continue
+      await page.keyboard.press('Enter');
+      await page.locator('.reconnect input[type="radio"]').first().check();
     },
   },
   { name: 'browser sign-in', path: './#/agents/browser' },
