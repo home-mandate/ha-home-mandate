@@ -104,6 +104,8 @@ type Config struct {
 	Token Secret
 	// RootCAs replaces the system roots for wss:// when set.
 	RootCAs *x509.CertPool
+	// ServerName, if set, is the name the certificate of wss:// is checked against.
+	ServerName string
 	// Logger receives connection events; nothing is logged when nil.
 	Logger *slog.Logger
 	// OnConnect, if set, runs in its own goroutine after every successful
@@ -161,7 +163,7 @@ func New(cfg Config) (*Client, error) {
 	return &Client{
 		cfg:        cfg,
 		log:        log,
-		httpClient: newHTTPClient(cfg.URL, cfg.RootCAs, cfg.Plaintext),
+		httpClient: newHTTPClient(cfg.URL, cfg.RootCAs, cfg.Plaintext, cfg.ServerName),
 		writeSem:   make(chan struct{}, 1),
 		pending:    map[int64]chan message{},
 		subs:       map[*Subscription]struct{}{},
@@ -211,9 +213,9 @@ func validateURL(raw string, plaintext Plaintext) error {
 // newHTTPClient refuses redirects (they could leave the configured host or downgrade to
 // ws://), ignores proxy settings and requires TLS 1.3. For ws:// it dials only addresses
 // that plaintext allows after name resolution.
-func newHTTPClient(rawURL string, roots *x509.CertPool, plaintext Plaintext) *http.Client {
+func newHTTPClient(rawURL string, roots *x509.CertPool, plaintext Plaintext, serverName string) *http.Client {
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots},
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: serverName},
 	}
 	if u, err := url.Parse(rawURL); err == nil && u.Scheme == "ws" {
 		transport.DialContext = plaintext.dialer(net.DefaultResolver.LookupIPAddr)

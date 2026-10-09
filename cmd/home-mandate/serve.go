@@ -15,6 +15,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -77,6 +78,10 @@ func serve(ctx context.Context, e env) int {
 	cfg, err := config.Load(config.Env{Getenv: e.getenv, ReadFile: e.readFile, Stat: e.stat, Unsetenv: e.unsetenv})
 	if err != nil {
 		fmt.Fprintln(e.stderr, "home-mandate:", permissionHint(err, uid, gid))
+		return exitFailure
+	}
+	if cfg, err = appHomeAssistant(ctx, cfg, coreInfo); err != nil {
+		fmt.Fprintln(e.stderr, "home-mandate:", err)
 		return exitFailure
 	}
 	s, err := openStore(ctx, cfg.DataDir)
@@ -272,7 +277,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	if directMode(s.cfg, g.certs) {
 		signIn, err := oauth.NewHASignIn(oauth.HASignInConfig{PublicURL: s.cfg.PublicURL, BrowserURL: s.cfg.HABrowserURL,
-			HTTPURL: s.cfg.HAHTTPURL, WebSocketURL: s.cfg.HAURL, Roots: s.cfg.HARootCAs, Plaintext: s.cfg.HAPlaintext, Callback: api.DirectCallbackPath})
+			HTTPURL: s.cfg.HAHTTPURL, WebSocketURL: userURL(s.cfg), Roots: s.cfg.HARootCAs, Plaintext: s.cfg.HAPlaintext, ServerName: s.cfg.HAServerName, Callback: api.DirectCallbackPath})
 		if err != nil {
 			return nil, err
 		}
@@ -401,7 +406,7 @@ func withOAuth(s *state, mcpHandler, ui http.Handler, resource string, logger *s
 		return nil, mcpHandler, nil
 	}
 	signIn, err := oauth.NewHASignIn(oauth.HASignInConfig{PublicURL: s.cfg.PublicURL, BrowserURL: s.cfg.HABrowserURL,
-		HTTPURL: s.cfg.HAHTTPURL, WebSocketURL: s.cfg.HAURL, Roots: s.cfg.HARootCAs, Plaintext: s.cfg.HAPlaintext})
+		HTTPURL: s.cfg.HAHTTPURL, WebSocketURL: userURL(s.cfg), Roots: s.cfg.HARootCAs, Plaintext: s.cfg.HAPlaintext, ServerName: s.cfg.HAServerName})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -679,4 +684,41 @@ func (g *gateway) retention(ctx context.Context) {
 		case <-time.After(retentionEvery):
 		}
 	}
+}
+
+// coreInfo asks the Supervisor how Home Assistant serves its HTTP API; replaced in tests.
+var coreInfo = ha.CoreInfo
+
+// appHomeAssistant sets, in app mode with a public URL, where Home-Mandate reaches Home
+// Assistant to sign humans in: on the Supervisor's network as homeassistant, at the port
+// and with the TLS the household configured, which the Supervisor knows. With TLS the
+// certificate is checked against the name the browser uses. Without a public URL OAuth is
+// off and nothing is asked; container mode takes the configuration as it is.
+func appHomeAssistant(ctx context.Context, cfg config.Config,
+	info func(context.Context, string, ha.Secret, ha.Plaintext) (int, bool, error)) (config.Config, error) {
+	if cfg.Mode != config.ModeApp || cfg.PublicURL == "" {
+		return cfg, nil
+	}
+	port, tls, err := info(ctx, "http://supervisor", cfg.HAToken, cfg.HAPlaintext)
+	if err != nil {
+		return cfg, fmt.Errorf("cannot ask the Supervisor how Home Assistant is reached: %w", err)
+	}
+	host := net.JoinHostPort("homeassistant", strconv.Itoa(port))
+	cfg.HAHTTPURL, cfg.HAUserURL, cfg.HAServerName = "http://"+host, "ws://"+host+"/api/websocket", ""
+	if tls {
+		browser, err := url.Parse(cfg.HABrowserURL)
+		if err != nil || browser.Hostname() == "" {
+			return cfg, errors.New("home assistant speaks TLS: ha_browser_url must name the host its certificate is for")
+		}
+		cfg.HAHTTPURL, cfg.HAUserURL, cfg.HAServerName = "https://"+host, "wss://"+host+"/api/websocket", browser.Hostname()
+	}
+	return cfg, nil
+}
+
+// userURL is Home Assistant's WebSocket API for checking a human's token.
+func userURL(cfg config.Config) string {
+	if cfg.HAUserURL != "" {
+		return cfg.HAUserURL
+	}
+	return cfg.HAURL
 }

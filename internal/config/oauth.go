@@ -12,7 +12,10 @@ import (
 // appHAHTTP is Home Assistant's HTTP API on the internal network of the Supervisor; the
 // Supervisor proxy (http://supervisor/core) forwards only /api and the WebSocket, not
 // /auth. Reached in plaintext as appPlaintext allows.
-const appHAHTTP = "http://homeassistant:8123"
+const (
+	appHAHTTP = "http://homeassistant:8123"
+	appHAUser = "ws://homeassistant:8123/api/websocket"
+)
 
 // publicURL validates HM_PUBLIC_URL or the public_url option and returns its origin.
 // Plaintext is only allowed for loopback (decision 1: no plaintext on the LAN).

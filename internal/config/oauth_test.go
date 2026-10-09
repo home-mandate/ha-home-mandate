@@ -87,7 +87,7 @@ func TestOAuthURLsAppMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.PublicURL != "https://hm.example.org:8765" || cfg.HABrowserURL != "https://ha.example.org" ||
-		cfg.HAHTTPURL != "http://homeassistant:8123" {
+		cfg.HAHTTPURL != "http://homeassistant:8123" || cfg.HAUserURL != "ws://homeassistant:8123/api/websocket" {
 		t.Errorf("config = %+v", cfg)
 	}
 
@@ -121,7 +121,7 @@ func TestPlaintextHostsPerMode(t *testing.T) {
 	if !reflect.DeepEqual(app.HAPlaintext, want) || !want.Network.Contains(SupervisorAddr) {
 		t.Errorf("app mode plaintext = %+v", app.HAPlaintext)
 	}
-	if _, err := ha.HTTPClient(app.HAHTTPURL, nil, app.HAPlaintext); err != nil {
+	if _, err := ha.HTTPClient(app.HAHTTPURL, nil, app.HAPlaintext, ""); err != nil {
 		t.Errorf("app mode Home Assistant HTTP URL refused: %v", err)
 	}
 	if _, err := ha.New(ha.Config{URL: app.HAURL, Token: "t", Plaintext: app.HAPlaintext}); err != nil {
@@ -135,10 +135,10 @@ func TestPlaintextHostsPerMode(t *testing.T) {
 	if !reflect.DeepEqual(container.HAPlaintext, ha.Plaintext{}) {
 		t.Errorf("container mode plaintext = %+v, want loopback only", container.HAPlaintext)
 	}
-	if _, err := ha.HTTPClient("http://homeassistant:8123", nil, container.HAPlaintext); !errors.Is(err, ha.ErrInsecureURL) {
+	if _, err := ha.HTTPClient("http://homeassistant:8123", nil, container.HAPlaintext, ""); !errors.Is(err, ha.ErrInsecureURL) {
 		t.Errorf("container mode plaintext to homeassistant: %v", err)
 	}
-	if _, err := ha.HTTPClient("http://supervisor", nil, container.HAPlaintext); !errors.Is(err, ha.ErrInsecureURL) {
+	if _, err := ha.HTTPClient("http://supervisor", nil, container.HAPlaintext, ""); !errors.Is(err, ha.ErrInsecureURL) {
 		t.Errorf("container mode plaintext to supervisor: %v", err)
 	}
 }
@@ -150,5 +150,15 @@ func TestStringShowsThePublicURL(t *testing.T) {
 	}
 	if !strings.Contains(cfg.String(), "public=https://hm.lan") {
 		t.Errorf("String() = %s", cfg.String())
+	}
+}
+
+// A human's token is checked over Home Assistant's own WebSocket API: in container mode
+// the one Home-Mandate uses, in app mode Home Assistant itself, not the Supervisor's
+// proxy, which accepts only the app's own token.
+func TestUserURLPerMode(t *testing.T) {
+	cfg, err := load(env(map[string]string{"HM_HA_URL": "wss://ha.example.org/api/websocket", "HM_HA_TOKEN": "t"}), files(nil))
+	if err != nil || cfg.HAUserURL != "wss://ha.example.org/api/websocket" || cfg.HAServerName != "" {
+		t.Errorf("container mode: %q %q %v", cfg.HAUserURL, cfg.HAServerName, err)
 	}
 }

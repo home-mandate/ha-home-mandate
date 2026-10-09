@@ -88,6 +88,14 @@ type Config struct {
 	// HABrowserURL is the origin of Home Assistant as the human's browser reaches it, for
 	// the sign-in redirect; empty in app mode without the option.
 	HABrowserURL string
+	// HAUserURL is Home Assistant's WebSocket API for checking a human's token: HAURL in
+	// container mode; in app mode Home Assistant itself, since the Supervisor's proxy takes
+	// only the app's own token. Port and TLS in app mode come from the Supervisor at start.
+	HAUserURL string
+	// HAServerName, if set, is the name Home Assistant's certificate is checked against
+	// (app mode with TLS in Home Assistant: reached as homeassistant, certified for the
+	// name of HABrowserURL).
+	HAServerName string
 	// HAHTTPURL is the origin of Home Assistant's HTTP API as Home-Mandate reaches it,
 	// for exchanging and revoking sign-in codes.
 	HAHTTPURL string
@@ -189,7 +197,7 @@ func loadApp(token ha.Secret, readFile func(string) ([]byte, error)) (Config, er
 	if cfg.PublicURL != "" && cfg.HABrowserURL == "" {
 		return Config{}, fmt.Errorf("%w: public_url needs ha_browser_url for the sign-in of humans", ErrInvalid)
 	}
-	cfg.HAHTTPURL = appHAHTTP
+	cfg.HAHTTPURL, cfg.HAUserURL = appHAHTTP, appHAUser
 	return cfg, nil
 }
 
@@ -269,7 +277,7 @@ func loadContainer(e Env) (Config, error) {
 	if cfg.Proxy.IsValid() && !strings.HasPrefix(cfg.PublicURL, "https://") {
 		return Config{}, fmt.Errorf("%w: HM_PROXY needs an https HM_PUBLIC_URL, the address the proxy serves", ErrInvalid)
 	}
-	cfg.HAHTTPURL = httpOrigin(cfg.HAURL)
+	cfg.HAHTTPURL, cfg.HAUserURL = httpOrigin(cfg.HAURL), cfg.HAURL
 	cfg.HABrowserURL = cfg.HAHTTPURL
 	if s := getenv("HM_HA_BROWSER_URL"); s != "" {
 		if cfg.HABrowserURL, err = browserURL(s); err != nil {

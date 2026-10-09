@@ -29,6 +29,7 @@ import (
 
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/config"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 	"github.com/home-mandate/ha-home-mandate/internal/pdp"
 	"github.com/home-mandate/ha-home-mandate/internal/store"
 	"github.com/home-mandate/ha-home-mandate/internal/tlscert"
@@ -441,5 +442,47 @@ func TestRestoredLimiterCountsTheLastHour(t *testing.T) {
 	_ = st.Close()
 	if !restoredLimiter(ctx, log, func() time.Time { return now }, logger).Allow("hm-client:a", 1) {
 		t.Error("limiter unusable after a failed restore")
+	}
+}
+
+// In app mode with a public URL, the addresses of Home Assistant for signing humans in come
+// from the Supervisor: port and TLS are settings of the household. With TLS, the
+// certificate is checked against the name the browser uses.
+func TestAppHomeAssistantFromTheSupervisor(t *testing.T) {
+	app := config.Config{Mode: config.ModeApp, HAToken: "sup", PublicURL: "https://hm.example.org:8765",
+		HABrowserURL: "https://ha.example.org:8123", HAHTTPURL: "http://homeassistant:8123", HAUserURL: "ws://homeassistant:8123/api/websocket"}
+	for _, tc := range []struct {
+		name               string
+		cfg                config.Config
+		port               int
+		tls                bool
+		infoErr            error
+		http, user, server string
+		ok, asked          bool
+	}{
+		{"plaintext on another port", app, 80, false, nil, "http://homeassistant:80", "ws://homeassistant:80/api/websocket", "", true, true},
+		{"own certificate", app, 8123, true, nil, "https://homeassistant:8123", "wss://homeassistant:8123/api/websocket", "ha.example.org", true, true},
+		{"supervisor fails", app, 0, false, errors.New("refused"), "", "", "", false, true},
+		{"no public URL: OAuth off", config.Config{Mode: config.ModeApp}, 0, false, nil, "", "", "", true, false},
+		{"container mode", config.Config{Mode: config.ModeContainer, PublicURL: "https://hm.example.org", HAHTTPURL: "https://ha.example.org"},
+			0, false, nil, "https://ha.example.org", "", "", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			asked := false
+			info := func(_ context.Context, supervisor string, token ha.Secret, _ ha.Plaintext) (int, bool, error) {
+				asked = true
+				if supervisor != "http://supervisor" || token != "sup" {
+					t.Errorf("asked %q with %q", supervisor, token)
+				}
+				return tc.port, tc.tls, tc.infoErr
+			}
+			got, err := appHomeAssistant(t.Context(), tc.cfg, info)
+			if (err == nil) != tc.ok || asked != tc.asked {
+				t.Fatalf("err %v, asked %v", err, asked)
+			}
+			if tc.ok && (got.HAHTTPURL != tc.http || got.HAUserURL != tc.user || got.HAServerName != tc.server) {
+				t.Errorf("http %q, user %q, server name %q", got.HAHTTPURL, got.HAUserURL, got.HAServerName)
+			}
+		})
 	}
 }
