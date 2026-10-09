@@ -46,9 +46,11 @@ protection class, expired, not yet valid) needs its own named test.
 - **Test users** in HA: `admin-approver` (admin, approver), `admin-other` (admin, not an
   approver), `user-plain` (not an admin).
 - **Home-Mandate** as a container from the release image, not from source, so that the shipped
-  artifact is tested.
+  artifact is tested. It runs without root, as container mode should, as the user running
+  the tests (rootless Podman: `keep-id`), on a data directory of the host; only a test run
+  by root keeps it root. Home Assistant and the stand-ins run as root.
 - **Agent** = test client based on the official MCP Go SDK, going through real OAuth flows.
-- **Approval requests:** sent to a configurable `notify` service; the answer is fired as a
+- **Approval requests:** sent to `notify.mobile_app_e2e_phone`, a `command_line` notify service that stands in for the Companion App; the answer is fired as a
   `mobile_app_notification_action` event via the HA API with the respective test user, so
   that `context.user_id` is set for real.
 - **UI:** Playwright against the UI (mandate editor, emergency stop, revoke agent), every UI
@@ -144,6 +146,8 @@ Every line is at least one test. New attack ideas are added here before they are
 - Rename event with the same ID, without an ID, with a space, control character or more than 255 characters, or not an update → ignored; at most 1000 renames are kept between two refreshes
 - Area removed → rules on it reported like a renamed device; `deny` or `ask` rule that names only an area → the editor says that a device moved elsewhere leaves it
 - Directory not loaded (start, connection lost) → nothing reported as missing, every request denied
+- Registry change (entity, device or area registry event) → every request `unavailable` until the following refresh has succeeded, also while it keeps failing; a change during a refresh needs the next one; a rename in the event takes effect at once; a directory older than 30 minutes → not ready; refreshes every 10 minutes on their own, failed ones retried at growing intervals
+- Cover of the class `door`, `garage`, `gate` or without a class (a cover group) → category `gate`, whose `open` is critical, never `cover`; blinds, shades, shutters, awnings, windows → `cover`
 - Critical mark set or removed → only by an administrator with CSRF token; an entity the directory does not know → `not_found`; every change is a `directory.changed` audit entry in the same transaction (a change that cannot be recorded is not made), failed attempts are in the server log
 - Template stored, removed, hidden or shown, approver added or removed (UI and command line) → exactly one `template.changed` or `approver.changed` entry in the same transaction, the human as actor (`local-admin` on the command line); unchanged saves, hiding a hidden template, other channels for an approver, refused and unrecordable changes → no entry and no change; `audit verify` and the export include the entries and verify with the specification
 - Renames that cannot be stored → held up to 1000, beyond that the catalog is not ready and every request is denied; storing that fails for two minutes → banner; a mark that could not be carried → carried with the next refresh, also after a restart
@@ -165,24 +169,31 @@ Every line is at least one test. New attack ideas are added here before they are
 - `requested_from` behind a proxy: `X-Forwarded-For` or `Forwarded` from a peer outside the configured trusted proxies → ignored; the address is normalized and at most 45 characters
 - Redirect URIs from client metadata: not `https` (except loopback), with userinfo, fragment, wildcards, control, bidi or format characters, more than 10 or longer than 2048 characters → refused; a later metadata fetch never widens the admitted set
 - Admission by a non-admin → rejected
-- Client metadata on a private, loopback or link-local address (also after DNS resolution), other port than 443, redirect, more than 5 KB, repeated keys → rejected without a connection to the private address
+- Client metadata on a private, loopback, link-local, site-local, IPv4-compatible (`::/96`) or Teredo address (also after DNS resolution), other port than 443, redirect, more than 5 KB, repeated keys → rejected without a connection to the private address
 - Redirect URI host with characters that could end a CSP directive → rejected
 - Sign-in callback without session, with a wrong, reused or expired `state` → rejected; a wrong `state` uses the attempt up
 - Session cookie from before the sign-in → worthless afterwards (session fixation)
 - Consent without CSRF token, from another origin, or posted twice at the same time → rejected, at most one agent admitted
 - Authorization code used twice, expired, for another client, redirect URI or resource → rejected
-- Refresh token presented by another OAuth client or for another resource → rejected
+- Refresh token presented by another OAuth client or for another resource → rejected; a used one from another client revokes nothing (the family stays) and is logged as `auth.rejected`
 - Admission during the emergency stop → no agent, no tokens
-- Many sign-ins, pairings or metadata fetches from one sender → refused beyond the per-sender limit
+- Many sign-ins, pairings or metadata fetches from one sender → refused beyond the per-sender limit; all addresses of one IPv6 /64 are one sender, also behind the proxy
+- More than 60 requests a minute from one sender or 600 from all to `/oauth/authorize`, the sign-in callback, `/oauth/consent`, `/pair` or `/oauth/device_authorization` (120 and 1200 to `/oauth/token`) → 429 with `Retry-After`, a page for the browser and `temporarily_unavailable` for the agent; the token endpoint counts apart, so a flood of sign-ins does not stop refreshes; metadata and the style sheet are not limited
+- Bare `GET /pair`, any number of times → no session; its signed state is bound to the cookie, which a failed attempt clears (a client that keeps the cookie can try again, bounded by the request limits), expires after 10 minutes and is worthless after a restart; the session is created only for an administrator Home Assistant signed in
+- Client metadata fetch that failed → not repeated for a minute (at most 100 remembered); not remembered when the caller gave up or all fetch slots were busy, so nobody can block another client's document
+- Refused authorization requests, failed sign-ins, refused admissions, reused refresh tokens, requests over the rate limit → logged at most once a minute per kind
 
 **Approval requests**
+- Approver device that is not a notify service of the Companion App (`notify.notify`, a group, a messenger, `mobile_app_` alone) → refused by `approver add`, the API (`approvers` Put) and the Home Assistant client; one stored earlier → not sent, the delivery is logged with the reason
 - Answer with an unknown, expired or already used nonce → discarded
 - Answer from a non-approver (also without user, or from Home-Mandate's own HA user) → request denied as `invalid_response`, approvers warned (decision W8)
 - "Yes" and "No" at the same time → first valid answer counts, second discarded, both logged
 - Very long or manipulated "reason" from the agent (control characters, Markdown, links) → truncated, sanitized, marked as the agent's claim
 - Invalid action parameters → rejected before a human is asked
+- Arming the alarm (`alarm_arm_<mode>`, no service data) → the request shows the mode, `away` when the agent names none
 - Emergency stop, revoked token or changed mandate while the human decides → not executed
 - More than 2 pending approval requests of one agent → refused
+- The same agent asks again for the same device after a rejection, a timeout or an invalid answer → `denied: approval_cooldown` without notifying anyone, logged; the wait doubles from 1 minute to at most 1 hour and ends with an approval or a quiet hour; other devices and agents are not affected; no reachable approver starts no wait
 - No approver set up or reachable → denied at once
 - Approver without any channel, more than 5 devices, duplicate device, critical actions in the UI without the UI channel → refused when saving
 - Admission preview of who may approve (consent page and pairing in the UI): a placeholder or named approver without any channel → marked; nobody reachable for the template's ordinary or critical requests → warned, admission still possible; Home Assistant not answering → unknown, never reachable; Home-Mandate's own user → never counted; names from Home Assistant with markup → shown as text; a hidden or unknown template → `not_found`
@@ -208,7 +219,9 @@ Every line is at least one test. New attack ideas are added here before they are
 - Oversized requests, deeply nested JSON → rejected
 - Attempt to reach administrative functions via MCP → not present
 - Read decision `ask`: device not listed in `list_devices`; `ask` or `deny` on an unreadable entity → same answer as for a non-existent one
+- Read decision `deny` with other actions allowed or asked → device in neither `list_devices` nor `list_my_permissions`; every refusal (`deny`, `ask` without asking anyone) and `get_state` → `not_found` like a non-existent device; an allowed action is still executed
 - Audit log not writable → nothing executed, nothing read
+- Household time zone or Home-Mandate's own Home Assistant user not known (Home Assistant did not answer `get_config` or `auth/current_user`, connection lost) → every tool `unavailable`, `list_devices` and `list_my_permissions` included, no approver asked; both read again at growing intervals until Home Assistant answers, the attempts end with the connection and a stop does not wait for them
 - Service parameters outside the declared list, type or range; parameters that widen the target (`entity_id`, `area_id`, …) → rejected before Home Assistant
 - Attributes carrying access tokens (`entity_picture`, `…token…`, `token=` in values) → never returned
 - Agent above its rate limit or without a mandate → refused; refusals logged at most once a minute
@@ -216,8 +229,8 @@ Every line is at least one test. New attack ideas are added here before they are
 **UI**
 - Request without CSRF token → rejected
 - CSRF token of another user, of a former run, older than two 12-hour periods, twice in the request, or a write without `Sec-Fetch-Site: same-origin` → rejected; the event stream without the token as first message (wrong, extra field, binary, none within 10 s) → closed with 4419, longer than 1 KiB → closed with 1009, from another site (`Sec-Fetch-Site`, or without it an `Origin` other than the host the browser asked for, `X-Forwarded-Host` behind Ingress) or without `Origin` → refused
-- Administrator check: no or two `X-Remote-User-Id`, malformed, unknown user, no administrator → refused (also for the UI's event stream and unknown paths); Home Assistant not reachable → 503, never an older answer; rights withdrawn → refused within 30 s, an open event stream closed with 4403
-- Request limit per user, test notifications per approver and overall, approval answers per person, verification of the audit log → `rate_limited` with the real `Retry-After`
+- Administrator check: no or two `X-Remote-User-Id`, malformed, unknown user, no administrator, deactivated (the owner too) → refused (also for the UI's event stream and unknown paths); Home Assistant not reachable → 503, never an older answer; rights withdrawn → refused within 30 s, an open event stream closed with 4403
+- Request limit per user, test notifications per approver and overall, approval answers per person, verification of the audit log → `rate_limited` with the real `Retry-After`; event streams beyond 50 overall, 10 of one user or 5 of one session (direct mode) → `rate_limited`
 - Body over 64 KiB, not JSON, unknown or mistyped fields, several objects, a body where none belongs → refused naming at most the field
 - Mandate draft with fields beyond the editable ones (`principal`, `default`, `id`) → refused; the identity of a version always comes from the server; a rename without changed rules stores no version but still needs the current version as its base
 - Database failure on any endpoint → `internal`, without details, nothing half done (revocation in one transaction)
@@ -252,6 +265,9 @@ Every line is at least one test. New attack ideas are added here before they are
 - Tampered entry in the database → chain verification fails and reports the position
 - Log rewritten consistently by someone who can write the database → `audit verify` reports it anchored only up to the last checkpoint; a checkpoint signed with another key or for another log ID → invalid
 - Shortening of the log with an agent as actor → refused; every shortening is followed by a checkpoint
+- Checkpoint key: created only by `serve` (atomically, mode 0600, no temporary file left), never by `audit verify` or `audit key`; a symbolic link, a directory or a key file with group or world access → refused; key missing while the log has checkpoints → `serve` and the command line refuse with a clear message, no new key
+- Retention with the clock years ahead → only entries older than 30 days before the newest entry of activity are deleted, never the whole log; at most a tenth of the entries per run; clock behind the newest entry → nothing deleted, a warning, the next run tries again
+- Beginning of the log deleted with a forged `log.truncated` entry (needs no key) → `audit verify` prints `first_seq` and `truncation=unanchored` and fails, the UI shows the chain broken at the first remaining entry, the gateway starts but logs an error; if the log has checkpoints but none covers the `log.truncated` entry (`truncation=tampered`) → treated as a broken chain, the gateway does not start
 - No tokens, nonces or HA credentials in logs (a test searches the log output of all E2E runs)
 - Search text with `%`, `_`, `\`, quotes, control, bidi or zero-width characters → cleaned, then matched literally (bound parameter, wildcards escaped or `instr`); errors name only `/q`, never the text
 - Search text over 100 characters after cleaning, a repeated `q`, or invalid UTF-8 → `invalid_input`, nothing run; empty or whitespace-only `q` → same result as no search
@@ -268,13 +284,15 @@ Every line is at least one test. New attack ideas are added here before they are
 - `auth_invalid` → no retry, permanent error state
 - Connection lost with requests in flight → they fail immediately, nothing is executed after reconnecting
 - Oversized or malformed message from HA → connection closed, no panic
-- Plaintext `ws://` to a host other than loopback or the Supervisor, also after DNS resolution → refused; redirects are not followed; untrusted TLS certificate → refused
+- Plaintext `ws://`/`http://` beyond the hosts of the mode (app mode: `supervisor` and `homeassistant` resolving into `172.30.32.0/23`; container mode: loopback only, `supervisor` refused), also after DNS resolution (e.g. `homeassistant` → an address outside the hassio network) → refused; redirects are not followed; untrusted TLS certificate → refused
 - Access token in logs, error messages or formatted configuration → never (redacted)
+- `HM_HA_TOKEN_FILE` not a regular file, or readable by group or others → start refused; `HM_HA_TOKEN` → removed from the environment once read (injected function in tests)
 
 **Storage**
 - Checksum of an applied migration changed → start aborted
 - Database schema newer than the binary → start aborted (no downgrade)
-- Database directory writable by group or others, or not owned by the service user; database file readable by others, a symlink or hard link → start aborted
+- Database directory writable by group or others, or not owned by the service user; database file readable by others, a symlink or hard link → start aborted; the error names the fix (`chmod`, or `chown -R UID:GID` of the data directory for one of another user, as after an upgrade from a container that ran as root; E2E: the release image as UID 65532 on the test's data directory)
+- Token, certificate or key file the service user may not read → start aborted with its UID and the `chown` to run
 
 **Test interface (SPEC-v0 section 10.1)**
 - The release binary depends on `tools/conformance` or the harness of the specification → a test fails (`go list -deps ./cmd/home-mandate`)
@@ -305,7 +323,9 @@ Every line is at least one test. New attack ideas are added here before they are
 - Cookie without `__Host-` prefix, `Secure`, `HttpOnly`, `SameSite=Strict` or with a domain → test fails
 - Sign-out without CSRF token or from another site → refused; after sign-out the old cookie is worthless
 - Sixth session of a user → the oldest ends; all sessions taken → the sign-in says "busy"
-- Flood of sign-in starts (one address or many) → the oldest sign-in in progress gives way (of the address first), never a refusal for everyone; the table stays bounded and nothing else grows with unauthenticated requests
+- Sign-in starts and callbacks beyond 10 a minute from one sender (IPv6 by /64) or 60 a minute overall → the sign-in says "busy", Home Assistant is not asked, a refused callback leaves its sign-in usable; a fifth sign-in while four wait for Home Assistant → "busy" without asking it
+- Flood of sign-in starts from many senders → within a minute it cannot push out a sign-in in progress, which ends once the minute is over; a flood over several minutes makes the oldest sign-in in progress give way (of the address first), never a refusal for good; the table stays bounded and nothing else grows with unauthenticated requests
+- Every answer in direct mode → `Strict-Transport-Security: max-age=31536000` (no `includeSubDomains`) and `Cross-Origin-Opener-Policy: same-origin`; behind Ingress → neither
 - `X-Remote-User-Id` or `X-Forwarded-Host` sent by the client in direct mode → ignored, never a user or an origin; an agent's bearer token on `/ui/api` → no user
 - Path tricks on the prefix (`/ui/../api`, `/ui/api%2f…`, `/ui//api`, encoded dots) → never a session without signing in
 - Inactive Home Assistant user → no session
@@ -371,7 +391,7 @@ How Home-Mandate meets each obligation and which tests show it. Gaps are listed,
 | 4 Independent of the agent | MCP has four tools, none answers; answers come only from Home Assistant notification events or the administrator UI behind Ingress | `mcp.TestOnlyTheFourToolsExist`, `api.TestOnlyTheSupervisorIsServed`, `api.TestAPINeedsAnAdministrator` | |
 | 5 In time | The wait ends at the shorter of the rule's timeout and `HM_APPROVAL_TIMEOUT`; rejection and invalid answers deny; right before the call the confirmation must be younger than that timeout, and the call ends at that point at the latest | `approval.TestTimeout`, `approval.TestMandateTimeoutShortensTheWait`, `approval.TestDefaultUpperLimit`, `mcp.TestExpiredConfirmationIsNotExecuted`, `mcp.TestApprovalValidity`, `mcp.TestRefusedApprovals` | |
 | 6 Evaluated again | After the answer: emergency stop, token and a fresh evaluation; executed only if not `deny` and the digest is unchanged | `mcp.TestChecksAfterApproval`, `mcp.TestRevokedTokenAfterApproval`, `mcp.TestMandateUnavailableAfterApproval` | Expiry and a closing time window after the answer are covered by the fresh evaluation, without tests of their own |
-| 7 Limited | At most 2 waiting requests per agent, further ones `denied: approval_pending`; the rate limit runs before the decision, so `ask` counts | `mcp.TestPendingAsksAreBounded`, `mcp.TestRateLimit`, `mcp.TestAskRequestsCountTowardsTheRateLimit` | |
+| 7 Limited | At most 2 waiting requests per agent, further ones `denied: approval_pending`; the rate limit runs before the decision, so `ask` counts; after a request that was not approved, asking again for the device waits (`denied: approval_cooldown`) | `mcp.TestPendingAsksAreBounded`, `mcp.TestRateLimit`, `mcp.TestAskRequestsCountTowardsTheRateLimit`, `mcp.TestAskingAgainAfterARefusalWaits` | |
 | Audit | Every outcome with `approval.outcome`, `by`, `via`; a cancelled request with `denied_by` | `mcp.TestCancelledApprovals`, `mcp.TestApprovalEntriesNameTheirRequest`, `audit.TestApprovedAskIsRecordedWithApproval`, `audit.TestApprovalChannelAndCancellation` | |
 
 ### 11.2 Rate limit

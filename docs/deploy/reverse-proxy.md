@@ -30,8 +30,10 @@ Take A unless you want TLS to end inside Home-Mandate.
   that needs an approval waits for it (default 120 s, so 150 s; with
   `HM_APPROVAL_TIMEOUT=600` it is 630 s). Traefik and Caddy do not cut responses by
   default; **nginx does after 60 s**.
-- Use the **public name without a port** in `HM_PUBLIC_URL`, exactly as browsers and
-  agents type it (`https://hm.example.org`).
+- Use the **proxy's address without a port** in `HM_PUBLIC_URL` (in app mode the option
+  `public_url`), exactly as browsers and agents type it (`https://hm.example.org`), in
+  both ways. Only without a proxy, when agents connect to Home-Mandate's own TLS
+  directly, does the public URL carry its port (`https://hm.example.org:8765`).
 - Let the browser reach **Home Assistant from outside** too: signing in to the UI sends
   the browser to Home Assistant, so `HM_HA_BROWSER_URL` is Home Assistant's public
   address (`https://ha.example.org`), not a LAN address.
@@ -89,6 +91,7 @@ services:
         ipv4_address: 172.31.250.2
 
   home-mandate:
+    user: "65532:65532" # without root; owns its data directory (README, "Without root")
     networks: [proxy]
     environment:
       HM_PROXY: 172.31.250.2
@@ -265,7 +268,8 @@ and pairing apply to all clients together.
 
 In the sidebar of Home Assistant the UI is already reachable wherever Home Assistant is,
 through Ingress. For agents from outside, set a certificate from `/ssl` and `public_url`
-in the app's options and pass TLS through as in way B; `HM_PROXY` is not available in
+(the proxy's address without a port, `https://hm.example.org`) in the app's options and
+pass TLS through as in way B; `HM_PROXY` is not available in
 app mode yet.
 
 ## Check

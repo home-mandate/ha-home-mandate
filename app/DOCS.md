@@ -29,8 +29,8 @@ This is the first, experimental version.
 | Option | Meaning |
 |---|---|
 | `tls_certfile`, `tls_keyfile` | Certificate and key in `/ssl` for the MCP endpoint (TLS 1.3). Must cover the host of `public_url`. Without them, the endpoint answers on localhost only. Renewed files are taken over without a restart. |
-| `public_url` | Where agents and browsers reach Home-Mandate, e.g. `https://hm.example.org:8765`. Without it, no agent can be admitted. |
-| `ha_browser_url` | Home Assistant as your browser reaches it, e.g. `https://ha.example.org:8123`. Needed with `public_url`. |
+| `public_url` | Where agents and browsers reach Home-Mandate. When they connect to the app directly, it carries the port, e.g. `https://hm.example.org:8765`; behind a reverse proxy it is the proxy's address without a port, e.g. `https://hm.example.org`. Without it, no agent can be admitted. |
+| `ha_browser_url` | Home Assistant as your browser reaches it, e.g. `https://ha.example.org:8123`. Needed with `public_url`. If Home Assistant uses a certificate of its own (e.g. Duck DNS), use the name that certificate is for: Home-Mandate checks it when it exchanges the sign-in with Home Assistant. |
 | `approval_timeout_seconds` | How long an action waits for an approval, 30–600 seconds. A mandate may only shorten it. |
 | `log_level` | `debug`, `info`, `warning` or `error`. |
 

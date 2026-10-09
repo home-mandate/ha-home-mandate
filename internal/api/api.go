@@ -153,6 +153,7 @@ type Server struct {
 	chain   *chainStatus
 	answers *waiters
 	ui      *uiSessions
+	signing chan struct{} // sign-ins waiting for Home Assistant (direct mode)
 	bell    bellSetting
 	mux     *http.ServeMux
 
@@ -200,7 +201,8 @@ func New(cfg Config) *Server {
 	key := make([]byte, 32)
 	_, _ = rand.Read(key) // crypto/rand.Read never fails (Go ≥ 1.24)
 	s := &Server{cfg: cfg, users: newUsers(cfg.HA, cfg.Now), csrfKey: key, limits: newLimits(cfg.Now), hub: newHub(),
-		chain: &chainStatus{}, answers: newWaiters(), ui: newUISessions(cfg.Now), hooks: make(chan func(), hookQueue)}
+		chain: &chainStatus{}, answers: newWaiters(), ui: newUISessions(cfg.Now), signing: make(chan struct{}, signInAtOnce),
+		hooks: make(chan func(), hookQueue)}
 	s.mux = s.routes()
 	go s.runHooks() // lives as long as the process
 	return s

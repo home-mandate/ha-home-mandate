@@ -141,6 +141,11 @@ func TestPartialFailures(t *testing.T) {
 	}
 	exec(`ALTER TABLE approver_devices_gone RENAME TO approver_devices`)
 	h.ok(http.MethodGet, "/api/approvals", nil, nil)
+	// It cannot be told whether the clock was behind: no system status either.
+	exec(`DROP INDEX audit_log_recorded_at`)
+	if r := h.do(http.MethodGet, "/api/system", nil); r.code != http.StatusInternalServerError {
+		t.Errorf("system without the clock check = %d", r.code)
+	}
 }
 
 // A mandate without a name (imported on the command line) shows its ID.
@@ -201,6 +206,40 @@ func TestReviewHardening(t *testing.T) {
 	a, _ := h.agents.Get(context.Background(), voice.ClientID)
 	if w := h.srv.presentAgent(context.Background(), a); w.ClientID != voice.ClientID || w.Mandate != nil || w.RedirectURIs == nil {
 		t.Errorf("fallback = %+v", w)
+	}
+}
+
+// When the log cannot be read, the tail announces nothing and tries again later; when the
+// hook worker is busy and its queue full, announcements are dropped, never waited for.
+func TestTailAndHooksWhenStuck(t *testing.T) {
+	h := newHarness(t)
+	h.srv.setLastSeen(7)
+	_ = h.st.Close()
+	c, _ := h.srv.hub.add(adminID, "")
+	h.srv.tail(context.Background())
+	select {
+	case data := <-c.send:
+		t.Errorf("announced without a log: %s", data)
+	default:
+	}
+	if h.srv.lastSeen != 7 {
+		t.Errorf("last seen moved to %d", h.srv.lastSeen)
+	}
+
+	release := make(chan struct{})
+	defer close(release)
+	running := make(chan struct{})
+	h.srv.later(func() { close(running); <-release })
+	<-running
+	for range hookQueue {
+		h.srv.later(func() {})
+	}
+	dropped := make(chan struct{})
+	go func() { h.srv.later(func() { t.Error("ran an announcement beyond the queue") }); close(dropped) }()
+	select {
+	case <-dropped:
+	case <-time.After(5 * time.Second):
+		t.Error("later waited for the queue")
 	}
 }
 

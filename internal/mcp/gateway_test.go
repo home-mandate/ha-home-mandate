@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -16,12 +17,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/home-mandate/spec"
 
 	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/catalog"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
@@ -135,8 +138,27 @@ func (f *fakeClock) set(behind bool, err error) {
 	f.behind, f.err = behind, err
 }
 
+// fakeNow is a clock that moves only when told to.
+type fakeNow struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (f *fakeNow) Now() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.t
+}
+
+func (f *fakeNow) advance(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.t = f.t.Add(d)
+}
+
 type harness struct {
 	clock    *fakeClock
+	now      *fakeNow // the gateway's clock
 	t        *testing.T
 	url      string
 	token    string
@@ -151,14 +173,29 @@ type harness struct {
 	approver Approver
 	decider  Decider // replaces pdp when set
 
-	mu sync.Mutex
-	tz string
+	mu   sync.Mutex
+	tz   string
+	self string // Home-Mandate's own Home Assistant user
 }
 
 func (h *harness) timeZone() string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.tz
+}
+
+func (h *harness) serviceUser() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.self
+}
+
+// setHousehold sets what Home Assistant's configuration told: the time zone and
+// Home-Mandate's own user.
+func (h *harness) setHousehold(tz, self string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.tz, h.self = tz, self
 }
 
 // newHarness runs the gateway on real stores with the voice assistant mandate of
@@ -187,7 +224,7 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 		t.Fatal(err)
 	}
 
-	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin", clock: &fakeClock{},
+	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin", self: "hm-service-user", clock: &fakeClock{}, now: &fakeNow{t: time.Now()},
 		ha: &fakeHA{connected: true},
 		catalog: &fakeCatalog{ready: true, devices: map[string]catalog.Device{
 			"light.kitchen":            {EntityID: "light.kitchen", Category: "light", Area: "kitchen", State: "off", Attributes: map[string]any{"friendly_name": "Kitchen"}},
@@ -208,7 +245,8 @@ func (h *harness) serve(auditor Auditor) string {
 	if h.decider != nil {
 		decider = h.decider
 	}
-	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test"})
+	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test",
+		TimeZone: h.timeZone, ServiceUser: h.serviceUser, Now: h.now.Now})
 	g.cfg.Clock = h.clock
 	srv := httptest.NewServer(g.Handler())
 	h.t.Cleanup(srv.Close)
@@ -482,14 +520,28 @@ func TestCatalogNotLoadedOrTimeZoneUnknown(t *testing.T) {
 		t.Errorf("catalog not ready: %q", errText)
 	}
 	h.catalog.setReady(true)
-	h.mu.Lock()
-	h.tz = ""
-	h.mu.Unlock()
-	if _, errText := h.call(s, "perform_action", map[string]any{"entity_id": "light.kitchen", "action": "turn_on"}); errText != "unavailable" {
-		t.Errorf("time zone unknown: %q", errText)
+	for _, tc := range []struct{ tz, self, code string }{
+		{"", "hm-service-user", "timezone_unknown"},
+		{"Europe/Berlin", "", "service_user_unknown"},
+	} {
+		h.setHousehold(tc.tz, tc.self)
+		// Lists too: time windows would be evaluated in the host's zone.
+		for tool, args := range map[string]map[string]any{
+			"perform_action":      {"entity_id": "light.kitchen", "action": "turn_on"},
+			"get_state":           {"entity_id": "light.kitchen"},
+			"list_devices":        nil,
+			"list_my_permissions": nil,
+		} {
+			if _, errText := h.call(s, tool, args); errText != "unavailable" {
+				t.Errorf("%s unknown, %s: %q", tc.code, tool, errText)
+			}
+		}
+		if e := h.lastEntry(); path(e, "result", "error") != tc.code {
+			t.Errorf("audit entry = %v", e)
+		}
 	}
-	if e := h.lastEntry(); path(e, "result", "error") != "timezone_unknown" {
-		t.Errorf("audit entry = %v", e)
+	if len(h.ha.recorded()) != 0 {
+		t.Error("executed without the household's configuration")
 	}
 }
 
@@ -700,6 +752,56 @@ func TestFailedActionLeavesOnlyAFailedEntry(t *testing.T) {
 	log := h.auditLog()
 	if strings.Contains(log, `"status":"executed"`) || !strings.Contains(log, `"error":"ha_unavailable"`) {
 		t.Errorf("audit log:\n%s", log)
+	}
+}
+
+// SECURITY.md: an agent never learns of a device it may not read. Neither list mentions
+// it, and every refusal on it is the answer for a device that does not exist. What the
+// mandate allows on it stays possible for an agent that knows the ID.
+func TestUnreadableDevicesAreNeitherListedNorMentioned(t *testing.T) {
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+			map[string]any{"id": "r-no-kitchen-read", "resource": map[string]any{"entity_id": "light.kitchen"}, "actions": []any{"read"}, "decision": "deny"},
+			map[string]any{"id": "r-kitchen-on", "resource": map[string]any{"entity_id": "light.kitchen"}, "actions": []any{"turn_on"}, "decision": "allow"},
+			map[string]any{"id": "r-kitchen-off", "resource": map[string]any{"entity_id": "light.kitchen"}, "actions": []any{"turn_off"}, "decision": "ask"},
+			map[string]any{"id": "r-no-camera-read", "resource": map[string]any{"category": "camera"}, "actions": []any{"read"}, "decision": "deny"},
+			map[string]any{"id": "r-camera", "resource": map[string]any{"category": "camera"}, "actions": []any{"snapshot"}, "decision": "ask"},
+		}
+	})
+	h.approver = &fakeApprover{result: approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: answeredAt}}
+	h.url = h.serve(h.log)
+	s := h.session()
+	for _, tool := range []string{"list_devices", "list_my_permissions"} {
+		out, errText := h.call(s, tool, nil)
+		if errText != "" {
+			t.Fatal(errText)
+		}
+		if listed := mustJSON(out); strings.Contains(listed, "light.kitchen") || strings.Contains(listed, "camera.porch") ||
+			!strings.Contains(listed, "lock.front_door") {
+			t.Errorf("%s = %s", tool, listed)
+		}
+	}
+	for _, args := range []map[string]any{
+		{"entity_id": "light.kitchen", "action": "turn_off"}, // ask: nobody is asked
+		{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": 10}},
+		{"entity_id": "camera.porch", "action": "snapshot"},
+	} {
+		_, unreadable := h.call(s, "perform_action", args)
+		missing := maps.Clone(args)
+		missing["entity_id"] = "light.nowhere"
+		if _, absent := h.call(s, "perform_action", missing); unreadable != "not_found" || absent != unreadable {
+			t.Errorf("%v: %q, for a missing device %q", args, unreadable, absent)
+		}
+	}
+	if _, errText := h.call(s, "get_state", map[string]any{"entity_id": "light.kitchen"}); errText != "not_found" {
+		t.Errorf("get_state = %q", errText)
+	}
+	if len(h.approver.(*fakeApprover).requests()) != 0 {
+		t.Error("an approver was asked about an unreadable device")
+	}
+	if out, errText := h.call(s, "perform_action", map[string]any{"entity_id": "light.kitchen", "action": "turn_on"}); errText != "" || out["status"] != "executed" {
+		t.Errorf("allowed action on an unreadable device = %v, %q", out, errText)
 	}
 }
 

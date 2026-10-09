@@ -26,6 +26,9 @@ panel_title: Home-Mandate
 
 # Home Assistant's API through the Supervisor (SUPERVISOR_TOKEN)
 homeassistant_api: true
+# Supervisor API with the default role (information only): at start, Home-Mandate asks for
+# Home Assistant's port and TLS setting to sign humans in (GET /core/info).
+hassio_api: true
 
 # MCP endpoint for agents: TLS 1.3 with a certificate from /ssl, otherwise localhost only
 ports:

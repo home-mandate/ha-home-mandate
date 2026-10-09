@@ -435,12 +435,19 @@ func (h *harness) putApprover(ap approval.Approver) {
 }
 
 // ask opens an approval request as the gateway would and, like it, writes the audit
-// entry of the outcome with the request ID. It returns the request ID.
+// entry of the outcome with the request ID. It returns the request ID. A request still
+// open when the test ends is dropped with it: its timeout must not report into a test
+// that is over (and whose store is closed).
 func (h *harness) ask(req approval.Request) (string, chan approval.Result) {
 	h.t.Helper()
 	done := make(chan approval.Result, 1)
+	ctx := h.t.Context()
 	go func() {
-		res, err := h.approvals.Ask(context.Background(), req)
+		res, err := h.approvals.Ask(ctx, req)
+		if ctx.Err() != nil {
+			close(done)
+			return
+		}
 		if err != nil {
 			h.t.Errorf("Ask: %v", err)
 			close(done)

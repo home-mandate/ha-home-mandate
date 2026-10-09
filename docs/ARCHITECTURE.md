@@ -73,13 +73,25 @@ Reason: only this way can every request be mapped unambiguously to a device and 
 | `list_my_permissions` | – | Shows the agent what it may do (helps models avoid pointless requests). Never shows other agents' rules. |
 
 Devices an agent has no read access to do not exist for that agent (no hint of their
-existence in lists or error messages).
+existence in lists or error messages): `list_devices` lists only devices it may read
+(`allow`), `list_my_permissions` none whose `read` is denied, also when the mandate allows
+other actions on it, and every refusal on such a device, `ask` included (nobody is asked),
+is `not_found`, as for a device that does not exist. An action the mandate allows on it is
+still performed for an agent that knows the ID: the household granted it, and its result
+tells no more than the grant. Its parameters are checked as for any other device.
 
 ## 5. Request flow
 
 1. The agent calls `perform_action(entity_id="lock.front_door", action="unlock")`.
 2. `mcp` checks the token (valid, not revoked, issued for this resource).
-3. The clock is checked against the audit log, then the rate limit, counted per mandate
+3. Availability: Home Assistant connected, the resource directory ready, and the
+   household's time zone (`get_config`) and Home-Mandate's own Home Assistant user
+   (`auth/current_user`) known; otherwise every tool, the lists included, answers
+   `unavailable`. Without the time zone, time windows would be evaluated in the host's
+   zone; without its own user, Home-Mandate could not leave it out of the approvers. Both
+   are read at every connection and, if Home Assistant cannot answer yet, again after 1,
+   2, 4 … seconds (at most every minute) until it does or the connection ends.
+   The clock is checked against the audit log, then the rate limit, counted per mandate
    (SPEC-v0 section 11.2). Exceeded → refusal, logged.
 4. `catalog` resolves the entity exactly as Home Assistant spells it: category `lock`, area
    `hallway`, and whether the household marked it as critical. An entity it does not know
@@ -105,15 +117,25 @@ The evaluation is only as good as the directory it gets category, area and the c
 mark from (SPEC-v0 sections 3.4 and 4). The catalog builds it from Home Assistant's
 states and registries and keeps it current through `state_changed` and the
 `*_registry_updated` events; until the first load, and after a lost connection until the
-next one, it is empty and every request is denied.
+next one, it is empty and every request is denied. A registry event says that the
+directory has changed but not how: from the event until the refresh that follows it has
+succeeded (0.5 s later, retried at growing intervals up to every 5 s while it fails),
+nothing is decided and every request is refused as `unavailable`; a rename in the event
+takes effect at once all the same. The registries are also read anew every 10 minutes,
+and a directory older than 30 minutes is not decided on: events cannot tell that none
+was missed.
 
-- **Category** comes from the domain and, for covers, the `device_class` (`garage`,
-  `gate` → `gate`). Whoever can change a `device_class` in Home Assistant can therefore
-  move a cover between `cover` and `gate`; Home Assistant administrators are trusted.
+- **Category** comes from the domain and, for covers, the `device_class`: a cover that
+  may close an entrance is `gate`, whose `open` is critical (`garage`, `gate`, `door`, and
+  no class at all, which cover groups and many template covers have); blinds, shades,
+  shutters, curtains, awnings, windows and every other class stay `cover`. So a household
+  that allows `cover` for its blinds does not let an agent open a front door modelled as
+  a cover. Whoever can change a `device_class` in Home Assistant can still move a cover
+  between `cover` and `gate`; Home Assistant administrators are trusted.
 - **Critical marks.** The household marks entities as critical in the settings
   (`critical_entities`): every action on them except `read` is critical, whatever their
   category. Home-Mandate proposes candidates (names with door, gate, garage; covers of the
-  classes door, window, garage, gate) but marks nothing by itself. Every change is an
+  class window) but marks nothing by itself. Every change is an
   audit entry (`directory.changed`), written in the same transaction as the change.
 - **Renames.** Rules and marks name entities by their ID. Home-Mandate finds a rename by
   the event (`entity_registry_updated` with `old_entity_id`) and, also after an outage or
@@ -191,9 +213,10 @@ human's decision; codes, pairings and browser sessions live in memory only.
 validity; admission fills them in.
 - **Base templates** ship with Home-Mandate, so a new installation can admit an agent at
   once: `hm-read-only` (reads everything), `hm-light-climate` (reads everything, switches
-  lights, sets temperatures, moves covers such as blinds; garage doors and gates are the
-  category `gate` and not included) and `hm-voice-cautious` (as `hm-light-climate` without
-  covers, locks only with approval, never cameras or disarming the alarm). They cannot be
+  lights, sets temperatures, moves covers such as blinds; garage doors, gates, doors and
+  covers without a class are the category `gate` and not included) and
+  `hm-voice-cautious` (as `hm-light-climate` without covers, locks only with approval,
+  never cameras or disarming the alarm). They cannot be
   changed or removed, only used, loaded into the editor and saved under a new name, and
   hidden: a hidden base template is neither offered nor accepted at admission. Names
   starting with `hm-` are reserved for them.
@@ -233,7 +256,9 @@ checked on every request.
 
 ## 7. Approval requests ("ask")
 
-- Sent via `notify.mobile_app_<device>` to every device (up to 5) of the approvers selected
+- Sent via `notify.mobile_app_<device>` (nothing else: the Home Assistant client, the
+  approvers store and `approver add` refuse other notify services, which could reach people
+  who are no approvers) to every device (up to 5) of the approvers selected
   in the settings: phones, tablets, the Companion App on a Mac. Each device has its own switch
   for critical requests; critical requests go only to devices where it is on. The UI
   proposes on only for iOS devices of the person themselves and off for everything else
@@ -251,11 +276,19 @@ checked on every request.
 - On iOS, `authenticationRequired: true` is set (unlocking required). Android and the
   Companion App on a Mac have no such step: whoever has the unlocked device can answer.
 - The "reason" supplied by the agent is explicitly marked in the message as the agent's claim,
-  not as a fact. The message also shows the service data that will be executed.
+  not as a fact. The message also shows the service data that will be executed, and when
+  the alarm is armed the mode (`mode=night`; `away` when the agent names none), which is
+  part of the service, not of the data; the UI shows the same.
 - Timeout: the mandate's `approval.timeout`, capped by `HM_APPROVAL_TIMEOUT` (default
   2 minutes, at most 10) because the agent's request waits → `deny`. Every nonce is valid
   exactly once; open requests live in memory.
 - After an approval the PEP checks emergency stop, token and mandate again before executing.
+- **Approver fatigue:** an agent has at most 2 requests waiting, and every request counts
+  towards its rate limit. After a rejection, a timeout or an invalid answer, the same
+  agent may not ask again for the same device for a minute; every further one doubles the
+  wait up to an hour, an approval or a quiet hour after the last wait ends it. Meanwhile
+  the agent gets `denied: approval_cooldown`, nobody is notified, and the refusal is in the
+  audit log (`denied_by: approval`, `error: approval_cooldown`). The waits live in memory.
 - **Answering in the UI (decision F2, 2026-10-02):** an approver who is a Home Assistant
   administrator may also answer in the Home-Mandate UI if this is switched on for them, and
   for critical actions only with a second, separate switch (a browser session asks for no
@@ -288,6 +321,15 @@ checked on every request.
 
 One image, two configuration sources. Architectures: `amd64`, `aarch64`.
 
+**Plaintext to Home Assistant** is decided by the mode, never guessed by the client. App
+mode: exactly `supervisor` (WebSocket via `ws://supervisor/core/websocket`) and
+`homeassistant` (HTTP API at `http://homeassistant:8123` for the sign-in of humans, since
+the Supervisor proxy does not forward `/auth`), each only while it resolves into the hassio
+network `172.30.32.0/23` (Core at `.1`, Supervisor at `.2`); no other host, no literal
+address, not `localhost`. Container mode: loopback only (literal loopback addresses and
+`localhost`), `supervisor` and `homeassistant` are refused. The resolved address is checked
+right before dialing, so DNS cannot point an allowed name elsewhere.
+
 **Who may use the UI (decision U2, checked against the Supervisor and Core sources):**
 Ingress lets every signed-in Home Assistant user reach the UI; `panel_admin` only hides the
 sidebar entry. Home-Mandate therefore checks itself, on every request:
@@ -301,8 +343,9 @@ sidebar entry. Home-Mandate therefore checks itself, on every request:
    address of the own proxy is configured (`HM_INGRESS_PROXY`, decision U2).
 2. Exactly one `X-Remote-User-Id`, in the form of a Home Assistant user ID. The Supervisor
    removes client copies of this header and sets it from the session.
-3. The user is an administrator now: `config/auth/list`, administrator = owner, or active
-   and in `system-admin` (Home Assistant's own rule). The answer is kept 30 seconds; when
+3. The user is an administrator now: `config/auth/list`, administrator = active, and the
+   owner or in `system-admin` (Home Assistant's own rule, except that a deactivated owner
+   is none either). The answer is kept 30 seconds; when
    Home Assistant cannot be asked, nobody is an administrator (503, fail closed).
 
 The UI runs in an iframe of Home Assistant's own origin; an XSS in it would take over Home
@@ -318,7 +361,13 @@ index `audit_search`, `approvers`, `mandate_templates`, `settings`.
 
 Further tables: `critical_entities` (the household's critical marks), the settings
 `mandate_issuer` and `audit_log_id`; the key of the audit checkpoints lies in
-`audit-checkpoint.key` next to the database or at `HM_AUDIT_KEY_FILE`.
+`audit-checkpoint.key` next to the database or at `HM_AUDIT_KEY_FILE`. Only `serve` creates
+the key, on its first start, atomically (temporary file with mode 0600 in the same
+directory, synced, renamed); the command line never does, and `audit key` fails before
+that start. The key is read only from a regular file (no symbolic link) owned by the user
+Home-Mandate runs as, without access for group or others. If the log has checkpoints but
+the key is missing, both refuse to run instead of creating a new key that could not
+verify them.
 
 ### What Home-Mandate trusts
 
@@ -329,17 +378,29 @@ Further tables: `critical_entities` (the household's critical marks), the settin
   shows that a stored version was altered (it then denies), but a new, consistent version
   can be written. The audit log shows such changes only up to its last checkpoint that left
   the device. Mandates signed with a key outside the device (planned) remove this trust.
+  Deleting the beginning of the log is accounted for by a `log.truncated` entry, which
+  needs no key; Home-Mandate therefore counts a truncation only if a verified checkpoint
+  covers that entry (stricter than SPEC-v0 section 9.4). Otherwise `audit verify` fails and
+  prints `first_seq` and `truncation`, the UI shows the chain broken at the first remaining
+  entry, and the gateway logs an error at start; if the log has checkpoints but none
+  covers the truncation, it is tampering and the gateway does not start.
 - **The clock.** Validity periods, time windows and the audit log follow the host clock.
   While it lies more than a minute behind the latest time in the audit log, nothing is
   decided (SPEC-v0 section 11.4): requests fail with `clock_behind`, the UI shows a banner.
   If the clock ran ahead by mistake and was corrected, `home-mandate audit accept-clock`
-  sets the entries with the future times aside for this check.
+  sets the entries with the future times aside for this check. The retention of the audit
+  log (30 days, at start and daily) counts the age back from the newest entry that is not
+  a `log.truncated` or `log.checkpoint`, or from the clock if that is earlier, so a clock
+  that jumped ahead does not age the log; it waits while the clock is behind (warning, the
+  next run tries again) and deletes at most a tenth of the entries per run.
 - **Nothing from the agent** except the requested resource, action, parameters and its
   reason, which is shown as the agent's claim.
 
 **The Home Assistant credentials are never stored (decision U8).** In app mode Home-Mandate
-uses `SUPERVISOR_TOKEN`; in container mode the token comes from `HM_HA_TOKEN` or the file in
-`HM_HA_TOKEN_FILE` (mode 0600, mounted read-only). Nothing to encrypt in the database; a test
+uses `SUPERVISOR_TOKEN`; in container mode the token comes from the file in `HM_HA_TOKEN_FILE`
+(preferred; a regular file that neither group nor others can read, e.g. mode 0600 mounted
+read-only, otherwise the start is refused) or from `HM_HA_TOKEN`, which Home-Mandate takes
+out of its environment once read. Nothing to encrypt in the database; a test
 runs the gateway with a token and checks that no file of the data directory contains it.
 
 ## 10. Cryptography
@@ -439,11 +500,23 @@ Decided by Markus on 2026-10-01.
    - The Let's Encrypt app copies `privkey.pem` to `/ssl` as root with mode 0600 (certbot
      default); the DuckDNS app writes key and certificate with `umask 077`.
 
-   **Result: the image runs as root**, like all official apps. It is `FROM scratch` with
-   only the binary and CA certificates (no shell, no package manager), requests no
-   `privileged` capabilities, and writes only to `/data`. Dropping privileges inside the
-   binary after reading the key and `options.json` remains possible later; it would
-   require a restart for certificate renewal.
+   **Result: the image runs as root in app mode**, like all official apps. It is
+   `FROM scratch` with only the binary and CA certificates (no shell, no package manager),
+   requests no `privileged` capabilities, and writes only to `/data`. Dropping privileges
+   inside the binary after reading the key and `options.json` remains possible later; it
+   would require a restart for certificate renewal.
+
+   **Container mode runs without root** (v0.1). The image sets no `USER`, since the
+   Supervisor would run it as that user too and the app configuration cannot change it;
+   the operator sets the user instead (`user: "65532:65532"` in `docs/deploy/compose.yaml`).
+   The data directory belongs to that user, the token, certificate and key are readable by
+   it; port 8765 needs no privilege. The store's checks stay as they are (directory owned
+   by the process's user and not writable by group or others, database, WAL and
+   shared-memory files regular with mode 0600); a data directory of another user, as left
+   by a container that ran as root, stops the start with `chown -R UID:GID` of the data
+   directory, and an unreadable token, certificate or key with the UID and the `chown` to
+   run. Started as root in container mode, Home-Mandate logs a warning. The E2E suite
+   runs the release image unprivileged.
 4. **App configuration format.** **Decision: as proposed.** Check against the current
    developer documentation (no automatic `BUILD_FROM` since Supervisor 2026.04) during app
    packaging.
@@ -459,7 +532,7 @@ Decided by Markus on 2026-10-01.
    (`home-mandate approver add USER_ID SERVICE de|en`).
 
 **Toolchain (2026-10-01):**
-- Go 1.27.1 for `home-mandate/spec` and `home-mandate`; build image `golang:1.27.1-alpine` pinned
+- Go 1.27.2 for `home-mandate/spec` and `home-mandate`; build image `golang:1.27.2-alpine` pinned
   by digest (Dockerfile).
 - HA WebSocket client: `github.com/coder/websocket`.
 - Migrations: `github.com/pressly/goose/v3` with embedded SQL files, plus own guards

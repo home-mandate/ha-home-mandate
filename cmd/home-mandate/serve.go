@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,6 +44,10 @@ const (
 	minWriteTimeout = 60 * time.Second
 	approvalSlack   = 30 * time.Second
 	bellCleanup     = 10 * time.Second
+	// configRetryMin and configRetryMax bound the wait between attempts to read Home
+	// Assistant's configuration and Home-Mandate's own user; nothing is decided without.
+	configRetryMin = time.Second
+	configRetryMax = time.Minute
 )
 
 // registryEvents keep the catalog current (ARCHITECTURE section 11.2).
@@ -68,8 +74,13 @@ func restoredLimiter(ctx context.Context, log *audit.Log, now func() time.Time, 
 func serve(ctx context.Context, e env) int {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel() // also stops what a failed start-up already started
-	cfg, err := config.Load(e.getenv, e.readFile)
+	uid, gid := os.Getuid(), os.Getgid()
+	cfg, err := config.Load(config.Env{Getenv: e.getenv, ReadFile: e.readFile, Stat: e.stat, Unsetenv: e.unsetenv})
 	if err != nil {
+		fmt.Fprintln(e.stderr, "home-mandate:", permissionHint(err, uid, gid))
+		return exitFailure
+	}
+	if cfg, err = appHomeAssistant(ctx, cfg, coreInfo); err != nil {
 		fmt.Fprintln(e.stderr, "home-mandate:", err)
 		return exitFailure
 	}
@@ -78,16 +89,19 @@ func serve(ctx context.Context, e env) int {
 		return exitOK // stopped during start-up
 	}
 	if err != nil {
-		fmt.Fprintln(e.stderr, "home-mandate:", err)
+		fmt.Fprintln(e.stderr, "home-mandate:", permissionHint(err, uid, gid))
 		return exitFailure
 	}
 	defer s.store.Close()
 	s.cfg = cfg
-	if err := attachSigner(ctx, s, cfg.DataDir, e.getenv); err != nil {
-		fmt.Fprintln(e.stderr, "home-mandate:", err)
+	if err := attachSigner(ctx, s, cfg.DataDir, e.getenv, true); err != nil {
+		fmt.Fprintln(e.stderr, "home-mandate:", permissionHint(err, uid, gid))
 		return exitFailure
 	}
 	logger := slog.New(slog.NewJSONHandler(e.stderr, &slog.HandlerOptions{Level: s.cfg.LogLevel}))
+	if warning := rootWarning(cfg.Mode, uid); warning != "" {
+		logger.Warn(warning)
+	}
 
 	// A stop signal during start-up cancels ctx and makes the step in progress fail; that
 	// is a clean stop, not a failed start.
@@ -95,9 +109,14 @@ func serve(ctx context.Context, e env) int {
 	if ctx.Err() != nil {
 		return exitOK
 	}
-	if err != nil || !r.Valid {
-		logger.Error("audit log is broken, not starting", "broken_at", r.BrokenAt, "error", err)
+	if err != nil || !r.Valid && r.Truncation != audit.TruncationUnanchored {
+		logger.Error("audit log is broken, not starting", "broken_at", r.BrokenAt, "truncation", r.Truncation, "error", err)
 		return exitFailure
+	}
+	if r.Truncation == audit.TruncationUnanchored {
+		// Without any checkpoint it cannot be told from a truncation of an old version; the
+		// UI shows it as a broken chain.
+		logger.Error("audit log beginning deleted without a verified checkpoint", "first_seq", r.FirstSeq)
 	}
 	n, err := s.log.IndexSearch(ctx)
 	if ctx.Err() != nil {
@@ -115,7 +134,7 @@ func serve(ctx context.Context, e env) int {
 		return exitOK
 	}
 	if err != nil {
-		logger.Error("cannot start", "error", err)
+		logger.Error("cannot start", "error", permissionHint(err, uid, gid))
 		return exitFailure
 	}
 	return g.run(ctx)
@@ -129,9 +148,10 @@ type gateway struct {
 	client   *ha.Client
 	catalog  *catalog.Catalog
 	api      *api.Server
-	timeZone atomic.Value // string; empty until Home Assistant answered get_config
-	language atomic.Value // string; household language from get_config
-	self     atomic.Value // string; Home-Mandate's own Home Assistant user
+	timeZone atomic.Value  // string; empty until Home Assistant answered get_config
+	language atomic.Value  // string; household language from get_config
+	self     atomic.Value  // string; Home-Mandate's own Home Assistant user
+	retryMin time.Duration // first wait before the configuration is read again
 
 	mu        sync.Mutex
 	haSince   time.Time // when the connection was made or lost
@@ -154,11 +174,11 @@ type gateway struct {
 }
 
 func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, error) {
-	g := &gateway{state: s, logger: logger, haSince: time.Now()}
+	g := &gateway{state: s, logger: logger, haSince: time.Now(), retryMin: configRetryMin}
 	g.timeZone.Store("")
 	g.language.Store("")
 	g.self.Store("")
-	client, err := ha.New(ha.Config{URL: s.cfg.HAURL, Token: s.cfg.HAToken, RootCAs: s.cfg.HARootCAs, Logger: logger,
+	client, err := ha.New(ha.Config{URL: s.cfg.HAURL, Token: s.cfg.HAToken, RootCAs: s.cfg.HARootCAs, Plaintext: s.cfg.HAPlaintext, Logger: logger,
 		OnConnect: g.onConnect, OnDisconnect: g.onDisconnect})
 	if err != nil {
 		return nil, err
@@ -217,7 +237,8 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		return nil, fmt.Errorf("subscribe %s: %w", ha.EventMobileAppNotificationAction, err)
 	}
 
-	decider := pdp.New(pdp.Config{Principal: s.household, Mandates: s.mandates, Catalog: g.catalog, TimeZone: g.householdTimeZone})
+	decider := pdp.New(pdp.Config{Principal: s.household, Mandates: s.mandates, Catalog: g.catalog, TimeZone: g.householdTimeZone,
+		Ready: func() bool { return g.catalog.Ready() && g.householdTimeZone() != "" }})
 	if s.cfg.PDPAddr != "" { // the AuthZEN endpoint for other gateways is opt-in
 		addr, err := decider.ListenAndServe(ctx, s.cfg.PDPAddr)
 		if err != nil {
@@ -231,8 +252,8 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		resource, metadata = s.cfg.PublicURL+mcp.Path, s.cfg.PublicURL+"/.well-known/oauth-protected-resource"+mcp.Path
 	}
 	gw := mcp.New(mcp.Config{Resource: resource, ResourceMetadataURL: metadata, Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
-		TemperatureUnit: g.temperatureUnit,
-		Limiter:         restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, Clock: s.log, Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
+		TemperatureUnit: g.temperatureUnit, TimeZone: g.householdTimeZone, ServiceUser: g.serviceUser,
+		Limiter: restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, Clock: s.log, Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
 	as, handler, err := withOAuth(s, gw.Handler(), http.HandlerFunc(g.serveDirect), resource, logger)
 	if err != nil {
 		return nil, err
@@ -256,7 +277,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	if directMode(s.cfg, g.certs) {
 		signIn, err := oauth.NewHASignIn(oauth.HASignInConfig{PublicURL: s.cfg.PublicURL, BrowserURL: s.cfg.HABrowserURL,
-			HTTPURL: s.cfg.HAHTTPURL, WebSocketURL: s.cfg.HAURL, Roots: s.cfg.HARootCAs, Callback: api.DirectCallbackPath})
+			HTTPURL: s.cfg.HAHTTPURL, WebSocketURL: userURL(s.cfg), Roots: s.cfg.HARootCAs, Plaintext: s.cfg.HAPlaintext, ServerName: s.cfg.HAServerName, Callback: api.DirectCallbackPath})
 		if err != nil {
 			return nil, err
 		}
@@ -385,7 +406,7 @@ func withOAuth(s *state, mcpHandler, ui http.Handler, resource string, logger *s
 		return nil, mcpHandler, nil
 	}
 	signIn, err := oauth.NewHASignIn(oauth.HASignInConfig{PublicURL: s.cfg.PublicURL, BrowserURL: s.cfg.HABrowserURL,
-		HTTPURL: s.cfg.HAHTTPURL, WebSocketURL: s.cfg.HAURL, Roots: s.cfg.HARootCAs})
+		HTTPURL: s.cfg.HAHTTPURL, WebSocketURL: userURL(s.cfg), Roots: s.cfg.HARootCAs, Plaintext: s.cfg.HAPlaintext, ServerName: s.cfg.HAServerName})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -500,7 +521,10 @@ func (g *gateway) onDisconnect() {
 	}
 }
 
-// onConnect reloads what may have changed while disconnected.
+// onConnect reloads what may have changed while disconnected. The configuration and
+// Home-Mandate's own user are read until Home Assistant answers or the connection ends
+// (ctx): nothing is decided without them. The client waits for onConnect before it
+// reconnects or Run returns, so no attempt outlives the connection.
 func (g *gateway) onConnect(ctx context.Context) {
 	g.mu.Lock()
 	g.haSince = time.Now()
@@ -511,22 +535,58 @@ func (g *gateway) onConnect(ctx context.Context) {
 			g.background.Go(g.api.SystemChanged)
 		}
 	}()
+	if !g.retry(ctx, "cannot read the Home Assistant configuration", g.readConfig) ||
+		!g.retry(ctx, "cannot read Home-Mandate's own Home Assistant user", g.readSelf) {
+		return
+	}
+	g.bellClean.Do(func() { go g.clearBells() })
+}
+
+// readConfig takes over the household's time zone, language, units and Home Assistant's
+// version.
+func (g *gateway) readConfig(ctx context.Context) error {
 	cfg, err := g.client.GetConfig(ctx)
 	if err != nil {
-		g.logger.Warn("cannot read the Home Assistant configuration", "error", err)
-		return
+		return err
 	}
 	g.timeZone.Store(cfg.TimeZone)
 	g.language.Store(cfg.Language)
 	g.mu.Lock()
 	g.haVersion, g.units = cfg.Version, maps.Clone(cfg.UnitSystem)
 	g.mu.Unlock()
-	if u, err := g.client.CurrentUser(ctx); err != nil {
-		g.logger.Warn("cannot read Home-Mandate's own Home Assistant user", "error", err)
-	} else {
-		g.self.Store(u.ID)
+	return nil
+}
+
+// readSelf takes over Home-Mandate's own Home Assistant user.
+func (g *gateway) readSelf(ctx context.Context) error {
+	u, err := g.client.CurrentUser(ctx)
+	if err != nil {
+		return err
 	}
-	g.bellClean.Do(func() { go g.clearBells() })
+	g.self.Store(u.ID)
+	return nil
+}
+
+// retry runs read until it succeeds, waiting twice as long after every failure from
+// retryMin up to configRetryMax; false once ctx ends.
+func (g *gateway) retry(ctx context.Context, failure string, read func(context.Context) error) bool {
+	delay := g.retryMin
+	for {
+		err := read(ctx)
+		if err == nil {
+			return true
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+		g.logger.Warn(failure+", retrying", "error", err, "retry_in", delay)
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(delay):
+		}
+		delay = min(2*delay, configRetryMax)
+	}
 }
 
 // clearBells removes hints of approval requests a crash left in Home Assistant's
@@ -595,16 +655,24 @@ func (g *gateway) run(ctx context.Context) int {
 	return exitOK
 }
 
-// retention truncates the audit log to 30 days and deletes expired tokens, at start and
-// then daily.
+// expireLog truncates the audit log to 30 days, counted so that a wrong clock cannot
+// wipe it (audit.Log.Expire).
+func expireLog(ctx context.Context, log *audit.Log, logger *slog.Logger) {
+	n, err := log.Expire(ctx, retention, audit.Actor{Kind: audit.ActorSystem, ID: "retention"})
+	switch {
+	case errors.Is(err, audit.ErrClockBehind):
+		logger.Warn("audit log retention postponed: the clock lies behind the newest entry")
+	case err != nil:
+		logger.Error("audit log retention failed", "error", err)
+	case n > 0:
+		logger.Info("audit log truncated", "entries", n)
+	}
+}
+
+// retention truncates the audit log and deletes expired tokens, at start and then daily.
 func (g *gateway) retention(ctx context.Context) {
-	actor := audit.Actor{Kind: audit.ActorSystem, ID: "retention"}
 	for {
-		if n, err := g.state.log.Truncate(ctx, time.Now().Add(-retention), actor); err != nil {
-			g.logger.Error("audit log retention failed", "error", err)
-		} else if n > 0 {
-			g.logger.Info("audit log truncated", "entries", n)
-		}
+		expireLog(ctx, g.state.log, g.logger)
 		if n, err := g.state.agents.PurgeExpiredTokens(ctx, time.Now()); err != nil {
 			g.logger.Error("deleting expired tokens failed", "error", err)
 		} else if n > 0 {
@@ -616,4 +684,41 @@ func (g *gateway) retention(ctx context.Context) {
 		case <-time.After(retentionEvery):
 		}
 	}
+}
+
+// coreInfo asks the Supervisor how Home Assistant serves its HTTP API; replaced in tests.
+var coreInfo = ha.CoreInfo
+
+// appHomeAssistant sets, in app mode with a public URL, where Home-Mandate reaches Home
+// Assistant to sign humans in: on the Supervisor's network as homeassistant, at the port
+// and with the TLS the household configured, which the Supervisor knows. With TLS the
+// certificate is checked against the name the browser uses. Without a public URL OAuth is
+// off and nothing is asked; container mode takes the configuration as it is.
+func appHomeAssistant(ctx context.Context, cfg config.Config,
+	info func(context.Context, string, ha.Secret, ha.Plaintext) (int, bool, error)) (config.Config, error) {
+	if cfg.Mode != config.ModeApp || cfg.PublicURL == "" {
+		return cfg, nil
+	}
+	port, tls, err := info(ctx, "http://supervisor", cfg.HAToken, cfg.HAPlaintext)
+	if err != nil {
+		return cfg, fmt.Errorf("cannot ask the Supervisor how Home Assistant is reached: %w", err)
+	}
+	host := net.JoinHostPort("homeassistant", strconv.Itoa(port))
+	cfg.HAHTTPURL, cfg.HAUserURL, cfg.HAServerName = "http://"+host, "ws://"+host+"/api/websocket", ""
+	if tls {
+		browser, err := url.Parse(cfg.HABrowserURL)
+		if err != nil || browser.Hostname() == "" {
+			return cfg, errors.New("home assistant speaks TLS: ha_browser_url must name the host its certificate is for")
+		}
+		cfg.HAHTTPURL, cfg.HAUserURL, cfg.HAServerName = "https://"+host, "wss://"+host+"/api/websocket", browser.Hostname()
+	}
+	return cfg, nil
+}
+
+// userURL is Home Assistant's WebSocket API for checking a human's token.
+func userURL(cfg config.Config) string {
+	if cfg.HAUserURL != "" {
+		return cfg.HAUserURL
+	}
+	return cfg.HAURL
 }

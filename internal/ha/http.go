@@ -14,8 +14,10 @@ const httpTimeout = 10 * time.Second
 
 // HTTPClient returns a client for Home Assistant's HTTP API at origin (http:// or
 // https://), e.g. to exchange the sign-in code of a human. The rules of the WebSocket
-// connection apply: TLS 1.3, no redirects, no proxy, plaintext only to local addresses.
-func HTTPClient(origin string, roots *x509.CertPool) (*http.Client, error) {
+// connection apply: TLS 1.3, no redirects, no proxy, plaintext only as plaintext allows.
+// serverName, if set, is the name the certificate is checked against instead of origin's
+// host (app mode: homeassistant on the Supervisor's network, certificate for the public name).
+func HTTPClient(origin string, roots *x509.CertPool, plaintext Plaintext, serverName string) (*http.Client, error) {
 	u, err := url.Parse(origin)
 	if err != nil || u.Path != "" && u.Path != "/" {
 		return nil, ErrInvalidURL
@@ -28,10 +30,10 @@ func HTTPClient(origin string, roots *x509.CertPool) (*http.Client, error) {
 	default:
 		return nil, ErrInvalidURL
 	}
-	if err := validateURL(u.String()); err != nil {
+	if err := validateURL(u.String(), plaintext); err != nil {
 		return nil, err
 	}
-	c := newHTTPClient(u.String(), roots)
+	c := newHTTPClient(u.String(), roots, plaintext, serverName)
 	c.Timeout = httpTimeout
 	return c, nil
 }

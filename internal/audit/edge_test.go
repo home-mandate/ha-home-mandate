@@ -116,14 +116,15 @@ func TestTruncateNeverDeletesTheNewestEntry(t *testing.T) {
 		t.Fatalf("Truncate(single) = %d, %v; want 0", n, err)
 	}
 	appendAll(t, l, samples()[:2])
+	l.SetSigner(signer())
 	n, err := l.Truncate(ctx, old.Add(time.Hour), audit.Actor{Kind: audit.ActorSystem, ID: "retention"})
 	if err != nil || n != 2 {
 		t.Fatalf("Truncate(all old) = %d, %v; want 2", n, err)
 	}
 	var left int
 	_ = db.QueryRow(`SELECT count(*) FROM audit_log`).Scan(&left)
-	if left != 2 { // newest original entry + log.truncated
-		t.Errorf("entries left = %d, want 2", left)
+	if left != 3 { // newest original entry + log.truncated + log.checkpoint
+		t.Errorf("entries left = %d, want 3", left)
 	}
 	if r := verify(t, l); !r.Valid {
 		t.Errorf("Verify = %+v", r)
@@ -204,5 +205,155 @@ func TestWithEntry(t *testing.T) {
 	}
 	if r := verify(t, l); !r.Valid {
 		t.Errorf("Verify = %+v", r)
+	}
+}
+
+// retentionLog holds n entries a day apart, the last at last.
+func retentionLog(t *testing.T, n int, last time.Time) (*audit.Log, *sql.DB) {
+	t.Helper()
+	l, db := newLog(t)
+	for i := range n {
+		at := last.Add(-time.Duration(n-1-i) * 24 * time.Hour)
+		l.SetClock(func() time.Time { return at })
+		appendAll(t, l, samples()[:1])
+	}
+	l.SetSigner(signer())
+	return l, db
+}
+
+func firstSeq(t *testing.T, db *sql.DB) int64 {
+	t.Helper()
+	var first int64
+	if err := db.QueryRow(`SELECT min(seq) FROM audit_log`).Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	return first
+}
+
+// The age of an entry counts from the newest entry when the clock lies beyond it: a clock
+// that jumped years ahead does not make the whole log old.
+func TestExpireCountsFromTheNewestEntry(t *testing.T) {
+	last := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	l, db := retentionLog(t, 50, last)
+	ctx := context.Background()
+	actor := audit.Actor{Kind: audit.ActorSystem, ID: "retention"}
+	l.SetClock(func() time.Time { return last.AddDate(10, 0, 0) })
+	// 19 entries are more than 30 days older than the newest; a tenth of 50 per run.
+	if n, err := l.Expire(ctx, 30*24*time.Hour, actor); err != nil || n != 5 {
+		t.Fatalf("Expire = %d, %v; want 5", n, err)
+	}
+	for range 10 {
+		if _, err := l.Expire(ctx, 30*24*time.Hour, actor); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if first := firstSeq(t, db); first != 20 {
+		t.Errorf("first seq = %d, want 20", first)
+	}
+	if r := verify(t, l); !r.Valid || r.Truncation != audit.TruncationAnchored {
+		t.Errorf("Verify = %+v", r)
+	}
+}
+
+// One run deletes at most a tenth of the entries, so that a wrong clock cannot wipe the
+// log at once.
+func TestExpireDeletesAtMostATenthPerRun(t *testing.T) {
+	last := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	actor := audit.Actor{Kind: audit.ActorSystem, ID: "retention"}
+	l, db := retentionLog(t, 40, last)
+	l.SetClock(func() time.Time { return last })
+	if n, err := l.Expire(ctx, time.Hour, actor); err != nil || n != 4 {
+		t.Fatalf("Expire = %d, %v; want 4", n, err)
+	}
+	if first := firstSeq(t, db); first != 5 {
+		t.Errorf("first seq = %d, want 5", first)
+	}
+	// Too few entries for a tenth: nothing is deleted.
+	small, _ := retentionLog(t, 9, last)
+	small.SetClock(func() time.Time { return last })
+	if n, err := small.Expire(ctx, time.Hour, actor); err != nil || n != 0 {
+		t.Errorf("Expire on 9 entries = %d, %v; want 0", n, err)
+	}
+	empty, _ := newLog(t)
+	if n, err := empty.Expire(ctx, time.Hour, actor); err != nil || n != 0 {
+		t.Errorf("Expire on an empty log = %d, %v", n, err)
+	}
+}
+
+// While the clock lies behind the newest entry, nothing is deleted: the next run tries
+// again.
+func TestExpireWaitsWhileTheClockIsBehind(t *testing.T) {
+	last := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	l, db := retentionLog(t, 40, last)
+	actor := audit.Actor{Kind: audit.ActorSystem, ID: "retention"}
+	l.SetClock(func() time.Time { return last.Add(-2 * audit.ClockTolerance) })
+	if n, err := l.Expire(context.Background(), time.Hour, actor); !errors.Is(err, audit.ErrClockBehind) || n != 0 {
+		t.Errorf("Expire = %d, %v; want ErrClockBehind", n, err)
+	}
+	if first := firstSeq(t, db); first != 1 {
+		t.Errorf("first seq = %d, want 1", first)
+	}
+	_ = db.Close()
+	if _, err := l.Expire(context.Background(), time.Hour, actor); err == nil {
+		t.Error("Expire on a closed database succeeded")
+	}
+	if _, err := l.HasCheckpoints(context.Background()); err == nil {
+		t.Error("HasCheckpoints on a closed database succeeded")
+	}
+}
+
+// A clock a little behind the newest entry, within the tolerance, counts from the clock.
+func TestExpireCountsFromAClockSlightlyBehind(t *testing.T) {
+	last := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	l, db := retentionLog(t, 20, last)
+	l.SetClock(func() time.Time { return last.Add(-audit.ClockTolerance / 2) })
+	// 24h before the clock: the entry of exactly one day before the newest is old by
+	// the clock, not by the newest entry.
+	if n, err := l.Expire(context.Background(), 24*time.Hour-audit.ClockTolerance, audit.Actor{Kind: audit.ActorSystem, ID: "retention"}); err != nil || n != 2 {
+		t.Fatalf("Expire = %d, %v; want 2", n, err)
+	}
+	if first := firstSeq(t, db); first != 3 {
+		t.Errorf("first seq = %d, want 3", first)
+	}
+}
+
+// The checkpoint after a truncation belongs to it: if it cannot be written, nothing is
+// deleted.
+func TestTruncateFailsWithoutItsCheckpoint(t *testing.T) {
+	last := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	l, db := retentionLog(t, 20, last)
+	if _, err := db.Exec(`CREATE TRIGGER no_checkpoint BEFORE INSERT ON audit_log WHEN NEW.event = 'log.checkpoint'
+		BEGIN SELECT RAISE(ABORT, 'injected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	l.SetClock(func() time.Time { return last })
+	if n, err := l.Expire(context.Background(), time.Hour, audit.Actor{Kind: audit.ActorSystem, ID: "retention"}); err == nil || n != 0 {
+		t.Errorf("Expire = %d, %v; want an error", n, err)
+	}
+	if first := firstSeq(t, db); first != 1 {
+		t.Errorf("first seq = %d, want 1", first)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER no_setting BEFORE INSERT ON settings BEGIN SELECT RAISE(ABORT, 'injected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := l.AcceptClock(context.Background()); err == nil {
+		t.Error("AcceptClock succeeded although the setting could not be written")
+	}
+}
+
+// A stored time that cannot be read stops the retention instead of guessing an age.
+func TestExpireRefusesAnUnreadableTime(t *testing.T) {
+	last := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	l, db := retentionLog(t, 3, last)
+	if _, err := db.Exec(`UPDATE audit_log SET recorded_at = '9999-garbage' WHERE seq = 3`); err != nil {
+		t.Fatal(err)
+	}
+	l.SetClock(func() time.Time { return last })
+	if _, _, err := l.AcceptClock(context.Background()); err != nil { // the clock check passes
+		t.Fatal(err)
+	}
+	if n, err := l.Expire(context.Background(), time.Hour, audit.Actor{Kind: audit.ActorSystem, ID: "retention"}); err == nil || n != 0 {
+		t.Errorf("Expire = %d, %v; want an error", n, err)
 	}
 }

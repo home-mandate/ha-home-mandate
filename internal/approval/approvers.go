@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
 
@@ -35,12 +36,10 @@ var (
 // maxDevices bounds the devices of one person.
 const maxDevices = 5
 
-var (
-	// userIDPattern matches Home Assistant user IDs and the approver strings a mandate
-	// may contain (SPEC-v0 schema).
-	userIDPattern        = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-	notifyServicePattern = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
-)
+// userIDPattern matches Home Assistant user IDs and the approver strings a mandate may
+// contain (SPEC-v0 schema). Devices must be notify services of the Companion App
+// (ha.ValidNotifyService).
+var userIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // Approver is a Home Assistant user who answers approval requests (decision F2): on
 // any of their devices, and if UI is set also in the Home-Mandate UI, there for
@@ -137,9 +136,9 @@ func (ap Approver) validate() error {
 		return fmt.Errorf("%w: more than %d devices", ErrInvalidApprover, maxDevices)
 	}
 	for i, d := range ap.Devices {
-		if !notifyServicePattern.MatchString(d.Service) ||
+		if !ha.ValidNotifyService(d.Service) ||
 			slices.ContainsFunc(ap.Devices[:i], func(other Device) bool { return other.Service == d.Service }) {
-			return fmt.Errorf("%w: device", ErrInvalidApprover)
+			return fmt.Errorf("%w: device %q: each device once, a notify service of the Companion App (mobile_app_…)", ErrInvalidApprover, d.Service)
 		}
 	}
 	switch {

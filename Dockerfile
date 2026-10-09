@@ -11,7 +11,7 @@ COPY web/ ./
 RUN pnpm run build            # produces /web/dist with relative paths (base: './')
 
 # 2) Gateway: static Go binary with the embedded UI
-FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine@sha256:85dc1069ac644ea3c527b177303a406eb3358192816cd7f9e5848eb658851673 AS build
 WORKDIR /src
 # Build against the version of the specification pinned in go.mod, never a workspace.
 ENV GOWORK=off
@@ -34,9 +34,11 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -buildvcs
 FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /out/home-mandate /home-mandate
-# Runs as root (docs/ARCHITECTURE.md decision 3): in app mode, Supervisor creates /data,
-# /data/options.json and the private key in /ssl as root-only. The image holds nothing
-# but the binary and CA certificates; there is no shell and nothing else to escalate to.
+# No USER (docs/ARCHITECTURE.md decision 3): in app mode, Supervisor runs the image as is
+# and creates /data, /data/options.json and the private key in /ssl as root-only, and an
+# app cannot set a user. Container mode runs unprivileged with a user the operator sets
+# (user: "65532:65532" in docs/deploy/compose.yaml). The image holds nothing but the
+# binary and CA certificates; there is no shell and nothing else to escalate to.
 EXPOSE 8765 8099
 ENTRYPOINT ["/home-mandate"]
 

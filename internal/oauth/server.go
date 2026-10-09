@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"html/template"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -79,8 +78,14 @@ type Server struct {
 	secure   bool   // cookies only over TLS
 	cookie   string // session cookie name
 
-	// clientAddr identifies the sender of a request for per-sender limits.
+	// clientAddr identifies the sender of a request for per-sender limits (senderKey).
 	clientAddr func(*http.Request) string
+	// onboarding and tokens limit the requests of the browser endpoints and of the
+	// token endpoint (limits.go).
+	onboarding, tokens *rateLimit
+	warned             warnings
+	// pairKey signs the state of pairing sign-ins (pairState); new at every start.
+	pairKey []byte
 
 	mu         sync.Mutex
 	codes      map[string]*authCode
@@ -114,7 +119,9 @@ func New(cfg Config) *Server {
 	}
 	s := &Server{cfg: cfg, sessions: newSessions(cfg.Now), codes: map[string]*authCode{},
 		grants: map[string]*deviceGrant{}, uiFailures: map[string]*uiFailures{},
-		uiLocks: map[string]*sessionLock{}, clientAddr: remoteHost}
+		uiLocks: map[string]*sessionLock{}, clientAddr: senderKey,
+		onboarding: newRateLimit(onboardingPerSender, onboardingGlobal), tokens: newRateLimit(tokenPerSender, tokenGlobal),
+		warned: warnings{last: map[string]time.Time{}}, pairKey: newPairKey()}
 	s.secure = strings.HasPrefix(cfg.PublicURL, "https://")
 	s.cookie = "hm_session"
 	if s.secure {
@@ -123,20 +130,21 @@ func New(cfg Config) *Server {
 	return s
 }
 
-// Handler serves the metadata, the OAuth endpoints and the pages.
+// Handler serves the metadata, the OAuth endpoints and the pages. Every endpoint
+// reachable without a token is rate limited; the metadata and the style sheet are static.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+MetadataPath, s.metadata)
 	mux.HandleFunc("GET "+ResourceMetadataPath, s.resourceMetadata)
 	mux.HandleFunc("GET "+ResourceMetadataPath+"/mcp", s.resourceMetadata)
-	mux.HandleFunc("GET "+AuthorizePath, s.authorize)
-	mux.HandleFunc("GET "+CallbackPath, s.callback)
-	mux.HandleFunc("GET "+ConsentPath, s.consentPage)
-	mux.HandleFunc("POST "+ConsentPath, s.consent)
-	mux.HandleFunc("POST "+TokenPath, s.token)
-	mux.HandleFunc("POST "+DevicePath, s.deviceAuthorization)
-	mux.HandleFunc("GET "+PairPath, s.pairPage)
-	mux.HandleFunc("POST "+PairPath, s.pair)
+	mux.HandleFunc("GET "+AuthorizePath, s.limited(s.onboarding, false, s.authorize))
+	mux.HandleFunc("GET "+CallbackPath, s.limited(s.onboarding, false, s.callback))
+	mux.HandleFunc("GET "+ConsentPath, s.limited(s.onboarding, false, s.consentPage))
+	mux.HandleFunc("POST "+ConsentPath, s.limited(s.onboarding, false, s.consent))
+	mux.HandleFunc("POST "+TokenPath, s.limited(s.tokens, true, s.token))
+	mux.HandleFunc("POST "+DevicePath, s.limited(s.onboarding, true, s.deviceAuthorization))
+	mux.HandleFunc("GET "+PairPath, s.limited(s.onboarding, false, s.pairPage))
+	mux.HandleFunc("POST "+PairPath, s.limited(s.onboarding, false, s.pair))
 	mux.HandleFunc("GET "+stylePath, s.style)
 	return mux
 }
@@ -291,15 +299,6 @@ func (s *Server) setCookie(w http.ResponseWriter, value string) {
 func (s *Server) clearCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{Name: s.cookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.secure,
 		SameSite: http.SameSiteLaxMode})
-}
-
-// remoteHost is the IP address of the sender, without the port.
-func remoteHost(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
 
 func (s *Server) sessionID(r *http.Request) string {

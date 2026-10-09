@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -38,6 +39,8 @@ func bareEnv() (env, *bytes.Buffer, *bytes.Buffer) {
 	return env{
 		getenv:   func(string) string { return "" },
 		readFile: os.ReadFile,
+		stat:     os.Stat,
+		unsetenv: func(string) error { return nil },
 		stdin:    strings.NewReader(""),
 		stdout:   &stdout,
 		stderr:   &stderr,
@@ -146,6 +149,32 @@ func TestServeStopsWhenContextIsCancelled(t *testing.T) {
 	}
 }
 
+// A token file others can read stops the start; HM_HA_TOKEN is taken out of the
+// environment once read.
+func TestServeProtectsTheHomeAssistantToken(t *testing.T) {
+	c := newCLI(t)
+	file := filepath.Join(t.TempDir(), "ha-token")
+	if err := os.WriteFile(file, []byte("test-token\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c.envVars["HM_HA_TOKEN"], c.envVars["HM_HA_TOKEN_FILE"] = "", file
+	e, _, stderr := c.env("")
+	if code := run(context.Background(), []string{"serve"}, e); code != exitFailure || !strings.Contains(stderr.String(), "chmod 600") {
+		t.Errorf("token file 0644: exit %d, %q", code, stderr.String())
+	}
+
+	c.envVars["HM_HA_TOKEN"], c.envVars["HM_HA_TOKEN_FILE"] = "test-token", ""
+	e, _, _ = c.env("")
+	var unset []string
+	e.unsetenv = func(k string) error { unset = append(unset, k); return nil }
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // stops right after the configuration was read
+	run(ctx, []string{"serve"}, e)
+	if len(unset) != 1 || unset[0] != "HM_HA_TOKEN" {
+		t.Errorf("unset = %v", unset)
+	}
+}
+
 func TestServeRefusesABrokenAuditLog(t *testing.T) {
 	c := newCLI(t)
 	c.register("A")
@@ -156,6 +185,48 @@ func TestServeRefusesABrokenAuditLog(t *testing.T) {
 	e, _, stderr := c.env("")
 	if code := run(context.Background(), []string{"serve"}, e); code != exitFailure || !strings.Contains(stderr.String(), "audit log") {
 		t.Errorf("exit code = %d, stderr %q", code, stderr.String())
+	}
+}
+
+// A deleted beginning that no checkpoint covers, although the log has checkpoints, is
+// tampering: the gateway does not start, as with a broken chain.
+func TestServeRefusesATruncationBehindTheCheckpoints(t *testing.T) {
+	c := newCLI(t)
+	c.register("A")
+	forgeTruncation(t, c, true)
+	e, _, stderr := c.env("")
+	if code := run(context.Background(), []string{"serve"}, e); code != exitFailure || !strings.Contains(stderr.String(), "audit log is broken") {
+		t.Errorf("exit code = %d, stderr %q", code, stderr.String())
+	}
+}
+
+// A deleted beginning in a log without any checkpoint cannot be told apart from an old
+// truncation: the gateway starts, but says so as an error.
+func TestServeReportsAnUnanchoredTruncation(t *testing.T) {
+	c := newCLI(t)
+	c.register("A")
+	forgeTruncation(t, c, false)
+	e, _, _ := c.env("")
+	stderr := &lockedBuffer{}
+	e.stderr = stderr
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan int, 1)
+	go func() { done <- run(ctx, []string{"serve"}, e) }()
+	deadline := time.After(10 * time.Second)
+	for !strings.Contains(stderr.String(), "home-mandate started") {
+		select {
+		case code := <-done:
+			t.Fatalf("run returned %d: %s", code, stderr)
+		case <-deadline:
+			t.Fatalf("gateway did not start: %s", stderr)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	cancel()
+	<-done
+	if !strings.Contains(stderr.String(), `"level":"ERROR","msg":"audit log beginning deleted without a verified checkpoint"`) {
+		t.Errorf("no error about the truncation: %s", stderr)
 	}
 }
 

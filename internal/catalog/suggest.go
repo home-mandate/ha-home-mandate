@@ -13,8 +13,9 @@ import (
 // alarms are critical anyway; lights, media and sensors do not open anything.
 var suggestCategories = map[string]bool{"switch": true, "cover": true, "script": true, "other": true}
 
-// suggestClasses are device classes of a cover that close an opening of the house.
-var suggestClasses = map[string]bool{"door": true, "window": true, "garage": true, "gate": true}
+// suggestClasses are device classes of a cover that close an opening of the house; doors,
+// garage doors and gates are the critical category gate anyway.
+var suggestClasses = map[string]bool{"window": true}
 
 // suggestParts are parts of a German word that point to a door or a garage; German
 // joins words ("Kellertür"), so they count anywhere in a word.

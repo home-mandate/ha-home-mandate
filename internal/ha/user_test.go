@@ -17,7 +17,7 @@ func TestCurrentUser(t *testing.T) {
 		return map[string]any{"id": "u-123", "name": "Markus", "is_owner": true, "is_admin": true,
 			"credentials": []any{map[string]any{"auth_provider_type": "homeassistant"}}}, nil
 	})
-	u, err := CurrentUser(context.Background(), f.url(), nil, "user-token")
+	u, err := CurrentUser(context.Background(), f.url(), nil, Plaintext{}, "", "user-token")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestCurrentUserRejects(t *testing.T) {
 			if tc.handler != nil {
 				f.handle("auth/current_user", tc.handler)
 			}
-			_, err := CurrentUser(context.Background(), f.url(), nil, tc.token)
+			_, err := CurrentUser(context.Background(), f.url(), nil, Plaintext{}, "", tc.token)
 			if err == nil || tc.want != nil && !errors.Is(err, tc.want) {
 				t.Errorf("CurrentUser = %v, want %v", err, tc.want)
 			}
@@ -60,11 +60,14 @@ func TestCurrentUserRejects(t *testing.T) {
 
 func TestCurrentUserRefusesInsecureURLs(t *testing.T) {
 	for _, u := range []string{"ws://ha.example.org/api/websocket", "http://localhost/api/websocket", "wss://user:pw@ha/api/websocket"} {
-		if _, err := CurrentUser(context.Background(), u, nil, "t"); !errors.Is(err, ErrInsecureURL) && !errors.Is(err, ErrInvalidURL) {
+		if _, err := CurrentUser(context.Background(), u, nil, Plaintext{}, "", "t"); !errors.Is(err, ErrInsecureURL) && !errors.Is(err, ErrInvalidURL) {
 			t.Errorf("%s: %v", u, err)
 		}
 	}
-	if _, err := CurrentUser(context.Background(), "ws://localhost:1/api/websocket", nil, ""); !errors.Is(err, ErrInvalidConfig) {
+	if _, err := CurrentUser(context.Background(), "ws://localhost:1/api/websocket", nil, appPlaintext, "", "t"); !errors.Is(err, ErrInsecureURL) {
+		t.Errorf("localhost in app mode: %v", err)
+	}
+	if _, err := CurrentUser(context.Background(), "ws://localhost:1/api/websocket", nil, Plaintext{}, "", ""); !errors.Is(err, ErrInvalidConfig) {
 		t.Errorf("empty token: %v", err)
 	}
 }
@@ -74,7 +77,7 @@ func TestCurrentUserTimesOut(t *testing.T) {
 	f.set(func(f *fakeHA) { f.token = "user-token"; f.authMode = "silent" })
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	if _, err := CurrentUser(ctx, f.url(), nil, "user-token"); err == nil {
+	if _, err := CurrentUser(ctx, f.url(), nil, Plaintext{}, "", "user-token"); err == nil {
 		t.Error("CurrentUser succeeded")
 	}
 }

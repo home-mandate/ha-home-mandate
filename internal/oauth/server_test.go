@@ -589,6 +589,7 @@ func TestSessionFixation(t *testing.T) {
 // Negative catalog (UI): request without CSRF token → rejected.
 func TestConsentRejects(t *testing.T) {
 	h := newHarness(t)
+	h.server.onboarding.raise(1000, 1000) // many sign-ins from one sender on purpose
 	_, challenge := pkce()
 	form := func(csrf, name, template string, action ...string) url.Values {
 		f := url.Values{"name": {name}, "template": {template}}
@@ -688,8 +689,13 @@ func TestTooManySignInsInProgress(t *testing.T) {
 	for range maxSessionsPerSender {
 		h.browser().get(authorizeQuery(challenge, nil))
 	}
-	if res := h.browser().get(PairPath); res.status != http.StatusServiceUnavailable {
+	if res := h.browser().get(authorizeQuery(challenge, nil)); res.status != http.StatusServiceUnavailable {
 		t.Errorf("one sender over its limit: status %d", res.status)
+	}
+	// A pairing sign-in needs a session only after Home Assistant signed in an administrator.
+	b := h.browser()
+	if res := b.signIn(b.get(PairPath), "admin-code"); res.status != http.StatusServiceUnavailable {
+		t.Errorf("pairing of one sender over its limit: status %d", res.status)
 	}
 	senders := 0
 	h.server.clientAddr = func(*http.Request) string { senders++; return fmt.Sprint("10.0.", senders/250, ".", senders%250) }
@@ -699,7 +705,8 @@ func TestTooManySignInsInProgress(t *testing.T) {
 	if res := h.browser().get(authorizeQuery(challenge, nil)); res.status != http.StatusServiceUnavailable {
 		t.Errorf("status %d", res.status)
 	}
-	if res := h.browser().get(PairPath); res.status != http.StatusServiceUnavailable {
+	b = h.browser()
+	if res := b.signIn(b.get(PairPath), "admin-code"); res.status != http.StatusServiceUnavailable {
 		t.Errorf("pair: status %d", res.status)
 	}
 	h.clock.Add(sessionTTL)

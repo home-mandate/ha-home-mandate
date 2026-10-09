@@ -15,9 +15,18 @@ const (
 )
 
 var (
-	notifyServicePattern = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+	// notifyServicePattern admits only devices of the Companion App: other notify
+	// services (a group, a messenger, notify.notify) could reach people who are no
+	// approvers, and their buttons would not require unlocking a phone.
+	notifyServicePattern = regexp.MustCompile(`^mobile_app_[a-z0-9_]{1,53}$`)
 	notifyActionPattern  = regexp.MustCompile(`^[A-Za-z0-9_]{1,80}$`)
 )
+
+// ValidNotifyService tells whether service names a device of the Companion App
+// (notify.mobile_app_…), the only notify services Home-Mandate sends to.
+func ValidNotifyService(service string) bool {
+	return notifyServicePattern.MatchString(service)
+}
 
 // Notification is a push notification for a human, optionally with buttons.
 type Notification struct {
@@ -62,7 +71,7 @@ func (c *Client) Notify(ctx context.Context, service string, n Notification) err
 func checkNotification(service string, n Notification) error {
 	switch {
 	case !notifyServicePattern.MatchString(service):
-		return fmt.Errorf("%w: notify service %q", ErrCommandNotAllowed, service)
+		return fmt.Errorf("%w: notify service %q is not a device of the Companion App (mobile_app_…)", ErrCommandNotAllowed, service)
 	case n.Message == "" || utf8.RuneCountInString(n.Message) > maxNotifyText || utf8.RuneCountInString(n.Title) > maxNotifyText:
 		return fmt.Errorf("%w: notification text", ErrCommandNotAllowed)
 	case len(n.Actions) > maxNotifyActions:

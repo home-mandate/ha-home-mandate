@@ -3,10 +3,13 @@
 package api
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"net/netip"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 )
 
@@ -183,6 +186,25 @@ func TestRequestBodies(t *testing.T) {
 	}
 	if r := h.do(http.MethodGet, "/api/session", `{"x":1}`); r.errCode() != codeInvalidInput {
 		t.Errorf("body on a GET = %d", r.code)
+	}
+	// A body that breaks off while it is read.
+	broken := func(r *http.Request) { r.Body = io.NopCloser(iotest.ErrReader(errors.New("connection reset"))) }
+	if r := h.do(http.MethodPut, path, `{"language":"de"}`, broken); r.errCode() != codeInvalidInput {
+		t.Errorf("broken body = %d %s", r.code, r.body)
+	}
+}
+
+// Requests of someone who is no administrator are limited too: they cannot make the
+// gateway ask Home Assistant without bound.
+func TestRequestLimitBeforeTheAdministratorCheck(t *testing.T) {
+	h := newHarness(t)
+	for range 2 * requestLimit {
+		if r := h.do(http.MethodGet, "/api/settings", nil, as(guestID)); r.errCode() != codeForbidden {
+			t.Fatalf("below the limit = %d %s", r.code, r.body)
+		}
+	}
+	if r := h.do(http.MethodGet, "/api/settings", nil, as(guestID)); r.errCode() != codeRateLimited || r.header.Get("Retry-After") == "" {
+		t.Errorf("over the limit = %d %v %s", r.code, r.header, r.body)
 	}
 }
 

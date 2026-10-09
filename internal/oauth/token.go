@@ -80,7 +80,7 @@ func (s *Server) admit(w http.ResponseWriter, r *http.Request, client Client, re
 		s.cfg.Logger.Info("agent admitted", "client_id", a.ClientID, "oauth_client", client.ID, "by", d.by)
 		writeTokens(w, tokens)
 	case refused(err):
-		s.cfg.Logger.Warn("admission refused", "oauth_client", client.ID, "error", err)
+		s.warn("admission refused", "oauth_client", client.ID, "error", err)
 		oauthError(w, http.StatusBadRequest, "invalid_grant")
 	default:
 		s.cfg.Logger.Error("admission failed", "oauth_client", client.ID, "error", err)
@@ -104,8 +104,11 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request, form map[string
 	case err == nil:
 		writeTokens(w, tokens)
 	case errors.Is(err, agent.ErrInvalidGrant):
-		if errors.Is(err, agent.ErrRefreshReused) {
-			s.cfg.Logger.Warn("refresh token reused, token family revoked", "oauth_client", form["client_id"])
+		switch {
+		case errors.Is(err, agent.ErrRefreshReused):
+			s.warn("refresh token reused, token family revoked", "oauth_client", form["client_id"])
+		case errors.Is(err, agent.ErrRefreshWrongClient):
+			s.warn("refresh token of another client refused", "oauth_client", form["client_id"])
 		}
 		oauthError(w, http.StatusBadRequest, "invalid_grant")
 	default:

@@ -18,7 +18,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/home-mandate/spec"
 )
@@ -42,8 +41,8 @@ type page struct {
 
 func newBrowser(t *testing.T) *hmBrowser {
 	jar, _ := cookiejar.New(nil)
-	return &hmBrowser{t: t, c: &http.Client{Jar: jar, Timeout: 30 * time.Second,
-		Transport:     &http.Transport{TLSClientConfig: &tls.Config{RootCAs: env.roots, MinVersion: tls.VersionTLS13}},
+	return &hmBrowser{t: t, c: &http.Client{Jar: jar, Timeout: politeTimeout,
+		Transport:     polite{&http.Transport{TLSClientConfig: &tls.Config{RootCAs: env.roots, MinVersion: tls.VersionTLS13}}},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
@@ -107,7 +106,7 @@ type pairing struct {
 
 func requestPairing(t *testing.T) pairing {
 	t.Helper()
-	resp, err := httpClient().PostForm(env.public+"/oauth/device_authorization", url.Values{"client_id": {e2eClient}})
+	resp, err := oauthClient().PostForm(env.public+"/oauth/device_authorization", url.Values{"client_id": {e2eClient}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +122,7 @@ func requestPairing(t *testing.T) pairing {
 // pollTokens asks the token endpoint once for the pairing.
 func pollTokens(t *testing.T, p pairing) (int, map[string]any) {
 	t.Helper()
-	resp, err := httpClient().PostForm(env.public+"/oauth/token", url.Values{
+	resp, err := oauthClient().PostForm(env.public+"/oauth/token", url.Values{
 		"grant_type": {"urn:ietf:params:oauth:grant-type:device_code"}, "device_code": {p.DeviceCode}, "client_id": {e2eClient}})
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +188,7 @@ var approverOnce sync.Once
 func newAgent(t *testing.T, name string, edit func(map[string]any)) string {
 	t.Helper()
 	approver := env.users[adminApprover].id
-	approverOnce.Do(func() { cli(t, "", "approver", "add", approver, "persistent_notification") })
+	approverOnce.Do(func() { cli(t, "", "approver", "add", approver, approverDevice) })
 	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
 		t.Fatal(err)

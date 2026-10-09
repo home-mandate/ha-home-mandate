@@ -6,6 +6,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -33,6 +34,15 @@ const (
 	signInCookie = "__Host-hm_signin"
 
 	signInTimeout = 15 * time.Second
+
+	// Sign-ins need no session, and each callback makes the gateway ask Home Assistant
+	// (oauth.HASignIn): starts and callbacks are limited per sender (IPv6 by /64) and
+	// overall, and only a few wait for Home Assistant at once. Beyond that the browser is
+	// told to try again; nobody already signed in is affected.
+	signInPeriod    = time.Minute
+	signInPerSender = 10
+	signInOverall   = 60
+	signInAtOnce    = 4
 )
 
 // Where a failed sign-in sends the browser: the UI says why, from its own catalog.
@@ -73,9 +83,13 @@ func (s *Server) DirectHandler() http.Handler {
 		return nil
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		directHeaders(w.Header())
 		switch p := r.URL.Path; {
 		case p == DirectPrefix:
 			http.Redirect(w, r, DirectPrefix+"/", http.StatusMovedPermanently)
+		case (p == directSignInPath || p == DirectCallbackPath) && r.Method == http.MethodGet && !s.signInAllowed(r):
+			w.Header().Set("Cache-Control", "no-store")
+			http.Redirect(w, r, signInBusy, http.StatusSeeOther)
 		case p == directSignInPath && r.Method == http.MethodGet:
 			s.startSignIn(w, r)
 		case p == DirectCallbackPath && r.Method == http.MethodGet:
@@ -90,6 +104,38 @@ func (s *Server) DirectHandler() http.Handler {
 			http.NotFound(w, r)
 		}
 	})
+}
+
+// directHeaders go on every answer in direct mode, which the browser reaches over HTTPS
+// at the public URL: stay on HTTPS (the operator's other hosts are not ours to name, so
+// no includeSubDomains), and keep the page out of the browsing context of other pages.
+// Behind Ingress Home Assistant's frontend owns the origin and sets neither.
+func directHeaders(h http.Header) {
+	h.Set("Strict-Transport-Security", "max-age=31536000")
+	h.Set("Cross-Origin-Opener-Policy", "same-origin")
+}
+
+// signInAllowed counts a sign-in start or callback against the overall limit and its
+// sender's. The overall limit comes first: no sender gets a window of its own unless the
+// overall limit let the request through, so unauthenticated requests cannot grow the
+// limits' table faster than signInOverall a period.
+func (s *Server) signInAllowed(r *http.Request) bool {
+	// Only a request its sender may make counts overall, so one sender cannot use up the
+	// sign-ins of everyone. A sender's window is created only while there is room overall,
+	// which bounds the windows unauthenticated requests can create.
+	ok := s.limits.room("signin", signInOverall, signInPeriod)
+	if ok {
+		ok, _ = s.limits.allow("signin:"+sender(r), signInPerSender, signInPeriod)
+	}
+	if ok {
+		ok, _ = s.limits.allow("signin", signInOverall, signInPeriod)
+	}
+	if !ok {
+		if logged, _ := s.limits.allow("log:signin", 1, time.Minute); logged {
+			s.cfg.Logger.Warn("UI sign-ins beyond the limit refused", "remote", peer(r))
+		}
+	}
+	return ok
 }
 
 // directRequest strips the prefix and carries the session's user, if any.
@@ -120,8 +166,25 @@ func peer(r *http.Request) string {
 	return host
 }
 
+// sender is whom the limits of sign-ins count a request against: the address, an IPv6
+// address by its /64, which one subscriber usually holds whole.
+func sender(r *http.Request) string {
+	host := peer(r)
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return host
+	}
+	addr = addr.Unmap().WithZone("")
+	if addr.Is4() {
+		return addr.String()
+	}
+	network, _ := addr.Prefix(64) // never fails for an IPv6 address
+	return network.String()
+}
+
 // startSignIn needs no session and keeps nothing per address beyond the bounded table of
-// sign-ins in progress (uisessions.go): unauthenticated requests never grow other state.
+// sign-ins in progress (uisessions.go) and the windows of signInAllowed: unauthenticated
+// requests never grow other state.
 func (s *Server) startSignIn(w http.ResponseWriter, r *http.Request) {
 	state := s.ui.startSignIn(peer(r))
 	// Lax: Home Assistant sends the browser back with a top-level navigation from its
@@ -145,7 +208,12 @@ func (s *Server) finishSignIn(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), signInTimeout)
 	defer cancel()
-	user, err := s.cfg.Direct.SignIn(ctx, q.Get("code"))
+	user, busy, err := s.exchange(ctx, q.Get("code"))
+	if busy {
+		s.cfg.Logger.Warn("UI sign-in refused: too many waiting for Home Assistant")
+		http.Redirect(w, r, signInBusy, http.StatusSeeOther)
+		return
+	}
 	if err != nil || !userIDPattern.MatchString(user.ID) {
 		s.cfg.Logger.Warn("UI sign-in through Home Assistant failed", "error", err)
 		http.Redirect(w, r, signInFailed, http.StatusSeeOther)
@@ -170,6 +238,19 @@ func (s *Server) finishSignIn(w http.ResponseWriter, r *http.Request) {
 	setUICookie(w, token, 0)
 	s.cfg.Logger.Info("signed in to the UI", "user_id", user.ID)
 	http.Redirect(w, r, DirectPrefix+"/", http.StatusSeeOther)
+}
+
+// exchange signs the user in through Home Assistant with code; busy when signInAtOnce
+// sign-ins are waiting for it already.
+func (s *Server) exchange(ctx context.Context, code string) (user ha.User, busy bool, err error) {
+	select {
+	case s.signing <- struct{}{}:
+		defer func() { <-s.signing }()
+	default:
+		return ha.User{}, true, nil
+	}
+	user, err = s.cfg.Direct.SignIn(ctx, code)
+	return user, false, err
 }
 
 func setUICookie(w http.ResponseWriter, value string, maxAge int) {

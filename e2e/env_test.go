@@ -39,6 +39,9 @@ import (
 // haImage is pinned by digest (docs/TESTING.md section 3: official image, fixed version).
 const haImage = "docker.io/homeassistant/home-assistant:2026.9.4@sha256:e47c978e1b801466e7f62f612fd552bc3a228e077b31a3f1c22c05cf63d754da"
 
+// haConfiguration stands in a notify service for the approvers' phone: Home-Mandate sends
+// only to notify services of the Companion App (notify.mobile_app_…), and the test
+// reads the calls as call_service events.
 const haConfiguration = `homeassistant:
   name: E2E
   time_zone: Europe/Berlin
@@ -48,7 +51,14 @@ http:
   ssl_certificate: /config/certs/cert.pem
   ssl_key: /config/certs/key.pem
 demo:
+command_line:
+  - notify:
+      name: ` + approverDevice + `
+      command: "cat > /dev/null"
 `
+
+// approverDevice is the notify service of the approvers in the test.
+const approverDevice = "mobile_app_e2e_phone"
 
 // env is the running environment shared by all scenarios.
 var env struct {
@@ -70,9 +80,9 @@ var env struct {
 	uiPath   string // /api/hassio_ingress/<token>
 	uiDirect string // http://127.0.0.1:<port> of the gateway's UI listener, bypassing Ingress
 	network  string
-	cimdNet  string // internal network of the client metadata server (tools/cimdserver)
-	cimd     string // its container
-	volume   string
+	cimdNet  string   // internal network of the client metadata server (tools/cimdserver)
+	cimd     string   // its container
+	data     string   // the gateway's data directory on this host
 	secrets  []string // must never appear in logs
 	teardown []func()
 }
@@ -106,7 +116,7 @@ func setUp() error {
 	_, _ = rand.Read(b[:])
 	env.id = hex.EncodeToString(b[:])
 	env.ha, env.hm = "hm-e2e-ha-"+env.id, "hm-e2e-gw-"+env.id
-	env.network, env.volume = "hm-e2e-net-"+env.id, "hm-e2e-data-"+env.id
+	env.network = "hm-e2e-net-" + env.id
 	env.cimdNet, env.cimd = "hm-e2e-cimd-net-"+env.id, "hm-e2e-cimd-"+env.id
 
 	for _, step := range []func() error{prepareImage, makeCertificates, createNetwork, startHA, onboard, createUsers, startCIMD,
@@ -189,7 +199,8 @@ func issueCertificate(serial int64, prefix string, names []string, ips []net.IP)
 	if err := os.WriteFile(filepath.Join(env.certs, prefix+"cert.pem"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644); err != nil {
 		return err
 	}
-	// The containers run as root (rootless: mapped to this user).
+	// Owner only: the gateway runs as this user (gatewayUser), Home Assistant and the
+	// client metadata server as root (rootless: mapped to this user).
 	return os.WriteFile(filepath.Join(env.certs, prefix+"key.pem"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600)
 }
 
@@ -263,6 +274,13 @@ func startHA() error {
 	}
 	env.haURL = "https://" + addr
 	return waitHTTP(env.haURL+"/api/onboarding", 3*time.Minute)
+}
+
+// oauthClient is httpClient for the gateway's OAuth endpoints, waiting out their limits.
+func oauthClient() *http.Client {
+	c := httpClient()
+	c.Transport, c.Timeout = polite{c.Transport}, politeTimeout
+	return c
 }
 
 func httpClient() *http.Client {
@@ -368,19 +386,22 @@ func longLivedToken(accessToken string) (string, error) {
 }
 
 func startGateway() error {
-	if _, err := run("volume", "create", env.volume); err != nil {
+	dir, err := os.MkdirTemp("", "hm-e2e-data-")
+	if err != nil {
 		return err
 	}
-	env.teardown = append(env.teardown, func() { _, _ = run("volume", "rm", "-f", env.volume) })
+	env.data = dir
+	env.teardown = append(env.teardown, func() { _ = os.RemoveAll(dir) })
 	port, err := freePort()
 	if err != nil {
 		return err
 	}
 	env.public = "https://localhost:" + port
-	if _, err := run("run", "-d", "--name", env.hm, "--network", env.network, "--network", env.cimdNet,
+	args := append([]string{"run", "-d", "--name", env.hm}, gatewayUser()...)
+	if _, err := run(append(args, "--network", env.network, "--network", env.cimdNet,
 		"--add-host", cimdHost+":"+cimdIP, "-p", "127.0.0.1:"+port+":8765", "-p", "127.0.0.1::8099",
 		"-e", "HM_INGRESS_ADDR=:8099", "-e", "HM_INGRESS_PROXY="+ingressIP,
-		"-v", env.volume+":/data", "-v", env.certs+":/certs:ro",
+		"-v", env.data+":/data", "-v", env.certs+":/certs:ro",
 		"-e", "HM_HA_URL=wss://homeassistant:8123/api/websocket",
 		"-e", "HM_HA_TOKEN_FILE=/certs/ha-token",
 		"-e", "HM_HA_CA_FILE=/certs/ca.pem",
@@ -390,7 +411,7 @@ func startGateway() error {
 		"-e", "HM_LOG_LEVEL=debug",
 		"-e", "HM_PUBLIC_URL="+env.public,
 		"-e", "HM_APPROVAL_TIMEOUT=30",
-		env.image); err != nil {
+		env.image)...); err != nil {
 		return err
 	}
 	env.teardown = append(env.teardown, func() { _, _ = run("rm", "-f", env.hm) })
@@ -404,6 +425,23 @@ func startGateway() error {
 	}
 	env.uiDirect = "http://" + direct
 	return nil
+}
+
+// gatewayUser runs the gateway as container mode is meant to run, unprivileged (README,
+// "Running in container mode"): as the user running the tests, who owns the data
+// directory, the certificates and the token on this host. Rootless Podman maps that user
+// into the container with keep-id; Docker uses the host's user IDs. Home Assistant and
+// the stand-ins keep running as root. A test run by root keeps the gateway root as well.
+func gatewayUser() []string {
+	uid, gid := os.Getuid(), os.Getgid()
+	if uid == 0 {
+		return nil
+	}
+	user := []string{"--user", fmt.Sprintf("%d:%d", uid, gid)}
+	if filepath.Base(env.runtime) == "podman" {
+		return append([]string{"--userns=keep-id"}, user...)
+	}
+	return user
 }
 
 // buildTool builds a command of tools/ into an image of its own.

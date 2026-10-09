@@ -124,6 +124,12 @@ type Config struct {
 	Approvals Approver
 	Logger    *slog.Logger
 	Version   string
+	// TimeZone returns the household's time zone and ServiceUser Home-Mandate's own Home
+	// Assistant user, both read from Home Assistant. While either is unknown (nil or
+	// empty) nothing is decided: time windows would be evaluated in the host's zone, and
+	// approval requests could not leave Home-Mandate's own user out.
+	TimeZone    func() string
+	ServiceUser func() string
 	// TemperatureUnit returns the unit Home Assistant uses for temperatures ("°C" or
 	// "°F"); nil or empty counts as degrees Celsius.
 	TemperatureUnit func() string
@@ -142,6 +148,7 @@ type Gateway struct {
 	mu           sync.Mutex
 	rateLimitLog map[string]time.Time // last rate-limit entry per agent
 	pendingAsks  map[string]int       // approval requests waiting, per agent
+	cooldowns    map[string]cooldown  // waits after requests not approved, per agent and device
 	rejectedLog  time.Time            // last auth.rejected entry for an invalid token
 }
 
@@ -159,7 +166,7 @@ func New(cfg Config) *Gateway {
 	if cfg.CallTimeout <= 0 {
 		cfg.CallTimeout = defaultCallTimeout
 	}
-	g := &Gateway{cfg: cfg, rateLimitLog: map[string]time.Time{}, pendingAsks: map[string]int{}, server: sdk.NewServer(&sdk.Implementation{Name: "home-mandate", Version: cfg.Version}, nil)}
+	g := &Gateway{cfg: cfg, rateLimitLog: map[string]time.Time{}, pendingAsks: map[string]int{}, cooldowns: map[string]cooldown{}, server: sdk.NewServer(&sdk.Implementation{Name: "home-mandate", Version: cfg.Version}, nil)}
 	sdk.AddTool(g.server, &sdk.Tool{Name: "list_devices",
 		Description: "Lists the devices you may read, with category, area and state."}, g.listDevices)
 	sdk.AddTool(g.server, &sdk.Tool{Name: "get_state",
@@ -168,7 +175,7 @@ func New(cfg Config) *Gateway {
 		Description: "Performs an action on one device, e.g. turn_on or unlock. Some actions need a human to confirm; " +
 			"then the call waits for the answer and you should give a short reason."}, g.performAction)
 	sdk.AddTool(g.server, &sdk.Tool{Name: "list_my_permissions",
-		Description: "Lists what you may do on which device: allow (immediately) or ask (a human confirms)."}, g.listPermissions)
+		Description: "Lists what you may do on the devices you may read: allow (immediately) or ask (a human confirms)."}, g.listPermissions)
 	return g
 }
 
@@ -246,9 +253,26 @@ func agentOf(req *sdk.CallToolRequest) (agent.Agent, error) {
 	return a, nil
 }
 
-// available reports whether requests can be decided and executed now.
-func (g *Gateway) available() bool {
-	return g.cfg.HA.Connected() && g.cfg.Catalog.Ready()
+// unavailable tells why requests cannot be decided and executed now, as the error of
+// their audit entry; empty if they can.
+func (g *Gateway) unavailable() string {
+	switch {
+	case !g.cfg.HA.Connected() || !g.cfg.Catalog.Ready():
+		return "ha_unavailable"
+	case known(g.cfg.TimeZone) == "":
+		return "timezone_unknown"
+	case known(g.cfg.ServiceUser) == "":
+		return "service_user_unknown"
+	}
+	return ""
+}
+
+// known returns what value returns; empty without it.
+func known(value func() string) string {
+	if value == nil {
+		return ""
+	}
+	return value()
 }
 
 // clockWrong reports whether the clock lies behind the newest audit entry: validity
@@ -334,6 +358,9 @@ func (g *Gateway) listPermissions(ctx context.Context, req *sdk.CallToolRequest,
 		return nil, out, err
 	}
 	for _, dev := range g.cfg.Catalog.All() {
+		if !readable(snap, dev.EntityID) {
+			continue // also when the mandate allows other actions on it
+		}
 		p := permissionOut{EntityID: dev.EntityID, Category: dev.Category, Area: dev.Area, Actions: map[string]string{}}
 		for _, action := range actionsOf(dev.Category) {
 			if d := snap.Decide(dev.EntityID, action, nil); d.Result.Decision != evaluator.Deny {
@@ -347,6 +374,13 @@ func (g *Gateway) listPermissions(ctx context.Context, req *sdk.CallToolRequest,
 	return nil, out, nil
 }
 
+// readable reports whether the agent may learn that entityID exists: its read is not
+// denied. Neither list names a device it may not read, and every refusal on one is
+// not_found, the answer for a device that does not exist.
+func readable(snap *pdp.Snapshot, entityID string) bool {
+	return snap.Decide(entityID, "read", nil).Result.Decision != evaluator.Deny
+}
+
 // listSnapshot checks availability and the rate limit for a list request (one token per
 // list) and loads the agent's mandate once.
 func (g *Gateway) listSnapshot(ctx context.Context, req *sdk.CallToolRequest) (*pdp.Snapshot, error) {
@@ -357,7 +391,7 @@ func (g *Gateway) listSnapshot(ctx context.Context, req *sdk.CallToolRequest) (*
 	if g.stopped(ctx) {
 		return nil, errors.New(codeDenied + ": emergency_stop")
 	}
-	if !g.available() || g.clockWrong(ctx) {
+	if g.unavailable() != "" || g.clockWrong(ctx) {
 		return nil, errors.New(codeUnavailable)
 	}
 	snap, err := g.cfg.PDP.Snapshot(ctx, a.ClientID)
@@ -519,9 +553,9 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop})
 		return pdp.Decision{}, errors.New(codeDenied + ": emergency_stop")
 	}
-	if !g.available() {
+	if code := g.unavailable(); code != "" {
 		d := pdp.Decision{Time: g.cfg.Now(), Resource: evaluator.Resource{EntityID: entityID}, Action: action}
-		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusFailed, Error: "ha_unavailable"})
+		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusFailed, Error: code})
 		return pdp.Decision{}, errors.New(codeUnavailable)
 	}
 	if g.clockWrong(ctx) {
@@ -545,22 +579,22 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 	if d.Result.Decision == evaluator.Allow {
 		return d, nil
 	}
-	readable := d.Result.Decision != evaluator.Deny
+	known := d.Result.Decision != evaluator.Deny
 	if action != "read" {
-		readable = snap.Decide(entityID, "read", nil).Result.Decision != evaluator.Deny
+		known = readable(snap, entityID)
 	}
 	if d.Result.Decision == evaluator.Ask {
-		if readable && action != "read" && g.cfg.Approvals != nil {
+		if known && action != "read" && g.cfg.Approvals != nil {
 			return d, errAsk // the caller asks a human after checking the parameters
 		}
 		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval})
-		if !readable {
+		if !known {
 			return pdp.Decision{}, errors.New(codeNotFound)
 		}
 		return pdp.Decision{}, errors.New(codeApprovalRequired + ": reading this device needs a confirmation, which v0.1 does not ask for")
 	}
 	_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate})
-	if !readable {
+	if !known {
 		return pdp.Decision{}, errors.New(codeNotFound) // same answer as for an entity that does not exist
 	}
 	return pdp.Decision{}, errors.New(codeDenied + ": " + string(d.Result.Reason))

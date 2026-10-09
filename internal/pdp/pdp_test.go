@@ -551,3 +551,26 @@ func TestRulesOnAFormerIDKeepApplying(t *testing.T) {
 		})
 	}
 }
+
+// While the gateway is not ready (no household time zone yet, directory being refreshed),
+// the endpoint gives no decision: 503, which an AuthZEN client takes as no permission.
+func TestNoDecisionWhileNotReady(t *testing.T) {
+	cfg, clientID := voice(t)
+	ready := false
+	cfg.Ready = func() bool { return ready }
+	h := New(cfg).Handler()
+	body := `{"subject":{"type":"agent","id":"` + clientID + `","properties":{"principal":"` + cfg.Principal +
+		`"}},"action":{"name":"turn_on"},"resource":{"type":"light","id":"light.kitchen"}}`
+	post := func() *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, evaluationPath, strings.NewReader(body)))
+		return rec
+	}
+	if rec := post(); rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "decision") {
+		t.Errorf("not ready: %d %s", rec.Code, rec.Body)
+	}
+	ready = true
+	if rec := post(); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"decision"`) {
+		t.Errorf("ready: %d %s", rec.Code, rec.Body)
+	}
+}
