@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/home-mandate/ha-home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/config"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
@@ -65,6 +66,9 @@ type wireSystem struct {
 	ApproversConfigured int       `json:"approvers_configured"`
 	// ClockBehind: the clock lies behind the newest audit entry; nothing is decided.
 	ClockBehind bool `json:"clock_behind"`
+	// ApprovalTimeoutSeconds is the installation's upper limit for an approval wait; the
+	// mandate editor offers no more, and a longer mandate timeout is capped to it.
+	ApprovalTimeoutSeconds int `json:"approval_timeout_seconds"`
 	// Directory: storing renames of Home Assistant has failed for a while; with overflow,
 	// renames cannot be held any more and nothing is decided.
 	Directory wireDirectory `json:"directory"`
@@ -111,7 +115,7 @@ func (s *Server) system(ctx context.Context) (wireSystem, error) {
 	tls := s.cfg.TLS()
 	out := wireSystem{
 		Mode: s.cfg.Mode, Version: s.cfg.Version, Commit: s.cfg.Commit, ServerTime: *formatTime(s.now()),
-		RetentionDays: int(s.cfg.Retention / (24 * time.Hour)),
+		RetentionDays: int(s.cfg.Retention / (24 * time.Hour)), ApprovalTimeoutSeconds: int(s.approvalTimeout() / time.Second),
 		HA: wireHA{Connected: st.HAConnected, Since: formatTime(st.HASince), Version: optional(st.HAVersion),
 			UserName: s.users.name(ctx, st.ServiceUser), Commands: ha.AllowedCommands()},
 		MCPURL: optional(s.cfg.MCPURL),
@@ -131,6 +135,14 @@ func (s *Server) system(ctx context.Context) (wireSystem, error) {
 		out.TLS.ValidUntil = nil
 	}
 	return out, nil
+}
+
+// approvalTimeout is the configured upper limit for an approval wait, or the default.
+func (s *Server) approvalTimeout() time.Duration {
+	if s.cfg.ApprovalTimeout <= 0 {
+		return config.DefaultApprovalTimeout
+	}
+	return s.cfg.ApprovalTimeout
 }
 
 func (s *Server) stopState(ctx context.Context) (wireStop, error) {

@@ -128,6 +128,10 @@ type Config struct {
 	// TLS reports the certificate of the MCP endpoint.
 	TLS       func() TLSStatus
 	Retention time.Duration
+	// ApprovalTimeout is the installation's upper limit for an approval wait
+	// (approval_timeout_seconds, HM_APPROVAL_TIMEOUT); a mandate may only shorten it.
+	// Zero means the default.
+	ApprovalTimeout time.Duration
 
 	Logger *slog.Logger
 	Now    func() time.Time

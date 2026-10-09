@@ -491,6 +491,7 @@
     {catalogMissing}
     readonly={false}
     {people}
+    maxTimeout={app.system?.approval_timeout_seconds ?? null}
     {agent}
     locale={ctx.locale}
     timeZone={ctx.timeZone}

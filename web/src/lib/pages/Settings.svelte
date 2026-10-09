@@ -168,6 +168,7 @@
           {:else if defaults.data}
             <DefaultsSection
               defaults={defaults.data}
+              maxTimeout={app.system?.approval_timeout_seconds ?? null}
               language={app.session?.language ?? null}
               {browserLanguage}
               onsave={saveDefaults}

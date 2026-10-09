@@ -317,6 +317,8 @@
   "weekdays_label": "Weekdays",
   "timeout_error": "Timeout must be between 10 seconds and 1 hour.",
   "timeout_help": "Between 10 seconds and 1 hour. After that, the request counts as declined.",
+  "timeout_help_max": "Between 10 seconds and {max}, the most this installation waits. After that, the request counts as declined.",
+  "timeout_capped": "Capped: this installation waits at most {max}. After that, the request counts as declined.",
   "timeout_label": "Approval timeout",
   "unit_minutes": "minutes",
   "unit_seconds": "seconds",

@@ -365,6 +365,15 @@ describe('Settings: critical devices', () => {
     expect(toggle('Gartentor-Öffner').getAttribute('aria-checked')).toBe('false');
   });
 
+  it('shows a default approval timeout above the installation limit as capped', async () => {
+    const { api } = await start();
+    await screen.findByLabelText('Default rate limit');
+    await api.putSettings({ approval_timeout: 'PT10M', max_actions_per_hour: 60, bell: false });
+    const defaults = region('Defaults');
+    expect(await within(defaults).findByText('Capped: this installation waits at most 2 minutes. After that, the request counts as declined.')).toBeTruthy();
+    expect(within(defaults).getByRole('spinbutton', { name: 'Approval timeout' }).getAttribute('max')).toBe('2');
+  });
+
   it('follows a change made elsewhere', async () => {
     const { api } = await start({ section: 'critical' });
     await waitFor(() => expect(toggle('Gartentor-Öffner').getAttribute('aria-checked')).toBe('false'));

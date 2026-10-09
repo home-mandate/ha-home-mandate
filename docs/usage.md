@@ -159,9 +159,11 @@ verified", the values it wants to set, and has two buttons: **Allow** and **Deny
 - The first answer counts, from any channel.
 - No answer within the approval timeout, a refusal, an answer from someone who may not
   approve, or no approver who can be reached means **deny**.
-- The agent's request waits for the answer. The mandate's timeout (10 seconds to 1 hour in
-  the editor) is capped by the installation's approval timeout: the app option
-  `approval_timeout_seconds` or `HM_APPROVAL_TIMEOUT`, 30 to 600 seconds, default 120.
+- The agent's request waits for the answer. A mandate's timeout can only shorten the
+  installation's approval timeout: the app option `approval_timeout_seconds` or
+  `HM_APPROVAL_TIMEOUT`, 30 to 600 seconds, default 120. The editor offers 10 seconds up to
+  that limit and names it; a longer timeout (for example one stored before the limit was
+  lowered) is shown as **Capped**, and Home-Mandate waits only as long as the limit.
 - After an approval Home-Mandate checks the emergency stop, the agent's token and the
   mandate again before it acts.
 - An agent can have at most 2 approval requests waiting.

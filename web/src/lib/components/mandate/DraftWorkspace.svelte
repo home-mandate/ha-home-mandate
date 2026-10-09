@@ -42,6 +42,8 @@
     readonly: boolean;
     /** People who can approve, by Home Assistant user id (or the placeholder of templates). */
     people: readonly { id: string; name: string }[];
+    /** The installation's upper limit for the approval timeout in seconds; null while unknown. */
+    maxTimeout: number | null;
     /** The agent, cleaned and isolated for use inside a sentence. */
     agent: string;
     locale: string;
@@ -73,6 +75,7 @@
     catalogMissing,
     readonly,
     people,
+    maxTimeout,
     agent,
     locale,
     timeZone,
@@ -305,6 +308,7 @@
         {people}
         timeoutError={visible.find((p) => p.rule === null && p.part === 'timeout')?.text ?? ''}
         approversError={visible.find((p) => p.rule === null && p.part === 'approvers')?.text ?? ''}
+        {maxTimeout}
         disabled={readonly}
         onchange={(approval) => onchange(withDefaults(draft, approval))}
         ontouch={touchSetting}
@@ -352,6 +356,7 @@
               matches={matchText(index)}
               defaults={draft.approval}
               {people}
+              {maxTimeout}
               {agent}
               {locale}
               {timeZone}

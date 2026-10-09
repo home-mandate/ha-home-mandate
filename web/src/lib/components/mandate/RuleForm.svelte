@@ -48,6 +48,8 @@
     /** The mandate's approval settings, which an "ask" rule uses unless it has its own. */
     defaults: Approval;
     people: readonly { id: string; name: string }[];
+    /** The installation's upper limit for the approval timeout in seconds; null while unknown. */
+    maxTimeout: number | null;
     /** Name of the agent, cleaned and isolated for use inside a sentence. */
     agent: string;
     locale: string;
@@ -58,7 +60,7 @@
     ondone: () => void;
   }
 
-  let { rule, catalog, problems, matches, defaults, people, agent, locale, timeZone, onchange, ontouch, onremove, ondone }: Props = $props();
+  let { rule, catalog, problems, matches, defaults, people, maxTimeout, agent, locale, timeZone, onchange, ontouch, onremove, ondone }: Props = $props();
 
   const id = $props.id();
   const DEFAULT_WINDOW = '22:00-06:00';
@@ -292,6 +294,7 @@
           {people}
           timeoutError={timeoutError}
           approversError={approversError}
+          {maxTimeout}
           onchange={(approval) => change(withApproval(rule, approval), false)}
           ontouch={() => ontouch()}
         />

@@ -75,13 +75,19 @@ export interface ChainStatus {
 }
 
 export interface SystemStatus {
-  /** v0.1 serves the UI only through Ingress, i.e. in app mode. */
+  /** app: Home Assistant OS app (UI through Ingress); container: own container (UI in direct mode). */
   mode: 'app' | 'container';
   version: string;
   commit: string;
   /** Server clock, for countdowns that must not depend on the browser clock. */
   server_time: string;
   retention_days: number;
+  /**
+   * The installation's upper limit for an approval wait in seconds (app option
+   * approval_timeout_seconds, HM_APPROVAL_TIMEOUT; 30–600). A mandate may only shorten it:
+   * a longer mandate timeout is capped to it when a request is decided.
+   */
+  approval_timeout_seconds: number;
   /**
    * user_name: Home-Mandate's own Home Assistant user. commands: the fixed allowlist of
    * WebSocket commands it may send (internal/ha), shown under "Why admin rights?".

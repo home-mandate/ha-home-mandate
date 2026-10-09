@@ -317,6 +317,8 @@
   "weekdays_label": "Wochentage",
   "timeout_error": "Timeout muss zwischen 10 Sekunden und 1 Stunde liegen.",
   "timeout_help": "Zwischen 10 Sekunden und 1 Stunde. Danach gilt die Anfrage als abgelehnt.",
+  "timeout_help_max": "Zwischen 10 Sekunden und {max}, länger wartet diese Installation nicht. Danach gilt die Anfrage als abgelehnt.",
+  "timeout_capped": "Begrenzt: Diese Installation wartet höchstens {max}. Danach gilt die Anfrage als abgelehnt.",
   "timeout_label": "Timeout für Rückfragen",
   "unit_minutes": "Minuten",
   "unit_seconds": "Sekunden",

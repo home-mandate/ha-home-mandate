@@ -2,12 +2,15 @@
 <!--
   The approval timeout as number and unit (seconds or minutes), for a mandate, a rule or
   the default in the settings. What is typed stays as typed; it only follows the value
-  when that changed elsewhere. Errors come from the caller.
+  when that changed elsewhere. Errors come from the caller. With the installation's upper
+  limit (max), the field offers no more and shows a longer timeout as capped: the server
+  waits at most that long.
 -->
 <script lang="ts">
   import { untrack } from 'svelte';
   import { m } from '../i18n.ts';
-  import { timeoutInput, timeoutIso, type TimeoutUnit } from '../mandate/timeout.ts';
+  import { cappedBy, inputMax, timeoutInput, timeoutIso, timeoutText, type TimeoutUnit } from '../mandate/timeout.ts';
+  import { getLocale } from '../paraglide/runtime.js';
   import Icon from './Icon.svelte';
 
   interface Props {
@@ -15,13 +18,15 @@
     timeout: string;
     error?: string;
     help?: string;
+    /** The installation's upper limit in seconds; null while unknown. */
+    max?: number | null;
     disabled?: boolean;
     onchange: (timeout: string) => void;
     /** The field was left. */
     ontouch?: () => void;
   }
 
-  let { timeout, error = '', help, disabled = false, onchange, ontouch }: Props = $props();
+  let { timeout, error = '', help, max = null, disabled = false, onchange, ontouch }: Props = $props();
 
   const id = $props.id();
 
@@ -40,6 +45,10 @@
   });
 
   const emit = () => onchange(typed());
+
+  const maxText = $derived(max === null ? '' : timeoutText(`PT${max}S`, getLocale()));
+  const capped = $derived(cappedBy(timeout, max) !== null);
+  const note = $derived(capped ? m.timeout_capped({ max: maxText }) : (help ?? (max === null ? m.timeout_help() : m.timeout_help_max({ max: maxText }))));
 </script>
 
 <div class="field">
@@ -49,6 +58,7 @@
       type="number"
       inputmode="numeric"
       min="1"
+      max={inputMax(max, unit)}
       bind:value
       {disabled}
       aria-labelledby="{id}-timeout"
@@ -63,8 +73,8 @@
       <option value="m">{m.unit_minutes()}</option>
     </select>
   </div>
-  <span id="{id}-timeout-help" class="help" class:error>
-    {#if error}<Icon name="warning" size={16} />{error}{:else}{help ?? m.timeout_help()}{/if}
+  <span id="{id}-timeout-help" class="help" class:error class:capped={capped && !error}>
+    {#if error}<Icon name="warning" size={16} />{error}{:else if capped}<Icon name="info" size={16} />{note}{:else}{note}{/if}
   </span>
 </div>
 
@@ -122,5 +132,8 @@
   }
   .help.error {
     color: var(--hm-color-danger-fg);
+  }
+  .help.capped {
+    color: var(--hm-color-text);
   }
 </style>

@@ -340,6 +340,47 @@ describe('MandateEditor', () => {
   });
 });
 
+describe('approval timeout and the installation limit', () => {
+  const timeoutGroup = async () => within(await screen.findByRole('group', { name: 'Approval timeout' }));
+
+  it('offers at most the installation’s approval timeout', async () => {
+    await start();
+    const group = await timeoutGroup();
+    const input = group.getByRole('spinbutton');
+    expect(input.getAttribute('min')).toBe('1');
+    expect(input.getAttribute('max')).toBe('2');
+    expect(screen.getByText('Between 10 seconds and 2 minutes, the most this installation waits. After that, the request counts as declined.')).toBeTruthy();
+    await fireEvent.change(group.getByRole('combobox'), { target: { value: 's' } });
+    expect(input.getAttribute('max')).toBe('120');
+  });
+
+  it('shows a longer timeout as capped, with the reason', async () => {
+    await start();
+    const group = await timeoutGroup();
+    await fireEvent.input(group.getByRole('spinbutton'), { target: { value: '5' } });
+    expect(screen.getByText('Capped: this installation waits at most 2 minutes. After that, the request counts as declined.')).toBeTruthy();
+    expect(group.getByRole('spinbutton').getAttribute('aria-invalid')).toBeNull();
+  });
+
+  it('shows a stored timeout above the limit as capped', async () => {
+    await start({}, async (api) => {
+      await store(api, (d) => ({ ...d, approval: { ...d.approval, timeout: 'PT10M' } }));
+    });
+    const group = await timeoutGroup();
+    await waitFor(() => expect((group.getByRole('spinbutton') as HTMLInputElement).value).toBe('10'));
+    expect(screen.getByText('Capped: this installation waits at most 2 minutes. After that, the request counts as declined.')).toBeTruthy();
+  });
+
+  it('follows the limit the server reports', async () => {
+    const { app } = await start();
+    app.system = { ...app.system!, approval_timeout_seconds: 600 };
+    const group = await timeoutGroup();
+    await waitFor(() => expect(group.getByRole('spinbutton').getAttribute('max')).toBe('10'));
+    await fireEvent.input(group.getByRole('spinbutton'), { target: { value: '5' } });
+    expect(screen.queryByText(/^Capped/)).toBeNull();
+  });
+});
+
 describe('critical actions without approval', () => {
   it('needs the separate confirmation; the safe choice has the focus', async () => {
     const { api } = await start();

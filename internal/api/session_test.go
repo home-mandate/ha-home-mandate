@@ -75,8 +75,14 @@ func TestSystem(t *testing.T) {
 		*sys.HA.UserName != "Home-Mandate" || !slices.Contains(sys.HA.Commands, "config/auth/list") ||
 		*sys.MCPURL != "https://hm.example.org:8765/mcp" || !sys.TLS.Present || *sys.TLS.ValidUntil != "2027-01-01T10:00:00.000Z" ||
 		sys.EmergencyStop.Active || sys.EmergencyStop.Since != nil || !sys.Chain.Valid || sys.Chain.CheckedAt != nil ||
-		sys.ApproversConfigured != 1 || sys.ClockBehind {
+		sys.ApproversConfigured != 1 || sys.ClockBehind || sys.ApprovalTimeoutSeconds != 300 {
 		t.Errorf("system = %+v", sys)
+	}
+	// Without a configured upper limit, the approval package's default applies (120 s).
+	h.srv.cfg.ApprovalTimeout = 0
+	h.ok(http.MethodGet, "/api/system", nil, &sys)
+	if sys.ApprovalTimeoutSeconds != 120 {
+		t.Errorf("approval_timeout_seconds without configuration = %d", sys.ApprovalTimeoutSeconds)
 	}
 	// A clock behind the newest audit entry is reported (SPEC-v0 section 11.4).
 	if _, err := h.srv.cfg.Log.Append(t.Context(), audit.Entry{Event: audit.EventEmergencyStopReleased,

@@ -58,6 +58,7 @@ export const systemFixture: SystemStatus = {
   commit: 'da11343',
   server_time: NOW,
   retention_days: 30,
+  approval_timeout_seconds: 120,
   ha: {
     connected: true,
     since: '2026-10-01T06:12:00Z',
