@@ -138,7 +138,19 @@ export const voiceAssistantMandate: MandateDocument = {
   created_at: '2026-10-01T08:00:00Z',
 };
 
-type Defaulted = 'created_by' | 'created_by_name' | 'client_verified' | 'redirect_uris' | 'revoked_at' | 'revoked_by_name' | 'requests_today' | 'actions_last_hour' | 'mandate';
+type Defaulted =
+  | 'created_by'
+  | 'created_by_name'
+  | 'client_verified'
+  | 'redirect_uris'
+  | 'revoked_at'
+  | 'revoked_by_name'
+  | 'removed_at'
+  | 'removed_by_name'
+  | 'connected'
+  | 'requests_today'
+  | 'actions_last_hour'
+  | 'mandate';
 type AgentInput = Omit<Agent, Defaulted> & Partial<Omit<Agent, 'mandate'>> & { mandate: { id: string; name: string; status: Agent['status'] } | null };
 
 /** Activity counts and the mandate's limit are filled in by the mock from the log and the mandate. */
@@ -149,10 +161,29 @@ const agent = ({ mandate, ...a }: AgentInput): Agent => ({
   redirect_uris: [],
   revoked_at: null,
   revoked_by_name: null,
+  removed_at: null,
+  removed_by_name: null,
+  connected: a.status === 'active',
   requests_today: 0,
   actions_last_hour: 0,
-  mandate: mandate && { ...mandate, max_actions_per_hour: null, digest: '', rules_from: null },
+  mandate: mandate && { ...mandate, max_actions_per_hour: null, digest: '', rules_from: null, removed_at: null },
   ...a,
+});
+
+/**
+ * After an emergency stop was lifted (MockOptions.afterStop): the kitchen tablet of the
+ * pairing code was admitted before and has no token since, so the pairing offers to
+ * reconnect it (#22).
+ */
+export const tabletAgentFixture: Agent = agent({
+  client_id: 'pair:kitchen-tablet-1',
+  display_name: 'Küchen-Tablet',
+  status: 'active',
+  connected: false,
+  created_at: '2026-09-28T10:00:00Z',
+  last_active_at: '2026-10-02T16:00:00Z',
+  oauth_client: 'kitchen-tablet',
+  mandate: { id: 'mandate-tablet', name: 'Tablet Küche', status: 'active' },
 });
 
 export const agentsFixture: Agent[] = [

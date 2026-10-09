@@ -392,3 +392,22 @@ describe('new mandate', () => {
     expect(await within(dialog).findByText('Couldn’t create the mandate. Please try again.')).toBeTruthy();
   });
 });
+
+describe('removing (#21)', () => {
+  it('hides removed mandates unless asked, and removes all revoked after a confirmation', async () => {
+    const { api } = await start({}, async (a) => {
+      await a.revokeMandate('mandate-claude');
+    });
+    const table = await screen.findByRole('table', { name: 'Mandates' });
+    const before = within(table).getAllByRole('row').length;
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove all revoked …' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(within(screen.getByRole('table', { name: 'Mandates' })).getAllByRole('row')).toHaveLength(before - 1));
+    expect((await api.mandate('mandate-claude')).summary.removed_at).not.toBeNull();
+    await fireEvent.click(screen.getByRole('switch', { name: /Show removed/ }));
+    const rows = within(screen.getByRole('table', { name: 'Mandates' })).getAllByRole('row');
+    expect(rows).toHaveLength(before);
+    expect(screen.getByText('Removed')).toBeTruthy();
+  });
+});

@@ -109,7 +109,8 @@ export interface SystemStatus {
 }
 
 // ---------------------------------------------------------------------------
-// Agents: GET api/agents, POST api/agents/revoke
+// Agents: GET api/agents, POST api/agents/revoke, POST api/agents/remove,
+// POST api/revoked/remove
 //
 // Client IDs are often URLs. They travel in the body, never in the path: an encoded "/"
 // (%2F) does not survive every proxy on the Ingress path unchanged.
@@ -139,6 +140,18 @@ export interface Agent {
   /** When and by whom the agent was revoked; null while active. */
   revoked_at: string | null;
   revoked_by_name: string | null;
+  /**
+   * When and by whom the revoked agent was removed from the lists (issue #21); null while
+   * listed. The UI hides removed agents unless asked; they stay revoked for good.
+   * removed_by_name is null for the retention of Home-Mandate.
+   */
+  removed_at: string | null;
+  removed_by_name: string | null;
+  /**
+   * The agent holds a valid token. False after an emergency stop until it signs in again
+   * and is reconnected (issue #22), or once its tokens expired.
+   */
+  connected: boolean;
   /** Requests of the agent (any decision) on the current day in the household's time zone. */
   requests_today: number;
   /** Requests counted against the mandate's rate limit in the last 60 minutes. */
@@ -157,12 +170,31 @@ export interface Agent {
     digest: string;
     /** The template the rules were last taken from; null if unknown. */
     rules_from: RulesFrom | null;
+    /** Set once the revoked mandate was removed from the lists. */
+    removed_at: string | null;
   } | null;
 }
 
 /** POST api/agents/revoke: revokes the agent, its tokens and its mandate at once. */
 export interface AgentRevoke {
   client_id: string;
+}
+
+/**
+ * POST api/agents/remove → Agent. Only a revoked agent is removed (otherwise "conflict"),
+ * unless revoke is set: then an active agent is revoked first, in the same step (leftovers
+ * after an emergency stop). mandates: remove its mandates too, each recorded on its own.
+ */
+export interface AgentRemove {
+  client_id: string;
+  revoke?: boolean;
+  mandates?: boolean;
+}
+
+/** POST api/revoked/remove (no body): removes every revoked agent with its mandates and every revoked mandate. */
+export interface RemovedCount {
+  agents: number;
+  mandates: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +223,29 @@ export interface PairingCandidate {
   expires_at: string;
   /** Network address the pairing request came from (decision G4); only shown here, not logged in the audit. */
   requested_from: string;
+  /**
+   * Existing agents of the same OAuth client without a valid token, e.g. after an
+   * emergency stop (issue #22). The person may reconnect one instead of admitting a new
+   * agent; nothing is preselected. Several assistants can share a client.
+   */
+  reconnect: ReconnectCandidate[];
+}
+
+export interface ReconnectCandidate {
+  client_id: string;
+  /** Chosen by a human at admission; untrusted text. */
+  display_name: string;
+  admitted_at: string;
+  /** The agent's active mandate; null without one. */
+  mandate: { id: string; name: string } | null;
+}
+
+/**
+ * POST api/pairing/reconnect → Agent: gives the chosen agent new tokens instead of
+ * admitting a new one (agent.reconnected). "conflict" if it is no longer offered.
+ */
+export interface PairingReconnect extends PairingDecision {
+  client_id: string;
 }
 
 export interface PairingDecision extends PairingCode {
@@ -386,6 +441,11 @@ export interface MandateSummary {
   stale_references: StaleReference[];
   /** The template the rules were last taken from; null if unknown or never from one. */
   rules_from: RulesFrom | null;
+  /**
+   * Set once the revoked mandate was removed from the lists (issue #21, POST
+   * api/mandates/{id}/remove). The UI hides it unless asked; it stays readable.
+   */
+  removed_at: string | null;
 }
 
 export interface StaleReference {
@@ -734,8 +794,11 @@ export type AuditEvent =
   | 'mandate.created'
   | 'mandate.updated'
   | 'mandate.revoked'
+  | 'mandate.removed'
   | 'agent.registered'
   | 'agent.revoked'
+  | 'agent.reconnected'
+  | 'agent.removed'
   | 'emergency_stop.activated'
   | 'emergency_stop.released'
   | 'auth.rejected'
@@ -771,8 +834,11 @@ export interface AuditEntry {
     resource: { entity_id: string; category?: string; area?: string; critical?: boolean };
     action: string;
   };
-  /** version: number of the mandate version with this digest (added by the API, not part of the chain; F4). */
-  mandate?: { id: string; digest: string; previous_digest?: string; version?: number };
+  /**
+   * version: number of the mandate version with this digest; name: the mandate's display
+   * name, also of a removed one (both added by the API, not part of the chain; F4).
+   */
+  mandate?: { id: string; digest: string; previous_digest?: string; version?: number; name?: string };
   evaluation?: { decision: Decision; reason: Reason; rule_id: string | null; approval_timeout?: string };
   /** via: the channel the answer came through, push or ui (decision F2). */
   approval?: { outcome: ApprovalOutcome; by?: string; by_name?: string; via?: 'push' | 'ui'; at: string };

@@ -394,3 +394,47 @@ describe('AgentPair', () => {
     expect(within(step()).getAllByRole('listitem')[0]?.getAttribute('aria-current')).toBeNull();
   });
 });
+
+describe('reconnecting after an emergency stop (#22)', () => {
+  it('offers the agents of the same client without access; nothing is chosen until the person picks one', async () => {
+    const api = createMockClient({ now: () => new Date(NOW), afterStop: true });
+    const app = new AppState(api, () => Date.parse(NOW));
+    await app.start();
+    render(AgentPair, { app, now: Date.now() });
+    await toMandate();
+    const region = screen.getByRole('region', { name: 'Or reconnect an existing agent' });
+    const option = within(region).getByRole('radio', { name: /Küchen-Tablet/ }) as HTMLInputElement;
+    expect(option.checked).toBe(false);
+    expect(region.textContent).toMatch(/Mandate: .*Tablet Küche.* · admitted on/);
+    const button = within(region).getByRole('button', { name: 'Reconnect' });
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    const before = (await api.agents()).length;
+    const reconnect = vi.spyOn(api, 'pairingReconnect');
+    await fireEvent.click(option);
+    await fireEvent.click(button);
+    const done = await screen.findByRole('heading', { name: /Küchen-Tablet.* is connected/ });
+    expect(document.activeElement).toBe(done);
+    expect(done.parentElement?.textContent).toContain('existing entry');
+    expect(reconnect).toHaveBeenCalledWith({ code: 'BCDFGHJK', pairing_id: 'pg-kitchen-tablet', client_id: 'pair:kitchen-tablet-1' });
+    expect((await api.agents()).length).toBe(before);
+  });
+
+  it('offers nothing to reconnect while the agents have access', async () => {
+    await start();
+    await toMandate();
+    expect(screen.queryByRole('region', { name: 'Or reconnect an existing agent' })).toBeNull();
+  });
+
+  it('says when the agent is no longer offered', async () => {
+    const api = createMockClient({ now: () => new Date(NOW), afterStop: true });
+    api.pairingReconnect = async () => Promise.reject(new ApiError('conflict', 409));
+    const app = new AppState(api, () => Date.parse(NOW));
+    await app.start();
+    render(AgentPair, { app, now: Date.now() });
+    await toMandate();
+    const region = screen.getByRole('region', { name: 'Or reconnect an existing agent' });
+    await fireEvent.click(within(region).getByRole('radio', { name: /Küchen-Tablet/ }));
+    await fireEvent.click(within(region).getByRole('button', { name: 'Reconnect' }));
+    await waitFor(() => expect(within(region).getByRole('alert').textContent).toContain('no longer offered'));
+  });
+});

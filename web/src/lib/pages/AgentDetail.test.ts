@@ -319,3 +319,62 @@ describe('AgentDetail', () => {
     expect(await screen.findByText('Page not found')).toBeTruthy();
   });
 });
+
+describe('removing (#21) and reconnecting (#22)', () => {
+  it('revokes and removes in one step when asked, recorded as both', async () => {
+    const { api } = await start(CLAUDE);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Revoke access' }));
+    const dialog = await screen.findByRole('alertdialog');
+    const also = within(dialog).getByRole('checkbox', { name: 'Also remove the agent and its mandates from the lists' }) as HTMLInputElement;
+    expect(also.checked).toBe(false);
+    await fireEvent.click(also);
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke and remove' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    await waitFor(() => expect(plain(document.body.textContent)).toContain('Removed from the lists on'));
+    const events = (await api.audit({ limit: 4 })).entries.map((e) => e.event).toReversed();
+    expect(events).toEqual(['agent.revoked', 'mandate.revoked', 'mandate.removed', 'agent.removed']);
+    expect(screen.queryByRole('button', { name: 'Remove from the lists …' })).toBeNull();
+  });
+
+  it('removes a revoked agent with its mandates after a confirmation', async () => {
+    const { api } = await start(VOICE, (a) => void a.revokeAgent(VOICE));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Remove from the lists …' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(plain(within(dialog).getByRole('heading').textContent)).toBe('Remove Sprachassistent from the lists?');
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect((within(dialog).getByRole('checkbox', { name: 'Also remove its mandates' }) as HTMLInputElement).checked).toBe(true);
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect((await api.mandate('mandate-voice')).summary.removed_at).not.toBeNull();
+    await waitFor(() => expect(plain(document.body.textContent)).toContain('by Markus. This agent stays revoked'));
+    expect(screen.getAllByText('Removed').length).toBeGreaterThan(0);
+  });
+
+  it('removes only the agent when its mandates are to stay, and reports a failure', async () => {
+    const { api } = await start(VOICE, (a) => void a.revokeAgent(VOICE));
+    const remove = api.removeAgent.bind(api);
+    let fail = true;
+    api.removeAgent = async (r) => {
+      if (fail) throw new ApiError('unavailable', 0);
+      return remove(r);
+    };
+    await fireEvent.click(await screen.findByRole('button', { name: 'Remove from the lists …' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Also remove its mandates' }));
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(within(dialog).getByRole('alert').textContent).toContain('Couldn’t remove'));
+    fail = false;
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect((await api.mandate('mandate-voice')).summary.removed_at).toBeNull();
+  });
+
+  it('says how to reconnect or clean up an agent without access', async () => {
+    const api = createMockClient({ now: () => new Date(NOW), afterStop: true });
+    const app = new AppState(api, () => Date.parse(NOW));
+    await app.start();
+    render(AgentDetail, { app, id: CLAUDE, now: Date.parse(NOW) });
+    await waitFor(() => expect(plain(document.body.textContent)).toContain('choose “Reconnect” on the sign-in or pairing page'));
+    expect(screen.getAllByText('Not signed in').length).toBeGreaterThan(0);
+  });
+});

@@ -2,7 +2,9 @@
 <!--
   One agent (design README 6.2, view=detail; decisions G3, G5, G7): identity, mandate,
   activity with its latest log entries, and "End access". A revoked agent shows who
-  revoked it and when, and offers nothing to change. An unknown ID looks like any page
+  revoked it and when, and offers to remove it from the lists (#21); a removed one offers
+  nothing. An active agent without a valid token (after an emergency stop) says how to
+  reconnect it or clean it up (#22). An unknown ID looks like any page
   that does not exist. The cards are named groups, not landmarks: five regions on one page
   would crowd the landmark list.
 -->
@@ -23,12 +25,14 @@
   import AgentMandate from '../components/agents/AgentMandate.svelte';
   import AgentStatus from '../components/agents/AgentStatus.svelte';
   import RevokeDialog from '../components/agents/RevokeDialog.svelte';
+  import RemoveDialog from '../components/RemoveDialog.svelte';
   import ActivityList from '../components/overview/ActivityList.svelte';
   import { formatDateTime, formatNumber, formatRelative } from '../format.ts';
   import { m } from '../i18n.ts';
   import { offeredTemplates } from '../mandate/template.ts';
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
+  import { MARK } from '../ui/sentence.ts';
   import { cleanUntrusted, isolate } from '../untrusted.ts';
 
   interface Props {
@@ -71,6 +75,8 @@
   let busy = $state(false);
   let error = $state('');
   let endButton: HTMLButtonElement | undefined = $state();
+  let removing = $state(false);
+  let removeButton: HTMLButtonElement | undefined = $state();
 
   const reload = () => void data.run();
   onMount(() => {
@@ -103,13 +109,16 @@
     void data.run();
   }
 
-  async function revoke() {
+  /** remove: revoke and remove the agent and its mandates in one step (#21). */
+  async function revoke(remove = false) {
     const target = agent;
     if (busy || !target) return;
     busy = true;
     error = '';
     try {
-      const result = await app.api.revokeAgent(target.client_id);
+      const result = remove
+        ? await app.api.removeAgent({ client_id: target.client_id, revoke: true, mandates: true })
+        : await app.api.revokeAgent(target.client_id);
       if (result.status !== 'revoked') throw new Error('not revoked');
       busy = false;
       await revoked(result);
@@ -131,6 +140,31 @@
     error = '';
     endButton?.focus();
   }
+
+  /** remove takes a revoked agent, and with mandates its revoked mandates, off the lists (#21). */
+  async function remove(mandates: boolean) {
+    const target = agent;
+    if (busy || !target) return;
+    busy = true;
+    error = '';
+    try {
+      const result = await app.api.removeAgent({ client_id: target.client_id, mandates });
+      busy = false;
+      removing = false;
+      await revoked(result);
+    } catch {
+      busy = false;
+      error = m.remove_failed();
+      void data.run();
+    }
+  }
+
+  function closeRemove() {
+    if (busy) return;
+    removing = false;
+    error = '';
+    removeButton?.focus();
+  }
 </script>
 
 <BackLink href={href({ name: 'agents' })} label={m.agents_title()} />
@@ -144,10 +178,17 @@
 {:else}
   <div class="head">
     <h1 id="{uid}-title" tabindex="-1"><AgentName name={agent.display_name} /></h1>
-    <AgentStatus status={agent.status} />
+    <AgentStatus status={agent.status} connected={agent.connected} removed={agent.removed_at !== null} />
   </div>
 
-  {#if agent.status === 'revoked'}
+  {#if agent.removed_at !== null}
+    <Banner
+      kind="info"
+      body={agent.removed_by_name
+        ? m.agent_removed_banner({ date: formatDateTime(new Date(agent.removed_at), ctx), admin: isolate(agent.removed_by_name) })
+        : m.agent_removed_banner_system({ date: formatDateTime(new Date(agent.removed_at), ctx) })}
+    />
+  {:else if agent.status === 'revoked'}
     <Banner
       kind="info"
       body={m.agent_revoked_banner({
@@ -155,6 +196,8 @@
         admin: isolate(agent.revoked_by_name ?? ''),
       })}
     />
+  {:else if !agent.connected}
+    <Banner kind="info" title={m.agent_signed_out_title()} body={m.agent_signed_out_body()} />
   {/if}
 
   <div class="grid">
@@ -212,7 +255,25 @@
       <p class="muted">{m.agent_detail_end_desc()}</p>
       <Button variant="danger" bind:element={endButton} onclick={() => (revoking = true)}>{m.revoke_button()}</Button>
     </div>
-    <RevokeDialog open={revoking} name={agent.display_name} {busy} {error} onclose={closeDialog} onrevoke={revoke} />
+    <RevokeDialog open={revoking} name={agent.display_name} {busy} {error} onclose={closeDialog} onrevoke={(r) => void revoke(r)} />
+  {:else if agent.removed_at === null}
+    <div class="card end" role="group" aria-labelledby="{uid}-remove">
+      <h2 id="{uid}-remove">{m.agent_detail_remove()}</h2>
+      <p class="muted">{m.agent_detail_remove_desc()}</p>
+      <Button variant="danger" bind:element={removeButton} onclick={() => (removing = true)}>{m.remove_more()}</Button>
+    </div>
+    <RemoveDialog
+      open={removing}
+      title={m.remove_agent_title({ agent: MARK })}
+      name={agent.display_name}
+      body={[m.agent_detail_remove_desc(), m.remove_keeps()]}
+      option={m.remove_agent_mandates()}
+      confirm={m.remove_button()}
+      {busy}
+      {error}
+      onclose={closeRemove}
+      onconfirm={(mandates) => void remove(mandates)}
+    />
   {/if}
 {/if}
 

@@ -5,7 +5,9 @@
   step's heading. If the code runs out or gets locked on the way, the person is back at
   step 1 with that state (and the lock time), with the focus on the field so its message is
   heard. Approve and deny name the request that was checked (pairing_id). When the answer
-  to an approval is lost, the agent list tells whether it went through.
+  to an approval is lost, the agent list tells whether it went through. After an emergency
+  stop, the mandate step also offers to reconnect an existing agent of the same client
+  instead (#22); admitting a new agent stays the default.
 -->
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
@@ -20,6 +22,7 @@
   import PageHeader from '../components/PageHeader.svelte';
   import PairCode from '../components/agents/PairCode.svelte';
   import PairMandate from '../components/agents/PairMandate.svelte';
+  import PairReconnect from '../components/agents/PairReconnect.svelte';
   import PairSteps from '../components/agents/PairSteps.svelte';
   import PairVerify from '../components/agents/PairVerify.svelte';
   import CriticalTemplateConfirm from '../components/mandate/CriticalTemplateConfirm.svelte';
@@ -68,6 +71,9 @@
   let displayName = $state('');
   let candidate: PairingCandidate | null = $state.raw(null);
   let admitted: Agent | null = $state.raw(null);
+  /** The agent was reconnected to its existing entry, not admitted anew. */
+  let reconnected = $state(false);
+  let reconnectError = $state('');
   let mandateName = $state('');
   let busy = $state(false);
   let error = $state('');
@@ -224,6 +230,28 @@
     return true;
   }
 
+  /** reconnect gives an existing agent of this client new access instead of a new entry (#22). */
+  async function reconnect(clientId: string) {
+    if (busy || !candidate) return;
+    const c = candidate;
+    busy = true;
+    reconnectError = '';
+    try {
+      admitted = await app.api.pairingReconnect({ code, pairing_id: c.pairing_id, client_id: clientId });
+    } catch (err) {
+      busy = false;
+      const result = codeError(err);
+      if (err instanceof ApiError && err.code === 'conflict') reconnectError = m.pair_reconnect_failed();
+      else if (result.state === 'failed') reconnectError = m.pair_failed();
+      else restart(result.state, result.lockedFor);
+      return;
+    }
+    reconnected = true;
+    mandateName = admitted.mandate?.name ?? '';
+    busy = false;
+    await go('done');
+  }
+
   const doneTitle = $derived(around(m.pair_done_title({ agent: MARK })));
 </script>
 
@@ -283,6 +311,9 @@
           void confirm(t, n);
         }}
       />
+      {#if candidate.reconnect.length > 0}
+        <PairReconnect candidates={candidate.reconnect} {ctx} {busy} error={reconnectError} onreconnect={(id) => void reconnect(id)} />
+      {/if}
       {#if critical}
         <CriticalTemplateConfirm
           template={titleOf(critical.template, choices.data.templates)}
@@ -303,7 +334,7 @@
     <section class="done" aria-labelledby={headingId}>
       <span class="icon"><Icon name="check" size={32} /></span>
       <h2 id={headingId} tabindex="-1">{doneTitle[0]}<bdi>{cleanUntrusted(admitted.display_name)}</bdi>{doneTitle[1]}</h2>
-      <p>{m.pair_done_body({ mandate: isolate(mandateName) })}</p>
+      <p>{reconnected ? m.pair_reconnected_body({ mandate: isolate(mandateName) }) : m.pair_done_body({ mandate: isolate(mandateName) })}</p>
       <div class="links">
         <a class="primary" href={href({ name: 'agent', id: admitted.client_id })}>{m.pair_done_open()}</a>
         {#if admitted.mandate}<a href={href({ name: 'mandate', id: admitted.mandate.id })}>{m.pair_done_edit()}</a>{/if}

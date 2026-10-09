@@ -5,6 +5,8 @@
   both from the UI's own evaluation. Saving goes through a summary and never overwrites
   silently: if someone else stored a version meanwhile, the editor says so and keeps the
   edit. The server checks every version again and decides every real request itself.
+  A revoked mandate is read-only and can be removed from the lists (#21); a removed one
+  stays readable.
 -->
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
@@ -24,6 +26,9 @@
   import DraftWorkspace from '../components/mandate/DraftWorkspace.svelte';
   import SaveDialog from '../components/mandate/SaveDialog.svelte';
   import UnsavedBar from '../components/mandate/UnsavedBar.svelte';
+  import RemoveDialog from '../components/RemoveDialog.svelte';
+  import { formatDateTime } from '../format.ts';
+  import { MARK } from '../ui/sentence.ts';
   import { needsCriticalConfirmation } from '../engine/vocabulary.ts';
   import { m } from '../i18n.ts';
   import { countChanges, type Edited } from '../mandate/changes.ts';
@@ -93,6 +98,28 @@
   let workspace: DraftWorkspace | undefined = $state();
   let summary: HTMLElement | undefined = $state();
   let heading: HTMLElement | undefined = $state();
+  let removing = $state(false);
+  let removeBusy = $state(false);
+  let removeError = $state('');
+
+  /** remove takes the revoked mandate off the lists (#21); it stays readable here. */
+  async function remove() {
+    if (removeBusy) return;
+    removeBusy = true;
+    removeError = '';
+    try {
+      await app.api.removeMandate(id);
+      removing = false;
+      toasts.show({ kind: 'success', text: m.mandate_removed_toast() });
+      await reload();
+      await tick();
+      heading?.focus();
+    } catch {
+      removeError = m.remove_failed();
+    } finally {
+      removeBusy = false;
+    }
+  }
 
   const ctx = $derived({ locale: getLocale(), timeZone: app.session?.household.time_zone ?? 'UTC' });
   const catalog = $derived(page.data?.catalog ?? NO_CATALOG);
@@ -168,9 +195,12 @@
       restored = true;
     }
     if (detail.summary.digest === current.summary.digest) {
-      // The same version; name or status may have changed without a new one. Keeping the
+      // The same version; name, status or removal may have changed without a new one. Keeping the
       // stored object otherwise keeps the evaluation's cache for it.
-      const same = detail.summary.name === current.summary.name && detail.summary.status === current.summary.status;
+      const same =
+        detail.summary.name === current.summary.name &&
+        detail.summary.status === current.summary.status &&
+        detail.summary.removed_at === current.summary.removed_at;
       const untouched = name === current.summary.name;
       if (!same) stored = detail;
       if (untouched) name = detail.summary.name;
@@ -375,8 +405,10 @@
     <Banner kind="warning" title={m.unsaved_restored_title()} body={m.unsaved_restored_mandate()} />
   {/if}
 
-  {#if readonly}
-    <Banner kind="info" body={m.editor_revoked_note()} />
+  {#if readonly && stored.summary.removed_at !== null}
+    <Banner kind="info" body={m.editor_removed_note({ date: formatDateTime(new Date(stored.summary.removed_at), ctx) })} />
+  {:else if readonly}
+    <Banner kind="info" body={m.editor_revoked_note()} action={{ label: m.remove_more(), onclick: () => (removing = true) }} />
   {:else if storedInvalid}
     <Banner kind="critical" body={m.code_invalid_mandate()} />
   {/if}
@@ -430,6 +462,23 @@
   {#if !readonly && changes > 0}
     <UnsavedBar count={changes} note={m.unsaved_bar_note_mandate()} saveLabel={m.unsaved_bar_save()} onsave={() => void trySave()} ondiscard={() => void discard()} />
   {/if}
+
+  <RemoveDialog
+    open={removing}
+    title={m.remove_mandate_title({ mandate: MARK })}
+    name={stored.summary.name}
+    body={[m.remove_mandate_body(), m.remove_keeps()]}
+    confirm={m.remove_button()}
+    busy={removeBusy}
+    error={removeError}
+    onclose={() => {
+      if (!removeBusy) {
+        removing = false;
+        removeError = '';
+      }
+    }}
+    onconfirm={() => void remove()}
+  />
 
   <SaveDialog
     open={saveOpen}

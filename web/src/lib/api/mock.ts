@@ -27,6 +27,7 @@ import {
   NOW,
   sessionFixture,
   systemFixture,
+  tabletAgentFixture,
   templatesFixture,
   voiceAssistantMandate,
   WORST_NAME,
@@ -56,6 +57,7 @@ import type {
   MandateVersion,
   RulesFrom,
   PairingCandidate,
+  ReconnectCandidate,
   ServerEvent,
   Session,
   SystemStatus,
@@ -103,11 +105,14 @@ const pairingFixture: PairingCandidate = {
   requested_at: '2026-10-02T17:40:00Z',
   expires_at: '2026-10-02T17:50:00Z',
   requested_from: '192.168.1.42',
+  reconnect: [],
 };
 
 interface StoredMandate {
   name: string;
   status: 'active' | 'revoked';
+  /** Set once the revoked mandate was removed from the lists (#21). */
+  removed_at: string | null;
   /** Newest first. */
   versions: { meta: MandateVersion; document: MandateDocument }[];
 }
@@ -164,6 +169,11 @@ export interface MockOptions {
   direct?: boolean;
   /** Starts without any approver set up: nobody but the admitting human, without a channel. */
   noApprovers?: boolean;
+  /**
+   * Starts after an emergency stop was lifted: no agent has a token, and the kitchen tablet
+   * behind the pairing code was admitted before, so the pairing offers to reconnect it (#22).
+   */
+  afterStop?: boolean;
   now?: () => Date;
 }
 
@@ -209,10 +219,10 @@ function hostileState(state: State): State {
 }
 
 /** The fixture mandates; the voice assistant's rules came from the template of that name, the others' are of before origins. */
-function initialMandates(templates: readonly Template[]): Record<string, StoredMandate> {
+function initialMandates(templates: readonly Template[], agents: readonly Agent[] = agentsFixture): Record<string, StoredMandate> {
   const voice = templates.find((t) => t.name === 'voice-assistant');
   return Object.fromEntries(
-    agentsFixture
+    agents
       .filter((a) => a.mandate !== null)
       .map((a, i): [string, StoredMandate] => {
         const id = a.mandate?.id ?? '';
@@ -222,7 +232,7 @@ function initialMandates(templates: readonly Template[]): Record<string, StoredM
             ? { origin: 'template', template: voice.name, template_digest: voice.digest }
             : { origin: 'unknown', template: null, template_digest: null };
         const meta = { number: 1, digest: `sha256:fixture-${i}`, created_at: document.created_at, created_by: 'u-admin', created_by_name: 'Markus', ...origin };
-        return [id, { name: a.mandate?.name ?? id, status: 'active', versions: [{ meta, document }] }];
+        return [id, { name: a.mandate?.name ?? id, status: 'active', removed_at: null, versions: [{ meta, document }] }];
       }),
   );
 }
@@ -382,14 +392,15 @@ function matchesQuery(e: AuditEntry, q: AuditQuery): boolean {
 export function createMockClient(options: MockOptions = {}): MockClient {
   const now = options.now ?? (() => new Date(NOW));
   const pairingCandidate: PairingCandidate = options.hostile ? { ...pairingFixture, claimed_name: WORST_NAME } : pairingFixture;
+  const startAgents = options.afterStop ? [...agentsFixture.map((a) => ({ ...a, connected: false })), tabletAgentFixture] : agentsFixture;
   const initial: State = {
     session: sessionFixture,
     system: options.noApprovers ? { ...systemFixture, approvers_configured: 0 } : systemFixture,
     defaults: defaultsFixture,
     devices: devicesFixture,
     renames: {},
-    agents: options.empty ? [] : agentsFixture,
-    mandates: options.empty ? {} : initialMandates(templatesFixture.map(storedTemplate)),
+    agents: options.empty ? [] : startAgents,
+    mandates: options.empty ? {} : initialMandates(templatesFixture.map(storedTemplate), startAgents),
     templates: templatesFixture.map(storedTemplate),
     audit: options.empty ? [] : auditFixture,
     approvals: options.empty ? { open: [], history: [] } : { open: approvalsOpenFixture, history: approvalsHistoryFixture },
@@ -449,6 +460,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
         updated_at: current.meta.created_at,
         stale_references: m.status === 'active' ? staleReferences(doc.rules, state.devices, state.renames) : [],
         rules_from: rulesFrom(m),
+        removed_at: m.removed_at,
       },
       document: doc,
       versions: m.versions.map((v) => v.meta),
@@ -460,7 +472,9 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       ...state,
       mandates: { ...state.mandates, [id]: m },
       agents: state.agents.map((a) =>
-        a.mandate?.id === id ? { ...a, mandate: { id, name: m.name, status: m.status, max_actions_per_hour: null, digest: '', rules_from: null } } : a,
+        a.mandate?.id === id
+          ? { ...a, mandate: { id, name: m.name, status: m.status, max_actions_per_hour: null, digest: '', rules_from: null, removed_at: m.removed_at } }
+          : a,
       ),
     };
     emit({ type: 'mandates.changed', id });
@@ -520,6 +534,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       max_actions_per_hour: current?.document.limits?.max_actions_per_hour ?? null,
       digest: current?.meta.digest ?? '',
       rules_from: m ? rulesFrom(m) : null,
+      removed_at: m ? m.removed_at : null,
     };
     return {
       ...a,
@@ -531,6 +546,32 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 
   function setMandateStatus(id: string, status: 'active' | 'revoked'): void {
     putStored(id, { ...stored(id), status });
+  }
+
+  /** removeStored removes a revoked mandate from the lists once, as the server records it. */
+  function removeStored(id: string): void {
+    const m = stored(id);
+    if (m.removed_at !== null) return;
+    putStored(id, { ...m, removed_at: now().toISOString() });
+    log('mandate.removed', { mandate: { id, digest: detail(id).summary.digest } });
+  }
+
+  /** The agents of the pairing client without a token, as the server offers them to reconnect (#22). */
+  function reconnectable(): ReconnectCandidate[] {
+    return state.agents
+      .filter(
+        (a) =>
+          a.status === 'active' &&
+          !a.connected &&
+          a.oauth_client === pairingCandidate.client &&
+          a.client_verified === pairingCandidate.client_verified,
+      )
+      .map((a) => ({
+        client_id: a.client_id,
+        display_name: a.display_name,
+        admitted_at: a.created_at,
+        mandate: a.mandate && a.mandate.status === 'active' ? { id: a.mandate.id, name: stored(a.mandate.id).name } : null,
+      }));
   }
 
   /** A template to make a mandate from: hidden base templates are refused, as at admission. */
@@ -580,11 +621,13 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     state = {
       ...state,
       agents: state.agents.map((a) =>
-        a.client_id === clientId ? { ...a, mandate: { id, name: '', status: 'active' as const, max_actions_per_hour: null, digest: '', rules_from: null } } : a,
+        a.client_id === clientId
+          ? { ...a, mandate: { id, name: '', status: 'active' as const, max_actions_per_hour: null, digest: '', rules_from: null, removed_at: null } }
+          : a,
       ),
     };
     // As admission: named after the agent unless the human gave a name.
-    putStored(id, { name: mandateName?.trim() || agent.display_name, status: 'active', versions: [{ meta, document }] });
+    putStored(id, { name: mandateName?.trim() || agent.display_name, status: 'active', removed_at: null, versions: [{ meta, document }] });
     log('mandate.created', { agent: document.agent, mandate: { id, digest: meta.digest } });
     return id;
   }
@@ -721,17 +764,21 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     },
     async revokeAgent(clientId) {
       const agent = state.agents.find((a) => a.client_id === clientId) ?? fail('not_found');
+      const active = agent.mandate && stored(agent.mandate.id).status === 'active' ? agent.mandate.id : null;
       if (agent.mandate) setMandateStatus(agent.mandate.id, 'revoked');
-      const revoked = { status: 'revoked' as const, revoked_at: now().toISOString(), revoked_by_name: user().name };
+      const revoked = { status: 'revoked' as const, revoked_at: now().toISOString(), revoked_by_name: user().name, connected: false };
       state = { ...state, agents: state.agents.map((a) => (a.client_id === clientId ? { ...a, ...revoked } : a)) };
       for (const r of state.approvals.open.filter((x) => x.agent.client_id === clientId)) closeApproval(r.id, 'revoked', null);
-      log('agent.revoked', { agent: { client_id: agent.client_id, display_name: agent.display_name } });
+      if (agent.status === 'active') {
+        log('agent.revoked', { agent: { client_id: agent.client_id, display_name: agent.display_name } });
+        if (active) log('mandate.revoked', { mandate: { id: active, digest: detail(active).summary.digest } });
+      }
       emit({ type: 'agents.changed' });
       return copy(present(state.agents.find((a) => a.client_id === clientId) ?? fail('internal')));
     },
     async pairingCheck(code) {
       checkPairing(code);
-      return copy(pairingCandidate);
+      return copy({ ...pairingCandidate, reconnect: reconnectable() });
     },
     async pairingApprove(req) {
       const name = req.display_name.trim();
@@ -759,6 +806,9 @@ export function createMockClient(options: MockOptions = {}): MockClient {
         redirect_uris: [],
         revoked_at: null,
         revoked_by_name: null,
+        removed_at: null,
+        removed_by_name: null,
+        connected: true,
         requests_today: 0,
         actions_last_hour: 0,
         mandate: null,
@@ -773,6 +823,57 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       const key = checkPairing(code);
       if (pairing_id !== pairingCandidate.pairing_id) fail('conflict');
       state = { ...state, pairing: { ...state.pairing, codes: { ...state.pairing.codes, [key]: 'expired' } } };
+    },
+    async pairingReconnect({ code, pairing_id, client_id: clientId }) {
+      if (typeof clientId !== 'string' || clientId === '') fail('invalid_input', '/client_id');
+      const key = checkPairing(code);
+      if (pairing_id !== pairingCandidate.pairing_id) fail('conflict');
+      // As the server: only an agent the check offers now.
+      if (!reconnectable().some((r) => r.client_id === clientId)) fail('conflict');
+      state = {
+        ...state,
+        agents: state.agents.map((a) => (a.client_id === clientId ? { ...a, connected: true } : a)),
+        pairing: { ...state.pairing, codes: { ...state.pairing.codes, [key]: 'expired' } },
+      };
+      const agent = state.agents.find((a) => a.client_id === clientId) ?? fail('internal');
+      log('agent.reconnected', { agent: { client_id: agent.client_id, display_name: agent.display_name } });
+      emit({ type: 'agents.changed' });
+      return copy(present(agent));
+    },
+    async removeAgent({ client_id: clientId, revoke, mandates }) {
+      const found = state.agents.find((a) => a.client_id === clientId) ?? fail('not_found');
+      if (found.status === 'active' && revoke !== true) return fail('conflict');
+      if (found.status === 'active') await api.revokeAgent(clientId);
+      if (mandates === true) {
+        for (const [id, m] of Object.entries(state.mandates)) {
+          if (m.removed_at !== null || m.versions[0]?.document.agent.client_id !== clientId) continue;
+          if (m.status === 'active') await api.revokeMandate(id);
+          removeStored(id);
+        }
+      }
+      const agent = state.agents.find((a) => a.client_id === clientId) ?? fail('internal');
+      if (agent.removed_at === null) {
+        const removed = { removed_at: now().toISOString(), removed_by_name: user().name };
+        state = { ...state, agents: state.agents.map((a) => (a.client_id === clientId ? { ...a, ...removed } : a)) };
+        log('agent.removed', { agent: { client_id: agent.client_id, display_name: agent.display_name } });
+      }
+      emit({ type: 'agents.changed' });
+      return copy(present(state.agents.find((a) => a.client_id === clientId) ?? fail('internal')));
+    },
+    async removeRevoked() {
+      const count = { agents: 0, mandates: 0 };
+      for (const a of state.agents.filter((x) => x.status === 'revoked' && x.removed_at === null)) {
+        const before = Object.values(state.mandates).filter((m) => m.removed_at !== null).length;
+        await api.removeAgent({ client_id: a.client_id, mandates: true });
+        count.agents++;
+        count.mandates += Object.values(state.mandates).filter((m) => m.removed_at !== null).length - before;
+      }
+      for (const [id, m] of Object.entries(state.mandates)) {
+        if (m.status !== 'revoked' || m.removed_at !== null) continue;
+        removeStored(id);
+        count.mandates++;
+      }
+      return count;
     },
 
     async devices() {
@@ -864,6 +965,13 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     async revokeMandate(id) {
       setMandateStatus(id, 'revoked');
       log('mandate.revoked', { mandate: { id, digest: detail(id).summary.digest } });
+      return detail(id).summary;
+    },
+    async removeMandate(id) {
+      const m = stored(id);
+      if (m.status !== 'revoked') return fail('conflict');
+      removeStored(id);
+      emit({ type: 'agents.changed' });
       return detail(id).summary;
     },
 
@@ -1033,7 +1141,11 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       const search = searchMatcher(query.q, state.devices);
       const matching = state.audit.filter((e) => matchesQuery(e, query) && (search?.(e) ?? true)).toReversed();
       const page = matching.filter((e) => query.before === undefined || e.seq < query.before);
-      const entries = page.slice(0, limit);
+      // As the server: the name of the mandate an entry names, also of a removed one.
+      const entries = page.slice(0, limit).map((e) => {
+        const name = e.mandate && state.mandates[e.mandate.id]?.name;
+        return e.mandate && name ? { ...e, mandate: { ...e.mandate, name } } : e;
+      });
       const more = page.length > limit;
       return copy({ entries, next_before: more ? (entries.at(-1)?.seq ?? null) : null, total: matching.length });
     },
@@ -1078,6 +1190,8 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       if (active !== state.system.emergency_stop.active) {
         const stop = active ? { active, since: now().toISOString(), by_name: user().name } : { active, since: null, by_name: null };
         if (active) for (const r of state.approvals.open) closeApproval(r.id, 'emergency_stop', null);
+        // Every token is withdrawn; lifting the stop does not bring them back.
+        if (active) state = { ...state, agents: state.agents.map((a) => ({ ...a, connected: false })) };
         setSystem({ ...state.system, emergency_stop: stop });
         log(active ? 'emergency_stop.activated' : 'emergency_stop.released');
       }

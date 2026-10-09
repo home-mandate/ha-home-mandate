@@ -1012,3 +1012,29 @@ describe('states', () => {
     expect(screen.getByRole('tabpanel', { name: 'Rules' })).toBeTruthy();
   });
 });
+
+describe('removing (#21)', () => {
+  it('removes a revoked mandate after a confirmation; it stays readable', async () => {
+    const { api } = await start({}, async (a) => void (await a.revokeMandate(ID)));
+    await rulesRegion();
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove from the lists …' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect((await api.mandate(ID)).summary.removed_at).not.toBeNull();
+    await waitFor(() => expect(screen.getByText(/was removed from the lists on/)).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Remove from the lists …' })).toBeNull();
+  });
+
+  it('keeps the dialog open when removing fails, and closes on cancel', async () => {
+    await start({ failures: { removeMandate: 'unavailable' } }, async (a) => void (await a.revokeMandate(ID)));
+    await rulesRegion();
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove from the lists …' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(within(dialog).getByRole('alert').textContent).toContain('Couldn’t remove'));
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  });
+});

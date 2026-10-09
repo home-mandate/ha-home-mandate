@@ -221,3 +221,41 @@ describe('AgentConnect', () => {
     expect(screen.getByText(/no valid TLS certificate/)).toBeTruthy();
   });
 });
+
+describe('removing and reconnecting (#21, #22)', () => {
+  beforeEach(desktop);
+
+  it('removes all revoked agents after a confirmation and hides them unless asked', async () => {
+    const { api } = await start();
+    const table = await screen.findByRole('table', { name: 'Agents' });
+    expect(within(table).getAllByRole('row')).toHaveLength(6);
+    expect(screen.queryByRole('switch', { name: /Show removed/ })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove all revoked …' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(dialog.textContent).toContain('the audit log keeps every entry');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect((await api.agents()).find((a) => a.client_id === 'pair:old-bot')?.removed_at).not.toBeNull();
+    await waitFor(() => expect(within(screen.getByRole('table', { name: 'Agents' })).getAllByRole('row')).toHaveLength(5));
+    expect(screen.queryByRole('button', { name: 'Remove all revoked …' })).toBeNull();
+    await fireEvent.click(screen.getByRole('switch', { name: 'Show removed (1)' }));
+    const rows = within(screen.getByRole('table', { name: 'Agents' })).getAllByRole('row');
+    expect(rows).toHaveLength(6);
+    expect(within(rows.at(-1) as HTMLElement).getByText('Removed')).toBeTruthy();
+  });
+
+  it('keeps the dialog open with a message when removing fails', async () => {
+    await start({ failures: { removeRevoked: 'unavailable' } });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Remove all revoked …' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(within(dialog).getByRole('alert').textContent).toContain('Couldn’t remove'));
+  });
+
+  it('marks agents without access after an emergency stop as not signed in', async () => {
+    await start({ afterStop: true });
+    const table = await screen.findByRole('table', { name: 'Agents' });
+    expect(within(table).getAllByText('Not signed in').length).toBe(5);
+  });
+});

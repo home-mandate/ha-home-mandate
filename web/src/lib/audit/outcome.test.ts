@@ -55,13 +55,14 @@ describe('eventLabel', () => {
   it('has a label for every event type', () => {
     const events: AuditEvent[] = ['decision', 'mandate.created', 'mandate.updated', 'mandate.revoked', 'agent.registered', 'agent.revoked',
       'emergency_stop.activated', 'emergency_stop.released', 'auth.rejected', 'log.truncated', 'log.checkpoint', 'directory.changed',
-      'template.changed', 'approver.changed'];
+      'template.changed', 'approver.changed', 'mandate.removed', 'agent.removed', 'agent.reconnected'];
     const labels = events.map(eventLabel);
     expect(new Set(labels).size).toBe(events.length);
     expect(labels).toContain('Template changed');
     expect(labels).toContain('Approvers changed');
     expect(labels).toContain('Emergency stop triggered');
     expect(labels).toContain('Agent approved');
+    expect(labels).toEqual(expect.arrayContaining(['Mandate removed', 'Agent removed', 'Agent reconnected']));
   });
 });
 

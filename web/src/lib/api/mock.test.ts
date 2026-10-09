@@ -82,7 +82,7 @@ describe('createMockClient: agents and pairing', () => {
     expect(approvals.open).toEqual([]);
     // F1: the revocation ends the request; it is not a "rejected" by a person.
     expect(approvals.history[0]).toMatchObject({ outcome: 'revoked', by_name: null });
-    expect(types(events)).toEqual(['mandates.changed', 'approval.closed', 'audit.appended', 'agents.changed']);
+    expect(types(events)).toEqual(['mandates.changed', 'approval.closed', 'audit.appended', 'audit.appended', 'agents.changed']);
   });
 
   it('reports activity from the log: requests on the household day and in the last hour, against the limit', async () => {
@@ -176,6 +176,81 @@ describe('createMockClient: agents and pairing', () => {
     const api = createMockClient();
     await api.pairingDeny({ code: MOCK_PAIRING_CODE, pairing_id: PAIRING_ID });
     await expect(api.pairingCheck(MOCK_PAIRING_CODE)).rejects.toMatchObject({ code: 'pairing_code_expired' });
+  });
+});
+
+describe('createMockClient: removing and reconnecting (#21, #22)', () => {
+  const VOICE = 'pair:voice-assistant';
+
+  it('removes only revoked agents, with their mandates when asked, and records each removal', async () => {
+    const api = createMockClient();
+    await expect(api.removeAgent({ client_id: VOICE })).rejects.toMatchObject({ code: 'conflict' });
+    await expect(api.removeAgent({ client_id: 'pair:none' })).rejects.toMatchObject({ code: 'not_found' });
+    await api.revokeAgent(VOICE);
+    const { events } = listen(api);
+    const removed = await api.removeAgent({ client_id: VOICE, mandates: true });
+    expect(removed.removed_at).toBe(NOW_ISO);
+    expect(removed.removed_by_name).toBe('Markus');
+    expect(removed.mandate?.removed_at).toBe(NOW_ISO);
+    expect(types(events)).toContain('agents.changed');
+    const log = (await api.audit({ limit: 2 })).entries.map((e) => e.event);
+    expect(log).toEqual(['agent.removed', 'mandate.removed']);
+    const mandate = (await api.audit({ event: 'mandate.removed' })).entries[0]?.mandate;
+    expect(mandate?.name).toBe('Sprachassistent Küche');
+    // Removed stays listed, marked; removing again records nothing.
+    expect((await api.agents()).find((a) => a.client_id === VOICE)?.removed_at).toBe(NOW_ISO);
+    await api.removeAgent({ client_id: VOICE, mandates: true });
+    expect((await api.audit({ limit: 1 })).entries[0]?.event).toBe('agent.removed');
+    expect((await api.audit({ event: 'agent.removed' })).total).toBe(1);
+  });
+
+  it('revokes and removes in one step, revocations first', async () => {
+    const api = createMockClient();
+    const removed = await api.removeAgent({ client_id: VOICE, revoke: true });
+    expect(removed.status).toBe('revoked');
+    expect(removed.connected).toBe(false);
+    expect(removed.mandate?.status).toBe('revoked');
+    expect(removed.mandate?.removed_at).toBeNull();
+    const log = (await api.audit({ limit: 3 })).entries.map((e) => e.event).toReversed();
+    expect(log).toEqual(['agent.revoked', 'mandate.revoked', 'agent.removed']);
+  });
+
+  it('removes a revoked mandate and every revoked agent and mandate at once', async () => {
+    const api = createMockClient();
+    await expect(api.removeMandate('mandate-claude')).rejects.toMatchObject({ code: 'conflict' });
+    await api.revokeMandate('mandate-claude');
+    expect((await api.removeMandate('mandate-claude')).removed_at).toBe(NOW_ISO);
+    await api.revokeMandate('mandate-long');
+    expect(await api.removeRevoked()).toEqual({ agents: 1, mandates: 1 });
+    expect(await api.removeRevoked()).toEqual({ agents: 0, mandates: 0 });
+    const agents = await api.agents();
+    expect(agents.filter((a) => a.removed_at !== null).map((a) => a.client_id)).toEqual(['pair:old-bot']);
+  });
+
+  it('offers the agents of the same client without tokens after an emergency stop, and reconnects one', async () => {
+    const api = createMockClient({ afterStop: true });
+    const candidate = await api.pairingCheck(MOCK_PAIRING_CODE);
+    expect(candidate.reconnect.map((r) => r.display_name)).toEqual(['Küchen-Tablet']);
+    expect(candidate.reconnect[0]?.mandate?.name).toBe('Tablet Küche');
+    const target = candidate.reconnect[0]?.client_id ?? '';
+    await expect(api.pairingReconnect({ code: MOCK_PAIRING_CODE, pairing_id: 'other', client_id: target })).rejects.toMatchObject({ code: 'conflict' });
+    await expect(api.pairingReconnect({ code: MOCK_PAIRING_CODE, pairing_id: PAIRING_ID, client_id: VOICE })).rejects.toMatchObject({ code: 'conflict' });
+    const before = (await api.agents()).length;
+    const agent = await api.pairingReconnect({ code: MOCK_PAIRING_CODE, pairing_id: PAIRING_ID, client_id: target });
+    expect(agent.client_id).toBe(target);
+    expect(agent.connected).toBe(true);
+    expect((await api.agents()).length).toBe(before);
+    expect((await api.audit({ limit: 1 })).entries[0]?.event).toBe('agent.reconnected');
+    await expect(api.pairingCheck(MOCK_PAIRING_CODE)).rejects.toMatchObject({ code: 'pairing_code_expired' });
+  });
+
+  it('offers nothing to reconnect while the agents have tokens; the emergency stop withdraws them', async () => {
+    const api = createMockClient();
+    expect((await api.pairingCheck(MOCK_PAIRING_CODE)).reconnect).toEqual([]);
+    expect((await api.agents()).find((a) => a.client_id === VOICE)?.connected).toBe(true);
+    await api.setEmergencyStop(true);
+    await api.setEmergencyStop(false);
+    expect((await api.agents()).every((a) => !a.connected)).toBe(true);
   });
 });
 
@@ -406,6 +481,7 @@ describe('createMockClient: mandates and templates', () => {
       max_actions_per_hour: 60,
       digest: created.summary.digest,
       rules_from: { template: 'read-only', template_digest: expect.stringMatching(/^sha256:/), at: '2026-10-03T10:00:00.000Z', edited_since: false },
+      removed_at: null,
     });
   });
 
