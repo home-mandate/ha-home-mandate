@@ -318,7 +318,9 @@ Every line is at least one test. New attack ideas are added here before they are
 - Cookie without `__Host-` prefix, `Secure`, `HttpOnly`, `SameSite=Strict` or with a domain → test fails
 - Sign-out without CSRF token or from another site → refused; after sign-out the old cookie is worthless
 - Sixth session of a user → the oldest ends; all sessions taken → the sign-in says "busy"
-- Flood of sign-in starts (one address or many) → the oldest sign-in in progress gives way (of the address first), never a refusal for everyone; the table stays bounded and nothing else grows with unauthenticated requests
+- Sign-in starts and callbacks beyond 10 a minute from one sender (IPv6 by /64) or 60 a minute overall → the sign-in says "busy", Home Assistant is not asked, a refused callback leaves its sign-in usable; a fifth sign-in while four wait for Home Assistant → "busy" without asking it
+- Flood of sign-in starts from many senders → within a minute it cannot push out a sign-in in progress, which ends once the minute is over; a flood over several minutes makes the oldest sign-in in progress give way (of the address first), never a refusal for good; the table stays bounded and nothing else grows with unauthenticated requests
+- Every answer in direct mode → `Strict-Transport-Security: max-age=31536000` (no `includeSubDomains`) and `Cross-Origin-Opener-Policy: same-origin`; behind Ingress → neither
 - `X-Remote-User-Id` or `X-Forwarded-Host` sent by the client in direct mode → ignored, never a user or an origin; an agent's bearer token on `/ui/api` → no user
 - Path tricks on the prefix (`/ui/../api`, `/ui/api%2f…`, `/ui//api`, encoded dots) → never a session without signing in
 - Inactive Home Assistant user → no session

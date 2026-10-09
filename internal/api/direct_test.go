@@ -21,11 +21,14 @@ import (
 
 const publicURL = "https://hm.example.org:8765"
 
-// fakeSignIn plays Home Assistant's sign-in: a code names the user it signs in.
+// fakeSignIn plays Home Assistant's sign-in: a code names the user it signs in. With hold
+// set, every sign-in reports on entered and waits until hold is closed.
 type fakeSignIn struct {
-	mu    sync.Mutex
-	codes map[string]string
-	used  []string
+	mu      sync.Mutex
+	codes   map[string]string
+	used    []string
+	hold    chan struct{}
+	entered chan struct{}
 }
 
 func (f *fakeSignIn) AuthorizeURL(state string) string {
@@ -33,6 +36,10 @@ func (f *fakeSignIn) AuthorizeURL(state string) string {
 }
 
 func (f *fakeSignIn) SignIn(_ context.Context, code string) (ha.User, error) {
+	if f.hold != nil {
+		f.entered <- struct{}{}
+		<-f.hold
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.used = append(f.used, code)
@@ -325,29 +332,184 @@ func TestDirectSignOut(t *testing.T) {
 	}
 }
 
-// Starting a sign-in needs no session: a flood never locks the administrators out, it
-// only makes the oldest sign-in in progress (of the same address first) give way.
-func TestDirectSignInFloodEvictsInsteadOfRefusing(t *testing.T) {
+// startState starts a sign-in and returns its state, empty when it was refused.
+func (d *direct) startState(b *browser) string {
+	d.t.Helper()
+	to, _ := url.Parse(d.send(b, http.MethodGet, "/ui/signin", nil).Header().Get("Location"))
+	return to.Query().Get("state")
+}
+
+func (d *direct) callback(b *browser, code, state string) string {
+	d.t.Helper()
+	return d.send(b, http.MethodGet, "/ui/signin/callback?code="+url.QueryEscape(code)+"&state="+url.QueryEscape(state), nil).Header().Get("Location")
+}
+
+// flood starts n sign-ins from many senders and returns how many were refused as busy.
+func (d *direct) flood(n int) int {
+	d.t.Helper()
+	attacker, busy := newBrowser(), 0
+	for i := range n {
+		attacker.addr = "198.51.100." + strconv.Itoa(i%250) + ":1"
+		switch got := d.send(attacker, http.MethodGet, "/ui/signin", nil).Header().Get("Location"); {
+		case got == signInBusy:
+			busy++
+		case !strings.HasPrefix(got, "https://ha.example.org/"):
+			d.t.Fatalf("start %d ended at %q", i, got)
+		}
+	}
+	return busy
+}
+
+// Starting a sign-in needs no session. A flood from many senders is held by the overall
+// limit: within one period it cannot push out a sign-in in progress, and once the period
+// is over the administrators sign in again. Only a flood over several periods makes the
+// oldest sign-in in progress give way, never a refusal for good.
+func TestDirectSignInFlood(t *testing.T) {
 	d := newDirect(t)
 	victim := newBrowser()
 	victim.addr = "192.0.2.50:1"
-	start := d.send(victim, http.MethodGet, "/ui/signin", nil)
-	to, _ := url.Parse(start.Header().Get("Location"))
-	victimState := to.Query().Get("state")
-
-	attacker := newBrowser()
-	for i := range signInTotal + 5 {
-		attacker.addr = "198.51.100." + strconv.Itoa(i%250) + ":1"
-		if r := d.send(attacker, http.MethodGet, "/ui/signin", nil); !strings.HasPrefix(r.Header().Get("Location"), "https://ha.example.org/") {
-			t.Fatalf("start %d refused: %s", i, r.Header().Get("Location"))
-		}
+	state := d.startState(victim)
+	if busy := d.flood(signInTotal + 5); busy != signInTotal+5-(signInOverall-1) {
+		t.Errorf("%d starts refused, want all beyond the overall limit", busy)
 	}
-	// The victim's sign-in gave way; starting again works at once.
-	if got := d.send(victim, http.MethodGet, "/ui/signin/callback?code=code-admin&state="+url.QueryEscape(victimState), nil).Header().Get("Location"); got != signInFailed {
-		t.Errorf("evicted sign-in ended at %q", got)
+	d.now.Add(signInPeriod)
+	if got := d.callback(victim, "code-admin", state); got != "/ui/" {
+		t.Errorf("the sign-in in progress ended at %q after the flood", got)
+	}
+
+	state = d.startState(victim)
+	for range signInTotal/signInOverall + 1 {
+		d.now.Add(signInPeriod)
+		d.flood(signInOverall)
+	}
+	d.now.Add(signInPeriod)
+	if got := d.callback(victim, "code-admin", state); got != signInFailed {
+		t.Errorf("a sign-in pushed out by a long flood ended at %q", got)
 	}
 	if got := d.signInWith(victim, "code-admin"); got != "/ui/" {
 		t.Errorf("a new sign-in after the flood ended at %q", got)
+	}
+}
+
+// Start and callback count against their sender, IPv6 by /64; beyond the limit the
+// browser is told to try again later, and Home Assistant is not asked.
+func TestDirectSignInIsLimitedPerSender(t *testing.T) {
+	d := newDirect(t)
+	b := newBrowser()
+	b.addr = "[2001:db8:1:2::10]:50000"
+	for i := range signInPerSender {
+		if d.startState(b) == "" {
+			t.Fatalf("start %d refused", i)
+		}
+	}
+	same := newBrowser()
+	same.addr = "[2001:db8:1:2:ffff::1]:50000" // the same /64
+	if got := d.send(same, http.MethodGet, "/ui/signin", nil).Header().Get("Location"); got != signInBusy {
+		t.Errorf("start beyond the limit ended at %q", got)
+	}
+	state := b.cookies[signInCookie].Value
+	if got := d.callback(b, "code-admin", state); got != signInBusy {
+		t.Errorf("callback beyond the limit ended at %q", got)
+	}
+	if len(d.signIn.used) != 0 {
+		t.Errorf("Home Assistant was asked: %v", d.signIn.used)
+	}
+	other := newBrowser()
+	other.addr = "[2001:db8:1:3::10]:50000"
+	if got := d.signInWith(other, "code-admin"); got != "/ui/" {
+		t.Errorf("another /64 ended at %q", got)
+	}
+	// The refused callback used nothing up: once the period is over, it works.
+	d.now.Add(signInPeriod)
+	if got := d.callback(b, "code-admin", state); got != "/ui/" {
+		t.Errorf("callback after the period ended at %q", got)
+	}
+}
+
+func TestDirectSignInIsLimitedOverall(t *testing.T) {
+	d := newDirect(t)
+	if busy := d.flood(signInOverall); busy != 0 {
+		t.Fatalf("%d starts refused within the overall limit", busy)
+	}
+	b := newBrowser()
+	b.addr = "203.0.113.7:1"
+	if got := d.send(b, http.MethodGet, "/ui/signin", nil).Header().Get("Location"); got != signInBusy {
+		t.Errorf("start beyond the overall limit ended at %q", got)
+	}
+	d.now.Add(signInPeriod)
+	if got := d.signInWith(b, "code-admin"); got != "/ui/" {
+		t.Errorf("sign-in after the period ended at %q", got)
+	}
+}
+
+// Only a few sign-ins wait for Home Assistant at once; one more is told to try again
+// without asking it.
+func TestDirectSignInsAtOnceAreBounded(t *testing.T) {
+	d := newDirect(t)
+	d.signIn.hold, d.signIn.entered = make(chan struct{}), make(chan struct{})
+	browsers := make([]*browser, signInAtOnce+1)
+	states := make([]string, len(browsers))
+	for i := range browsers {
+		browsers[i] = newBrowser()
+		browsers[i].addr = "192.0.2." + strconv.Itoa(20+i) + ":1"
+		states[i] = d.startState(browsers[i])
+	}
+	done := make(chan string, signInAtOnce)
+	for i := range signInAtOnce {
+		go func() { done <- d.callback(browsers[i], "code-admin", states[i]) }()
+	}
+	for range signInAtOnce {
+		<-d.signIn.entered
+	}
+	if got := d.callback(browsers[signInAtOnce], "code-admin", states[signInAtOnce]); got != signInBusy {
+		t.Errorf("one sign-in too many ended at %q", got)
+	}
+	close(d.signIn.hold)
+	for range signInAtOnce {
+		if got := <-done; got != "/ui/" {
+			t.Errorf("a waiting sign-in ended at %q", got)
+		}
+	}
+	if n := len(d.signIn.used); n != signInAtOnce {
+		t.Errorf("Home Assistant was asked %d times, want %d", n, signInAtOnce)
+	}
+}
+
+func TestSenderGroupsIPv6Networks(t *testing.T) {
+	for addr, want := range map[string]string{
+		"192.0.2.10:1":             "192.0.2.10",
+		"[::ffff:192.0.2.10]:1":    "192.0.2.10",
+		"[2001:db8:1:2::10]:1":     "2001:db8:1:2::/64",
+		"[2001:db8:1:2:ffff::1]:1": "2001:db8:1:2::/64",
+		"[fe80::1%eth0]:1":         "fe80::/64",
+		"no address":               "no address",
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = addr
+		if got := sender(r); got != want {
+			t.Errorf("sender(%q) = %q, want %q", addr, got, want)
+		}
+	}
+}
+
+// Direct mode is reached over HTTPS from the internet: every answer keeps the browser on
+// HTTPS and the page in a browsing context of its own. Behind Ingress Home Assistant's
+// frontend owns the origin, and neither header is sent.
+func TestDirectResponsesKeepTheBrowserOnHTTPS(t *testing.T) {
+	d := newDirect(t)
+	b := newBrowser()
+	d.signInWith(b, "code-admin")
+	for _, target := range []string{"/ui", "/ui/", "/ui/signin", "/ui/signin/callback", "/ui/api/session", "/ui/api/unknown", "/elsewhere"} {
+		r := d.send(b, http.MethodGet, target, nil)
+		if r.Header().Get("Strict-Transport-Security") != "max-age=31536000" || r.Header().Get("Cross-Origin-Opener-Policy") != "same-origin" {
+			t.Errorf("%s: headers %v", target, r.Header())
+		}
+	}
+	for _, path := range []string{"/", "/api/session"} {
+		r := d.do(http.MethodGet, path, nil)
+		if r.header.Get("Strict-Transport-Security") != "" || r.header.Get("Cross-Origin-Opener-Policy") != "" {
+			t.Errorf("behind Ingress %s: headers %v", path, r.header)
+		}
 	}
 }
 
@@ -355,10 +517,11 @@ func TestDirectSignInPerAddressKeepsTheNewest(t *testing.T) {
 	d := newDirect(t)
 	b := newBrowser()
 	var states []string
-	for range signInPerAddr + 1 {
-		r := d.send(b, http.MethodGet, "/ui/signin", nil)
-		to, _ := url.Parse(r.Header().Get("Location"))
-		states = append(states, to.Query().Get("state"))
+	for i := range signInPerAddr + 1 {
+		if i > 0 && i%signInPerSender == 0 { // the address's limit of starts per period
+			d.now.Add(signInPeriod)
+		}
+		states = append(states, d.startState(b))
 	}
 	if d.srv.ui.finishSignIn(states[0], states[0]) {
 		t.Error("the oldest sign-in of the address did not give way")
