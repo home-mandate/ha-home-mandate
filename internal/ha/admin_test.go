@@ -16,8 +16,8 @@ func TestAuthUserIsAdmin(t *testing.T) {
 		u    AuthUser
 		want bool
 	}{
-		{"owner", AuthUser{IsOwner: true}, true},
-		{"owner even inactive", AuthUser{IsOwner: true, IsActive: false}, true},
+		{"owner", AuthUser{IsOwner: true, IsActive: true}, true},
+		{"inactive owner", AuthUser{IsOwner: true, IsActive: false, GroupIDs: []string{"system-admin"}}, false},
 		{"active admin", AuthUser{IsActive: true, GroupIDs: []string{"system-users", "system-admin"}}, true},
 		{"inactive admin", AuthUser{IsActive: false, GroupIDs: []string{"system-admin"}}, false},
 		{"active user", AuthUser{IsActive: true, GroupIDs: []string{"system-users"}}, false},

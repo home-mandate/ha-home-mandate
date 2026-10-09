@@ -54,7 +54,7 @@ func TestSession(t *testing.T) {
 	// Before Home Assistant answered: UTC, and the ID when the name is unknown.
 	h.status.TimeZone = ""
 	h.ha.set(func(f *fakeHA) {
-		f.users = append(f.users, ha.AuthUser{ID: "noname0000000000000000000000000", IsOwner: true})
+		f.users = append(f.users, ha.AuthUser{ID: "noname0000000000000000000000000", IsOwner: true, IsActive: true})
 	})
 	h.now.Add(usersTTL)
 	h.ok(http.MethodGet, "/api/session", nil, &s, as("noname0000000000000000000000000"))

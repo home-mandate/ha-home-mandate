@@ -36,10 +36,12 @@ type AuthUser struct {
 	GroupIDs        []string `json:"group_ids"`
 }
 
-// IsAdmin is Home Assistant's own rule (core auth/models.py User.is_admin): the owner, or
-// an active member of the administrator group.
+// IsAdmin tells whether the user is an administrator: active, and the owner or a member
+// of the administrator group. Stricter than Home Assistant's own rule (core
+// auth/models.py User.is_admin), which counts the owner even when deactivated: Home
+// Assistant lets a deactivated user sign in nowhere, nor does Home-Mandate.
 func (u AuthUser) IsAdmin() bool {
-	return u.IsOwner || u.IsActive && slices.Contains(u.GroupIDs, groupAdmin)
+	return u.IsActive && (u.IsOwner || slices.Contains(u.GroupIDs, groupAdmin))
 }
 
 // ListUsers returns the Home Assistant users. The UI uses it for one thing only: whether

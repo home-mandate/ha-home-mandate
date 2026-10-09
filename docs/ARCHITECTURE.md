@@ -332,8 +332,9 @@ sidebar entry. Home-Mandate therefore checks itself, on every request:
    address of the own proxy is configured (`HM_INGRESS_PROXY`, decision U2).
 2. Exactly one `X-Remote-User-Id`, in the form of a Home Assistant user ID. The Supervisor
    removes client copies of this header and sets it from the session.
-3. The user is an administrator now: `config/auth/list`, administrator = owner, or active
-   and in `system-admin` (Home Assistant's own rule). The answer is kept 30 seconds; when
+3. The user is an administrator now: `config/auth/list`, administrator = active, and the
+   owner or in `system-admin` (Home Assistant's own rule, except that a deactivated owner
+   is none either). The answer is kept 30 seconds; when
    Home Assistant cannot be asked, nobody is an administrator (503, fail closed).
 
 The UI runs in an iframe of Home Assistant's own origin; an XSS in it would take over Home
