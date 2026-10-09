@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 	"github.com/home-mandate/spec"
 
 	"github.com/home-mandate/ha-home-mandate/internal/agent"
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/catalog"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
@@ -750,6 +752,56 @@ func TestFailedActionLeavesOnlyAFailedEntry(t *testing.T) {
 	log := h.auditLog()
 	if strings.Contains(log, `"status":"executed"`) || !strings.Contains(log, `"error":"ha_unavailable"`) {
 		t.Errorf("audit log:\n%s", log)
+	}
+}
+
+// SECURITY.md: an agent never learns of a device it may not read. Neither list mentions
+// it, and every refusal on it is the answer for a device that does not exist. What the
+// mandate allows on it stays possible for an agent that knows the ID.
+func TestUnreadableDevicesAreNeitherListedNorMentioned(t *testing.T) {
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+			map[string]any{"id": "r-no-kitchen-read", "resource": map[string]any{"entity_id": "light.kitchen"}, "actions": []any{"read"}, "decision": "deny"},
+			map[string]any{"id": "r-kitchen-on", "resource": map[string]any{"entity_id": "light.kitchen"}, "actions": []any{"turn_on"}, "decision": "allow"},
+			map[string]any{"id": "r-kitchen-off", "resource": map[string]any{"entity_id": "light.kitchen"}, "actions": []any{"turn_off"}, "decision": "ask"},
+			map[string]any{"id": "r-no-camera-read", "resource": map[string]any{"category": "camera"}, "actions": []any{"read"}, "decision": "deny"},
+			map[string]any{"id": "r-camera", "resource": map[string]any{"category": "camera"}, "actions": []any{"snapshot"}, "decision": "ask"},
+		}
+	})
+	h.approver = &fakeApprover{result: approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: answeredAt}}
+	h.url = h.serve(h.log)
+	s := h.session()
+	for _, tool := range []string{"list_devices", "list_my_permissions"} {
+		out, errText := h.call(s, tool, nil)
+		if errText != "" {
+			t.Fatal(errText)
+		}
+		if listed := mustJSON(out); strings.Contains(listed, "light.kitchen") || strings.Contains(listed, "camera.porch") ||
+			!strings.Contains(listed, "lock.front_door") {
+			t.Errorf("%s = %s", tool, listed)
+		}
+	}
+	for _, args := range []map[string]any{
+		{"entity_id": "light.kitchen", "action": "turn_off"}, // ask: nobody is asked
+		{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": 10}},
+		{"entity_id": "camera.porch", "action": "snapshot"},
+	} {
+		_, unreadable := h.call(s, "perform_action", args)
+		missing := maps.Clone(args)
+		missing["entity_id"] = "light.nowhere"
+		if _, absent := h.call(s, "perform_action", missing); unreadable != "not_found" || absent != unreadable {
+			t.Errorf("%v: %q, for a missing device %q", args, unreadable, absent)
+		}
+	}
+	if _, errText := h.call(s, "get_state", map[string]any{"entity_id": "light.kitchen"}); errText != "not_found" {
+		t.Errorf("get_state = %q", errText)
+	}
+	if len(h.approver.(*fakeApprover).requests()) != 0 {
+		t.Error("an approver was asked about an unreadable device")
+	}
+	if out, errText := h.call(s, "perform_action", map[string]any{"entity_id": "light.kitchen", "action": "turn_on"}); errText != "" || out["status"] != "executed" {
+		t.Errorf("allowed action on an unreadable device = %v, %q", out, errText)
 	}
 }
 

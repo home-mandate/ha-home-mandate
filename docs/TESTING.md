@@ -212,6 +212,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - Oversized requests, deeply nested JSON → rejected
 - Attempt to reach administrative functions via MCP → not present
 - Read decision `ask`: device not listed in `list_devices`; `ask` or `deny` on an unreadable entity → same answer as for a non-existent one
+- Read decision `deny` with other actions allowed or asked → device in neither `list_devices` nor `list_my_permissions`; every refusal (`deny`, `ask` without asking anyone) and `get_state` → `not_found` like a non-existent device; an allowed action is still executed
 - Audit log not writable → nothing executed, nothing read
 - Household time zone or Home-Mandate's own Home Assistant user not known (Home Assistant did not answer `get_config` or `auth/current_user`, connection lost) → every tool `unavailable`, `list_devices` and `list_my_permissions` included, no approver asked; both read again at growing intervals until Home Assistant answers, the attempts end with the connection and a stop does not wait for them
 - Service parameters outside the declared list, type or range; parameters that widen the target (`entity_id`, `area_id`, …) → rejected before Home Assistant

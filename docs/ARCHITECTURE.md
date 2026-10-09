@@ -73,7 +73,12 @@ Reason: only this way can every request be mapped unambiguously to a device and 
 | `list_my_permissions` | – | Shows the agent what it may do (helps models avoid pointless requests). Never shows other agents' rules. |
 
 Devices an agent has no read access to do not exist for that agent (no hint of their
-existence in lists or error messages).
+existence in lists or error messages): `list_devices` lists only devices it may read
+(`allow`), `list_my_permissions` none whose `read` is denied, also when the mandate allows
+other actions on it, and every refusal on such a device, `ask` included (nobody is asked),
+is `not_found`, as for a device that does not exist. An action the mandate allows on it is
+still performed for an agent that knows the ID: the household granted it, and its result
+tells no more than the grant. Its parameters are checked as for any other device.
 
 ## 5. Request flow
 
