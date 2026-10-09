@@ -46,7 +46,9 @@ protection class, expired, not yet valid) needs its own named test.
 - **Test users** in HA: `admin-approver` (admin, approver), `admin-other` (admin, not an
   approver), `user-plain` (not an admin).
 - **Home-Mandate** as a container from the release image, not from source, so that the shipped
-  artifact is tested.
+  artifact is tested. It runs without root, as container mode should, as the user running
+  the tests (rootless Podman: `keep-id`), on a data directory of the host; only a test run
+  by root keeps it root. Home Assistant and the stand-ins run as root.
 - **Agent** = test client based on the official MCP Go SDK, going through real OAuth flows.
 - **Approval requests:** sent to a configurable `notify` service; the answer is fired as a
   `mobile_app_notification_action` event via the HA API with the respective test user, so
@@ -284,7 +286,8 @@ Every line is at least one test. New attack ideas are added here before they are
 **Storage**
 - Checksum of an applied migration changed → start aborted
 - Database schema newer than the binary → start aborted (no downgrade)
-- Database directory writable by group or others, or not owned by the service user; database file readable by others, a symlink or hard link → start aborted
+- Database directory writable by group or others, or not owned by the service user; database file readable by others, a symlink or hard link → start aborted; the error names the fix (`chmod`, or `chown -R UID:GID` of the data directory for one of another user, as after an upgrade from a container that ran as root; E2E: the release image as UID 65532 on the test's data directory)
+- Token, certificate or key file the service user may not read → start aborted with its UID and the `chown` to run
 
 **Test interface (SPEC-v0 section 10.1)**
 - The release binary depends on `tools/conformance` or the harness of the specification → a test fails (`go list -deps ./cmd/home-mandate`)

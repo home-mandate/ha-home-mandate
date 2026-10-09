@@ -51,19 +51,54 @@ from Playwright's CDN, for tests only.
 | `HM_MCP_ADDR` | Listen address of the MCP endpoint, default `:8765` with TLS or `HM_PROXY`, `127.0.0.1:8765` without |
 | `HM_PROXY` | The one IP address of a reverse proxy that ends TLS in front of Home-Mandate. Only that address is served (plaintext allowed beyond loopback), the sender is the last entry of its `X-Forwarded-For`; needs an `https://` `HM_PUBLIC_URL`. See [docs/deploy/reverse-proxy.md](docs/deploy/reverse-proxy.md) |
 | `HM_PDP_ADDR` | Optional loopback address for the AuthZEN evaluation endpoint, for other gateways on the same host |
-| `HM_PUBLIC_URL` | Origin agents and browsers reach Home-Mandate at, e.g. `https://hm.example.org:8765` (`http://` only for `localhost`). Without it, OAuth is off and no agent can be admitted |
+| `HM_PUBLIC_URL` | Origin agents and browsers reach Home-Mandate at (`http://` only for `localhost`). With Home-Mandate's own certificate it carries the port they connect to, e.g. `https://hm.example.org:8765`; behind a reverse proxy it is the proxy's address, without a port, e.g. `https://hm.example.org`. Without it, OAuth is off and no agent can be admitted |
 | `HM_HA_BROWSER_URL` | Home Assistant as the human's browser reaches it, for signing in; default: the origin of `HM_HA_URL` |
 | `HM_APPROVAL_TIMEOUT` | Upper limit in seconds for waiting for an approval, 30–600, default 120; a mandate may only shorten it |
 | `HM_LOG_LEVEL` | `debug`, `info`, `warning` or `error` |
 | `HM_INGRESS_ADDR` | Optional listen address of the UI, e.g. `:8099`, for a proxy that does what Home Assistant's Supervisor does (signs people in, sets `X-Remote-User-Id`, removes client copies of it), and for the E2E tests. Not needed for the UI in direct mode (below) |
 | `HM_INGRESS_PROXY` | Required with `HM_INGRESS_ADDR`: the one IP address of that proxy. Requests from any other address get nothing; the user must be a Home Assistant administrator |
 
-Agents connect to `https://<host>:8765/mcp` with an OAuth access token.
+Agents connect to `<HM_PUBLIC_URL>/mcp` with an OAuth access token.
 
 `docs/deploy/compose.yaml` is an example next to Home Assistant Container on the same host
 (`make image` builds the image). The certificate must be valid for the host of
 `HM_PUBLIC_URL`; Home-Mandate looks at the files once a minute and takes a renewed pair over
 without a restart.
+
+### Without root
+
+The image sets no user, because in app mode the Supervisor runs it as root and creates
+`/data` and the key in `/ssl` for root (`docs/ARCHITECTURE.md`, decision 3). Container
+mode needs no privileges: port 8765 is no privileged port, and Home-Mandate writes only to
+its data directory. Run it as an unprivileged user, e.g. `user: "65532:65532"` in Compose
+(as in the example) or `docker run --user 65532:65532`; any UID that is not root works.
+Started as root in container mode, Home-Mandate logs a warning.
+
+That user must own the data directory and be able to read the token file, the certificate
+and the key. Create the directory before the first start; Docker creates a missing one for
+root:
+
+```sh
+mkdir -p data && sudo chown -R 65532:65532 data && sudo chmod 700 data
+sudo chown 65532:65532 ha-token certs/privkey.pem && sudo chmod 600 ha-token certs/privkey.pem
+```
+
+Let your ACME client hand a renewed key to that user as well (a deploy hook, or a group
+the user is in with mode 0640). With rootless Podman, the container's UID 65532 is a
+subordinate UID on the host: use `podman unshare chown -R 65532:65532 data`, or run with
+`--userns=keep-id:uid=65532,gid=65532` so that your own files appear as the container
+user's.
+
+**Upgrading from a container that ran as root:** stop it, hand the data directory over
+with `sudo chown -R 65532:65532 data`, set the user and start again. Until then
+Home-Mandate refuses to start and names the fix:
+
+```
+home-mandate: store: insecure permissions: /data is owned by uid 0, but Home-Mandate runs as uid 65532; fix: chown -R 65532:65532 /data (in a container: the host directory mounted there)
+```
+
+A token, certificate or key file the user cannot read stops the start the same way, with
+the UID and the `chown` to run on the host.
 
 ## The local UI
 
@@ -85,8 +120,9 @@ Caddy: [docs/deploy/reverse-proxy.md](docs/deploy/reverse-proxy.md).
 
 ## Admitting agents
 
-Agents find everything through `https://<host>:8765/.well-known/oauth-protected-resource/mcp`
-(RFC 9728). There is no open registration; a human of the household admits every agent. The
+Agents find everything through `<public URL>/.well-known/oauth-protected-resource/mcp`
+(RFC 9728; the public URL is `HM_PUBLIC_URL`, in app mode the option `public_url`). There
+is no open registration; a human of the household admits every agent. The
 human signs in with their Home Assistant account (administrators only), gives the agent a
 name and picks a mandate template.
 
@@ -94,7 +130,7 @@ name and picks a mandate template.
   Client ID Metadata Document: an `https://` URL on a public address that names the agent's
   redirect URIs.
 - **Agents without a browser** use a pairing code (Device Authorization Grant): the agent
-  shows a code like `BCDF-GHJK`, the human opens `https://<host>:8765/pair`, signs in and
+  shows a code like `BCDF-GHJK`, the human opens `<public URL>/pair`, signs in and
   enters it. Five wrong codes lock the session, thirty within ten minutes lock pairing for
   everyone for ten minutes.
 

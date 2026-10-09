@@ -470,11 +470,23 @@ Decided by Markus on 2026-10-01.
    - The Let's Encrypt app copies `privkey.pem` to `/ssl` as root with mode 0600 (certbot
      default); the DuckDNS app writes key and certificate with `umask 077`.
 
-   **Result: the image runs as root**, like all official apps. It is `FROM scratch` with
-   only the binary and CA certificates (no shell, no package manager), requests no
-   `privileged` capabilities, and writes only to `/data`. Dropping privileges inside the
-   binary after reading the key and `options.json` remains possible later; it would
-   require a restart for certificate renewal.
+   **Result: the image runs as root in app mode**, like all official apps. It is
+   `FROM scratch` with only the binary and CA certificates (no shell, no package manager),
+   requests no `privileged` capabilities, and writes only to `/data`. Dropping privileges
+   inside the binary after reading the key and `options.json` remains possible later; it
+   would require a restart for certificate renewal.
+
+   **Container mode runs without root** (v0.1). The image sets no `USER`, since the
+   Supervisor would run it as that user too and the app configuration cannot change it;
+   the operator sets the user instead (`user: "65532:65532"` in `docs/deploy/compose.yaml`).
+   The data directory belongs to that user, the token, certificate and key are readable by
+   it; port 8765 needs no privilege. The store's checks stay as they are (directory owned
+   by the process's user and not writable by group or others, database, WAL and
+   shared-memory files regular with mode 0600); a data directory of another user, as left
+   by a container that ran as root, stops the start with `chown -R UID:GID` of the data
+   directory, and an unreadable token, certificate or key with the UID and the `chown` to
+   run. Started as root in container mode, Home-Mandate logs a warning. The E2E suite
+   runs the release image unprivileged.
 4. **App configuration format.** **Decision: as proposed.** Check against the current
    developer documentation (no automatic `BUILD_FROM` since Supervisor 2026.04) during app
    packaging.

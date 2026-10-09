@@ -10,6 +10,12 @@
 # - A certificate for hm.example.org lies in ./certs (renewed in place, e.g. by your ACME
 #   client); Home-Mandate takes renewed files over without a restart.
 # - hm.example.org resolves to this host in your network.
+# - Home-Mandate runs without root as UID/GID 65532 (any UID other than 0 works). Before
+#   the first start, and when upgrading from a container that ran as root:
+#     mkdir -p data && sudo chown -R 65532:65532 data && sudo chmod 700 data
+#     sudo chown 65532:65532 ha-token certs/privkey.pem
+#   The key and the token must stay readable by that user after a renewal (README,
+#   "Running in container mode", "Without root").
 #
 # Behind a reverse proxy (Traefik, nginx, Caddy) for access from the internet, see
 # docs/deploy/reverse-proxy.md.
@@ -19,6 +25,7 @@ services:
     image: home-mandate:latest # built with `make image`, or a released image
     container_name: home-mandate
     restart: unless-stopped
+    user: "65532:65532" # owns ./data; port 8765 needs no privilege
     network_mode: host # reaches Home Assistant on 127.0.0.1:8123
     read_only: true
     cap_drop: [ALL]
@@ -31,11 +38,13 @@ services:
       HM_TLS_KEY: /certs/privkey.pem
       # Listen on one address of this host only; agents and browsers connect here.
       HM_MCP_ADDR: 192.0.2.10:8765
+      # Own certificate: the public URL carries the port agents connect to. Behind a
+      # reverse proxy it is the proxy's address without a port (docs/deploy/reverse-proxy.md).
       HM_PUBLIC_URL: https://hm.example.org:8765
       # Home Assistant as your browser reaches it, for signing in to the UI.
       HM_HA_BROWSER_URL: http://192.0.2.10:8123
       HM_LOG_LEVEL: info
     volumes:
-      - ./data:/data
-      - ./certs:/certs:ro
-      - ./ha-token:/run/secrets/ha-token:ro # mode 0600
+      - ./data:/data # owned by 65532:65532, mode 0700
+      - ./certs:/certs:ro # privkey.pem readable by 65532
+      - ./ha-token:/run/secrets/ha-token:ro # owned by 65532, mode 0600

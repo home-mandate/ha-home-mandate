@@ -18,8 +18,9 @@ configuration:
   public_url:
     name: Public URL
     description: >-
-      The address agents and browsers reach Home-Mandate at, e.g.
-      https://hm.example.org:8765. Without it, no agent can be admitted.
+      The address agents and browsers reach Home-Mandate at. Reached directly, with the
+      port, e.g. https://hm.example.org:8765; behind a reverse proxy, the proxy's address
+      without a port, e.g. https://hm.example.org. Without it, no agent can be admitted.
   ha_browser_url:
     name: Home Assistant URL for your browser
     description: >-

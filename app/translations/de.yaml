@@ -18,8 +18,10 @@ configuration:
   public_url:
     name: Öffentliche URL
     description: >-
-      Die Adresse, unter der Agenten und Browser Home-Mandate erreichen, z. B.
-      https://hm.example.org:8765. Ohne sie kann kein Agent zugelassen werden.
+      Die Adresse, unter der Agenten und Browser Home-Mandate erreichen. Direkt erreicht
+      mit Port, z. B. https://hm.example.org:8765; hinter einem Reverse Proxy die Adresse
+      des Proxys ohne Port, z. B. https://hm.example.org. Ohne sie kann kein Agent
+      zugelassen werden.
   ha_browser_url:
     name: Home-Assistant-URL für deinen Browser
     description: >-

@@ -26,7 +26,8 @@ import (
 var (
 	// ErrInvalidPath means the database path is not an absolute path to a file.
 	ErrInvalidPath = errors.New("store: invalid database path")
-	// ErrInsecurePermissions means the database or its directory is accessible to others.
+	// ErrInsecurePermissions means the database or its directory is accessible to others
+	// or belongs to another user; the error names the command that fixes it.
 	ErrInsecurePermissions = errors.New("store: insecure permissions")
 )
 
@@ -108,9 +109,9 @@ func prepareFiles(path string) error {
 		return fmt.Errorf("store: database directory: %w", err)
 	}
 	if info.Mode().Perm()&0o022 != 0 {
-		return fmt.Errorf("%w: %s is writable by group or others", ErrInsecurePermissions, dir)
+		return fmt.Errorf("%w: %s is writable by group or others; fix: chmod go-w %s", ErrInsecurePermissions, dir, dir)
 	}
-	if err := checkOwner(dir, info); err != nil {
+	if err := checkOwner(dir, dir, info); err != nil {
 		return err
 	}
 
@@ -125,16 +126,17 @@ func prepareFiles(path string) error {
 	}
 
 	for _, p := range []string{path, path + "-wal", path + "-shm"} {
-		if err := checkFile(p); err != nil {
+		if err := checkFile(p, dir); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// checkFile requires an existing file to be a regular file, not a symlink or hard
-// link, owned by this process's user and accessible only to it. A missing file is fine.
-func checkFile(path string) error {
+// checkFile requires an existing file in dataDir to be a regular file, not a symlink or
+// hard link, owned by this process's user and accessible only to it. A missing file is
+// fine.
+func checkFile(path, dataDir string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -146,9 +148,10 @@ func checkFile(path string) error {
 		return fmt.Errorf("%w: %s is not a regular file", ErrInsecurePermissions, path)
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("%w: %s has mode %o, want 600", ErrInsecurePermissions, path, info.Mode().Perm())
+		return fmt.Errorf("%w: %s has mode %o, want 600; fix: chmod 600 %s",
+			ErrInsecurePermissions, path, info.Mode().Perm(), path)
 	}
-	if err := checkOwner(path, info); err != nil {
+	if err := checkOwner(path, dataDir, info); err != nil {
 		return err
 	}
 	if st, ok := info.Sys().(*syscall.Stat_t); !ok || st.Nlink != 1 {
@@ -157,11 +160,19 @@ func checkFile(path string) error {
 	return nil
 }
 
-// checkOwner requires path to belong to the user this process runs as.
-func checkOwner(path string, info fs.FileInfo) error {
+// checkOwner requires path in dataDir to belong to the user this process runs as. A data
+// directory of another user is typically one a container wrote as root before it ran
+// unprivileged (README, "Running in container mode"): the error names the command that
+// hands the whole directory over.
+func checkOwner(path, dataDir string, info fs.FileInfo) error {
 	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || int(st.Uid) != os.Getuid() {
-		return fmt.Errorf("%w: %s is not owned by this user", ErrInsecurePermissions, path)
+	if !ok {
+		return fmt.Errorf("%w: cannot read the owner of %s", ErrInsecurePermissions, path)
+	}
+	if uid := os.Getuid(); int(st.Uid) != uid {
+		return fmt.Errorf("%w: %s is owned by uid %d, but Home-Mandate runs as uid %d; "+
+			"fix: chown -R %d:%d %s (in a container: the host directory mounted there)",
+			ErrInsecurePermissions, path, st.Uid, uid, uid, os.Getgid(), dataDir)
 	}
 	return nil
 }

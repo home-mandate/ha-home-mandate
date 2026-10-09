@@ -126,7 +126,7 @@ func mandateIssuer(ctx context.Context, st *store.Store) (string, error) {
 func withState(ctx context.Context, e env, fn func(*state) error) int {
 	s, err := openState(ctx, e)
 	if err != nil {
-		fmt.Fprintln(e.stderr, "home-mandate:", err)
+		fmt.Fprintln(e.stderr, "home-mandate:", permissionHint(err, os.Getuid(), os.Getgid()))
 		return exitFailure
 	}
 	defer s.store.Close()
