@@ -35,11 +35,16 @@ const (
 	cimdMaxBytes    = 5 << 10
 	cimdCacheTTL    = time.Hour
 	cimdCacheSize   = 100
+	cimdFailTTL     = time.Minute // a failed fetch is not repeated before
+	cimdFailSize    = 100
 	cimdParallel    = 4 // concurrent fetches; more are refused, not queued
 	maxClientIDLen  = 255
 	maxClientName   = 80
 	maxRedirectURIs = 10
 )
+
+// errFetchBusy refuses a fetch while cimdParallel others are in progress.
+var errFetchBusy = fmt.Errorf("%w: too many metadata fetches in progress", ErrInvalidClient)
 
 // freeIdentifier is a client ID without metadata, accepted only for pairing codes and
 // shown to the human as unverified (decision W7).
@@ -71,8 +76,9 @@ type CIMDResolver struct {
 
 	fetching chan struct{} // semaphore of cimdParallel
 
-	mu    sync.Mutex
-	cache map[string]cachedClient
+	mu     sync.Mutex
+	cache  map[string]cachedClient
+	failed map[string]time.Time // client ID → time of the failed fetch
 }
 
 type cachedClient struct {
@@ -83,7 +89,7 @@ type cachedClient struct {
 // NewCIMDResolver returns a resolver; roots nil means the system roots.
 func NewCIMDResolver(roots *x509.CertPool) *CIMDResolver {
 	r := &CIMDResolver{now: time.Now, allowAddr: publicAddr, cache: map[string]cachedClient{},
-		fetching: make(chan struct{}, cimdParallel)}
+		failed: map[string]time.Time{}, fetching: make(chan struct{}, cimdParallel)}
 	dialer := &net.Dialer{Timeout: cimdTimeout, Control: r.control}
 	r.client = &http.Client{
 		Timeout: cimdTimeout,
@@ -150,7 +156,9 @@ func publicAddr(ip netip.Addr) bool {
 }
 
 // Resolve returns the client for a Client ID Metadata Document URL (fetched, cached for
-// an hour) or for a free identifier (unverified, no redirect URIs).
+// an hour) or for a free identifier (unverified, no redirect URIs). A failed fetch is
+// remembered for cimdFailTTL, so that a slow or broken document cannot tie up the fetch
+// slots.
 func (r *CIMDResolver) Resolve(ctx context.Context, clientID string) (Client, error) {
 	if freeIdentifier.MatchString(clientID) {
 		return Client{ID: clientID, Name: clientID}, nil
@@ -161,31 +169,52 @@ func (r *CIMDResolver) Resolve(ctx context.Context, clientID string) (Client, er
 	}
 	r.mu.Lock()
 	c, hit := r.cache[clientID]
+	failedAt, failed := r.failed[clientID]
 	r.mu.Unlock()
 	if hit && r.now().Sub(c.fetched) < cimdCacheTTL {
 		return c.client, nil
 	}
-	client, err := r.fetch(ctx, clientID, u)
-	if err != nil {
-		return Client{}, err
+	if failed && r.now().Sub(failedAt) < cimdFailTTL {
+		return Client{}, fmt.Errorf("%w: metadata failed recently", ErrInvalidClient)
 	}
-	r.remember(clientID, client)
-	return client, nil
+	client, err := r.fetch(ctx, clientID, u)
+	switch {
+	case err == nil:
+		r.remember(clientID, client)
+	case ctx.Err() == nil && !errors.Is(err, errFetchBusy):
+		r.rememberFailure(clientID) // the document's failure, not the caller's or ours
+	}
+	return client, err
 }
 
 func (r *CIMDResolver) remember(clientID string, client Client) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.cache) >= cimdCacheSize {
-		oldest := ""
-		for id, c := range r.cache {
-			if oldest == "" || c.fetched.Before(r.cache[oldest].fetched) {
-				oldest = id
-			}
-		}
-		delete(r.cache, oldest)
+		dropOldest(r.cache, func(c cachedClient) time.Time { return c.fetched })
 	}
+	delete(r.failed, clientID)
 	r.cache[clientID] = cachedClient{client: client, fetched: r.now()}
+}
+
+func (r *CIMDResolver) rememberFailure(clientID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.failed) >= cimdFailSize {
+		dropOldest(r.failed, func(t time.Time) time.Time { return t })
+	}
+	r.failed[clientID] = r.now()
+}
+
+// dropOldest removes the entry of m with the earliest time.
+func dropOldest[V any](m map[string]V, at func(V) time.Time) {
+	oldest, first := "", true
+	for k, v := range m {
+		if first || at(v).Before(at(m[oldest])) {
+			oldest, first = k, false
+		}
+	}
+	delete(m, oldest)
 }
 
 // metadataURL checks the rules for a Client ID Metadata Document URL: https, port 443,
@@ -223,7 +252,7 @@ func (r *CIMDResolver) fetch(ctx context.Context, clientID string, u *url.URL) (
 	case r.fetching <- struct{}{}:
 		defer func() { <-r.fetching }()
 	default:
-		return Client{}, fmt.Errorf("%w: too many metadata fetches in progress", ErrInvalidClient)
+		return Client{}, errFetchBusy
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, clientID, nil)
 	if err != nil {
