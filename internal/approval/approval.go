@@ -140,7 +140,7 @@ type Request struct {
 	Device    string         // friendly name or entity ID
 	Action    string         // vocabulary action
 	Reason    string         // the agent's claim, untrusted
-	Params    map[string]any // the service data that will be sent, shown to the human
+	Params    map[string]any // service data shown to the human; arming the alarm: its mode
 	Approvers []string
 	Timeout   time.Duration // from the mandate's approval settings
 	Critical  bool          // a critical action (SPEC-v0 section 5)

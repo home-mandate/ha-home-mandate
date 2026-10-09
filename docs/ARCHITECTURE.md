@@ -73,13 +73,25 @@ Reason: only this way can every request be mapped unambiguously to a device and 
 | `list_my_permissions` | – | Shows the agent what it may do (helps models avoid pointless requests). Never shows other agents' rules. |
 
 Devices an agent has no read access to do not exist for that agent (no hint of their
-existence in lists or error messages).
+existence in lists or error messages): `list_devices` lists only devices it may read
+(`allow`), `list_my_permissions` none whose `read` is denied, also when the mandate allows
+other actions on it, and every refusal on such a device, `ask` included (nobody is asked),
+is `not_found`, as for a device that does not exist. An action the mandate allows on it is
+still performed for an agent that knows the ID: the household granted it, and its result
+tells no more than the grant. Its parameters are checked as for any other device.
 
 ## 5. Request flow
 
 1. The agent calls `perform_action(entity_id="lock.front_door", action="unlock")`.
 2. `mcp` checks the token (valid, not revoked, issued for this resource).
-3. The clock is checked against the audit log, then the rate limit, counted per mandate
+3. Availability: Home Assistant connected, the resource directory ready, and the
+   household's time zone (`get_config`) and Home-Mandate's own Home Assistant user
+   (`auth/current_user`) known; otherwise every tool, the lists included, answers
+   `unavailable`. Without the time zone, time windows would be evaluated in the host's
+   zone; without its own user, Home-Mandate could not leave it out of the approvers. Both
+   are read at every connection and, if Home Assistant cannot answer yet, again after 1,
+   2, 4 … seconds (at most every minute) until it does or the connection ends.
+   The clock is checked against the audit log, then the rate limit, counted per mandate
    (SPEC-v0 section 11.2). Exceeded → refusal, logged.
 4. `catalog` resolves the entity exactly as Home Assistant spells it: category `lock`, area
    `hallway`, and whether the household marked it as critical. An entity it does not know
@@ -105,15 +117,25 @@ The evaluation is only as good as the directory it gets category, area and the c
 mark from (SPEC-v0 sections 3.4 and 4). The catalog builds it from Home Assistant's
 states and registries and keeps it current through `state_changed` and the
 `*_registry_updated` events; until the first load, and after a lost connection until the
-next one, it is empty and every request is denied.
+next one, it is empty and every request is denied. A registry event says that the
+directory has changed but not how: from the event until the refresh that follows it has
+succeeded (0.5 s later, retried at growing intervals up to every 5 s while it fails),
+nothing is decided and every request is refused as `unavailable`; a rename in the event
+takes effect at once all the same. The registries are also read anew every 10 minutes,
+and a directory older than 30 minutes is not decided on: events cannot tell that none
+was missed.
 
-- **Category** comes from the domain and, for covers, the `device_class` (`garage`,
-  `gate` → `gate`). Whoever can change a `device_class` in Home Assistant can therefore
-  move a cover between `cover` and `gate`; Home Assistant administrators are trusted.
+- **Category** comes from the domain and, for covers, the `device_class`: a cover that
+  may close an entrance is `gate`, whose `open` is critical (`garage`, `gate`, `door`, and
+  no class at all, which cover groups and many template covers have); blinds, shades,
+  shutters, curtains, awnings, windows and every other class stay `cover`. So a household
+  that allows `cover` for its blinds does not let an agent open a front door modelled as
+  a cover. Whoever can change a `device_class` in Home Assistant can still move a cover
+  between `cover` and `gate`; Home Assistant administrators are trusted.
 - **Critical marks.** The household marks entities as critical in the settings
   (`critical_entities`): every action on them except `read` is critical, whatever their
   category. Home-Mandate proposes candidates (names with door, gate, garage; covers of the
-  classes door, window, garage, gate) but marks nothing by itself. Every change is an
+  class window) but marks nothing by itself. Every change is an
   audit entry (`directory.changed`), written in the same transaction as the change.
 - **Renames.** Rules and marks name entities by their ID. Home-Mandate finds a rename by
   the event (`entity_registry_updated` with `old_entity_id`) and, also after an outage or
@@ -191,9 +213,10 @@ human's decision; codes, pairings and browser sessions live in memory only.
 validity; admission fills them in.
 - **Base templates** ship with Home-Mandate, so a new installation can admit an agent at
   once: `hm-read-only` (reads everything), `hm-light-climate` (reads everything, switches
-  lights, sets temperatures, moves covers such as blinds; garage doors and gates are the
-  category `gate` and not included) and `hm-voice-cautious` (as `hm-light-climate` without
-  covers, locks only with approval, never cameras or disarming the alarm). They cannot be
+  lights, sets temperatures, moves covers such as blinds; garage doors, gates, doors and
+  covers without a class are the category `gate` and not included) and
+  `hm-voice-cautious` (as `hm-light-climate` without covers, locks only with approval,
+  never cameras or disarming the alarm). They cannot be
   changed or removed, only used, loaded into the editor and saved under a new name, and
   hidden: a hidden base template is neither offered nor accepted at admission. Names
   starting with `hm-` are reserved for them.
@@ -251,11 +274,19 @@ checked on every request.
 - On iOS, `authenticationRequired: true` is set (unlocking required). Android and the
   Companion App on a Mac have no such step: whoever has the unlocked device can answer.
 - The "reason" supplied by the agent is explicitly marked in the message as the agent's claim,
-  not as a fact. The message also shows the service data that will be executed.
+  not as a fact. The message also shows the service data that will be executed, and when
+  the alarm is armed the mode (`mode=night`; `away` when the agent names none), which is
+  part of the service, not of the data; the UI shows the same.
 - Timeout: the mandate's `approval.timeout`, capped by `HM_APPROVAL_TIMEOUT` (default
   2 minutes, at most 10) because the agent's request waits → `deny`. Every nonce is valid
   exactly once; open requests live in memory.
 - After an approval the PEP checks emergency stop, token and mandate again before executing.
+- **Approver fatigue:** an agent has at most 2 requests waiting, and every request counts
+  towards its rate limit. After a rejection, a timeout or an invalid answer, the same
+  agent may not ask again for the same device for a minute; every further one doubles the
+  wait up to an hour, an approval or a quiet hour after the last wait ends it. Meanwhile
+  the agent gets `denied: approval_cooldown`, nobody is notified, and the refusal is in the
+  audit log (`denied_by: approval`, `error: approval_cooldown`). The waits live in memory.
 - **Answering in the UI (decision F2, 2026-10-02):** an approver who is a Home Assistant
   administrator may also answer in the Home-Mandate UI if this is switched on for them, and
   for critical actions only with a second, separate switch (a browser session asks for no

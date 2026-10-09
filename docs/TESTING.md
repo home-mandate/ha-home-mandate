@@ -144,6 +144,8 @@ Every line is at least one test. New attack ideas are added here before they are
 - Rename event with the same ID, without an ID, with a space, control character or more than 255 characters, or not an update → ignored; at most 1000 renames are kept between two refreshes
 - Area removed → rules on it reported like a renamed device; `deny` or `ask` rule that names only an area → the editor says that a device moved elsewhere leaves it
 - Directory not loaded (start, connection lost) → nothing reported as missing, every request denied
+- Registry change (entity, device or area registry event) → every request `unavailable` until the following refresh has succeeded, also while it keeps failing; a change during a refresh needs the next one; a rename in the event takes effect at once; a directory older than 30 minutes → not ready; refreshes every 10 minutes on their own, failed ones retried at growing intervals
+- Cover of the class `door`, `garage`, `gate` or without a class (a cover group) → category `gate`, whose `open` is critical, never `cover`; blinds, shades, shutters, awnings, windows → `cover`
 - Critical mark set or removed → only by an administrator with CSRF token; an entity the directory does not know → `not_found`; every change is a `directory.changed` audit entry in the same transaction (a change that cannot be recorded is not made), failed attempts are in the server log
 - Template stored, removed, hidden or shown, approver added or removed (UI and command line) → exactly one `template.changed` or `approver.changed` entry in the same transaction, the human as actor (`local-admin` on the command line); unchanged saves, hiding a hidden template, other channels for an approver, refused and unrecordable changes → no entry and no change; `audit verify` and the export include the entries and verify with the specification
 - Renames that cannot be stored → held up to 1000, beyond that the catalog is not ready and every request is denied; storing that fails for two minutes → banner; a mark that could not be carried → carried with the next refresh, also after a restart
@@ -185,8 +187,10 @@ Every line is at least one test. New attack ideas are added here before they are
 - "Yes" and "No" at the same time → first valid answer counts, second discarded, both logged
 - Very long or manipulated "reason" from the agent (control characters, Markdown, links) → truncated, sanitized, marked as the agent's claim
 - Invalid action parameters → rejected before a human is asked
+- Arming the alarm (`alarm_arm_<mode>`, no service data) → the request shows the mode, `away` when the agent names none
 - Emergency stop, revoked token or changed mandate while the human decides → not executed
 - More than 2 pending approval requests of one agent → refused
+- The same agent asks again for the same device after a rejection, a timeout or an invalid answer → `denied: approval_cooldown` without notifying anyone, logged; the wait doubles from 1 minute to at most 1 hour and ends with an approval or a quiet hour; other devices and agents are not affected; no reachable approver starts no wait
 - No approver set up or reachable → denied at once
 - Approver without any channel, more than 5 devices, duplicate device, critical actions in the UI without the UI channel → refused when saving
 - Admission preview of who may approve (consent page and pairing in the UI): a placeholder or named approver without any channel → marked; nobody reachable for the template's ordinary or critical requests → warned, admission still possible; Home Assistant not answering → unknown, never reachable; Home-Mandate's own user → never counted; names from Home Assistant with markup → shown as text; a hidden or unknown template → `not_found`
@@ -212,7 +216,9 @@ Every line is at least one test. New attack ideas are added here before they are
 - Oversized requests, deeply nested JSON → rejected
 - Attempt to reach administrative functions via MCP → not present
 - Read decision `ask`: device not listed in `list_devices`; `ask` or `deny` on an unreadable entity → same answer as for a non-existent one
+- Read decision `deny` with other actions allowed or asked → device in neither `list_devices` nor `list_my_permissions`; every refusal (`deny`, `ask` without asking anyone) and `get_state` → `not_found` like a non-existent device; an allowed action is still executed
 - Audit log not writable → nothing executed, nothing read
+- Household time zone or Home-Mandate's own Home Assistant user not known (Home Assistant did not answer `get_config` or `auth/current_user`, connection lost) → every tool `unavailable`, `list_devices` and `list_my_permissions` included, no approver asked; both read again at growing intervals until Home Assistant answers, the attempts end with the connection and a stop does not wait for them
 - Service parameters outside the declared list, type or range; parameters that widen the target (`entity_id`, `area_id`, …) → rejected before Home Assistant
 - Attributes carrying access tokens (`entity_picture`, `…token…`, `token=` in values) → never returned
 - Agent above its rate limit or without a mandate → refused; refusals logged at most once a minute
@@ -375,7 +381,7 @@ How Home-Mandate meets each obligation and which tests show it. Gaps are listed,
 | 4 Independent of the agent | MCP has four tools, none answers; answers come only from Home Assistant notification events or the administrator UI behind Ingress | `mcp.TestOnlyTheFourToolsExist`, `api.TestOnlyTheSupervisorIsServed`, `api.TestAPINeedsAnAdministrator` | |
 | 5 In time | The wait ends at the shorter of the rule's timeout and `HM_APPROVAL_TIMEOUT`; rejection and invalid answers deny; right before the call the confirmation must be younger than that timeout, and the call ends at that point at the latest | `approval.TestTimeout`, `approval.TestMandateTimeoutShortensTheWait`, `approval.TestDefaultUpperLimit`, `mcp.TestExpiredConfirmationIsNotExecuted`, `mcp.TestApprovalValidity`, `mcp.TestRefusedApprovals` | |
 | 6 Evaluated again | After the answer: emergency stop, token and a fresh evaluation; executed only if not `deny` and the digest is unchanged | `mcp.TestChecksAfterApproval`, `mcp.TestRevokedTokenAfterApproval`, `mcp.TestMandateUnavailableAfterApproval` | Expiry and a closing time window after the answer are covered by the fresh evaluation, without tests of their own |
-| 7 Limited | At most 2 waiting requests per agent, further ones `denied: approval_pending`; the rate limit runs before the decision, so `ask` counts | `mcp.TestPendingAsksAreBounded`, `mcp.TestRateLimit`, `mcp.TestAskRequestsCountTowardsTheRateLimit` | |
+| 7 Limited | At most 2 waiting requests per agent, further ones `denied: approval_pending`; the rate limit runs before the decision, so `ask` counts; after a request that was not approved, asking again for the device waits (`denied: approval_cooldown`) | `mcp.TestPendingAsksAreBounded`, `mcp.TestRateLimit`, `mcp.TestAskRequestsCountTowardsTheRateLimit`, `mcp.TestAskingAgainAfterARefusalWaits` | |
 | Audit | Every outcome with `approval.outcome`, `by`, `via`; a cancelled request with `denied_by` | `mcp.TestCancelledApprovals`, `mcp.TestApprovalEntriesNameTheirRequest`, `audit.TestApprovedAskIsRecordedWithApproval`, `audit.TestApprovalChannelAndCancellation` | |
 
 ### 11.2 Rate limit
