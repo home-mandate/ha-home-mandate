@@ -19,7 +19,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,8 +35,7 @@ var (
 	// ErrInvalidURL means the URL is not a ws:// or wss:// URL without credentials,
 	// query or fragment.
 	ErrInvalidURL = errors.New("home assistant: invalid URL")
-	// ErrInsecureURL means a plaintext ws:// URL to a host other than localhost or the
-	// Supervisor.
+	// ErrInsecureURL means a plaintext ws:// URL to a host Plaintext does not allow.
 	ErrInsecureURL = errors.New("home assistant: plaintext connection outside localhost")
 	// ErrAuthInvalid means Home Assistant rejected the access token. Run does not retry.
 	ErrAuthInvalid = errors.New("home assistant: access token rejected")
@@ -62,15 +63,43 @@ const (
 	stableSession = 10 * time.Second
 )
 
-// plaintextHosts may be reached via ws://: the local host and the Supervisor proxy in
-// app mode (http://supervisor/core/websocket).
-var plaintextHosts = map[string]bool{"localhost": true, "supervisor": true}
+// Plaintext says which hosts may be reached without TLS. The configuration decides it
+// per mode, the client never guesses. The zero value allows loopback only: literal
+// loopback addresses and "localhost" (container mode).
+type Plaintext struct {
+	// Hosts are the only host names allowed when Network is set, e.g. "supervisor" and
+	// "homeassistant" in app mode; literal addresses and "localhost" are then refused.
+	Hosts []string
+	// Network must contain every address the hosts resolve to, e.g. the Supervisor's
+	// hassio network 172.30.32.0/23.
+	Network netip.Prefix
+}
+
+// allowsHost checks the host name of a ws:// URL before any resolution.
+func (p Plaintext) allowsHost(host string) bool {
+	if !p.Network.IsValid() {
+		ip := net.ParseIP(host)
+		return host == "localhost" || ip != nil && ip.IsLoopback()
+	}
+	return slices.Contains(p.Hosts, host)
+}
+
+// allowsAddr checks an address the host resolved to, right before dialing.
+func (p Plaintext) allowsAddr(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	if !p.Network.IsValid() {
+		return ip.IsLoopback()
+	}
+	return p.Network.Contains(ip)
+}
 
 // Config configures a Client.
 type Config struct {
 	// URL of the WebSocket API, e.g. ws://supervisor/core/websocket or
 	// wss://ha.example.org/api/websocket.
 	URL string
+	// Plaintext are the hosts allowed for ws://; the zero value allows loopback only.
+	Plaintext Plaintext
 	// Token is the access token of Home-Mandate's own HA user (or SUPERVISOR_TOKEN).
 	Token Secret
 	// RootCAs replaces the system roots for wss:// when set.
@@ -121,7 +150,7 @@ func New(cfg Config) (*Client, error) {
 	if cfg.Token == "" {
 		return nil, fmt.Errorf("%w: empty access token", ErrInvalidConfig)
 	}
-	if err := validateURL(cfg.URL); err != nil {
+	if err := validateURL(cfg.URL, cfg.Plaintext); err != nil {
 		return nil, err
 	}
 	cfg = withDefaults(cfg)
@@ -132,7 +161,7 @@ func New(cfg Config) (*Client, error) {
 	return &Client{
 		cfg:        cfg,
 		log:        log,
-		httpClient: newHTTPClient(cfg.URL, cfg.RootCAs),
+		httpClient: newHTTPClient(cfg.URL, cfg.RootCAs, cfg.Plaintext),
 		writeSem:   make(chan struct{}, 1),
 		pending:    map[int64]chan message{},
 		subs:       map[*Subscription]struct{}{},
@@ -160,7 +189,7 @@ func withDefaults(cfg Config) Config {
 }
 
 // validateURL never includes the URL in errors: it may contain credentials.
-func validateURL(raw string) error {
+func validateURL(raw string, plaintext Plaintext) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
 		u.Opaque != "" || u.Hostname() == "" {
@@ -170,8 +199,7 @@ func validateURL(raw string) error {
 	case "wss":
 		return nil
 	case "ws":
-		host := u.Hostname()
-		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() || plaintextHosts[host] {
+		if plaintext.allowsHost(u.Hostname()) {
 			return nil
 		}
 		return ErrInsecureURL
@@ -182,13 +210,13 @@ func validateURL(raw string) error {
 
 // newHTTPClient refuses redirects (they could leave the configured host or downgrade to
 // ws://), ignores proxy settings and requires TLS 1.3. For ws:// it dials only addresses
-// that are local after name resolution.
-func newHTTPClient(rawURL string, roots *x509.CertPool) *http.Client {
+// that plaintext allows after name resolution.
+func newHTTPClient(rawURL string, roots *x509.CertPool, plaintext Plaintext) *http.Client {
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots},
 	}
 	if u, err := url.Parse(rawURL); err == nil && u.Scheme == "ws" {
-		transport.DialContext = plaintextDial
+		transport.DialContext = plaintext.dialer(net.DefaultResolver.LookupIPAddr)
 	}
 	return &http.Client{
 		Transport:     transport,
@@ -196,26 +224,36 @@ func newHTTPClient(rawURL string, roots *x509.CertPool) *http.Client {
 	}
 }
 
-// plaintextDial resolves the host and connects only to an allowed local address, so a
-// name like "localhost" or "supervisor" cannot be pointed elsewhere via DNS.
-func plaintextDial(ctx context.Context, network, addr string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
+// dialer resolves the host with lookup and connects only to an allowed address, so a name
+// like "localhost" or "homeassistant" cannot be pointed elsewhere via DNS.
+func (p Plaintext) dialer(lookup func(context.Context, string) ([]net.IPAddr, error)) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		if !p.allowsHost(host) {
+			return nil, fmt.Errorf("%w: %s", ErrInsecureURL, host)
+		}
+		ips, err := lookup(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		return p.dialAllowed(ctx, network, host, port, ips)
 	}
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return nil, err
-	}
+}
+
+// dialAllowed tries every allowed address, as net.Dialer does: "localhost" may resolve to
+// ::1 first while the server listens on 127.0.0.1 only.
+func (p Plaintext) dialAllowed(ctx context.Context, network, host, port string, ips []net.IPAddr) (net.Conn, error) {
 	var d net.Dialer
 	var errs []error
 	for _, ip := range ips {
-		if !plaintextAllowed(host, ip.IP) {
+		addr, ok := netip.AddrFromSlice(ip.IP)
+		if !ok || !p.allowsAddr(addr) {
 			continue
 		}
-		// Try every allowed address, as net.Dialer does: "localhost" may resolve to ::1
-		// first while the server listens on 127.0.0.1 only.
-		conn, err := d.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+		conn, err := d.DialContext(ctx, network, net.JoinHostPort(addr.Unmap().String(), port))
 		if err == nil {
 			return conn, nil
 		}
@@ -224,13 +262,7 @@ func plaintextDial(ctx context.Context, network, addr string) (net.Conn, error) 
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
 	}
-	return nil, fmt.Errorf("%w: %s does not resolve to a local address", ErrInsecureURL, host)
-}
-
-// plaintextAllowed accepts loopback addresses, and private addresses for the Supervisor,
-// which runs on the Docker network of Home Assistant OS.
-func plaintextAllowed(host string, ip net.IP) bool {
-	return ip.IsLoopback() || host == "supervisor" && ip.IsPrivate()
+	return nil, fmt.Errorf("%w: %s does not resolve to an allowed address", ErrInsecureURL, host)
 }
 
 // Run connects and keeps the connection alive until ctx is cancelled or Home Assistant

@@ -55,6 +55,9 @@ type Config struct {
 	DataDir string
 	HAURL   string
 	HAToken ha.Secret
+	// HAPlaintext are the hosts of Home Assistant reached without TLS: the Supervisor and
+	// Home Assistant on the hassio network in app mode, loopback only in container mode.
+	HAPlaintext ha.Plaintext
 	// HARootCAs replaces the system roots for wss:// to Home Assistant (HM_HA_CA_FILE),
 	// e.g. for a self-signed certificate. Nil means the system roots.
 	HARootCAs *x509.CertPool
@@ -151,7 +154,7 @@ func loadApp(token ha.Secret, readFile func(string) ([]byte, error)) (Config, er
 	if err := dec.Decode(&opts); err != nil {
 		return Config{}, fmt.Errorf("%w: %s: %w", ErrInvalid, appOptions, err)
 	}
-	cfg := Config{Mode: ModeApp, DataDir: appDataDir, HAURL: supervisorWS, HAToken: token}
+	cfg := Config{Mode: ModeApp, DataDir: appDataDir, HAURL: supervisorWS, HAToken: token, HAPlaintext: appPlaintext}
 	if cfg.TLSCert, cfg.TLSKey, err = sslPaths(opts.TLSCertFile, opts.TLSKeyFile); err != nil {
 		return Config{}, err
 	}
@@ -327,6 +330,15 @@ func mcpAddr(addr string, secured bool) (string, error) {
 // SupervisorAddr is the Supervisor's address in Home Assistant OS: the hassio network
 // 172.30.32.0/23 and the Supervisor at .2 are constants of the Supervisor.
 var SupervisorAddr = netip.MustParseAddr("172.30.32.2")
+
+// hassioNetwork is the Supervisor's network: Home Assistant Core at 172.30.32.1, the
+// Supervisor at SupervisorAddr.
+var hassioNetwork = netip.MustParsePrefix("172.30.32.0/23")
+
+// appPlaintext allows plaintext in app mode exactly to the Supervisor proxy
+// (ws://supervisor/core/websocket) and Home Assistant's HTTP API (appHAHTTP), and only
+// while they resolve into the hassio network.
+var appPlaintext = ha.Plaintext{Hosts: []string{"supervisor", "homeassistant"}, Network: hassioNetwork}
 
 // ingressProxy reads HM_INGRESS_PROXY: required with HM_INGRESS_ADDR, one IP address (no
 // range, zone, unspecified or multicast address), meaningless without it.

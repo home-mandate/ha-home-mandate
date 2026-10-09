@@ -55,6 +55,8 @@ type HASignInConfig struct {
 	HTTPURL      string
 	WebSocketURL string
 	Roots        *x509.CertPool
+	// Plaintext are the hosts reached without TLS, as for Home-Mandate's own connection.
+	Plaintext ha.Plaintext
 	// Callback is the path Home Assistant sends the browser back to; CallbackPath when
 	// empty. The UI's sign-in in direct mode uses its own.
 	Callback string
@@ -74,7 +76,7 @@ func NewHASignIn(cfg HASignInConfig) (*HASignIn, error) {
 	if cfg.PublicURL == "" || cfg.BrowserURL == "" || cfg.WebSocketURL == "" {
 		return nil, errors.New("oauth: sign-in needs the public URL and the Home Assistant URLs")
 	}
-	client, err := ha.HTTPClient(cfg.HTTPURL, cfg.Roots)
+	client, err := ha.HTTPClient(cfg.HTTPURL, cfg.Roots, cfg.Plaintext)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: Home Assistant HTTP URL: %w", err)
 	}
@@ -87,7 +89,9 @@ func NewHASignIn(cfg HASignInConfig) (*HASignIn, error) {
 	}
 	return &HASignIn{clientID: cfg.PublicURL + "/", redirectURI: cfg.PublicURL + callback,
 		browserURL: cfg.BrowserURL, httpURL: cfg.HTTPURL, wsURL: cfg.WebSocketURL, roots: cfg.Roots,
-		client: client, currentUser: ha.CurrentUser}, nil
+		client: client, currentUser: func(ctx context.Context, wsURL string, roots *x509.CertPool, token ha.Secret) (ha.User, error) {
+			return ha.CurrentUser(ctx, wsURL, roots, cfg.Plaintext, token)
+		}}, nil
 }
 
 // AuthorizeURL is Home Assistant's sign-in page for this sign-in.

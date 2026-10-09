@@ -288,6 +288,15 @@ checked on every request.
 
 One image, two configuration sources. Architectures: `amd64`, `aarch64`.
 
+**Plaintext to Home Assistant** is decided by the mode, never guessed by the client. App
+mode: exactly `supervisor` (WebSocket via `ws://supervisor/core/websocket`) and
+`homeassistant` (HTTP API at `http://homeassistant:8123` for the sign-in of humans, since
+the Supervisor proxy does not forward `/auth`), each only while it resolves into the hassio
+network `172.30.32.0/23` (Core at `.1`, Supervisor at `.2`); no other host, no literal
+address, not `localhost`. Container mode: loopback only (literal loopback addresses and
+`localhost`), `supervisor` and `homeassistant` are refused. The resolved address is checked
+right before dialing, so DNS cannot point an allowed name elsewhere.
+
 **Who may use the UI (decision U2, checked against the Supervisor and Core sources):**
 Ingress lets every signed-in Home Assistant user reach the UI; `panel_admin` only hides the
 sidebar entry. Home-Mandate therefore checks itself, on every request:

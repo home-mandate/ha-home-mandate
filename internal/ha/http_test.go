@@ -13,6 +13,7 @@ import (
 
 func TestHTTPClientValidatesTheOrigin(t *testing.T) {
 	for raw, want := range map[string]error{
+		"http://homeassistant:8123":      ErrInsecureURL, // container mode
 		"https://ha.example.org":         nil,
 		"http://localhost:8123":          nil,
 		"http://127.0.0.1:8123":          nil,
@@ -23,7 +24,24 @@ func TestHTTPClientValidatesTheOrigin(t *testing.T) {
 		"https://ha.example.org/?x=1":    ErrInvalidURL,
 		"":                               ErrInvalidURL,
 	} {
-		_, err := HTTPClient(raw, nil)
+		_, err := HTTPClient(raw, nil, Plaintext{})
+		if want == nil && err != nil || want != nil && !errors.Is(err, want) {
+			t.Errorf("HTTPClient(%q) = %v, want %v", raw, err, want)
+		}
+	}
+}
+
+// In app mode Home Assistant's HTTP API is reached in plaintext on the Supervisor's
+// network, and nothing else is.
+func TestHTTPClientInAppMode(t *testing.T) {
+	for raw, want := range map[string]error{
+		"http://homeassistant:8123": nil,
+		"https://ha.example.org":    nil,
+		"http://localhost:8123":     ErrInsecureURL,
+		"http://172.30.32.1:8123":   ErrInsecureURL,
+		"http://ha.example.org":     ErrInsecureURL,
+	} {
+		_, err := HTTPClient(raw, nil, appPlaintext)
 		if want == nil && err != nil || want != nil && !errors.Is(err, want) {
 			t.Errorf("HTTPClient(%q) = %v, want %v", raw, err, want)
 		}
@@ -35,7 +53,7 @@ func TestHTTPClientDoesNotFollowRedirects(t *testing.T) {
 		http.Redirect(w, r, "http://example.org/", http.StatusFound)
 	}))
 	defer srv.Close()
-	c, err := HTTPClient(srv.URL, nil)
+	c, err := HTTPClient(srv.URL, nil, Plaintext{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +74,7 @@ func TestHTTPClientRequiresTLS13(t *testing.T) {
 	defer srv.Close()
 	roots := x509.NewCertPool()
 	roots.AddCert(srv.Certificate())
-	c, err := HTTPClient(srv.URL, roots)
+	c, err := HTTPClient(srv.URL, roots, Plaintext{})
 	if err != nil {
 		t.Fatal(err)
 	}

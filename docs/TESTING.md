@@ -268,7 +268,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - `auth_invalid` → no retry, permanent error state
 - Connection lost with requests in flight → they fail immediately, nothing is executed after reconnecting
 - Oversized or malformed message from HA → connection closed, no panic
-- Plaintext `ws://` to a host other than loopback or the Supervisor, also after DNS resolution → refused; redirects are not followed; untrusted TLS certificate → refused
+- Plaintext `ws://`/`http://` beyond the hosts of the mode (app mode: `supervisor` and `homeassistant` resolving into `172.30.32.0/23`; container mode: loopback only, `supervisor` refused), also after DNS resolution (e.g. `homeassistant` → an address outside the hassio network) → refused; redirects are not followed; untrusted TLS certificate → refused
 - Access token in logs, error messages or formatted configuration → never (redacted)
 
 **Storage**

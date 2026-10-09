@@ -158,7 +158,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	g.timeZone.Store("")
 	g.language.Store("")
 	g.self.Store("")
-	client, err := ha.New(ha.Config{URL: s.cfg.HAURL, Token: s.cfg.HAToken, RootCAs: s.cfg.HARootCAs, Logger: logger,
+	client, err := ha.New(ha.Config{URL: s.cfg.HAURL, Token: s.cfg.HAToken, RootCAs: s.cfg.HARootCAs, Plaintext: s.cfg.HAPlaintext, Logger: logger,
 		OnConnect: g.onConnect, OnDisconnect: g.onDisconnect})
 	if err != nil {
 		return nil, err
@@ -256,7 +256,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	if directMode(s.cfg, g.certs) {
 		signIn, err := oauth.NewHASignIn(oauth.HASignInConfig{PublicURL: s.cfg.PublicURL, BrowserURL: s.cfg.HABrowserURL,
-			HTTPURL: s.cfg.HAHTTPURL, WebSocketURL: s.cfg.HAURL, Roots: s.cfg.HARootCAs, Callback: api.DirectCallbackPath})
+			HTTPURL: s.cfg.HAHTTPURL, WebSocketURL: s.cfg.HAURL, Roots: s.cfg.HARootCAs, Plaintext: s.cfg.HAPlaintext, Callback: api.DirectCallbackPath})
 		if err != nil {
 			return nil, err
 		}
@@ -385,7 +385,7 @@ func withOAuth(s *state, mcpHandler, ui http.Handler, resource string, logger *s
 		return nil, mcpHandler, nil
 	}
 	signIn, err := oauth.NewHASignIn(oauth.HASignInConfig{PublicURL: s.cfg.PublicURL, BrowserURL: s.cfg.HABrowserURL,
-		HTTPURL: s.cfg.HAHTTPURL, WebSocketURL: s.cfg.HAURL, Roots: s.cfg.HARootCAs})
+		HTTPURL: s.cfg.HAHTTPURL, WebSocketURL: s.cfg.HAURL, Roots: s.cfg.HARootCAs, Plaintext: s.cfg.HAPlaintext})
 	if err != nil {
 		return nil, nil, err
 	}

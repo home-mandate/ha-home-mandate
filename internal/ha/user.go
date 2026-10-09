@@ -27,8 +27,8 @@ type User struct {
 // auth/current_user and closes the connection. It is how Home-Mandate learns who signed
 // in and whether they are an administrator; the same URL and TLS rules as for its own
 // connection apply. No other command is sent.
-func CurrentUser(ctx context.Context, wsURL string, roots *x509.CertPool, token Secret) (User, error) {
-	c, err := New(Config{URL: wsURL, Token: token, RootCAs: roots})
+func CurrentUser(ctx context.Context, wsURL string, roots *x509.CertPool, plaintext Plaintext, token Secret) (User, error) {
+	c, err := New(Config{URL: wsURL, Token: token, RootCAs: roots, Plaintext: plaintext})
 	if err != nil {
 		return User{}, err
 	}

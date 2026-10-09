@@ -272,6 +272,17 @@ func TestWithOAuth(t *testing.T) {
 	if _, _, err := withOAuth(s, mcpHandler, ui, "https://hm.example.org/mcp", logger); err == nil {
 		t.Error("plaintext Home Assistant accepted")
 	}
+
+	// In app mode Home Assistant is reached in plaintext on the Supervisor's network.
+	options := `{"approval_timeout_seconds":120,"public_url":"https://hm.example.org","ha_browser_url":"https://ha.example.org"}`
+	s.cfg, err = config.Load(func(k string) string { return map[string]string{"SUPERVISOR_TOKEN": "s"}[k] },
+		func(string) ([]byte, error) { return []byte(options), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if as, _, err := withOAuth(s, mcpHandler, ui, "https://hm.example.org/mcp", logger); err != nil || as == nil {
+		t.Errorf("app mode with public_url: %v", err)
+	}
 }
 
 func TestPublicHostNeverTurnsTheCheckOff(t *testing.T) {
