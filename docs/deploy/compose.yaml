@@ -24,7 +24,7 @@ services:
   home-mandate:
     # A released image (signed, see docs/install-container.md, "Updates"), or
     # home-mandate:dev built with `make image`.
-    image: ghcr.io/home-mandate/ha-home-mandate:0.1.0-rc.1
+    image: ghcr.io/home-mandate/ha-home-mandate:0.1.0-rc.2
     container_name: home-mandate
     restart: unless-stopped
     user: "65532:65532" # owns ./data; port 8765 needs no privilege

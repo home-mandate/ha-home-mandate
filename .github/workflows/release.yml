@@ -189,7 +189,10 @@ jobs:
           done
           out=$(docker run --rm --platform linux/amd64 --network none --read-only --cap-drop ALL "$IMAGE@$DIGEST" --version)
           [ "$out" = "home-mandate $VERSION" ] || { echo "::error::--version says '$out'"; exit 1; }
-          id=$(docker create --platform linux/arm64 "$IMAGE@$DIGEST")
+          # By the arm64 manifest's own digest: the index digest is already stored for amd64.
+          arm64=$(docker buildx imagetools inspect "$IMAGE@$DIGEST" \
+            --format '{{range .Manifest.Manifests}}{{if eq .Platform.Architecture "arm64"}}{{.Digest}}{{end}}{{end}}')
+          id=$(docker create --platform linux/arm64 "$IMAGE@$arm64")
           docker cp "$id:/home-mandate" ./home-mandate-arm64
           docker rm "$id" > /dev/null
           file ./home-mandate-arm64 | grep -q 'ARM aarch64' || { echo "::error::arm64 image holds no aarch64 binary"; exit 1; }
@@ -247,5 +250,6 @@ jobs:
           EOF
           flags=()
           if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+          # GitHub's list of merged pull requests follows the notes above.
           gh release create "$TAG" sbom-source.spdx.json --repo "$GITHUB_REPOSITORY" --verify-tag \
-            --title "Home-Mandate $VERSION" --notes-file release-notes.md "${flags[@]}"
+            --title "Home-Mandate $VERSION" --notes-file release-notes.md --generate-notes "${flags[@]}"

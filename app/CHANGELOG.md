@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.1.0-rc.1
+## 0.1.0-rc.2
 
-First release candidate. Experimental.
+First published release candidate (0.1.0-rc.1 was tagged, but its release build stopped before publishing). Experimental.
 
 - Mandates with allow, ask and deny per device, area, category and action; time windows
   and weekdays, value limits (brightness, temperature, position, volume), a rate limit per
