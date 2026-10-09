@@ -64,11 +64,17 @@ var domainCategory = map[string]string{
 	"script":              "script",
 }
 
+// gateClasses are the device classes of a cover that may close an entrance of the
+// house: garage doors, gates, doors, and none at all, which Home Assistant gives cover
+// groups and many template covers. They are the critical category gate; every other
+// class (blinds, shades, shutters, curtains, awnings, windows, ...) is cover.
+var gateClasses = map[string]bool{"garage": true, "gate": true, "door": true, "": true}
+
 // Category returns the category of an entity from its domain and device_class.
 func Category(entityID, deviceClass string) string {
 	domain, _, _ := strings.Cut(entityID, ".")
 	if domain == "cover" {
-		if deviceClass == "garage" || deviceClass == "gate" {
+		if gateClasses[deviceClass] {
 			return "gate"
 		}
 		return "cover"

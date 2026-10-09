@@ -107,13 +107,17 @@ states and registries and keeps it current through `state_changed` and the
 `*_registry_updated` events; until the first load, and after a lost connection until the
 next one, it is empty and every request is denied.
 
-- **Category** comes from the domain and, for covers, the `device_class` (`garage`,
-  `gate` → `gate`). Whoever can change a `device_class` in Home Assistant can therefore
-  move a cover between `cover` and `gate`; Home Assistant administrators are trusted.
+- **Category** comes from the domain and, for covers, the `device_class`: a cover that
+  may close an entrance is `gate`, whose `open` is critical (`garage`, `gate`, `door`, and
+  no class at all, which cover groups and many template covers have); blinds, shades,
+  shutters, curtains, awnings, windows and every other class stay `cover`. So a household
+  that allows `cover` for its blinds does not let an agent open a front door modelled as
+  a cover. Whoever can change a `device_class` in Home Assistant can still move a cover
+  between `cover` and `gate`; Home Assistant administrators are trusted.
 - **Critical marks.** The household marks entities as critical in the settings
   (`critical_entities`): every action on them except `read` is critical, whatever their
   category. Home-Mandate proposes candidates (names with door, gate, garage; covers of the
-  classes door, window, garage, gate) but marks nothing by itself. Every change is an
+  class window) but marks nothing by itself. Every change is an
   audit entry (`directory.changed`), written in the same transaction as the change.
 - **Renames.** Rules and marks name entities by their ID. Home-Mandate finds a rename by
   the event (`entity_registry_updated` with `old_entity_id`) and, also after an outage or
@@ -191,8 +195,8 @@ human's decision; codes, pairings and browser sessions live in memory only.
 validity; admission fills them in.
 - **Base templates** ship with Home-Mandate, so a new installation can admit an agent at
   once: `hm-read-only` (reads everything), `hm-light-climate` (reads everything, switches
-  lights, sets temperatures, moves covers such as blinds; garage doors and gates are the
-  category `gate` and not included) and `hm-voice-cautious` (as `hm-light-climate` without
+  lights, sets temperatures, moves covers such as blinds; garage doors, gates, doors and
+  covers without a class are the category `gate` and not included) and `hm-voice-cautious` (as `hm-light-climate` without
   covers, locks only with approval, never cameras or disarming the alarm). They cannot be
   changed or removed, only used, loaded into the editor and saved under a new name, and
   hidden: a hidden base template is neither offered nor accepted at admission. Names

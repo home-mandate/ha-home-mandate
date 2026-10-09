@@ -81,6 +81,10 @@ func house() *fakeSource {
 			state("cover.living_room_blinds", "open", map[string]any{"device_class": "blind"}),
 			state("cover.garage_door", "closed", map[string]any{"device_class": "garage"}),
 			state("cover.driveway", "closed", map[string]any{"device_class": "gate"}),
+			state("cover.front_door", "closed", map[string]any{"device_class": "door"}),
+			state("cover.side_entrance", "closed", nil),
+			state("cover.all_covers", "open", map[string]any{"entity_id": []any{"cover.living_room_blinds"}}),
+			state("cover.terrace_awning", "open", map[string]any{"device_class": "awning"}),
 			state("lock.front_door", "locked", nil),
 			state("alarm_control_panel.home", "armed_away", nil),
 			state("camera.porch", "idle", nil),
@@ -123,6 +127,10 @@ func TestCategoriesFollowTheVocabulary(t *testing.T) {
 		"cover.living_room_blinds": "cover",
 		"cover.garage_door":        "gate",
 		"cover.driveway":           "gate",
+		"cover.front_door":         "gate",
+		"cover.side_entrance":      "gate",
+		"cover.all_covers":         "gate",
+		"cover.terrace_awning":     "cover",
 		"lock.front_door":          "lock",
 		"alarm_control_panel.home": "alarm",
 		"camera.porch":             "camera",
@@ -142,6 +150,24 @@ func TestCategoriesFollowTheVocabulary(t *testing.T) {
 	}
 	if len(c.All()) != len(want) {
 		t.Errorf("All() = %d devices, want %d", len(c.All()), len(want))
+	}
+}
+
+// Covers that may close an entrance are gates: garage doors, gates, doors, and covers
+// without a class, which Home Assistant gives cover groups and many templates. Only the
+// classes that shade or close a window stay covers (decision of the owner).
+func TestCoversThatMayBeAnEntranceAreGates(t *testing.T) {
+	for class, want := range map[string]string{
+		"garage": "gate", "gate": "gate", "door": "gate", "": "gate",
+		"awning": "cover", "blind": "cover", "curtain": "cover", "damper": "cover",
+		"shade": "cover", "shutter": "cover", "window": "cover",
+	} {
+		if got := Category("cover.x", class); got != want {
+			t.Errorf("Category(cover, %q) = %s, want %s", class, got, want)
+		}
+	}
+	if got := Category("switch.door", "door"); got != "switch" {
+		t.Errorf("a switch is no cover: %s", got)
 	}
 }
 

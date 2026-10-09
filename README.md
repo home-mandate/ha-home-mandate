@@ -172,6 +172,15 @@ home-mandate audit key                       # log ID and public key of the chec
 A template is a mandate whose `id`, `principal`, `agent`, `created_by`, `created_at`,
 `valid_from` and `expires` are filled in when an agent is admitted.
 
+## Device categories
+
+Home-Mandate takes a device's category from Home Assistant, never from the agent. Covers
+that may close an entrance, those of the classes garage, gate and door and those without a
+class (cover groups, many template covers), are the category `gate`: opening them is a
+critical action, which needs a confirmation unless a rule explicitly allows critical
+actions. Blinds, shades, shutters, curtains, awnings and windows are `cover`. Give a blind
+without a class its class in Home Assistant to manage it as a `cover`.
+
 ## Limits of the current development version
 
 - Camera snapshots and `set` on entities of category `other` are evaluated and logged but
