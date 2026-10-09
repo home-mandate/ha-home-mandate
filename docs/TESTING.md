@@ -165,7 +165,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - `requested_from` behind a proxy: `X-Forwarded-For` or `Forwarded` from a peer outside the configured trusted proxies → ignored; the address is normalized and at most 45 characters
 - Redirect URIs from client metadata: not `https` (except loopback), with userinfo, fragment, wildcards, control, bidi or format characters, more than 10 or longer than 2048 characters → refused; a later metadata fetch never widens the admitted set
 - Admission by a non-admin → rejected
-- Client metadata on a private, loopback or link-local address (also after DNS resolution), other port than 443, redirect, more than 5 KB, repeated keys → rejected without a connection to the private address
+- Client metadata on a private, loopback, link-local, site-local, IPv4-compatible (`::/96`) or Teredo address (also after DNS resolution), other port than 443, redirect, more than 5 KB, repeated keys → rejected without a connection to the private address
 - Redirect URI host with characters that could end a CSP directive → rejected
 - Sign-in callback without session, with a wrong, reused or expired `state` → rejected; a wrong `state` uses the attempt up
 - Session cookie from before the sign-in → worthless afterwards (session fixation)

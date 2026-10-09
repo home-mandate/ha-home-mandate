@@ -114,7 +114,9 @@ func (r *CIMDResolver) control(_, address string, _ syscall.RawConn) error {
 	return nil
 }
 
-// nonPublic lists special-purpose ranges beyond what netip classifies.
+// nonPublic lists special-purpose ranges beyond what netip classifies. 192.88.99.0/24,
+// the deprecated 6to4 relay anycast, stays allowed: the E2E suite uses it as a public
+// stand-in.
 var nonPublic = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("100.64.0.0/10"),
@@ -124,11 +126,14 @@ var nonPublic = []netip.Prefix{
 	netip.MustParsePrefix("198.51.100.0/24"),
 	netip.MustParsePrefix("203.0.113.0/24"),
 	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("::/96"), // IPv4-compatible, deprecated
 	netip.MustParsePrefix("64:ff9b::/96"),
 	netip.MustParsePrefix("64:ff9b:1::/48"),
 	netip.MustParsePrefix("100::/64"),
+	netip.MustParsePrefix("2001::/32"), // Teredo
 	netip.MustParsePrefix("2001:db8::/32"),
 	netip.MustParsePrefix("2002::/16"),
+	netip.MustParsePrefix("fec0::/10"), // site-local, deprecated
 }
 
 func publicAddr(ip netip.Addr) bool {

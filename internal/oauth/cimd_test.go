@@ -154,6 +154,8 @@ func TestResolverRefusesNonPublicAddresses(t *testing.T) {
 		"172.16.0.1:443": false, "169.254.169.254:443": false, "100.64.0.1:443": false, "0.0.0.0:443": false,
 		"[fd00::1]:443": false, "[fe80::1]:443": false, "[::ffff:127.0.0.1]:443": false, "[64:ff9b::a00:1]:443": false,
 		"224.0.0.1:443": false, "198.18.0.1:443": false, "not-an-ip:443": false,
+		"[::a00:1]:443": false, "[fec0::1]:443": false, "[2001:0:4136:e378:8000:63bf:3fff:fdd2]:443": false,
+		"192.88.99.10:443": true, // deprecated 6to4 relay anycast, the E2E suite's public stand-in
 	} {
 		if err := r.control("tcp", addr, nil); (err == nil) != ok {
 			t.Errorf("%s: %v", addr, err)
