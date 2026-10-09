@@ -276,8 +276,8 @@ func TestWithOAuth(t *testing.T) {
 
 	// In app mode Home Assistant is reached in plaintext on the Supervisor's network.
 	options := `{"approval_timeout_seconds":120,"public_url":"https://hm.example.org","ha_browser_url":"https://ha.example.org"}`
-	s.cfg, err = config.Load(func(k string) string { return map[string]string{"SUPERVISOR_TOKEN": "s"}[k] },
-		func(string) ([]byte, error) { return []byte(options), nil })
+	s.cfg, err = config.Load(config.Env{Getenv: func(k string) string { return map[string]string{"SUPERVISOR_TOKEN": "s"}[k] },
+		ReadFile: func(string) ([]byte, error) { return []byte(options), nil }})
 	if err != nil {
 		t.Fatal(err)
 	}

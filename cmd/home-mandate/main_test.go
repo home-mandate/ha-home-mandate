@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -38,6 +39,7 @@ func bareEnv() (env, *bytes.Buffer, *bytes.Buffer) {
 	return env{
 		getenv:   func(string) string { return "" },
 		readFile: os.ReadFile,
+		unsetenv: func(string) error { return nil },
 		stdin:    strings.NewReader(""),
 		stdout:   &stdout,
 		stderr:   &stderr,
@@ -143,6 +145,32 @@ func TestServeStopsWhenContextIsCancelled(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("run did not return after the context was cancelled")
+	}
+}
+
+// A token file others can read stops the start; HM_HA_TOKEN is taken out of the
+// environment once read.
+func TestServeProtectsTheHomeAssistantToken(t *testing.T) {
+	c := newCLI(t)
+	file := filepath.Join(t.TempDir(), "ha-token")
+	if err := os.WriteFile(file, []byte("test-token\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c.envVars["HM_HA_TOKEN"], c.envVars["HM_HA_TOKEN_FILE"] = "", file
+	e, _, stderr := c.env("")
+	if code := run(context.Background(), []string{"serve"}, e); code != exitFailure || !strings.Contains(stderr.String(), "chmod 600") {
+		t.Errorf("token file 0644: exit %d, %q", code, stderr.String())
+	}
+
+	c.envVars["HM_HA_TOKEN"], c.envVars["HM_HA_TOKEN_FILE"] = "test-token", ""
+	e, _, _ = c.env("")
+	var unset []string
+	e.unsetenv = func(k string) error { unset = append(unset, k); return nil }
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // stops right after the configuration was read
+	run(ctx, []string{"serve"}, e)
+	if len(unset) != 1 || unset[0] != "HM_HA_TOKEN" {
+		t.Errorf("unset = %v", unset)
 	}
 }
 

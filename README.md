@@ -44,7 +44,7 @@ from Playwright's CDN, for tests only.
 | Variable | Meaning |
 |---|---|
 | `HM_HA_URL` | WebSocket API of Home Assistant: `ws://localhost:8123/api/websocket` or `wss://…` (plaintext only to localhost) |
-| `HM_HA_TOKEN` or `HM_HA_TOKEN_FILE` | Long-lived token of Home-Mandate's own Home Assistant user |
+| `HM_HA_TOKEN_FILE` or `HM_HA_TOKEN` | Long-lived token of Home-Mandate's own Home Assistant user. Prefer the file: it must be a regular file nobody but its owner can read (`chmod 600`), otherwise Home-Mandate does not start; `HM_HA_TOKEN` is removed from the environment once read, but stays visible in the container configuration |
 | `HM_HA_CA_FILE` | Optional PEM file with a CA to trust for `wss://` (self-signed Home Assistant certificate) |
 | `HM_DATA_DIR` | Data directory, default `/data` |
 | `HM_TLS_CERT`, `HM_TLS_KEY` | Certificate for the MCP endpoint and the UI (TLS 1.3); without it, MCP listens on localhost only. Renewed files are taken over without a restart; the certificate must cover the host of `HM_PUBLIC_URL` |

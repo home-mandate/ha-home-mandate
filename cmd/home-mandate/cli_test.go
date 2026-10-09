@@ -47,6 +47,7 @@ func (c *cli) env(stdin string) (env, *bytes.Buffer, *bytes.Buffer) {
 	return env{
 		getenv:   func(k string) string { return c.envVars[k] },
 		readFile: os.ReadFile,
+		unsetenv: func(string) error { return nil },
 		stdin:    strings.NewReader(stdin),
 		stdout:   &stdout,
 		stderr:   &stderr,

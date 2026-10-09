@@ -41,7 +41,7 @@ func TestOAuthURLsContainerMode(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			cfg, err := Load(env(tc.env), files(nil))
+			cfg, err := load(env(tc.env), files(nil))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -72,7 +72,7 @@ func TestOAuthURLsRejected(t *testing.T) {
 	}
 	for name, m := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, err := Load(env(m), files(nil)); !errors.Is(err, ErrInvalid) {
+			if _, err := load(env(m), files(nil)); !errors.Is(err, ErrInvalid) {
 				t.Errorf("Load = %v, want ErrInvalid", err)
 			}
 		})
@@ -82,7 +82,7 @@ func TestOAuthURLsRejected(t *testing.T) {
 func TestOAuthURLsAppMode(t *testing.T) {
 	opts := `{"tls_certfile":"fullchain.pem","tls_keyfile":"privkey.pem","approval_timeout_seconds":120,"log_level":"info",` +
 		`"public_url":"https://hm.example.org:8765","ha_browser_url":"https://ha.example.org"}`
-	cfg, err := Load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": opts}))
+	cfg, err := load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": opts}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,18 +92,18 @@ func TestOAuthURLsAppMode(t *testing.T) {
 	}
 
 	// Without the options, OAuth is off: no public URL and no browser URL to guess.
-	cfg, err = Load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": options}))
+	cfg, err = load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": options}))
 	if err != nil || cfg.PublicURL != "" || cfg.HABrowserURL != "" {
 		t.Errorf("without options: %+v, %v", cfg, err)
 	}
 
 	noBrowser := strings.Replace(opts, `,"ha_browser_url":"https://ha.example.org"`, ``, 1)
-	if _, err := Load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": noBrowser})); !errors.Is(err, ErrInvalid) {
+	if _, err := load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": noBrowser})); !errors.Is(err, ErrInvalid) {
 		t.Errorf("public_url without ha_browser_url: %v", err)
 	}
 
 	bad := strings.Replace(opts, "https://hm.example.org:8765", "http://hm.lan", 1)
-	if _, err := Load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": bad})); !errors.Is(err, ErrInvalid) {
+	if _, err := load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": bad})); !errors.Is(err, ErrInvalid) {
 		t.Errorf("plaintext public_url: %v", err)
 	}
 }
@@ -113,7 +113,7 @@ func TestOAuthURLsAppMode(t *testing.T) {
 // only, in container mode to loopback only.
 func TestPlaintextHostsPerMode(t *testing.T) {
 	opts := `{"approval_timeout_seconds":120,"public_url":"https://hm.example.org:8765","ha_browser_url":"https://ha.example.org"}`
-	app, err := Load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": opts}))
+	app, err := load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": opts}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestPlaintextHostsPerMode(t *testing.T) {
 		t.Errorf("app mode Home Assistant URL refused: %v", err)
 	}
 
-	container, err := Load(env(containerEnv("HM_HA_URL", "ws://localhost:8123/api/websocket")), files(nil))
+	container, err := load(env(containerEnv("HM_HA_URL", "ws://localhost:8123/api/websocket")), files(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestPlaintextHostsPerMode(t *testing.T) {
 }
 
 func TestStringShowsThePublicURL(t *testing.T) {
-	cfg, err := Load(env(containerEnv("HM_PUBLIC_URL", "https://hm.lan")), files(nil))
+	cfg, err := load(env(containerEnv("HM_PUBLIC_URL", "https://hm.lan")), files(nil))
 	if err != nil {
 		t.Fatal(err)
 	}

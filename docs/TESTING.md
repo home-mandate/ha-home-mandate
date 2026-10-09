@@ -273,6 +273,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - Oversized or malformed message from HA → connection closed, no panic
 - Plaintext `ws://`/`http://` beyond the hosts of the mode (app mode: `supervisor` and `homeassistant` resolving into `172.30.32.0/23`; container mode: loopback only, `supervisor` refused), also after DNS resolution (e.g. `homeassistant` → an address outside the hassio network) → refused; redirects are not followed; untrusted TLS certificate → refused
 - Access token in logs, error messages or formatted configuration → never (redacted)
+- `HM_HA_TOKEN_FILE` not a regular file, or readable by group or others → start refused; `HM_HA_TOKEN` → removed from the environment once read (injected function in tests)
 
 **Storage**
 - Checksum of an applied migration changed → start aborted

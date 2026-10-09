@@ -363,8 +363,10 @@ verify them.
   reason, which is shown as the agent's claim.
 
 **The Home Assistant credentials are never stored (decision U8).** In app mode Home-Mandate
-uses `SUPERVISOR_TOKEN`; in container mode the token comes from `HM_HA_TOKEN` or the file in
-`HM_HA_TOKEN_FILE` (mode 0600, mounted read-only). Nothing to encrypt in the database; a test
+uses `SUPERVISOR_TOKEN`; in container mode the token comes from the file in `HM_HA_TOKEN_FILE`
+(preferred; a regular file that neither group nor others can read, e.g. mode 0600 mounted
+read-only, otherwise the start is refused) or from `HM_HA_TOKEN`, which Home-Mandate takes
+out of its environment once read. Nothing to encrypt in the database; a test
 runs the gateway with a token and checks that no file of the data directory contains it.
 
 ## 10. Cryptography

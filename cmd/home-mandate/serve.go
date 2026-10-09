@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -68,7 +69,7 @@ func restoredLimiter(ctx context.Context, log *audit.Log, now func() time.Time, 
 func serve(ctx context.Context, e env) int {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel() // also stops what a failed start-up already started
-	cfg, err := config.Load(e.getenv, e.readFile)
+	cfg, err := config.Load(config.Env{Getenv: e.getenv, ReadFile: e.readFile, Stat: os.Stat, Unsetenv: e.unsetenv})
 	if err != nil {
 		fmt.Fprintln(e.stderr, "home-mandate:", err)
 		return exitFailure
