@@ -114,6 +114,9 @@ func TestRevokeAgent(t *testing.T) {
 			t.Errorf("client_id %q = %d %s", bad, r.code, r.body)
 		}
 	}
+	if r := h.do(http.MethodPost, "/api/agents/revoke", map[string]any{"client_id": other.ClientID, "all": true}); r.field() != "/all" {
+		t.Errorf("unknown field = %d %s", r.code, r.body)
+	}
 	// A failing transaction revokes nothing: the agent stays active.
 	if _, err := h.st.DB().Exec(`CREATE TRIGGER no_revoke BEFORE UPDATE ON mandates BEGIN SELECT RAISE(ABORT, 'x'); END`); err != nil {
 		t.Fatal(err)

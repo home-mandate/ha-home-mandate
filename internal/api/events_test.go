@@ -293,6 +293,50 @@ func TestSlowClientIsClosed(t *testing.T) {
 	}
 }
 
+func TestEventStreamAnnouncesDeviceChanges(t *testing.T) {
+	h := newHarness(t)
+	s := h.open(h.wsServer(), adminID)
+	h.srv.DevicesChanged()
+	s.until("devices.changed")
+	// An event too large to send makes the UI reconnect and reload.
+	h.srv.publish(event{Type: "approval.closed", ID: strings.Repeat("x", maxEventBytes)})
+	for {
+		if e, code := s.next(); e == nil {
+			if code != websocket.StatusTryAgainLater {
+				t.Errorf("closed with %d, want %d", code, websocket.StatusTryAgainLater)
+			}
+			break
+		}
+	}
+}
+
+// Without the system status the stream cannot start; a request that is no WebSocket
+// handshake gets none.
+func TestEventStreamWithoutSystemStatus(t *testing.T) {
+	h := newHarness(t)
+	srv := h.wsServer()
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/events", nil)
+	req.Header = http.Header{"X-Remote-User-Id": {adminID}, "Origin": {"https://ha.example.org"}, "Sec-Fetch-Site": {"same-origin"}}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode == http.StatusSwitchingProtocols || resp.StatusCode == http.StatusOK {
+		t.Errorf("plain request = %d", resp.StatusCode)
+	}
+
+	waiting, _, err := h.connect(srv, adminID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = h.st.Close()
+	waiting.send(`{"csrf":"` + h.srv.csrfToken(adminID, h.now.Now()) + `"}`)
+	if _, code := waiting.next(); code != websocket.StatusTryAgainLater {
+		t.Errorf("start without system status: closed with %d", code)
+	}
+}
+
 // One user, and in direct mode one session, cannot take every connection.
 func TestEventStreamsPerUserAndSession(t *testing.T) {
 	h := newHarness(t)

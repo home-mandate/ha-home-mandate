@@ -3,6 +3,8 @@
 package api
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"slices"
 	"testing"
@@ -169,6 +171,40 @@ func TestRunVerifierAndRunTailStop(t *testing.T) {
 			t.Fatal("did not stop")
 		}
 	}
+}
+
+// logRecorder passes the messages of a slog.Logger on, dropping them when nobody reads.
+type logRecorder struct{ messages chan string }
+
+func (l logRecorder) Enabled(context.Context, slog.Level) bool { return true }
+func (l logRecorder) WithAttrs([]slog.Attr) slog.Handler       { return l }
+func (l logRecorder) WithGroup(string) slog.Handler            { return l }
+func (l logRecorder) Handle(_ context.Context, r slog.Record) error {
+	select {
+	case l.messages <- r.Message:
+	default:
+	}
+	return nil
+}
+
+func TestRunVerifierReportsWhenTheLogCannotBeRead(t *testing.T) {
+	h := newHarness(t)
+	rec := logRecorder{messages: make(chan string, 16)}
+	h.srv.cfg.Logger = slog.New(rec)
+	_ = h.st.Close()
+	ctx, cancel := context_(t)
+	done := make(chan struct{})
+	go func() { h.srv.RunVerifier(ctx); close(done) }()
+	for found := false; !found; {
+		select {
+		case msg := <-rec.messages:
+			found = msg == "verifying the audit log failed"
+		case <-time.After(5 * time.Second):
+			t.Fatal("the failure was not reported")
+		}
+	}
+	cancel()
+	<-done
 }
 
 // failingRenames reports that storing renames fails.

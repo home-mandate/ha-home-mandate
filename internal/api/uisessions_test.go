@@ -125,6 +125,13 @@ func TestSignInStates(t *testing.T) {
 	if s.finishSignIn(old, old) {
 		t.Error("an expired sign-in finished")
 	}
+	// One never finished is forgotten at the next start.
+	s.startSignIn("192.0.2.30")
+	c.Add(signInTTL)
+	s.startSignIn("192.0.2.31")
+	if n := len(s.signIns); n != 1 {
+		t.Errorf("%d sign-ins in progress after the expiry, want 1", n)
+	}
 
 	// Per address, the oldest gives way; other addresses keep theirs.
 	other := s.startSignIn("192.0.2.21")
