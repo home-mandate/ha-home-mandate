@@ -251,7 +251,9 @@ disk not full.
   a certificate or `HM_PROXY`. The log says `UI in direct mode` when it is on.
 - **"Home Assistant unreachable" banner:** all requests are declined until the connection
   is back; nothing is replayed later.
-- **Settings → Home Assistant connection** says "Home-Mandate runs as a Home Assistant
-  app" also in container mode, and the "No TLS certificate" banner mentions `/ssl` in
-  container mode too. In container mode, the certificate comes from `HM_TLS_CERT` and
-  `HM_TLS_KEY`.
+- **"No TLS certificate" banner:** agents outside your home network cannot connect
+  securely. As an app, put `fullchain.pem` and `privkey.pem` (or the files named in
+  `tls_certfile` and `tls_keyfile`) into `/ssl`. As a container, set `HM_TLS_CERT` and
+  `HM_TLS_KEY`, or run Home-Mandate behind a reverse proxy with `HM_PROXY`
+  ([install-container.md](install-container.md)); behind `HM_PROXY` the banner does not
+  appear.

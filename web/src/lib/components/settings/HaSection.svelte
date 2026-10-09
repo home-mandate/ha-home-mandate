@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!--
-  Home Assistant connection (design README 6.11 section 3; decisions D7, S6): app mode only,
-  so status, version and Home-Mandate's own user; no address and no token. Why it needs
+  Home Assistant connection (design README 6.11 section 3; decisions D7, S6): how
+  Home-Mandate is connected (as an app by the Supervisor, as a container with the token of
+  its own user), status, version and that user; no address and no token. Why it needs
   admin rights, with the fixed command list from the server, in the page.
 -->
 <script lang="ts">
@@ -13,15 +14,17 @@
 
   interface Props {
     ha: SystemStatus['ha'];
+    mode: SystemStatus['mode'];
     ctx: FormatContext;
   }
 
-  let { ha, ctx }: Props = $props();
+  let { ha, mode, ctx }: Props = $props();
 
+  const modeText = $derived(mode === 'container' ? m.set_ha_mode_container() : m.set_ha_mode_app());
   const since = $derived(ha.since ? formatDateTime(new Date(ha.since), ctx) : null);
 </script>
 
-<p class="desc">{m.set_ha_mode_app()}</p>
+<p class="desc">{modeText}</p>
 <dl>
   <dt>{m.overview_ha_label()}</dt>
   <dd>

@@ -355,7 +355,7 @@ elsewhere leaves it.
 | Approvers | People, their devices, critical requests, language, answering in the UI, the notification bell, browser notifications |
 | Critical devices | Devices on which every action except reading is critical |
 | Defaults | Approval timeout and rate limit that new templates and mandates start with; interface language |
-| Home Assistant connection | Connection state, Home Assistant version, Home-Mandate's own Home Assistant user, why it needs admin rights and the fixed command list |
+| Home Assistant connection | How Home-Mandate is connected (as an app, or as a container with the token of its own user), connection state, Home Assistant version, Home-Mandate's own Home Assistant user, why it needs admin rights and the fixed command list |
 | MCP endpoint | The address agents connect to; the TLS certificate or the reverse proxy |
 | Retention | 30 days for the audit log |
 | Emergency stop | Trigger or lift it |

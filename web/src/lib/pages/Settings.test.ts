@@ -444,6 +444,20 @@ describe('Settings: system sections', () => {
     expect(ha.textContent).toContain('Home-Mandate');
     expect(within(ha).getByText('call_service')).toBeTruthy();
     expect(within(ha).queryByLabelText(/token/i)).toBeNull();
+    expect(ha.textContent).toContain('runs as a Home Assistant app');
+  });
+
+  it('says in container mode that Home-Mandate connects with the token of its own user', async () => {
+    await start({
+      prepare: (api) => {
+        const system = api.system.bind(api);
+        api.system = async () => ({ ...(await system()), mode: 'container' });
+      },
+    });
+    const ha = region('Home Assistant connection');
+    expect(ha.textContent).not.toContain('Home Assistant app');
+    expect(ha.textContent).toContain('runs as a container');
+    expect(ha.textContent).toContain('access token of its own Home Assistant user');
   });
 
   it('shows the MCP address and the certificate, amber when it is missing', async () => {
@@ -456,6 +470,37 @@ describe('Settings: system sections', () => {
     const mcp = region('MCP endpoint');
     expect((within(mcp).getByLabelText('MCP endpoint address') as HTMLInputElement).value).toBe('https://home.example:8765/mcp');
     expect(within(mcp).getByText(/No certificate found/)).toBeTruthy();
+    expect(within(mcp).getByText(/in \/ssl/)).toBeTruthy();
+  });
+
+  it('names the container settings for a missing certificate in container mode, not /ssl', async () => {
+    await start({
+      prepare: (api) => {
+        const system = api.system.bind(api);
+        api.system = async () => ({ ...(await system()), mode: 'container', tls: { present: false, valid_until: null, renewal_failed: false, proxy: false } });
+      },
+    });
+    const mcp = region('MCP endpoint');
+    const warning = within(mcp).getByText(/No certificate found/);
+    expect(warning.textContent).toContain('HM_TLS_CERT');
+    expect(warning.textContent).toContain('HM_TLS_KEY');
+    expect(warning.textContent).toContain('HM_PROXY');
+    expect(warning.textContent).not.toContain('/ssl');
+  });
+
+  it('names where the certificate comes from in each mode', async () => {
+    await start();
+    expect(within(region('MCP endpoint')).getByText(/from \/ssl\/fullchain\.pem/)).toBeTruthy();
+    cleanup();
+    await start({
+      prepare: (api) => {
+        const system = api.system.bind(api);
+        api.system = async () => ({ ...(await system()), mode: 'container' });
+      },
+    });
+    const mcp = region('MCP endpoint');
+    expect(within(mcp).getByText(/from HM_TLS_CERT/)).toBeTruthy();
+    expect(mcp.textContent).not.toContain('/ssl');
   });
 
   it('says that the reverse proxy holds the certificate, without a warning', async () => {

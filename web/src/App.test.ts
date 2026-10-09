@@ -299,6 +299,30 @@ describe('App frame', () => {
     expect(titles).not.toContain('TLS certificate expires soon');
   });
 
+  it('tells how to add a missing certificate in the way of the installation', async () => {
+    const bodyOf = (mode: 'app' | 'container') => {
+      const api = createMockClient();
+      const system = api.system.bind(api);
+      api.system = async () => ({ ...(await system()), mode, tls: { present: false, valid_until: null, renewal_failed: false, proxy: false } });
+      return api;
+    };
+    const bannerText = async (api: ReturnType<typeof createMockClient>) => {
+      const app = new AppState(api);
+      render(App, { app });
+      await app.start();
+      await tick();
+      const banner = screen.getAllByRole('alert').find((a) => a.querySelector('strong')?.textContent === 'No TLS certificate');
+      return banner?.textContent ?? '';
+    };
+    const app = await bannerText(bodyOf('app'));
+    expect(app).toContain('/ssl');
+    cleanup();
+    const container = await bannerText(bodyOf('container'));
+    expect(container).toContain('HM_TLS_CERT');
+    expect(container).toContain('HM_PROXY');
+    expect(container).not.toContain('/ssl');
+  });
+
   it('does not warn about a missing certificate when the reverse proxy holds it', async () => {
     const api = createMockClient();
     const system = api.system.bind(api);

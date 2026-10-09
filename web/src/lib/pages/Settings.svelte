@@ -179,7 +179,7 @@
         {:else if s.key !== 'retention' && !app.system}
           <Skeleton lines={['50%', '70%']} />
         {:else if s.key === 'ha' && app.system}
-          <HaSection ha={app.system.ha} {ctx} />
+          <HaSection ha={app.system.ha} mode={app.system.mode} {ctx} />
         {:else if s.key === 'mcp' && app.system}
           <McpSection system={app.system} {ctx} />
         {:else if s.key === 'retention'}
