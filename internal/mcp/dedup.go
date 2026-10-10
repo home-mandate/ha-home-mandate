@@ -84,8 +84,10 @@ type repeated struct {
 	ref     string   // a request in the journal the idempotency key names
 	replay  bool     // ref was executed within the replay window
 	at      time.Time
-	auditAs string // the audit error of the call
-	err     error  // a refusal instead
+	auditAs string   // the audit error of the call
+	err     error    // a refusal instead
+	pending *waiting // with approval_pending: the open request, whose end is the retry time
+	why     string
 }
 
 // findRepeat applies the idempotency key and layers 1 and 2 for a call of agent a.
@@ -118,8 +120,9 @@ func (g *Gateway) findRepeat(ctx context.Context, clientID, entityID, action str
 	g.mu.Unlock()
 	if w != nil {
 		if w.digest != digest {
-			return &repeated{auditAs: "approval_pending", err: fmt.Errorf("%s: approval_pending: a request for this device waits "+
-				"for a human (approval_id %s); approval_status gives its outcome, approval_cancel withdraws it", codeDenied, w.ref)}, nil
+			why := fmt.Sprintf("A request for this device waits for a human (approval_id %s); approval_status gives its outcome, "+
+				"approval_cancel withdraws it", w.ref)
+			return &repeated{auditAs: "approval_pending", pending: w, why: why, err: fmt.Errorf("%s: approval_pending: %s", codeDenied, why)}, nil
 		}
 		return &repeated{w: w, auditAs: errDuplicate}, nil
 	}
@@ -145,6 +148,11 @@ var errKeyConflict = errors.New(codeInvalidParams + ": idempotency_conflict: the
 func (g *Gateway) answerRepeat(ctx context.Context, a agent.Agent, d pdp.Decision, r *repeated) (*sdk.CallToolResult, actionOut, error) {
 	_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval, Error: r.auditAs})
 	switch {
+	case r.pending != nil:
+		if _, expires := g.info(r.pending); !expires.IsZero() {
+			return g.retryLater("approval_pending", "for this device", r.why, expires)
+		}
+		return nil, actionOut{}, r.err
 	case r.err != nil:
 		return nil, actionOut{}, r.err
 	case r.w != nil:

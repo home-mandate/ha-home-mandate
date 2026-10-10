@@ -67,7 +67,12 @@ func pendingUnlock(t *testing.T, h *harness, f *fakeApprover, entity ...string) 
 		t.Fatalf("structured = %v", out)
 	}
 	text := res.Content[0].(*sdk.TextContent).Text
-	for _, want := range []string{"NOT EXECUTED YET", "Do not tell the user it was done", ref, "approval_status", "approval_cancel", "unlock on " + entityID} {
+	if out["poll_again"] != true {
+		t.Errorf("poll_again = %v", out["poll_again"])
+	}
+	for _, want := range []string{"NOT EXECUTED YET", "Do not tell the user it was done", ref, "Keep calling approval_status",
+		"until the status is no longer pending or", "each call waits up to", "Do not call perform_action again", "approval_cancel",
+		"unlock on " + entityID} {
 		if !strings.Contains(text, want) {
 			t.Errorf("text lacks %q: %s", want, text)
 		}
@@ -245,7 +250,7 @@ func TestPendingRequestsCountUntilTheyEnd(t *testing.T) {
 	h, f := pendingHarness(t)
 	ref, _ := pendingUnlock(t, h, f)
 	pendingUnlock(t, h, f, "lock.back_door")
-	if errText := unlock(h, map[string]any{"entity_id": "lock.garden_gate"}); errText != "denied: approval_pending" || len(f.requests()) != 2 {
+	if errText := unlock(h, map[string]any{"entity_id": "lock.garden_gate"}); !strings.HasPrefix(errText, "denied: approval_pending") || len(f.requests()) != 2 {
 		t.Errorf("third = %q, %d asked", errText, len(f.requests()))
 	}
 	for _, id := range f.heldIDs() {
@@ -568,7 +573,7 @@ func TestAWithdrawalStartsTheWait(t *testing.T) {
 	if out, errText := h.call(h.session(), "approval_cancel", map[string]any{"approval_id": ref}); out["status"] != "withdrawn" {
 		t.Fatalf("cancel = %v, %q", out, errText)
 	}
-	if errText := unlock(h, nil); errText != "denied: approval_cooldown" || len(f.requests()) != 1 {
+	if errText := unlock(h, nil); !strings.HasPrefix(errText, "denied: approval_cooldown") || len(f.requests()) != 1 {
 		t.Errorf("asked again = %q, %d asked", errText, len(f.requests()))
 	}
 
@@ -600,5 +605,49 @@ func TestOldResultsAreForgottenOnLookup(t *testing.T) {
 	h.gw.mu.Unlock()
 	if n != 0 {
 		t.Errorf("%d results kept", n)
+	}
+}
+
+// approval_pending says when the agent may ask again: when the open request ends.
+func TestApprovalPendingSaysWhenToAskAgain(t *testing.T) {
+	h, f := pendingHarness(t)
+	pendingUnlock(t, h, f)
+	res, err := h.session().CallTool(context.Background(), &sdk.CallToolParams{Name: "perform_action",
+		Arguments: map[string]any{"entity_id": "lock.front_door", "action": "open"}})
+	if err != nil || !res.IsError {
+		t.Fatalf("result = %+v, %v", res, err)
+	}
+	out, _ := res.StructuredContent.(map[string]any)
+	text := res.Content[0].(*sdk.TextContent).Text
+	if !strings.HasPrefix(text, "denied: approval_pending") || !strings.Contains(text, "you may ask again") || out["retry_at"] == nil || out["retry_after"] == nil {
+		t.Errorf("other call = %q, %v", text, out)
+	}
+	pendingUnlock(t, h, f, "lock.back_door")
+	res, _ = h.session().CallTool(context.Background(), &sdk.CallToolParams{Name: "perform_action",
+		Arguments: map[string]any{"entity_id": "lock.garden_gate", "action": "unlock"}})
+	if out, _ := res.StructuredContent.(map[string]any); !res.IsError || out["retry_at"] == nil {
+		t.Errorf("limit of 2 = %+v", res)
+	}
+}
+
+// A status answer that is not final says to keep polling; a final one does not.
+func TestStatusSaysWhetherToPollAgain(t *testing.T) {
+	h, f := pendingHarness(t)
+	ref, _ := pendingUnlock(t, h, f)
+	res, err := h.session().CallTool(context.Background(), &sdk.CallToolParams{Name: "approval_status", Arguments: map[string]any{"approval_id": ref}})
+	if err != nil || res.IsError {
+		t.Fatalf("status = %+v, %v", res, err)
+	}
+	if out := res.StructuredContent.(map[string]any); out["poll_again"] != true || !strings.Contains(res.Content[0].(*sdk.TextContent).Text, "Keep calling approval_status") {
+		t.Errorf("pending status = %v", out)
+	}
+	f.end(f.heldIDs()[0], approvedNow(h))
+	waitFor(t, func() bool {
+		out, _ := h.call(h.session(), "approval_status", map[string]any{"approval_id": ref})
+		return out["status"] == "executed" && out["poll_again"] == nil
+	})
+	h.now.advance(resultKeep + time.Minute) // from the journal
+	if out, _ := h.call(h.session(), "approval_status", map[string]any{"approval_id": ref}); out["status"] != "executed" || out["poll_again"] != nil {
+		t.Errorf("from the journal = %v", out)
 	}
 }

@@ -222,8 +222,9 @@ device without an agent.
    afterwards has no effect. Raise the mandate's timeout, up to the
    installation's limit (`approval_timeout_seconds` / `HM_APPROVAL_TIMEOUT`, at most 600
    seconds).
-8. **Cooldown:** after a refusal or timeout the agent may not ask again for the same device
-   for a while, and nobody is notified (agent error `approval_cooldown`).
+8. **Cooldown:** after a refusal or a second unanswered request in a row the agent may not
+   ask again for the same device for a while, and nobody is notified (agent error
+   `approval_cooldown`, which names the time it may ask again).
 9. **Home Assistant was disconnected:** while it is unreachable, approvals cannot be
    delivered and affected requests are declined.
 10. **Asked once, although the agent called twice; or "already executed":** repeated

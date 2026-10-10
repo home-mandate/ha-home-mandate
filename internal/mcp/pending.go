@@ -55,6 +55,7 @@ const (
 	statusPending   = "pending"
 	statusExecuted  = "executed"
 	statusWithdrawn = "withdrawn"
+	statusDenied    = "denied"
 	// Phases of a pending request: no answer yet, or answered (or otherwise ended) and its
 	// outcome, an execution after a confirmation, not settled yet.
 	phaseWaiting  = "waiting"
@@ -287,29 +288,32 @@ func (g *Gateway) await(ctx context.Context, w *waiting) (*sdk.CallToolResult, a
 // pendingResult tells the agent plainly that the action is not executed yet, and what to
 // call: still waiting for a human, or answered and its execution not finished yet.
 func (g *Gateway) pendingResult(ctx context.Context, w *waiting) (*sdk.CallToolResult, actionOut, error) {
+	answered := false
 	select {
 	case <-w.answered:
-		text := fmt.Sprintf("NOT FINISHED YET. The request for %s on %s was confirmed by a human or ended otherwise, and its "+
-			"outcome is being settled: do not tell the user it was done. Approval ID: %s. Call approval_status with this "+
-			"approval_id to learn the outcome.", w.action, w.entityID, w.ref)
-		out := actionOut{Status: statusPending, Phase: phaseAnswered, ApprovalID: w.ref, Next: "approval_status"}
-		return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: text}}}, out, nil
+		answered = true
 	default:
 	}
-	select {
-	case <-w.started: // Start returns once delivered (bounded), or fails and finish closes it
-	case <-ctx.Done():
-		return nil, actionOut{}, errors.New(codeUnavailable)
-	}
 	_, expires := g.info(w)
+	return g.pollResult(w.action, w.entityID, w.ref, expires, answered)
+}
+
+// pollResult is a pending answer: not executed yet, and keep calling approval_status.
+// The text is read by models: short and imperative.
+func (g *Gateway) pollResult(action, entityID, ref string, expires time.Time, answered bool) (*sdk.CallToolResult, actionOut, error) {
 	until := expires.UTC().Format(time.RFC3339)
 	left := max(expires.Sub(g.cfg.Now()).Round(time.Second), 0)
-	text := fmt.Sprintf("NOT EXECUTED YET. %s on %s is waiting for a human to approve it; nothing has happened so far. "+
-		"Do not tell the user it was done. Approval ID: %s. The request stays open until %s (%s from now); without an "+
-		"approval by then it is denied. Call approval_status with this approval_id to learn the outcome (it waits up to %s "+
-		"for it), or approval_cancel to withdraw the request.",
-		w.action, w.entityID, w.ref, until, left, g.cfg.ApprovalWait)
-	out := actionOut{Status: statusPending, Phase: phaseWaiting, ApprovalID: w.ref, OpenUntil: until, Next: "approval_status"}
+	lead := fmt.Sprintf("NOT EXECUTED YET. %s on %s is waiting for a human to approve it; nothing has happened so far.", action, entityID)
+	phase := phaseWaiting
+	if answered {
+		lead = fmt.Sprintf("NOT FINISHED YET. The request for %s on %s was confirmed by a human or ended otherwise, and its "+
+			"outcome is being settled.", action, entityID)
+		phase = phaseAnswered
+	}
+	text := fmt.Sprintf("%s Do not tell the user it was done. Keep calling approval_status with approval_id %s until the "+
+		"status is no longer pending or %s (%s from now) has passed; each call waits up to %s. Do not call perform_action "+
+		"again for this. approval_cancel withdraws the request.", lead, ref, until, left, g.cfg.ApprovalWait)
+	out := actionOut{Status: statusPending, Phase: phase, ApprovalID: ref, OpenUntil: until, Next: "approval_status", PollAgain: true}
 	return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: text}}}, out, nil
 }
 
@@ -371,11 +375,7 @@ func (g *Gateway) fromJournal(ctx context.Context, ref, clientID string) (*sdk.C
 		return nil, actionOut{}, errNoRequest
 	}
 	if !st.Ended() {
-		phase := phaseWaiting
-		if st.State == "executing" {
-			phase = phaseAnswered
-		}
-		return nil, actionOut{Status: statusPending, Phase: phase, ApprovalID: ref, OpenUntil: st.Expires.UTC().Format(time.RFC3339), Next: "approval_status"}, nil
+		return g.pollResult(st.Action, st.EntityID, ref, st.Expires, st.State == "executing")
 	}
 	return journalResult(st, g.mayRead(ctx, clientID, st.EntityID))
 }

@@ -348,8 +348,12 @@ checked on every request.
     within the call). An answer within it gives the result as before (the call also waits
     for an execution that started within it). Without an answer the agent gets a normal
     result (no error), `{"status": "pending", "approval_id", "open_until", "next":
-    "approval_status"}`, whose text begins "NOT EXECUTED YET" and tells the model not to
-    report success.
+    "approval_status", "poll_again": true}`, whose text begins "NOT EXECUTED YET", tells the
+    model not to report success, and says in short imperative words to keep calling
+    `approval_status` with the approval ID until the status is no longer pending or
+    `open_until` has passed (each call waits up to the bound), and not to call
+    `perform_action` again. Every pending answer of `approval_status` says the same and has
+    `poll_again: true`; a final one has no `poll_again`.
   - `approval_status(approval_id)` waits up to the same bound and returns what
     `perform_action` would have: `executed`, the refusal as the same error (e.g. `denied:
     approval_rejected`), or `pending` again. The exact result stays in memory 15 minutes
@@ -548,14 +552,22 @@ checked on every request.
   to a device that never had the request.
 - After an approval the PEP checks emergency stop, token and mandate again before executing.
 - **Approver fatigue:** an agent has at most 2 requests waiting, and every request counts
-  towards its rate limit. After a rejection, a timeout, an invalid answer or a withdrawal
-  by the agent (`approval_cancel`; withdrawing and asking again would otherwise notify the
-  approvers again and again; not after an end by the emergency stop, a revocation or a
-  restart), the same
-  agent may not ask again for the same device for a minute; every further one doubles the
-  wait up to an hour, an approval or a quiet hour after the last wait ends it. Meanwhile
-  the agent gets `denied: approval_cooldown`, nobody is notified, and the refusal is in the
-  audit log (`denied_by: approval`, `error: approval_cooldown`). The waits live in memory.
+  towards its rate limit. After a rejection, an invalid answer or a withdrawal by the agent
+  (`approval_cancel`; withdrawing and asking again would otherwise notify the approvers
+  again and again; not after an end by the emergency stop, a revocation or a restart), the
+  same agent may not ask again for the same device for a minute; every further one doubles
+  the wait up to an hour, an approval or a quiet hour after the last wait ends it. A
+  timeout starts a wait only if the agent's previous request for the device also ended by
+  timeout (two in a row; decision 2026-10-10, from an acceptance test with Claude Desktop:
+  the human may simply not have seen the first request, and the agent asking once more
+  must reach them); a timeout after a refusal leaves that refusal's wait as it is.
+  Meanwhile the agent gets `denied: approval_cooldown: you may ask again for this device
+  at <time> (in <N> s); asking earlier is refused without notifying anyone`, with
+  `retry_after` (seconds) and `retry_at` (RFC 3339) in the structured content of the error
+  result; nobody is notified, and the refusal is in the audit log (`denied_by: approval`,
+  `error: approval_cooldown`). `denied: approval_pending` gives the same when the end is
+  known: the timeout of the open request for the device, or the first of the agent's
+  waiting requests to time out at the limit of 2. The waits live in memory.
 - **Answering in the UI (decision F2, 2026-10-02):** an approver who is a Home Assistant
   administrator may also answer in the Home-Mandate UI if this is switched on for them, and
   for critical actions only with a second, separate switch (a browser session asks for no

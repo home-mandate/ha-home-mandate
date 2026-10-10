@@ -204,6 +204,7 @@ func (j *Journal) end(ctx context.Context, tx *sql.Tx, id string, a *audit.Appro
 // Status is what the journal knows of a request for its agent.
 type Status struct {
 	EntityID string
+	Action   string
 	State    string // open, executing or ended
 	Expires  time.Time
 	Outcome  string       // the approval outcome once known
@@ -226,9 +227,9 @@ func (j *Journal) Lookup(ctx context.Context, ref, clientID string) (Status, boo
 	var st Status
 	var expires string
 	var result, answered, ended sql.NullString
-	err := j.db.QueryRowContext(ctx, `SELECT entity_id, state, expires_at, outcome, cause, result, answered_at, ended_at
+	err := j.db.QueryRowContext(ctx, `SELECT entity_id, action, state, expires_at, outcome, cause, result, answered_at, ended_at
 		FROM approval_journal WHERE agent_ref = ? AND client_id = ?`, ref, clientID).
-		Scan(&st.EntityID, &st.State, &expires, &st.Outcome, &st.Cause, &result, &answered, &ended)
+		Scan(&st.EntityID, &st.Action, &st.State, &expires, &st.Outcome, &st.Cause, &result, &answered, &ended)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Status{}, false, nil
 	}

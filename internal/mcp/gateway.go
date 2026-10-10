@@ -394,6 +394,12 @@ type (
 		Next string `json:"next,omitempty"`
 		// ConfirmedAt is when the earlier request was confirmed, for already_executed.
 		ConfirmedAt string `json:"confirmed_at,omitempty"`
+		// PollAgain: the outcome is not final; call approval_status again.
+		PollAgain bool `json:"poll_again,omitempty"`
+		// RetryAfter (seconds) and RetryAt (RFC 3339) say when a refused call may be made
+		// again (approval_cooldown, approval_pending).
+		RetryAfter int    `json:"retry_after,omitempty"`
+		RetryAt    string `json:"retry_at,omitempty"`
 	}
 	approvalInput struct {
 		ApprovalID string `json:"approval_id" jsonschema:"the approval_id perform_action returned with status pending"`

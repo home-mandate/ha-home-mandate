@@ -208,21 +208,23 @@ call after about a minute, so a slower answer does not come back in the same cal
 the agent gets a normal result:
 
 ```json
-{"status": "pending", "phase": "waiting", "approval_id": "apr_3f9c…", "open_until": "2026-10-10T12:04:00Z", "next": "approval_status"}
+{"status": "pending", "phase": "waiting", "approval_id": "apr_3f9c…", "open_until": "2026-10-10T12:04:00Z", "next": "approval_status", "poll_again": true}
 ```
 
 with the text: "NOT EXECUTED YET. unlock on lock.front_door is waiting for a human to
-approve it; nothing has happened so far. Do not tell the user it was done. Approval ID:
-apr_3f9c…. The request stays open until 2026-10-10T12:04:00Z (3m0s from now); without an
-approval by then it is denied. Call approval_status with this approval_id to learn the
-outcome (it waits up to 45s for it), or approval_cancel to withdraw the request."
+approve it; nothing has happened so far. Do not tell the user it was done. Keep calling
+approval_status with approval_id apr_3f9c… until the status is no longer pending or
+2026-10-10T12:04:00Z (3m0s from now) has passed; each call waits up to 45s. Do not call
+perform_action again for this. approval_cancel withdraws the request."
 
 For agent builders:
 
 - **Never report a pending action as done.** Tell the user it waits for a confirmation.
-- **Poll with `approval_status`**: each call waits up to 45 seconds itself, so calling it
-  again right after it returns is enough; stop at `open_until`. It returns `executed`, the
-  refusal (`denied: approval_rejected`, `denied: approval_timeout`, …) or `pending`.
+- **Poll with `approval_status`** while `poll_again` is `true`: each call waits up to 45
+  seconds itself, so calling it again right after it returns is enough; stop at
+  `open_until`. It returns `executed`, the refusal (`denied: approval_rejected`, `denied:
+  approval_timeout`, …) or `pending` again. Stopping early does not end the request: the
+  human may still confirm, and then it is executed.
 - **Calling `perform_action` again** for the same action while it is pending asks nobody:
   it returns the same pending result and approval ID (the request is shared). Another
   action on the same device while one is pending is refused (`denied: approval_pending`,
@@ -266,8 +268,8 @@ Tool errors are short codes without internal details. Every refusal is in the au
 | `not_found` | The device does not exist, or the agent may not read it. | Check the mandate; the agent cannot tell the two apart by design. |
 | `denied: <reason>` | The mandate denies it, for example `denied: no_match` (no rule applies), `denied: rule`, `denied: expired`, `denied: no_mandate`. | Adjust the mandate if the agent should be allowed. |
 | `denied: approval_rejected`, `denied: approval_timeout`, `denied: approval_invalid` | A human declined, nobody answered in time, or someone who may not approve answered. | – |
-| `denied: approval_cooldown` | The agent asked for the same device recently and was not approved, or withdrew that request; it must wait (1 minute, doubling up to 1 hour). | Wait, or answer *Allow* to a later request. |
-| `denied: approval_pending` | The agent already has 2 approval requests waiting (pending results count until they end). | Answer, let them end, or withdraw one with `approval_cancel`. |
+| `denied: approval_cooldown: you may ask again for this device at <time> (in <N> s); …` | The agent's request for the device was declined, answered by someone who may not approve, or withdrawn, or timed out twice in a row (a single timeout starts no wait); it must wait (1 minute, doubling up to 1 hour). The error result also carries `retry_after` (seconds) and `retry_at`. | Ask again at that time, not earlier, and tell the user when. |
+| `denied: approval_pending: you may ask again … at <time> …` | Another action on the device waits for a human (its approval ID is in the text), or the agent already has 2 requests waiting (pending results count until they end). `retry_after` / `retry_at` give the time the request ends at the latest. | `approval_status` for the outcome, or `approval_cancel`. |
 | `denied: approval_withdrawn` | The agent withdrew the request with `approval_cancel`. | – |
 | `failed: already_in_state`, `failed: state_changed` | A confirmed action was not executed: the device was already in the state the action leads to, or its state changed after the request was shown. | Read the state; ask again if still needed. |
 | `failed: not_executed` | As above, for an agent that may not read the device. | – |

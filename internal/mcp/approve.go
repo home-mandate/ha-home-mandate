@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -91,15 +93,19 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusFailed, Error: errAlreadyInState})
 		return nil, actionOut{}, errors.New(codeFailed + ": " + errAlreadyInState)
 	}
-	if g.cooling(a.ClientID, d.Resource.EntityID) > 0 {
+	if left := g.cooling(a.ClientID, d.Resource.EntityID); left > 0 {
 		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval, Error: "approval_cooldown"})
-		return nil, actionOut{}, errors.New(codeDenied + ": approval_cooldown")
+		return g.retryLater("approval_cooldown", "for this device", "", g.cfg.Now().Add(left))
 	}
 	// A request counts until it ends, not until this call returns (SPEC-v0 section 11.1
 	// item 7): follow releases it.
 	if !g.reserve(a.ClientID) {
 		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval})
-		return nil, actionOut{}, errors.New(codeDenied + ": approval_pending")
+		why := fmt.Sprintf("You have %d requests waiting for a human; approval_status gives their outcome", maxPendingAsks)
+		if at := g.firstEnd(a.ClientID); !at.IsZero() {
+			return g.retryLater("approval_pending", "", why, at)
+		}
+		return nil, actionOut{}, errors.New(codeDenied + ": approval_pending: " + why)
 	}
 
 	ref := newAgentRef()
@@ -168,15 +174,17 @@ func (g *Gateway) settle(ctx context.Context, a agent.Agent, token string, d pdp
 		g.forgive(a.ClientID, d.Resource.EntityID)
 		return g.afterApproval(ctx, a, token, d, call, appr, res.At.Add(g.approvalValidity(timeout)), state, canRead)
 	}
-	g.coolDown(a.ClientID, d.Resource.EntityID)
 	var code string
 	switch res.Outcome {
 	case approval.OutcomeRejected:
 		code = "approval_rejected"
+		g.coolDown(a.ClientID, d.Resource.EntityID)
 	case approval.OutcomeInvalidResponse:
 		code = "approval_invalid"
+		g.coolDown(a.ClientID, d.Resource.EntityID)
 	default:
 		code = "approval_timeout"
+		g.coolDownAfterTimeout(a.ClientID, d.Resource.EntityID)
 	}
 	_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}, appr)
 	return nil, actionOut{}, errors.New(codeDenied + ": " + code)
@@ -313,4 +321,42 @@ func (g *Gateway) approvalValidity(timeout time.Duration) time.Duration {
 // Critical requests reach only devices where critical requests are on.
 func criticalRequest(d pdp.Decision) bool {
 	return evaluator.IsCritical(d.Resource.Category, d.Action) || d.Resource.Critical && d.Action != "read"
+}
+
+// retryLater refuses a call that may be made again at a known time: the text says when,
+// and the structured content carries retry_after (seconds) and retry_at (RFC 3339). It is
+// an error result (isError) with structured content, as MCP allows; the SDK passes both.
+func (g *Gateway) retryLater(code, subject, why string, at time.Time) (*sdk.CallToolResult, actionOut, error) {
+	left := max(int(math.Ceil(at.Sub(g.cfg.Now()).Seconds())), 0)
+	when := at.UTC().Format(time.RFC3339)
+	scope := ""
+	if subject != "" {
+		scope = " " + subject
+	}
+	text := fmt.Sprintf("%s: %s: you may ask again%s at %s (in %d s); asking earlier is refused without notifying anyone",
+		codeDenied, code, scope, when, left)
+	if why != "" {
+		text += ". " + why + "."
+	}
+	return &sdk.CallToolResult{IsError: true, Content: []sdk.Content{&sdk.TextContent{Text: text}}},
+		actionOut{Status: statusDenied, RetryAfter: left, RetryAt: when}, nil
+}
+
+// firstEnd is when the first of the agent's waiting requests ends at the latest (its
+// timeout); zero if none is known.
+func (g *Gateway) firstEnd(clientID string) time.Time {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	var first time.Time
+	for _, w := range g.waits {
+		select {
+		case <-w.done:
+			continue
+		default:
+		}
+		if w.clientID == clientID && !w.expires.IsZero() && (first.IsZero() || w.expires.Before(first)) {
+			first = w.expires
+		}
+	}
+	return first
 }
