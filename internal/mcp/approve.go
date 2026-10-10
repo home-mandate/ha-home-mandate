@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -40,7 +41,56 @@ const (
 // request for the device was not approved waits before anyone is asked again. The
 // request outlives the call: it is followed in the background (follow), and the call
 // waits for its outcome at most ApprovalWait (await).
-func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, reason string) (*sdk.CallToolResult, actionOut, error) {
+func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, reason, key string) (*sdk.CallToolResult, actionOut, error) {
+	digest := callDigest(call)
+	if digest == "" {
+		// Fail closed: without a fingerprint repeats cannot be told apart.
+		g.cfg.Logger.Error("call fingerprint failed, request refused", "entity_id", d.Resource.EntityID)
+		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusFailed, Error: errFingerprint})
+		return nil, actionOut{}, errors.New(codeFailed)
+	}
+	// The key first, then the device: the same key for two devices at once is checked and
+	// registered by one call at a time (always in this order, so no deadlock).
+	var keyLock *sync.Mutex
+	if key != "" {
+		keyLock = g.keyLock(a.ClientID + "\x00" + key)
+		keyLock.Lock()
+	}
+	deviceLock := g.deviceLock(deviceKey(a.ClientID, d.Resource.EntityID))
+	deviceLock.Lock()
+	unlock := func() {
+		deviceLock.Unlock()
+		if keyLock != nil {
+			keyLock.Unlock()
+		}
+	}
+	locked := true
+	defer func() {
+		if locked {
+			unlock()
+		}
+	}()
+	// A repeated call asks nobody: it attaches to the open request, gets the result of
+	// one executed a short while ago, or is refused (dedup.go).
+	r, err := g.findRepeat(ctx, a.ClientID, d.Resource.EntityID, d.Action, call, digest, key)
+	if err != nil {
+		g.cfg.Logger.Error("approval journal unreadable, request refused", "error", err)
+		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusFailed, Error: errJournal})
+		return nil, actionOut{}, errors.New(codeUnavailable)
+	}
+	if r != nil {
+		unlock()
+		locked = false
+		return g.answerRepeat(ctx, a, d, r)
+	}
+	// Nobody is asked for what is done already (SPEC-v0 section 11.1 item 10, state.go),
+	// unless the agent may not read the device: then it must not learn its state, and the
+	// human, who sees it, is asked.
+	canRead := g.mayRead(ctx, a.ClientID, d.Resource.EntityID)
+	if dev := g.knownState(d.Resource.EntityID); canRead && dev != nil && reachedNow(d.Resource.Category, d.Action, call, *dev) {
+		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusFailed, Error: errAlreadyInState})
+		return nil, actionOut{}, errors.New(codeFailed + ": " + errAlreadyInState)
+	}
 	if g.cooling(a.ClientID, d.Resource.EntityID) > 0 {
 		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval, Error: "approval_cooldown"})
 		return nil, actionOut{}, errors.New(codeDenied + ": approval_cooldown")
@@ -55,41 +105,54 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 	ref := newAgentRef()
 	req := approval.Request{ClientID: a.ClientID, Agent: a.DisplayName, EntityID: d.Resource.EntityID, Area: d.Resource.Area,
 		Device: d.Resource.EntityID, Action: d.Action, Reason: reason, Params: shownParams(d, call), Critical: criticalRequest(d),
-		Record: &approval.Record{Entry: g.entry(a, d, true, audit.Result{}), ParamsDigest: callDigest(call), AgentRef: ref}}
+		Record: &approval.Record{Entry: g.entry(a, d, true, audit.Result{}), ParamsDigest: digest, AgentRef: ref, IdempotencyKey: key}}
 	if dev, ok := g.cfg.Catalog.Lookup(d.Resource.EntityID); ok {
 		if name, _ := dev.Attributes["friendly_name"].(string); name != "" {
 			req.Device = name
 		}
+		req.State = shownState(dev.Category, dev.State)
 	}
 	if ap := d.Result.Approval; ap != nil {
 		req.Approvers, req.Timeout = ap.Approvers, ap.Duration()
 	}
-	p, err := g.cfg.Approvals.Start(ctx, req)
-	if err != nil {
-		g.release(a.ClientID)
-		// No request was made (SPEC-v0 section 9.1): no approval, and no request in the UI
-		// to close; one that is in the journal but reached nobody ends there.
-		ref := approvalRef{row: p.ID}
-		if errors.Is(err, approval.ErrJournal) {
-			_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: errJournal}, ref)
-			return nil, actionOut{}, errors.New(codeUnavailable)
-		}
-		if !errors.Is(err, approval.ErrNoApprover) {
-			g.cfg.Logger.Error("approval request failed", "error", err)
-		}
-		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}, ref)
-		return nil, actionOut{}, errors.New(codeDenied + ": no_approver")
-	}
-	w := &waiting{ref: ref, clientID: a.ClientID, row: p.ID, entityID: d.Resource.EntityID, action: d.Action, expires: p.Expires,
-		answered: make(chan struct{}), done: make(chan struct{})}
+	w := &waiting{ref: ref, clientID: a.ClientID, entityID: d.Resource.EntityID, action: d.Action, digest: digest, key: key,
+		state: req.State, canRead: canRead, started: make(chan struct{}), answered: make(chan struct{}), done: make(chan struct{})}
+	// Registered before the device lock is let go: a repeat from now on attaches to it.
+	g.register(w)
 	g.track(w)
+	unlock()
+	locked = false
+	// Calls may attach to the request from now on: it must not fail because this one ends.
+	p, err := g.cfg.Approvals.Start(context.WithoutCancel(ctx), req)
+	if err != nil {
+		res, out, err := g.notStarted(ctx, a, d, p.ID, err)
+		g.finish(w, out, err)
+		return res, out, err
+	}
+	g.started(w, p)
 	go g.follow(w, p, a, token, d, call, req.Timeout)
 	return g.await(ctx, w)
 }
 
+// notStarted records a request that could not be made (SPEC-v0 section 9.1: no approval,
+// and no request in the UI to close); one that is in the journal but reached nobody
+// ends there (row).
+func (g *Gateway) notStarted(ctx context.Context, a agent.Agent, d pdp.Decision, row string, err error) (*sdk.CallToolResult, actionOut, error) {
+	ref := approvalRef{row: row}
+	if errors.Is(err, approval.ErrJournal) {
+		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: errJournal}, ref)
+		return nil, actionOut{}, errors.New(codeUnavailable)
+	}
+	if !errors.Is(err, approval.ErrNoApprover) {
+		g.cfg.Logger.Error("approval request failed", "error", err)
+	}
+	_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}, ref)
+	return nil, actionOut{}, errors.New(codeDenied + ": no_approver")
+}
+
 // settle records how a request ended and, after a confirmation, checks again and
 // executes. It runs in the background (follow) with a context of its own.
-func (g *Gateway) settle(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, res approval.Result, timeout time.Duration) (*sdk.CallToolResult, actionOut, error) {
+func (g *Gateway) settle(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, res approval.Result, timeout time.Duration, state string, canRead bool) (*sdk.CallToolResult, actionOut, error) {
 	appr := approvalRef{approval: &audit.Approval{Outcome: res.Outcome, By: res.By, Via: res.Via, At: res.At, Cause: res.Cause},
 		id: res.ID, row: res.ID}
 	if res.Outcome == approval.OutcomeCancelled {
@@ -103,7 +166,7 @@ func (g *Gateway) settle(ctx context.Context, a agent.Agent, token string, d pdp
 	}
 	if res.Outcome == approval.OutcomeApproved {
 		g.forgive(a.ClientID, d.Resource.EntityID)
-		return g.afterApproval(ctx, a, token, d, call, appr, res.At.Add(g.approvalValidity(timeout)))
+		return g.afterApproval(ctx, a, token, d, call, appr, res.At.Add(g.approvalValidity(timeout)), state, canRead)
 	}
 	g.coolDown(a.ClientID, d.Resource.EntityID)
 	var code string
@@ -190,7 +253,7 @@ func callDigest(call ha.ServiceCall) string {
 // A confirmation is valid until expires, its timeout after it was given (SPEC-v0 section
 // 11.1 item 5): it is checked right before the call, and the call to Home Assistant ends
 // at that point at the latest.
-func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, appr approvalRef, expires time.Time) (*sdk.CallToolResult, actionOut, error) {
+func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, appr approvalRef, expires time.Time, state string, canRead bool) (*sdk.CallToolResult, actionOut, error) {
 	if g.stopped(ctx) {
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop}, appr)
 		return nil, actionOut{}, errors.New(codeDenied + ": emergency_stop")
@@ -225,6 +288,13 @@ func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string
 	if !g.cfg.Now().Before(expires) {
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}, appr)
 		return nil, actionOut{}, errors.New(codeDenied + ": approval_expired")
+	}
+	// The state that was shown (SPEC-v0 section 11.1 item 10, state.go); Home Assistant
+	// is connected and the directory current here (checked above).
+	dev, exists := g.cfg.Catalog.Lookup(d.Resource.EntityID)
+	if code := stateCheck(d.Resource.Category, d.Action, call, state, dev, exists); code != "" {
+		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: code}, appr)
+		return nil, actionOut{}, errors.New(codeFailed + ": " + agentCode(code, canRead))
 	}
 	return g.execute(ctx, a, d, call, appr, expires)
 }

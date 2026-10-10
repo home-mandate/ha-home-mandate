@@ -244,6 +244,8 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 		catalog: &fakeCatalog{ready: true, devices: map[string]catalog.Device{
 			"light.kitchen":            {EntityID: "light.kitchen", Category: "light", Area: "kitchen", State: "off", Attributes: map[string]any{"friendly_name": "Kitchen"}},
 			"lock.front_door":          {EntityID: "lock.front_door", Category: "lock", Area: "hallway", State: "locked"},
+			"lock.back_door":           {EntityID: "lock.back_door", Category: "lock", Area: "garden", State: "locked"},
+			"lock.garden_gate":         {EntityID: "lock.garden_gate", Category: "lock", Area: "garden", State: "locked"},
 			"camera.porch":             {EntityID: "camera.porch", Category: "camera", Area: "porch", State: "idle", Attributes: map[string]any{"entity_picture": "/api/camera_proxy/camera.porch?token=secret"}},
 			"alarm_control_panel.home": {EntityID: "alarm_control_panel.home", Category: "alarm", State: "armed_away"},
 			"climate.living_room":      {EntityID: "climate.living_room", Category: "climate", State: "heat"},

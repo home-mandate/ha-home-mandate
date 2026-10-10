@@ -84,6 +84,8 @@ export function outcomeOf(entry: AuditEntry): Outcome | null {
       };
     case 'failed':
       if (result.error === 'outcome_unknown') return { tone: 'warning', text: m.result_failed(), why: m.result_outcome_unknown() };
+      if (result.error === 'already_in_state') return { tone: 'warning', text: m.result_failed(), why: m.result_already_in_state() };
+      if (result.error === 'state_changed') return { tone: 'warning', text: m.result_failed(), why: m.result_state_changed() };
       return { tone: 'danger', text: m.result_failed(), why: result.error ? cleanUntrusted(result.error, MAX_ERROR) : null };
     case 'denied':
       break;
@@ -105,6 +107,8 @@ export function outcomeOf(entry: AuditEntry): Outcome | null {
         case 'invalid_response':
           return { tone: 'warning', text: m.result_invalid(), why: null };
         default:
+          if (result.error === 'approval_duplicate') return { tone: 'danger', text: m.result_denied(), why: m.reason_duplicate() };
+          if (result.error === 'already_executed') return { tone: 'danger', text: m.result_denied(), why: m.reason_already_executed() };
           return { tone: 'danger', text: m.result_denied(), why: m.reason_approval() };
       }
     default:

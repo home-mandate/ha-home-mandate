@@ -343,11 +343,11 @@ func TestPendingAsksAreBounded(t *testing.T) {
 	f.during = func() { <-release }
 	h := approvalHarness(t, f)
 	results := make(chan string, maxPendingAsks)
-	for range maxPendingAsks {
-		go func() { results <- unlock(h, nil) }()
+	for _, id := range []string{"lock.front_door", "lock.back_door"} {
+		go func() { results <- unlock(h, map[string]any{"entity_id": id}) }()
 	}
 	waitFor(t, func() bool { return len(f.requests()) == maxPendingAsks })
-	if errText := unlock(h, nil); errText != "denied: approval_pending" {
+	if errText := unlock(h, map[string]any{"entity_id": "lock.garden_gate"}); errText != "denied: approval_pending" {
 		t.Errorf("third request = %q", errText)
 	}
 	close(release)
@@ -728,6 +728,10 @@ func TestApprovalShowsTheAlarmMode(t *testing.T) {
 		})
 		h.approver = f
 		h.url = h.serve(h.log)
+		// Disarmed: arming is not already done (SPEC-v0 section 11.1 item 10).
+		dev := h.catalog.devices["alarm_control_panel.home"]
+		dev.State = "disarmed"
+		h.catalog.devices["alarm_control_panel.home"] = dev
 		args := map[string]any{"entity_id": "alarm_control_panel.home", "action": "arm"}
 		if mode != "" {
 			args["params"] = map[string]any{"mode": mode}

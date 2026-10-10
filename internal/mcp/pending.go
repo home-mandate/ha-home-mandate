@@ -13,9 +13,12 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/home-mandate/spec/evaluator"
+
 	"github.com/home-mandate/ha-home-mandate/internal/agent"
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 	"github.com/home-mandate/ha-home-mandate/internal/pdp"
 )
@@ -77,10 +80,17 @@ var errNoRequest = errors.New(codeNotFound + ": no such approval request")
 type waiting struct {
 	ref      string // the approval ID the agent knows
 	clientID string
-	row      string // the request's ID in the UI and the journal
 	entityID string
 	action   string
+	digest   string // fingerprint of the effective call (layer 1)
+	key      string // the agent's idempotency key, empty without
+	state    string // the device's state shown with the request (layer 3)
+	canRead  bool   // the agent may read the device: state refusals are named to it
+	// row (the request's ID in the UI and the journal) and expires are set once the
+	// request was started; read them under g.mu (info).
+	row      string
 	expires  time.Time
+	started  chan struct{} // closed once Start returned (row and expires set) or failed
 	answered chan struct{} // closed when the request ended (answered, timed out, cancelled)
 	done     chan struct{} // closed when the outcome is final: executed or refused
 
@@ -147,13 +157,7 @@ func (g *Gateway) forgetLocked() {
 // as interrupted (approval.Journal.Recover).
 func (g *Gateway) follow(w *waiting, p approval.Pending, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, timeout time.Duration) {
 	out, err := actionOut{}, errors.New(codeUnavailable)
-	defer func() {
-		g.mu.Lock()
-		w.out, w.err, w.endedAt = out, err, g.cfg.Now()
-		close(w.done)
-		g.releaseLocked(w.clientID)
-		g.mu.Unlock()
-	}()
+	defer func() { g.finish(w, out, err) }()
 	res := <-p.Done
 	close(w.answered)
 	g.mu.Lock()
@@ -162,7 +166,43 @@ func (g *Gateway) follow(w *waiting, p approval.Pending, a agent.Agent, token st
 	if closed {
 		return
 	}
-	_, out, err = g.settle(context.Background(), a, token, d, call, res, timeout)
+	_, out, err = g.settle(context.Background(), a, token, d, call, res, timeout, w.state, w.canRead)
+}
+
+// started records what Start returned for w.
+func (g *Gateway) started(w *waiting, p approval.Pending) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	w.row, w.expires = p.ID, p.Expires
+	close(w.started)
+}
+
+// info returns w's request ID and expiry, set once it was started.
+func (g *Gateway) info(w *waiting) (row string, expires time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return w.row, w.expires
+}
+
+// finish makes w's outcome final: whoever waits for it gets out and err, the agent's
+// place among its waiting requests is free, and the device has no open request.
+func (g *Gateway) finish(w *waiting, out actionOut, err error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	w.out, w.err, w.endedAt = out, err, g.cfg.Now()
+	close(w.done)
+	select {
+	case <-w.started:
+	default:
+		close(w.started) // Start failed
+	}
+	select {
+	case <-w.answered:
+	default:
+		close(w.answered) // never started
+	}
+	g.releaseLocked(w.clientID)
+	g.unregisterLocked(w)
 }
 
 // closePoll is how often Close looks whether the accepted answers are settled.
@@ -206,7 +246,7 @@ func (g *Gateway) unsettled() bool {
 			continue
 		default:
 		}
-		if !g.cfg.Approvals.IsOpen(w.row) {
+		if row, _ := g.info(w); row != "" && !g.cfg.Approvals.IsOpen(row) {
 			return true
 		}
 	}
@@ -241,12 +281,12 @@ func (g *Gateway) await(ctx context.Context, w *waiting) (*sdk.CallToolResult, a
 	case <-timer.C:
 	case <-ctx.Done():
 	}
-	return g.pendingResult(w)
+	return g.pendingResult(ctx, w)
 }
 
 // pendingResult tells the agent plainly that the action is not executed yet, and what to
 // call: still waiting for a human, or answered and its execution not finished yet.
-func (g *Gateway) pendingResult(w *waiting) (*sdk.CallToolResult, actionOut, error) {
+func (g *Gateway) pendingResult(ctx context.Context, w *waiting) (*sdk.CallToolResult, actionOut, error) {
 	select {
 	case <-w.answered:
 		text := fmt.Sprintf("NOT FINISHED YET. The request for %s on %s was confirmed by a human or ended otherwise, and its "+
@@ -256,8 +296,14 @@ func (g *Gateway) pendingResult(w *waiting) (*sdk.CallToolResult, actionOut, err
 		return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: text}}}, out, nil
 	default:
 	}
-	until := w.expires.UTC().Format(time.RFC3339)
-	left := max(w.expires.Sub(g.cfg.Now()).Round(time.Second), 0)
+	select {
+	case <-w.started: // Start returns once delivered (bounded), or fails and finish closes it
+	case <-ctx.Done():
+		return nil, actionOut{}, errors.New(codeUnavailable)
+	}
+	_, expires := g.info(w)
+	until := expires.UTC().Format(time.RFC3339)
+	left := max(expires.Sub(g.cfg.Now()).Round(time.Second), 0)
 	text := fmt.Sprintf("NOT EXECUTED YET. %s on %s is waiting for a human to approve it; nothing has happened so far. "+
 		"Do not tell the user it was done. Approval ID: %s. The request stays open until %s (%s from now); without an "+
 		"approval by then it is denied. Call approval_status with this approval_id to learn the outcome (it waits up to %s "+
@@ -331,20 +377,41 @@ func (g *Gateway) fromJournal(ctx context.Context, ref, clientID string) (*sdk.C
 		}
 		return nil, actionOut{Status: statusPending, Phase: phase, ApprovalID: ref, OpenUntil: st.Expires.UTC().Format(time.RFC3339), Next: "approval_status"}, nil
 	}
-	return journalResult(st)
+	return journalResult(st, g.mayRead(ctx, clientID, st.EntityID))
+}
+
+// mayRead tells whether the agent may read the device now (decision allow); every
+// failure means no. An agent that may not read learns nothing about the state.
+func (g *Gateway) mayRead(ctx context.Context, clientID, entityID string) bool {
+	snap, err := g.cfg.PDP.Snapshot(ctx, clientID)
+	return err == nil && snap.Decide(entityID, "read", nil).Result.Decision == evaluator.Allow
+}
+
+// knownState is the device as the directory has it, if its state can be trusted now:
+// Home Assistant connected, the directory current, the state one of the known ones.
+// Otherwise nil, and there is no shortcut: the human is asked.
+func (g *Gateway) knownState(entityID string) *catalog.Device {
+	if g.unavailable() != "" {
+		return nil
+	}
+	dev, ok := g.cfg.Catalog.Lookup(entityID)
+	if !ok || shownState(dev.Category, dev.State) == "" {
+		return nil
+	}
+	return &dev
 }
 
 // journalResult is the answer the agent would have got for an ended request, from what
 // the journal holds: executed, or the refusal with its reason code.
-func journalResult(st approval.Status) (*sdk.CallToolResult, actionOut, error) {
+func journalResult(st approval.Status, canRead bool) (*sdk.CallToolResult, actionOut, error) {
 	r := st.Result
 	switch r.Status {
 	case audit.StatusExecuted:
 		return nil, actionOut{Status: statusExecuted}, nil
 	case audit.StatusFailed:
 		switch r.Error {
-		case approval.ErrorOutcomeUnknown:
-			return nil, actionOut{}, errors.New(codeFailed + ": " + r.Error)
+		case approval.ErrorOutcomeUnknown, errAlreadyInState, errStateChanged:
+			return nil, actionOut{}, errors.New(codeFailed + ": " + agentCode(r.Error, canRead))
 		case "mandate_unavailable", errJournal, errClockBehind, "ha_unavailable", "timezone_unknown", "service_user_unknown":
 			// As the checks before the call answer; Home Assistant failing during the call
 			// (also ha_unavailable) answers failed synchronously, which the journal cannot
@@ -421,11 +488,16 @@ func (g *Gateway) approvalCancel(ctx context.Context, req *sdk.CallToolRequest, 
 		return nil, actionOut{}, errAnswered
 	}
 	select {
+	case <-w.started:
+	case <-ctx.Done():
+		return nil, actionOut{}, errors.New(codeUnavailable)
+	}
+	select {
 	case <-w.answered:
 		return nil, actionOut{}, errAnswered
 	default:
 	}
-	if !g.cfg.Approvals.CancelRequest(w.row) {
+	if row, _ := g.info(w); !g.cfg.Approvals.CancelRequest(row) {
 		return nil, actionOut{}, errAnswered // answered at the same moment: the answer stands
 	}
 	timer := time.NewTimer(cancelWait)

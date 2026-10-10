@@ -129,6 +129,8 @@ type (
 		End(id string, a *audit.Approval, result audit.Result) func(context.Context, *sql.Tx) error
 		EndNow(ctx context.Context, id string, a *audit.Approval, result audit.Result) error
 		Lookup(ctx context.Context, ref, clientID string) (approval.Status, bool, error)
+		Replay(ctx context.Context, clientID, entityID, digest string, now time.Time) (approval.Replayed, bool, error)
+		ByKey(ctx context.Context, clientID, key string) (approval.Keyed, bool, error)
 	}
 )
 
@@ -179,11 +181,15 @@ type Gateway struct {
 	server *sdk.Server
 
 	mu           sync.Mutex
-	rateLimitLog map[string]time.Time // last rate-limit entry per agent
-	pendingAsks  map[string]int       // approval requests until they end, per agent
-	waits        map[string]*waiting  // approval requests followed, by the agent's approval ID
-	cooldowns    map[string]cooldown  // waits after requests not approved, per agent and device
-	rejectedLog  time.Time            // last auth.rejected entry for an invalid token
+	rateLimitLog map[string]time.Time    // last rate-limit entry per agent
+	pendingAsks  map[string]int          // approval requests until they end, per agent
+	waits        map[string]*waiting     // approval requests followed, by the agent's approval ID
+	open         map[string]*waiting     // the open request per agent and device (deviceKey)
+	byKey        map[string]*waiting     // open requests by agent and idempotency key
+	keyLocks     [lockStripes]sync.Mutex // dedup.go
+	deviceLocks  [lockStripes]sync.Mutex
+	cooldowns    map[string]cooldown // waits after requests not approved, per agent and device
+	rejectedLog  time.Time           // last auth.rejected entry for an invalid token
 	// statusLimiter bounds approval_status and approval_cancel per agent.
 	statusLimiter *ratelimit.Limiter
 	// closing: after Close, requests that end are left to the next start.
@@ -207,7 +213,8 @@ func New(cfg Config) *Gateway {
 	if cfg.ApprovalWait <= 0 {
 		cfg.ApprovalWait = defaultApprovalWait
 	}
-	g := &Gateway{cfg: cfg, rateLimitLog: map[string]time.Time{}, pendingAsks: map[string]int{}, waits: map[string]*waiting{},
+	g := &Gateway{cfg: cfg, rateLimitLog: map[string]time.Time{}, pendingAsks: map[string]int{}, waits: map[string]*waiting{}, open: map[string]*waiting{},
+		byKey:         map[string]*waiting{},
 		statusLimiter: ratelimit.New(cfg.Now), cooldowns: map[string]cooldown{}, server: sdk.NewServer(&sdk.Implementation{Name: "home-mandate", Version: cfg.Version}, nil)}
 	sdk.AddTool(g.server, &sdk.Tool{Name: "list_devices",
 		Description: "Lists the devices you may read, with category, area and state."}, g.listDevices)
@@ -353,6 +360,8 @@ type (
 		Action   string         `json:"action" jsonschema:"action from the device category, e.g. turn_on"`
 		Params   map[string]any `json:"params,omitempty" jsonschema:"parameters of the action, e.g. brightness_pct"`
 		Reason   string         `json:"reason,omitempty" jsonschema:"why you want this; shown to the human who confirms, marked as your claim"`
+		// IdempotencyKey ties repeated calls to one approval request (issue #27).
+		IdempotencyKey string `json:"idempotency_key,omitempty" jsonschema:"optional key of 8 to 64 letters, digits, _ or -: the same key within 24 hours returns the outcome of the first call instead of asking again"`
 	}
 	deviceOut struct {
 		EntityID string `json:"entity_id"`
@@ -371,6 +380,8 @@ type (
 	}
 	actionOut struct {
 		// Status is executed, pending (NOT executed yet) or withdrawn.
+		// Status is also already_executed: the same call was executed a short while ago and
+		// not again (issue #27, layer 2).
 		Status string `json:"status"`
 		// Phase of a pending request: waiting (for a human's answer) or answered (the
 		// outcome, an execution after a confirmation, is not settled yet).
@@ -381,6 +392,8 @@ type (
 		OpenUntil string `json:"open_until,omitempty"`
 		// Next is the tool to call for a pending request.
 		Next string `json:"next,omitempty"`
+		// ConfirmedAt is when the earlier request was confirmed, for already_executed.
+		ConfirmedAt string `json:"confirmed_at,omitempty"`
 	}
 	approvalInput struct {
 		ApprovalID string `json:"approval_id" jsonschema:"the approval_id perform_action returned with status pending"`
@@ -528,7 +541,7 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 		return nil, actionOut{}, err
 	}
 	if !entityIDPattern.MatchString(in.EntityID) || !actionPattern.MatchString(in.Action) || in.Action == "read" ||
-		utf8.RuneCountInString(in.Reason) > maxReasonRunes {
+		utf8.RuneCountInString(in.Reason) > maxReasonRunes || in.IdempotencyKey != "" && !idempotencyKeyPattern.MatchString(in.IdempotencyKey) {
 		return nil, actionOut{}, errors.New(codeInvalidParams)
 	}
 	// The parameters of the evaluation come from what will be executed; the category from
@@ -555,7 +568,7 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 		return nil, actionOut{}, errors.New(code)
 	}
 	if ask {
-		return g.askHuman(ctx, a, tokenOf(req), d, call, in.Reason)
+		return g.askHuman(ctx, a, tokenOf(req), d, call, in.Reason, in.IdempotencyKey)
 	}
 	return g.execute(ctx, a, d, call, approvalRef{}, time.Time{})
 }

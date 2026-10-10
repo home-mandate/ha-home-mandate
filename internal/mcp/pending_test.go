@@ -5,6 +5,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -49,10 +50,14 @@ func (h *harness) sessionWith(token string) *sdk.ClientSession {
 
 // pendingUnlock asks to unlock and expects the pending result; it returns the approval ID
 // and the request's ID.
-func pendingUnlock(t *testing.T, h *harness, f *fakeApprover) (string, string) {
+func pendingUnlock(t *testing.T, h *harness, f *fakeApprover, entity ...string) (string, string) {
 	t.Helper()
+	entityID := "lock.front_door"
+	if len(entity) > 0 {
+		entityID = entity[0]
+	}
 	res, err := h.session().CallTool(context.Background(), &sdk.CallToolParams{Name: "perform_action",
-		Arguments: map[string]any{"entity_id": "lock.front_door", "action": "unlock", "reason": "parcel"}})
+		Arguments: map[string]any{"entity_id": entityID, "action": "unlock", "reason": "parcel"}})
 	if err != nil || res.IsError {
 		t.Fatalf("perform_action = %+v, %v", res, err)
 	}
@@ -62,7 +67,7 @@ func pendingUnlock(t *testing.T, h *harness, f *fakeApprover) (string, string) {
 		t.Fatalf("structured = %v", out)
 	}
 	text := res.Content[0].(*sdk.TextContent).Text
-	for _, want := range []string{"NOT EXECUTED YET", "Do not tell the user it was done", ref, "approval_status", "approval_cancel", "unlock on lock.front_door"} {
+	for _, want := range []string{"NOT EXECUTED YET", "Do not tell the user it was done", ref, "approval_status", "approval_cancel", "unlock on " + entityID} {
 		if !strings.Contains(text, want) {
 			t.Errorf("text lacks %q: %s", want, text)
 		}
@@ -239,8 +244,8 @@ func TestApprovalIDsAreBoundToTheAgent(t *testing.T) {
 func TestPendingRequestsCountUntilTheyEnd(t *testing.T) {
 	h, f := pendingHarness(t)
 	ref, _ := pendingUnlock(t, h, f)
-	pendingUnlock(t, h, f)
-	if errText := unlock(h, nil); errText != "denied: approval_pending" || len(f.requests()) != 2 {
+	pendingUnlock(t, h, f, "lock.back_door")
+	if errText := unlock(h, map[string]any{"entity_id": "lock.garden_gate"}); errText != "denied: approval_pending" || len(f.requests()) != 2 {
 		t.Errorf("third = %q, %d asked", errText, len(f.requests()))
 	}
 	for _, id := range f.heldIDs() {
@@ -255,7 +260,7 @@ func TestPendingRequestsCountUntilTheyEnd(t *testing.T) {
 		out, _ := h.call(h.session(), "approval_status", map[string]any{"approval_id": ref})
 		return out["status"] == "executed"
 	})
-	pendingUnlock(t, h, f)
+	pendingUnlock(t, h, f, "lock.garden_gate")
 	if len(f.requests()) != 3 {
 		t.Errorf("%d asked", len(f.requests()))
 	}
@@ -294,7 +299,7 @@ func TestStatusAfterARestart(t *testing.T) {
 	h, f := pendingHarness(t)
 	ref, _ := pendingUnlock(t, h, f)
 	h.now.advance(cooldownMax)
-	ref2, _ := pendingUnlock(t, h, f)
+	ref2, _ := pendingUnlock(t, h, f, "lock.back_door")
 	row2 := ""
 	for _, id := range f.heldIDs() {
 		var agentRef string
@@ -370,11 +375,11 @@ func TestJournalReasonCodes(t *testing.T) {
 		{approval.Status{Result: audit.Result{Status: "denied", DeniedBy: "approval"}}, "denied: no_approver"},
 		{approval.Status{Outcome: "approved", Result: audit.Result{Status: "failed"}}, "failed"},
 	} {
-		if _, _, err := journalResult(tc.st); err == nil || err.Error() != tc.want {
+		if _, _, err := journalResult(tc.st, true); err == nil || err.Error() != tc.want {
 			t.Errorf("%+v: %v, want %s", tc.st, err, tc.want)
 		}
 	}
-	if _, out, err := journalResult(approval.Status{Result: audit.Result{Status: "executed"}}); err != nil || out.Status != "executed" {
+	if _, out, err := journalResult(approval.Status{Result: audit.Result{Status: "executed"}}, true); err != nil || out.Status != "executed" {
 		t.Errorf("executed = %v, %v", out, err)
 	}
 }
@@ -471,7 +476,7 @@ func TestAnAnsweredCallWaitsOnlyAGrace(t *testing.T) {
 func TestJournalFailureCodes(t *testing.T) {
 	for errCode, want := range map[string]string{"ha_error": "failed", "mandate_unavailable": "unavailable", "journal_unavailable": "unavailable",
 		"clock_behind": "unavailable", "ha_unavailable": "unavailable", "outcome_unknown": "failed: outcome_unknown"} {
-		_, _, err := journalResult(approval.Status{Outcome: "approved", Result: audit.Result{Status: "failed", Error: errCode}})
+		_, _, err := journalResult(approval.Status{Outcome: "approved", Result: audit.Result{Status: "failed", Error: errCode}}, true)
 		if err == nil || err.Error() != want {
 			t.Errorf("%s: %v, want %s", errCode, err, want)
 		}
@@ -484,9 +489,8 @@ func TestJournalFailureCodes(t *testing.T) {
 func TestCloseSettlesAcceptedAnswersAndRefusesLaterOnes(t *testing.T) {
 	h, f := pendingHarness(t)
 	pendingUnlock(t, h, f)
-	h.now.advance(cooldownMax)
-	pendingUnlock(t, h, f)
-	ids := f.heldIDs()
+	pendingUnlock(t, h, f, "lock.back_door")
+	ids := []string{fmt.Sprintf("%032x", 1), fmt.Sprintf("%032x", 2)} // the fake's IDs, in order
 	release := make(chan struct{})
 	h.ha.onCall = func() { <-release }
 	f.end(ids[0], approvedNow(h))

@@ -36,6 +36,7 @@ type Key string
 const (
 	ApprovalTitle          Key = "approval_title"
 	ApprovalMessage        Key = "approval_message"
+	ApprovalMessageState   Key = "approval_message_state"
 	ApprovalReason         Key = "approval_reason"
 	ApprovalParams         Key = "approval_params"
 	ApprovalIdentity       Key = "approval_identity"
@@ -143,7 +144,7 @@ var actions = []string{"read", "turn_on", "turn_off", "set", "set_temperature", 
 
 // Keys lists every message key.
 var Keys = append([]Key{
-	ApprovalTitle, ApprovalMessage, ApprovalReason, ApprovalParams, ApprovalIdentity, ApprovalNoAnswer, ApprovalApprove, ApprovalDeny,
+	ApprovalTitle, ApprovalMessage, ApprovalMessageState, ApprovalReason, ApprovalParams, ApprovalIdentity, ApprovalNoAnswer, ApprovalApprove, ApprovalDeny,
 	ApprovalInvalidTitle, ApprovalInvalidMessage, ApprovalBellTitle, ApprovalBellMessage, ApprovalTestTitle, ApprovalTestMessage,
 	ApprovalInterruptedTitle, ApprovalInterruptedMessage, ApprovalUnknownTitle, ApprovalUnknownMessage,
 	CheckpointTitle, CheckpointMessage, RenameFloodTitle, RenameFloodMessage,

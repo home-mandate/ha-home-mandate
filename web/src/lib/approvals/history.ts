@@ -35,6 +35,10 @@ export function historyOutcome(entry: ApprovalHistoryEntry): HistoryOutcome {
   const plain = { hint: null, dashed: false };
   switch (entry.outcome) {
     case 'approved':
+      if (entry.error === 'already_in_state' || entry.error === 'state_changed') {
+        const hint = entry.error === 'already_in_state' ? m.result_already_in_state() : m.result_state_changed();
+        return { icon: 'warning', tone: 'warning', text: answered(entry, m.result_approved_by({ person })), hint, dashed: false };
+      }
       if (entry.error === 'outcome_unknown') {
         return { icon: 'warning', tone: 'warning', text: answered(entry, m.result_approved_by({ person })), hint: m.result_outcome_unknown(), dashed: false };
       }

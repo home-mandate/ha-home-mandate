@@ -70,7 +70,7 @@ Reason: only this way can every request be mapped unambiguously to a device and 
 |---|---|---|
 | `list_devices` | `read` | Lists only devices the agent has at least read access to |
 | `get_state` | `read` | State of a device |
-| `perform_action` | depends on the category, e.g. `turn_on`, `unlock` | Performs an action, after the decision |
+| `perform_action` | depends on the category, e.g. `turn_on`, `unlock` | Performs an action, after the decision; optional `idempotency_key` ties repeated calls to one approval request (section 7) |
 | `list_my_permissions` | – | Shows the agent what it may do (helps models avoid pointless requests). Never shows other agents' rules. |
 | `approval_status` | – (no action) | Outcome of the agent's own request that waits for a human, by its approval ID: executed, the refusal, or still pending (section 7) |
 | `approval_cancel` | – (no action) | Withdraws the agent's own open request (`cancelled`, `cause: withdrawn`); never an answer (section 7) |
@@ -397,9 +397,105 @@ checked on every request.
     plus 30 seconds (85 s by default), no longer derived from the approval timeout.
   - **MCP Tasks:** a client that declares the extension would get a task bound to the
     same waiting request instead of the pending result (`mcp.await`); not built.
-  - Not yet (issue #27, part C): a repeated call for the same resource, action and
-    parameters while a request is open creates a second request (deduplication, replay
-    window, state check at execution).
+- **Repeated requests (issue #27, part C):** clients give up after about a minute and
+  call again (observed with Claude Desktop: two requests, both confirmed, the light
+  switched twice). The gateway cannot see that a client gave up, only that the same thing
+  is asked again. The fingerprint of a call is the digest of the effective call
+  (`params_digest`: domain, service, entity and data after the parameter check, RFC 8785,
+  SHA-256), so `50` and `50.0` or another key order are the same call. The checks and the
+  creation of a request run under a lock per agent and device (and per idempotency key),
+  so concurrent identical calls make one request; the locks are a fixed set of 256 each,
+  chosen by hash, so agent-chosen keys cannot make them grow.
+  1. **One open request per agent and device:** while a request of the agent for the
+     resolved device is open or executing, the same call asks nobody: it attaches to that
+     request and behaves like `approval_status` of it (same approval ID, same pending
+     result, the same outcome after the confirmation; one execution). Another action or
+     other parameters: `denied: approval_pending`, naming the open request's approval ID,
+     nobody notified. No silent replacement: the human may be tapping the old one now.
+  2. **Replay window:** after a request of the agent for the device was executed after a
+     confirmation, the same call within the request's timeout plus 5 minutes gets a
+     normal result `{"status": "already_executed", "approval_id", "confirmed_at"}` ("ALREADY
+     EXECUTED … NOT executed again"), no new request. It comes from the journal, so it
+     holds across a restart. It holds only while the effect does: for an action with a
+     state check, a device no longer in the target state (closed by hand, or by another
+     call) is asked for again. Within the window a repeat of the same call is **not
+     executed again, also for stateless actions** (script, scene, `lock.open`); a second
+     execution needs the window to pass, or a human acts directly in Home Assistant. A
+     request that ended `outcome_unknown` is not replayed (decision 2026-10-10): the human
+     is asked again and sees the current state. A rejection, a timeout and a withdrawal are covered by the
+     cooldown. The price: an intended second execution within the window is refused; it
+     cannot be told from a retry ("once too few rather than once too many"); the human can
+     act directly in Home Assistant.
+  3. **The state that was shown (SPEC-v0 11.1 item 10):** the device's state when the
+     request is made is recorded in the journal and shown in the push and the UI ("Garage
+     door (closed): open"); unknown or unavailable → not shown and no check for that
+     request. After the confirmation, with the other checks: the target state already
+     reached → not executed, `failed`, `error: already_in_state`; the state otherwise
+     different from the one shown → not executed, `failed`, `state_changed`; unchanged →
+     executed. A call whose target state is reached already when the request would be
+     made asks nobody: `failed`, `already_in_state`. **No state oracle:** for an agent that
+     may not read the device (decision `read` not `allow`) there is no such shortcut (the
+     human is asked and sees the state), and a refusal by the check reaches it as the
+     generic `failed: not_executed`, also through `approval_status`; the audit entry keeps
+     the precise code. Only states of the category's known set (on/off, open/opening/
+     closed/closing/stopped, locked/unlocked/locking/unlocking/jammed, disarmed/armed_*/
+     arming/…, playing/paused/idle/…, HVAC modes) are recorded and shown; anything else
+     (unknown, unavailable, a scene's timestamp) means no state shown and no check. The
+     state never appears in text an agent sees. While Home Assistant is disconnected or the
+     directory is being reloaded there is no shortcut and no check either (the human is
+     asked; an execution then fails anyway). A rule by the state alone (`turn_on`,
+     `open`, …) applies only to a call without data: a light turned on at another
+     brightness is not "already on". The comparison is with the whole state (decision
+     2026-10-10): a `set_temperature` is refused if only the HVAC mode changed meanwhile. This catches what layers 1 and 2
+     cannot see: two agents, or someone who
+     operated the device meanwhile (a garage door on a pulse relay toggles on every
+     `open_cover`). Target states (`mcp/state.go`):
+
+     | Category | Action | Already reached when |
+     |---|---|---|
+     | light, switch | `turn_on` / `turn_off` | state `on` / `off` |
+     | light | `set` | no check: brightness and colour temperature are converted and rounded by Home Assistant |
+     | climate | `set_mode` | state equals `hvac_mode` |
+     | climate | `set_temperature` | attribute `temperature` equals the value |
+     | cover, gate | `open` / `close` | `open` (a cover with `current_position` only at 100), `opening` / `closed`, `closing` |
+     | cover | `set_position` | attribute `current_position` equals the value |
+     | cover | `stop` | no check (acts on every call) |
+     | lock | `lock` / `unlock` | `locked`, `locking` / `unlocked`, `unlocking` |
+     | lock | `open` | no check (unlatches on every call) |
+     | alarm | `arm` / `disarm` | `armed_<mode>` / `disarmed` |
+     | media | `turn_on` / `turn_off` | `on`, `idle`, `playing`, `paused`, `buffering` / `off` |
+     | media | `play` / `pause` | `playing` / `paused` |
+     | media | `set_volume` | attribute `volume_level` equals the value |
+     | scene, script | `activate`, `run` | no check (act on every call); layers 1 and 2 protect them |
+
+     A value setter whose attribute is missing is not "already reached"; it is still
+     refused as `state_changed` if the state itself changed. The check reads the
+     gateway's directory, kept current by Home Assistant's state events; it is not atomic
+     with the call. Residual: Home Assistant's services are not conditional, so a device
+     whose state is reported late (a pulse relay whose sensor updates after a few
+     seconds) can still be toggled twice by two confirmations in that gap. Two agents
+     asking the same stateless action and two confirmations run it twice (two separate
+     human decisions; layers 1 and 2 are per agent; decision 2026-10-10).
+  4. **`idempotency_key`** (optional argument of `perform_action`, 8 to 64 of `A–Z a–z
+     0–9 _ -`): the same agent with the same key is tied to the request it named for as
+     long as the journal holds it (24 hours after the end), regardless of the window:
+     attached while open; once ended, its outcome **marked as earlier**: an execution as
+     `already_executed` with its time, a refusal or timeout as the refusal with "(earlier
+     result of <time>; nothing new was asked)"; never a plain `executed`. A new intention
+     needs a new key. The key is checked and registered under a lock of its
+     own, so one key for two devices at once gives one request and one conflict. The same key with another device,
+     action or parameters: `invalid_params: idempotency_conflict`. It applies to actions
+     that need a confirmation; for carefully built agents, not relied on for chat clients.
+  - **Audit of repeated calls:** each is a request of an authenticated agent, so it is a
+    `decision` entry (SPEC-v0 section 9.2) and counts towards the rate limit; it made no
+    request of its own, so it has no `approval` object (section 9.1) and is `denied`,
+    `denied_by: approval`, with `error` `approval_duplicate` (attached, or tied by its key),
+    `already_executed` (replayed) or `idempotency_conflict` (the UI says "This call
+    executed nothing itself: …"); a call refused for want of a fingerprint is `failed`,
+    `call_fingerprint` (fail closed). The same shape as
+    `approval_pending` and `approval_cooldown`. The request it was tied to has its own
+    entry with the approval and the execution; the specification has no field that links
+    the two.
 - **Approval journal (issue #27, SPEC-v0 section 11.1 item 9):** every request is a row of
   `approval_journal` (section 9). The row is written, state `open`, before the first
   notification leaves; if it cannot be written the request is denied and nobody is
@@ -537,7 +633,9 @@ once their data is deleted and only the tombstone is left), `tokens` (hashes), `
 (hash-chained) with its search index `audit_search`, `approvers`, `mandate_templates`,
 `settings`, `approval_journal` (every approval request from before its first
 notification until a day after its end, so that a restart ends waiting ones visibly;
-section 7, migrations 0016 and 0017; `agent_ref` is the approval ID the agent knows).
+section 7, migrations 0016 to 0018; `agent_ref` is the approval ID the agent knows,
+`state_before` the device's state shown with the request, `idempotency_key` the agent's
+optional key, unique per agent).
 
 Every connection waits up to 15 seconds for a lock (`busy_timeout`): longer than the
 longest call to Home Assistant (10 seconds), during which the audit log holds the write
