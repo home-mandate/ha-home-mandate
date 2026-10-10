@@ -39,6 +39,21 @@ func awaitResult(t *testing.T, ch <-chan toolResult) toolResult {
 	}
 }
 
+// settled follows a pending result with approval_status until the outcome is known
+// (issue #27): the call itself waits only HM_APPROVAL_WAIT.
+func settled(t *testing.T, s *sdk.ClientSession, r toolResult) toolResult {
+	t.Helper()
+	deadline := time.Now().Add(45 * time.Second)
+	for r.errText == "" && r.out["status"] == "pending" {
+		if time.Now().After(deadline) {
+			t.Fatal("still pending")
+		}
+		out, errText := call(t, s, "approval_status", map[string]any{"approval_id": r.out["approval_id"]})
+		r = toolResult{out, errText}
+	}
+	return r
+}
+
 // statusWith returns the HTTP status of an MCP request with token.
 func statusWith(t *testing.T, token string) int {
 	t.Helper()
@@ -74,7 +89,7 @@ func TestScenario02ApprovedDoorOpens(t *testing.T) {
 	}
 	env.secrets = append(env.secrets, strings.TrimPrefix(n.Actions[0], "HM_APPROVE_"))
 	answer(t, adminApprover, n.Actions[0])
-	if r := awaitResult(t, result); r.errText != "" || r.out["status"] != "executed" {
+	if r := settled(t, s, awaitResult(t, result)); r.errText != "" || r.out["status"] != "executed" {
 		t.Fatalf("perform_action = %v, %q", r.out, r.errText)
 	}
 	eventually(t, "door unlocked in Home Assistant", 15*time.Second, func() bool { return haState(t, "lock.front_door") == "unlocked" })
@@ -84,7 +99,8 @@ func TestScenario02ApprovedDoorOpens(t *testing.T) {
 }
 
 // Scenario 3: open door → approval request → no answer → denied after the timeout, the
-// door stays closed.
+// door stays closed. The call returns the pending result after HM_APPROVAL_WAIT (5 s),
+// NOT executed yet; approval_status then gives the timeout (issue #27).
 func TestScenario03NoAnswerKeepsTheDoorClosed(t *testing.T) {
 	notes := watchNotifications(t)
 	s := session(t, newAgent(t, "Impatient", nil))
@@ -96,8 +112,14 @@ func TestScenario03NoAnswerKeepsTheDoorClosed(t *testing.T) {
 	result := callAsync(t, s, "perform_action", unlockArgs("lock.openable_lock"))
 	nextNotification(t, notes)
 	r := awaitResult(t, result)
-	if r.errText != "denied: approval_timeout" || time.Since(start) < 10*time.Second {
-		t.Errorf("perform_action = %q after %v", r.errText, time.Since(start))
+	if r.errText != "" || r.out["status"] != "pending" || r.out["approval_id"] == nil || time.Since(start) >= 10*time.Second {
+		t.Fatalf("perform_action = %v, %q after %v", r.out, r.errText, time.Since(start))
+	}
+	if state := haState(t, "lock.openable_lock"); state != "locked" {
+		t.Errorf("lock.openable_lock is %q while pending", state)
+	}
+	if r = settled(t, s, r); r.errText != "denied: approval_timeout" || time.Since(start) < 10*time.Second {
+		t.Errorf("approval_status = %q after %v", r.errText, time.Since(start))
 	}
 	if state := haState(t, "lock.openable_lock"); state != "locked" {
 		t.Errorf("lock.openable_lock is %q", state)
@@ -117,7 +139,7 @@ func TestScenario04AnswerFromANonApprover(t *testing.T) {
 	n := nextNotification(t, notes)
 	env.secrets = append(env.secrets, strings.TrimPrefix(n.Actions[0], "HM_APPROVE_"))
 	answer(t, adminOther, n.Actions[0])
-	if r := awaitResult(t, result); r.errText != "denied: approval_invalid" {
+	if r := settled(t, s, awaitResult(t, result)); r.errText != "denied: approval_invalid" {
 		t.Errorf("perform_action = %q", r.errText)
 	}
 	other := env.users[adminOther].id

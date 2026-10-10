@@ -411,6 +411,9 @@ func startGateway() error {
 		"-e", "HM_LOG_LEVEL=debug",
 		"-e", "HM_PUBLIC_URL="+env.public,
 		"-e", "HM_APPROVAL_TIMEOUT=30",
+		// Shorter than the mandates' approval timeout (10 s), so that a request without an
+		// answer gives the pending result (issue #27).
+		"-e", "HM_APPROVAL_WAIT=5",
 		env.image)...); err != nil {
 		return err
 	}

@@ -72,6 +72,8 @@ Reason: only this way can every request be mapped unambiguously to a device and 
 | `get_state` | `read` | State of a device |
 | `perform_action` | depends on the category, e.g. `turn_on`, `unlock` | Performs an action, after the decision |
 | `list_my_permissions` | – | Shows the agent what it may do (helps models avoid pointless requests). Never shows other agents' rules. |
+| `approval_status` | – (no action) | Outcome of the agent's own request that waits for a human, by its approval ID: executed, the refusal, or still pending (section 7) |
+| `approval_cancel` | – (no action) | Withdraws the agent's own open request (`cancelled`, `cause: withdrawn`); never an answer (section 7) |
 
 Devices an agent has no read access to do not exist for that agent (no hint of their
 existence in lists or error messages): `list_devices` lists only devices it may read
@@ -315,7 +317,8 @@ checked on every request.
   the alarm is armed the mode (`mode=night`; `away` when the agent names none), which is
   part of the service, not of the data; the UI shows the same.
 - Timeout: the mandate's `approval.timeout`, capped by `HM_APPROVAL_TIMEOUT` (default
-  2 minutes, at most 10) because the agent's request waits → `deny`. Every nonce is valid
+  2 minutes, at most 10) → `deny`; the agent's call waits only `HM_APPROVAL_WAIT` of it
+  (below). Every nonce is valid
   exactly once and lives only in memory (as a hash); the request itself is also in the
   approval journal (below).
 - **Notification tag:** every request's notifications carry a Companion App `data.tag`, a
@@ -328,25 +331,75 @@ checked on every request.
   would not clear. Clearing runs in the background, so an approved action does not wait
   for it; failures are logged. On a stop the gateway waits up to 2 seconds for removals
   still being sent before Home Assistant's client stops.
-- **Waiting of the agent (decision 2026-10-10, planned, issue #27):** clients cut tool calls
-  off long before the timeout (Claude Desktop reportedly after about 60 s, also through
-  `mcp-remote`; remote connectors after about 4 minutes; to be measured), and the MCP Tasks
-  extension has no client support yet. Therefore: the call waits at most about 45 s; without
-  an answer by then the agent gets a normal result stating that the action is **not executed
-  yet**, with an opaque ID (not the nonce, bound to the agent and its token) and the time
-  until which the request is open. The new tool `approval_status` waits up to about 45 s
-  itself and returns the result of the execution, the refusal or "still waiting";
-  `approval_cancel` withdraws an open request. Rules: the action is executed when the
-  confirmation arrives (SPEC-v0 11.1 item 5), never when the agent fetches the result,
-  which is kept for a bounded time; a request counts towards the limit of 2 waiting
-  requests until it ends, not until the tool call returns; status calls are rate limited
-  and are no actions. A client that declares the Tasks extension later gets a task instead,
-  with the same logic behind it. A repeated call of the same agent for the same resource,
-  action and parameters while a request is open creates no second request (observed with
-  Claude Desktop, which calls again after its cut-off). The approval journal and the
-  restart handling below are built (issue #27, part A); the short wait, the pending
-  result, `approval_status`, `approval_cancel`, counting the limit of 2 from the journal
-  and the detection of repeated requests are not yet.
+- **Waiting of the agent (decision 2026-10-10, issue #27):** clients cut tool calls off
+  long before the timeout (Claude Desktop reportedly after about 60 s, also through
+  `mcp-remote`; remote connectors after about 4 minutes), and the MCP Tasks extension has
+  no client support yet. Therefore the request is **decoupled from the tool call**:
+  - `approval.Service.Start` enters, notifies and returns; the request ends only by an
+    answer, its timeout, a revocation, the emergency stop or a withdrawal, never with the
+    context of the agent's call (an abandoned or cut-off call leaves it open).
+  - The gateway follows every request in the background (`mcp.follow`) with a context of
+    its own: when it ends, the outcome is recorded and, after a confirmation, the checks
+    below run and the action is executed **once, when the confirmation arrives** (SPEC-v0
+    11.1 item 5), journal `executing` first as below; never when the agent fetches the
+    result.
+  - `perform_action` waits for the outcome at most `HM_APPROVAL_WAIT` (app option
+    `approval_wait_seconds`, 5–55 s, default 45; a request whose timeout is shorter ends
+    within the call). An answer within it gives the result as before (the call also waits
+    for an execution that started within it). Without an answer the agent gets a normal
+    result (no error), `{"status": "pending", "approval_id", "open_until", "next":
+    "approval_status"}`, whose text begins "NOT EXECUTED YET" and tells the model not to
+    report success.
+  - `approval_status(approval_id)` waits up to the same bound and returns what
+    `perform_action` would have: `executed`, the refusal as the same error (e.g. `denied:
+    approval_rejected`), or `pending` again. The exact result stays in memory 15 minutes
+    after the end; after that, and after a restart, the journal answers for 24 hours
+    (`executed`, `denied: <reason>` derived from the stored approval and result,
+    `failed: outcome_unknown`, `denied: approval_interrupted`).
+  - `approval_cancel(approval_id)` withdraws an open request: `cancelled`, `cause:
+    withdrawn`, `denied_by: approval`, notifications cleared, journal ended. It is no answer
+    (SPEC-v0 11.1 item 4); a request already answered or ended keeps its outcome
+    (`conflict`).
+  - The **approval ID** (`apr_` + 128 random bits) is a value of its own, neither the
+    nonce, the UI's request ID nor the tag; it is stored in the journal (`agent_ref`) and
+    found only together with the agent's `client_id`, so only that agent, with a valid
+    token, can use it. Unknown, foreign and expired IDs give the same `not_found`.
+  - A request counts towards the limit of 2 until it **ends** (the follow releases it once
+    the outcome is final), not until the call returns; a third is denied without asking
+    anyone. After a restart nothing is open (recovery), so the count starts at 0 as the
+    journal does.
+  - Status and cancel calls are **no actions** (SPEC-v0 section 9.2: `decision` is for
+    requests to act): no audit entry, not counted towards `max_actions_per_hour`; they are
+    limited to 120 per hour per agent together (`rate_limited`). A withdrawal is recorded
+    in the decision entry of the request it ends.
+  - A pending result has `phase: waiting` (nobody answered) or `phase: answered` (an
+    answer came within the wait but the execution took longer than the 10-second grace);
+    the text of the latter says the request was confirmed and is not finished yet, never
+    that nothing has happened.
+  - The daily token purge keeps expired tokens for the approval timeout plus 15 minutes,
+    so that the token of an open request is still there for the check below.
+  - The check after a late answer asks whether the token that made the request still
+    counts (`agent.Store.StillAuthorized`): not revoked (token, family, agent), no
+    emergency stop, same resource. Its expiry after 10 minutes does not count (decision
+    2026-10-10): access tokens live 10 minutes, a request up to 10 minutes plus the
+    agent's polling, and a confirmation given after the agent stopped polling must still
+    execute once; expiry limits how long a stolen token can be used for new requests, not
+    whether a request made with a valid token may finish. Every revocation still stops it.
+  - **Shutdown:** `mcp.Gateway.Close` first closes the door (`approval.Service.StopAnswers`,
+    under the lock answers are taken with): from then on an answer on a phone or in the UI
+    is discarded and logged like one to a request that is no longer open. It then waits (5
+    seconds, while Home Assistant's client still runs) until every request that was
+    answered before is settled, executed after a confirmation. Requests still open are
+    recorded at the next start as `cancelled`/`interrupted`, which then is true: nobody's
+    answer was accepted (SPEC-v0 11.1 item 8). An execution still under way when the
+    process ends becomes `outcome_unknown` at the next start.
+  - The HTTP write timeout of the MCP listener is the agent's wait plus 10 seconds of grace
+    plus 30 seconds (85 s by default), no longer derived from the approval timeout.
+  - **MCP Tasks:** a client that declares the extension would get a task bound to the
+    same waiting request instead of the pending result (`mcp.await`); not built.
+  - Not yet (issue #27, part C): a repeated call for the same resource, action and
+    parameters while a request is open creates a second request (deduplication, replay
+    window, state check at execution).
 - **Approval journal (issue #27, SPEC-v0 section 11.1 item 9):** every request is a row of
   `approval_journal` (section 9). The row is written, state `open`, before the first
   notification leaves; if it cannot be written the request is denied and nobody is
@@ -399,7 +452,10 @@ checked on every request.
   to a device that never had the request.
 - After an approval the PEP checks emergency stop, token and mandate again before executing.
 - **Approver fatigue:** an agent has at most 2 requests waiting, and every request counts
-  towards its rate limit. After a rejection, a timeout or an invalid answer, the same
+  towards its rate limit. After a rejection, a timeout, an invalid answer or a withdrawal
+  by the agent (`approval_cancel`; withdrawing and asking again would otherwise notify the
+  approvers again and again; not after an end by the emergency stop, a revocation or a
+  restart), the same
   agent may not ask again for the same device for a minute; every further one doubles the
   wait up to an hour, an approval or a quiet hour after the last wait ends it. Meanwhile
   the agent gets `denied: approval_cooldown`, nobody is notified, and the refusal is in the
@@ -481,7 +537,7 @@ once their data is deleted and only the tombstone is left), `tokens` (hashes), `
 (hash-chained) with its search index `audit_search`, `approvers`, `mandate_templates`,
 `settings`, `approval_journal` (every approval request from before its first
 notification until a day after its end, so that a restart ends waiting ones visibly;
-section 7, migration 0016).
+section 7, migrations 0016 and 0017; `agent_ref` is the approval ID the agent knows).
 
 Every connection waits up to 15 seconds for a lock (`busy_timeout`): longer than the
 longest call to Home Assistant (10 seconds), during which the audit log holds the write

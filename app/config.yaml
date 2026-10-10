@@ -49,6 +49,9 @@ schema:
   tls_certfile: str
   tls_keyfile: str
   approval_timeout_seconds: int(30,600)
+  # Optional: how long an agent's call waits for an approval before it gets a pending
+  # result (default 45).
+  approval_wait_seconds: int(5,55)?
   log_level: list(debug|info|warning|error)
   # Both optional: without public_url, no agent can be admitted (OAuth is off).
   public_url: url?

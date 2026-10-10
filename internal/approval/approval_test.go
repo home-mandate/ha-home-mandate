@@ -319,20 +319,72 @@ func TestNoApproverCanBeReached(t *testing.T) {
 	}
 }
 
-func TestCancelledRequestEndsLikeATimeout(t *testing.T) {
+// Issue #27: a request does not end with the call that made it; an answer after the
+// caller gave up still counts, and the timeout ends it as before.
+func TestTheRequestOutlivesTheCall(t *testing.T) {
 	e := newEnv(t, time.Minute)
 	ctx, cancel := context.WithCancel(context.Background())
-	ch := make(chan answer, 1)
-	go func() {
-		res, err := e.svc.Ask(ctx, request())
-		ch <- answer{res, err}
-	}()
+	p, err := e.svc.Start(ctx, request())
+	if err != nil {
+		t.Fatal(err)
+	}
 	nonce := nonceOf(t, e.notifier.next(t))
 	cancel()
-	if a := wait(t, ch); a.res.Outcome != OutcomeTimeout {
-		t.Errorf("result = %+v", a.res)
+	select {
+	case res := <-p.Done:
+		t.Fatalf("ended with the call: %+v", res)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if open := e.svc.Open(); len(open) != 1 || open[0].ID != p.ID || !p.Expires.Equal(open[0].ExpiresAt) {
+		t.Fatalf("open = %+v, pending %+v", open, p)
 	}
 	e.svc.HandleEvent(event("HM_APPROVE_"+nonce, u1))
+	if res := <-p.Done; res.Outcome != OutcomeApproved || res.ID != p.ID {
+		t.Errorf("result = %+v", res)
+	}
+
+	req := request()
+	req.Timeout = 100 * time.Millisecond
+	p, err = e.svc.Start(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := <-p.Done; res.Outcome != OutcomeTimeout {
+		t.Errorf("timeout = %+v", res)
+	}
+}
+
+// SPEC-v0 section 11.1 item 8: the agent may withdraw its own open request; that is no
+// answer, and an answer given before stands.
+func TestCancelRequest(t *testing.T) {
+	e := newEnv(t, time.Minute)
+	p, err := e.svc.Start(context.Background(), request())
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := nonceOf(t, e.notifier.next(t))
+	_ = e.notifier.next(t) // the second approver's
+	if e.svc.CancelRequest("0123") || e.svc.CancelRequest("") {
+		t.Error("unknown request cancelled")
+	}
+	if !e.svc.CancelRequest(p.ID) {
+		t.Fatal("not cancelled")
+	}
+	if res := <-p.Done; res.Outcome != OutcomeCancelled || res.Cause != audit.CauseWithdrawn || res.By != "" {
+		t.Errorf("result = %+v", res)
+	}
+	e.svc.HandleEvent(event("HM_APPROVE_"+nonce, u1)) // too late: discarded
+
+	p, _ = e.svc.Start(context.Background(), request())
+	nonce = nonceOf(t, e.notifier.next(t))
+	_ = e.notifier.next(t)
+	e.svc.HandleEvent(event("HM_DENY_"+nonce, u1))
+	if res := <-p.Done; res.Outcome != OutcomeRejected {
+		t.Errorf("answered = %+v", res)
+	}
+	if e.svc.CancelRequest(p.ID) {
+		t.Error("an answered request was withdrawn")
+	}
 }
 
 // TESTING section 5: approval notifications in both languages against stored references.
@@ -523,5 +575,39 @@ func TestShownParamsAndText(t *testing.T) {
 	}
 	if got := ShownText("a\u202eb\nc", ShownReasonMax); got != "a b c" {
 		t.Errorf("ShownText = %q", got)
+	}
+}
+
+// On shutdown the door closes before anything else (SPEC-v0 section 11.1 items 8 and 9):
+// an answer after StopAnswers is discarded and logged like one to a request that is no
+// longer open, on the phone and in the UI; the request stays open, so the next start
+// records it as interrupted, which it then truly was.
+func TestNoAnswerIsTakenAfterStopAnswers(t *testing.T) {
+	e := newChannelEnv(t, time.Minute)
+	var buf safeBuffer
+	e.svc.cfg.Logger = slog.New(slog.NewTextHandler(&buf, nil))
+	e.put(t, Approver{UserID: u2, Devices: phones("mobile_app_anna"), UI: true})
+	e.admins.put(u2, true)
+	p, err := e.svc.Start(context.Background(), request())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := e.waitOpen(t, 1)[0].ID
+	nonce := nonceOf(t, e.notifier.next(t))
+	e.svc.StopAnswers()
+	e.svc.HandleEvent(event("HM_APPROVE_"+nonce, u1))
+	if !strings.Contains(buf.String(), "approval answer discarded: unknown, expired or already answered") {
+		t.Errorf("log = %s", buf.String())
+	}
+	if _, err := e.svc.Answer(context.Background(), id, u2, true); !errors.Is(err, ErrNotPending) {
+		t.Errorf("UI answer after the stop: %v", err)
+	}
+	if !e.svc.IsOpen(id) || e.svc.IsOpen("0123") {
+		t.Error("IsOpen")
+	}
+	select {
+	case res := <-p.Done:
+		t.Fatalf("ended by a discarded answer: %+v", res)
+	case <-time.After(50 * time.Millisecond):
 	}
 }

@@ -367,12 +367,15 @@ func TestDirectModeNeedsContainerModeTLSAndHTTPS(t *testing.T) {
 	}
 }
 
+// A tool call waits at most the agent's wait for an approval, plus the grace for an
+// execution after an answer within it (issue #27); the write timeout covers that and a
+// margin, whatever the approval timeout.
 func TestWriteTimeoutCoversTheApprovalWait(t *testing.T) {
-	if got := writeTimeout(2 * time.Minute); got != 150*time.Second {
-		t.Errorf("writeTimeout(2m) = %v", got)
-	}
-	if got := writeTimeout(10 * time.Second); got != time.Minute {
-		t.Errorf("writeTimeout(10s) = %v", got)
+	for wait, want := range map[time.Duration]time.Duration{45 * time.Second: 85 * time.Second, 55 * time.Second: 95 * time.Second,
+		5 * time.Second: time.Minute} {
+		if got := writeTimeout(wait); got != want {
+			t.Errorf("writeTimeout(%v) = %v, want %v", wait, got, want)
+		}
 	}
 }
 
@@ -387,7 +390,7 @@ func TestNewGatewayServesOAuth(t *testing.T) {
 	defer s.store.Close()
 	s.cfg = config.Config{Mode: config.ModeContainer, HAURL: "ws://localhost:1/api/websocket", HAToken: "t",
 		MCPAddr: "127.0.0.1:0", PublicURL: "http://localhost:8765", HABrowserURL: "http://localhost:1",
-		HAHTTPURL: "http://localhost:1", ApprovalTimeout: 2 * time.Minute}
+		HAHTTPURL: "http://localhost:1", ApprovalTimeout: 2 * time.Minute, ApprovalWait: 45 * time.Second}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	g, err := newGateway(ctx, s, slog.New(slog.DiscardHandler))
@@ -402,7 +405,7 @@ func TestNewGatewayServesOAuth(t *testing.T) {
 			t.Errorf("%s: %d, want %d", path, rec.Code, want)
 		}
 	}
-	if g.server.WriteTimeout != 150*time.Second {
+	if g.server.WriteTimeout != 85*time.Second {
 		t.Errorf("write timeout %v", g.server.WriteTimeout)
 	}
 }
@@ -522,5 +525,18 @@ func TestRetentionRemovesRevokedAgents(t *testing.T) {
 	expireRemovals(context.Background(), s, logger)
 	if !strings.Contains(out.String(), `"level":"ERROR","msg":"removing revoked agents and mandates failed"`) {
 		t.Errorf("log = %s", out.String())
+	}
+}
+
+// The daily purge keeps an expired access token as long as a request made with it may
+// still be answered (approval timeout plus a margin), so the check after a late
+// confirmation finds it (issue #27).
+func TestTokenPurgeKeepsTokensOfOpenRequests(t *testing.T) {
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	if got := tokenPurgeCutoff(now, 10*time.Minute); got != now.Add(-10*time.Minute-tokenKeepMargin) {
+		t.Errorf("cutoff = %v", got)
+	}
+	if tokenKeepMargin < 10*time.Minute {
+		t.Errorf("margin %v", tokenKeepMargin)
 	}
 }

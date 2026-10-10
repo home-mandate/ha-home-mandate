@@ -16,7 +16,7 @@ running Home-Mandate; where they differ, it says so. Install first:
 
 An AI agent that connects to Home-Mandate over MCP: Claude Desktop, Claude Code, a local
 language model, a script. Every agent gets its own identity when a Home Assistant
-administrator admits it, and it acts only through Home-Mandate's four tools
+administrator admits it, and it acts only through Home-Mandate's six tools
 ([agents.md](agents.md#the-tools-agents-see)). It never gets a Home Assistant token.
 
 The name an agent gives itself is its own claim. The UI marks such names with a dotted
@@ -159,7 +159,9 @@ verified", the values it wants to set, and has two buttons: **Allow** and **Deny
 - The first answer counts, from any channel.
 - No answer within the approval timeout, a refusal, an answer from someone who may not
   approve, or no approver who can be reached means **deny**.
-- The agent's request waits for the answer. A mandate's timeout can only shorten the
+- The request waits for the answer until its timeout; the agent's call waits only up to
+  45 seconds of it (`approval_wait_seconds` / `HM_APPROVAL_WAIT`) and then learns that the
+  action is not executed yet. A mandate's timeout can only shorten the
   installation's approval timeout: the app option `approval_timeout_seconds` or
   `HM_APPROVAL_TIMEOUT`, 30 to 600 seconds, default 120. The editor offers 10 seconds up to
   that limit and names it; a longer timeout (for example one stored before the limit was
@@ -300,7 +302,9 @@ cautious voice assistant template), your phone shows the notification. Long-pres
 expand it (depending on the phone) to see **Allow** and **Deny**. On an iPhone, the phone
 asks you to unlock it first for a critical action.
 
-The agent's call waits for your answer and then gets the result. Pending requests also
+If you answer within 45 seconds, the agent's call gets the result directly. Later, the
+agent has been told the action is not executed yet and asks again; your **Allow** still
+executes it at once, exactly once, also if the agent stopped asking. Pending requests also
 appear on the **Overview** under **Pending approvals**; if **Answer in Home-Mandate** is on
 for you, you can answer there (**Approve** → **Yes, approve**, or **Decline**).
 

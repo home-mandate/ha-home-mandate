@@ -26,10 +26,12 @@ Take A unless you want TLS to end inside Home-Mandate.
   OAuth endpoints (`/.well-known/…`, `/oauth/…`, `/pair`) and the UI (`/ui/`) are on
   the same host.
 - Pass **WebSocket** upgrades (the UI's live updates under `/ui/api/events`).
-- Allow responses to take **at least the approval timeout plus 30 seconds**: an action
-  that needs an approval waits for it (default 120 s, so 150 s; with
-  `HM_APPROVAL_TIMEOUT=600` it is 630 s). Traefik and Caddy do not cut responses by
-  default; **nginx does after 60 s**.
+- Allow responses to take **at least `HM_APPROVAL_WAIT` plus 40 seconds** (85 s with the
+  default wait of 45 s, at most 95 s), Home-Mandate's own write timeout: an action that
+  needs an approval waits for the answer up to `HM_APPROVAL_WAIT`, then up to 10 seconds
+  for the execution of an answer given within it; longer waits continue through
+  `approval_status`. Traefik and Caddy do not cut responses by default; **nginx does after
+  60 s** (`proxy_read_timeout`), which is usually enough but leaves little room.
 - Use the **proxy's address without a port** in `HM_PUBLIC_URL` (in app mode the option
   `public_url`), exactly as browsers and agents type it (`https://hm.example.org`), in
   both ways. Only without a proxy, when agents connect to Home-Mandate's own TLS

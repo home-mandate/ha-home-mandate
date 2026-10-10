@@ -12,6 +12,12 @@ configuration:
     description: >-
       How long an action waits for an approval, in seconds (30–600). A mandate may only
       shorten it.
+  approval_wait_seconds:
+    name: Agent's wait for an approval
+    description: >-
+      How long an agent's call waits for the answer, in seconds (5–55, default 45). Without
+      an answer by then the agent learns that the action is not executed yet and asks again
+      later; the request stays open until its approval timeout.
   log_level:
     name: Log level
     description: debug, info, warning or error.

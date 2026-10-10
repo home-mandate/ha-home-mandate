@@ -37,31 +37,25 @@ const (
 
 // askHuman asks the approvers of the mandate and executes only after a valid
 // confirmation. Every outcome is in the audit log with the approval. An agent whose last
-// request for the device was not approved waits before anyone is asked again.
+// request for the device was not approved waits before anyone is asked again. The
+// request outlives the call: it is followed in the background (follow), and the call
+// waits for its outcome at most ApprovalWait (await).
 func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, reason string) (*sdk.CallToolResult, actionOut, error) {
 	if g.cooling(a.ClientID, d.Resource.EntityID) > 0 {
 		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval, Error: "approval_cooldown"})
 		return nil, actionOut{}, errors.New(codeDenied + ": approval_cooldown")
 	}
-	g.mu.Lock()
-	if g.pendingAsks[a.ClientID] >= maxPendingAsks {
-		g.mu.Unlock()
+	// A request counts until it ends, not until this call returns (SPEC-v0 section 11.1
+	// item 7): follow releases it.
+	if !g.reserve(a.ClientID) {
 		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval})
 		return nil, actionOut{}, errors.New(codeDenied + ": approval_pending")
 	}
-	g.pendingAsks[a.ClientID]++
-	g.mu.Unlock()
-	defer func() {
-		g.mu.Lock()
-		defer g.mu.Unlock()
-		if g.pendingAsks[a.ClientID]--; g.pendingAsks[a.ClientID] == 0 {
-			delete(g.pendingAsks, a.ClientID)
-		}
-	}()
 
+	ref := newAgentRef()
 	req := approval.Request{ClientID: a.ClientID, Agent: a.DisplayName, EntityID: d.Resource.EntityID, Area: d.Resource.Area,
 		Device: d.Resource.EntityID, Action: d.Action, Reason: reason, Params: shownParams(d, call), Critical: criticalRequest(d),
-		Record: &approval.Record{Entry: g.entry(a, d, true, audit.Result{}), ParamsDigest: callDigest(call)}}
+		Record: &approval.Record{Entry: g.entry(a, d, true, audit.Result{}), ParamsDigest: callDigest(call), AgentRef: ref}}
 	if dev, ok := g.cfg.Catalog.Lookup(d.Resource.EntityID); ok {
 		if name, _ := dev.Attributes["friendly_name"].(string); name != "" {
 			req.Device = name
@@ -70,11 +64,12 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 	if ap := d.Result.Approval; ap != nil {
 		req.Approvers, req.Timeout = ap.Approvers, ap.Duration()
 	}
-	res, err := g.cfg.Approvals.Ask(ctx, req)
+	p, err := g.cfg.Approvals.Start(ctx, req)
 	if err != nil {
+		g.release(a.ClientID)
 		// No request was made (SPEC-v0 section 9.1): no approval, and no request in the UI
 		// to close; one that is in the journal but reached nobody ends there.
-		ref := approvalRef{row: res.ID}
+		ref := approvalRef{row: p.ID}
 		if errors.Is(err, approval.ErrJournal) {
 			_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: errJournal}, ref)
 			return nil, actionOut{}, errors.New(codeUnavailable)
@@ -85,14 +80,30 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}, ref)
 		return nil, actionOut{}, errors.New(codeDenied + ": no_approver")
 	}
+	w := &waiting{ref: ref, clientID: a.ClientID, row: p.ID, entityID: d.Resource.EntityID, action: d.Action, expires: p.Expires,
+		answered: make(chan struct{}), done: make(chan struct{})}
+	g.track(w)
+	go g.follow(w, p, a, token, d, call, req.Timeout)
+	return g.await(ctx, w)
+}
+
+// settle records how a request ended and, after a confirmation, checks again and
+// executes. It runs in the background (follow) with a context of its own.
+func (g *Gateway) settle(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, res approval.Result, timeout time.Duration) (*sdk.CallToolResult, actionOut, error) {
 	appr := approvalRef{approval: &audit.Approval{Outcome: res.Outcome, By: res.By, Via: res.Via, At: res.At, Cause: res.Cause},
 		id: res.ID, row: res.ID}
 	if res.Outcome == approval.OutcomeCancelled {
+		// Withdrawing and asking again would notify the approvers again and again: a
+		// withdrawal starts the same wait as a refusal. An end by the emergency stop, a
+		// revocation or a restart is none of the agent's doing.
+		if res.Cause == audit.CauseWithdrawn {
+			g.coolDown(a.ClientID, d.Resource.EntityID)
+		}
 		return g.cancelled(ctx, a, token, d, appr)
 	}
 	if res.Outcome == approval.OutcomeApproved {
 		g.forgive(a.ClientID, d.Resource.EntityID)
-		return g.afterApproval(ctx, a, token, d, call, appr, res.At.Add(g.approvalValidity(req.Timeout)))
+		return g.afterApproval(ctx, a, token, d, call, appr, res.At.Add(g.approvalValidity(timeout)))
 	}
 	g.coolDown(a.ClientID, d.Resource.EntityID)
 	var code string
@@ -132,21 +143,21 @@ type approvalRef struct {
 // revocation of the agent (its token no longer counts) denies by authentication, one of
 // only its mandate by mandate.
 func (g *Gateway) cancelled(ctx context.Context, a agent.Agent, token string, d pdp.Decision, appr approvalRef) (*sdk.CallToolResult, actionOut, error) {
-	deniedBy, code := audit.DeniedByApproval, "approval_cancelled"
+	deniedBy := audit.DeniedByApproval
 	switch appr.approval.Cause {
 	case audit.CauseEmergencyStop:
-		deniedBy, code = audit.DeniedByEmergencyStop, "emergency_stop"
+		deniedBy = audit.DeniedByEmergencyStop
 	case audit.CauseRevoked:
-		deniedBy, code = audit.DeniedByMandate, "revoked"
-		if _, err := g.cfg.Agents.Authenticate(ctx, token, g.cfg.Resource); err != nil {
+		deniedBy = audit.DeniedByMandate
+		if _, err := g.cfg.Agents.StillAuthorized(ctx, token, g.cfg.Resource); err != nil {
 			if !errors.Is(err, agent.ErrUnauthorized) {
 				g.cfg.Logger.Error("token check after a revocation failed", "error", err)
 			}
-			deniedBy, code = audit.DeniedByAuthentication, "unauthorized"
+			deniedBy = audit.DeniedByAuthentication
 		}
 	}
 	_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: deniedBy}, appr)
-	return nil, actionOut{}, errors.New(codeDenied + ": " + code)
+	return nil, actionOut{}, errors.New(codeDenied + ": " + cancelledCode(appr.approval.Cause, deniedBy))
 }
 
 // callDigest is the digest of the effective call: domain, service and data as they would
@@ -184,7 +195,9 @@ func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop}, appr)
 		return nil, actionOut{}, errors.New(codeDenied + ": emergency_stop")
 	}
-	if _, err := g.cfg.Agents.Authenticate(ctx, token, g.cfg.Resource); err != nil {
+	// The token that made the request may have expired meanwhile (10 minutes); what counts
+	// is that nothing revoked it (agent.Store.StillAuthorized).
+	if _, err := g.cfg.Agents.StillAuthorized(ctx, token, g.cfg.Resource); err != nil {
 		if !errors.Is(err, agent.ErrUnauthorized) {
 			g.cfg.Logger.Error("token check after an approval failed", "error", err)
 		}

@@ -591,3 +591,36 @@ func TestEmergencyStopState(t *testing.T) {
 		t.Error("EmergencyStopState succeeded on a closed database")
 	}
 }
+
+// Issue #27: the check after a late answer to an approval request asks whether the token
+// that made the request still counts: not revoked (the agent, its token family, the
+// emergency stop), for the same resource; its expiry after ten minutes does not end that.
+func TestStillAuthorizedIgnoresOnlyTheExpiry(t *testing.T) {
+	s, _, _ := newStore(t)
+	c := withClock(s)
+	ctx := context.Background()
+	a := register(t, s, "A")
+	p := issue(t, s, a.ClientID)
+	c.Set(t0.Add(time.Hour))
+	if _, err := s.Authenticate(ctx, p.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
+		t.Fatalf("expired token authenticated: %v", err)
+	}
+	if got, err := s.StillAuthorized(ctx, p.AccessToken, resource); err != nil || got.ClientID != a.ClientID {
+		t.Errorf("StillAuthorized = %+v, %v", got, err)
+	}
+	for name, tc := range map[string]struct{ token, resource string }{
+		"other resource": {p.AccessToken, "https://other.example.org/mcp"},
+		"refresh token":  {p.RefreshToken, resource},
+		"unknown":        {"hma_" + strings.Repeat("A", 43), resource},
+	} {
+		if _, err := s.StillAuthorized(ctx, tc.token, tc.resource); !errors.Is(err, agent.ErrUnauthorized) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if err := s.Revoke(ctx, a.ClientID, audit.Actor{Kind: audit.ActorUser, ID: "u"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.StillAuthorized(ctx, p.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
+		t.Errorf("revoked agent: %v", err)
+	}
+}
