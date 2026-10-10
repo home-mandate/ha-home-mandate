@@ -44,6 +44,9 @@ const (
 	minWriteTimeout = 60 * time.Second
 	approvalSlack   = 30 * time.Second
 	bellCleanup     = 10 * time.Second
+	// clearDrain bounds the wait on shutdown for removals of notifications of ended
+	// approval requests, while Home Assistant's client still runs.
+	clearDrain = 2 * time.Second
 	// configRetryMin and configRetryMax bound the wait between attempts to read Home
 	// Assistant's configuration and Home-Mandate's own user; nothing is decided without.
 	configRetryMin = time.Second
@@ -129,6 +132,16 @@ func serve(ctx context.Context, e env) int {
 	if n > 0 {
 		logger.Info("audit log indexed for the search", "entries", n)
 	}
+	// Approval requests a previous process left end before any agent can call.
+	s.journal = approval.NewJournal(s.store.DB(), logger)
+	err = recoverApprovals(ctx, s.journal, s.log, logger)
+	if ctx.Err() != nil {
+		return exitOK
+	}
+	if err != nil {
+		logger.Error("cannot end the approval requests of the previous run, not starting", "error", err)
+		return exitFailure
+	}
 	g, err := newGateway(ctx, s, logger)
 	if ctx.Err() != nil {
 		return exitOK
@@ -140,24 +153,45 @@ func serve(ctx context.Context, e env) int {
 	return g.run(ctx)
 }
 
+// recoverApprovals ends what the approval journal holds of a previous process (SPEC-v0
+// section 11.1 item 9): waiting requests as cancelled/interrupted, executions under way
+// as failed/outcome_unknown, each with its audit entry; nothing is executed or reopened.
+// The approvers are told once Home Assistant is connected (announceRecovered).
+func recoverApprovals(ctx context.Context, journal *approval.Journal, log *audit.Log, logger *slog.Logger) error {
+	r, err := journal.Recover(ctx, log)
+	if err != nil {
+		return err
+	}
+	if r.Interrupted > 0 || r.Unknown > 0 {
+		logger.Warn("approval requests ended by the restart", "waiting", r.Interrupted, "executing", r.Unknown)
+	}
+	if _, err := journal.Expire(ctx); err != nil {
+		logger.Error("deleting ended approval requests failed", "error", err)
+	}
+	return nil
+}
+
 type gateway struct {
-	marks    *catalog.Marks
-	renames  *catalog.Renames
-	state    *state
-	logger   *slog.Logger
-	client   *ha.Client
-	catalog  *catalog.Catalog
-	api      *api.Server
-	timeZone atomic.Value  // string; empty until Home Assistant answered get_config
-	language atomic.Value  // string; household language from get_config
-	self     atomic.Value  // string; Home-Mandate's own Home Assistant user
-	retryMin time.Duration // first wait before the configuration is read again
+	marks   *catalog.Marks
+	renames *catalog.Renames
+	state   *state
+	logger  *slog.Logger
+	client  *ha.Client
+	catalog *catalog.Catalog
+	api     *api.Server
+	// approvals asks humans; on shutdown its removals of notifications are waited for.
+	approvals *approval.Service
+	timeZone  atomic.Value  // string; empty until Home Assistant answered get_config
+	language  atomic.Value  // string; household language from get_config
+	self      atomic.Value  // string; Home-Mandate's own Home Assistant user
+	retryMin  time.Duration // first wait before the configuration is read again
 
 	mu        sync.Mutex
 	haSince   time.Time // when the connection was made or lost
 	haVersion string
 	units     map[string]string
 	bellClean sync.Once
+	announce  sync.Once
 	// background holds announcements started by Home Assistant's callbacks; they read the
 	// database, so run waits for them before it returns.
 	background sync.WaitGroup
@@ -232,7 +266,9 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 			if a := uiAPI.Load(); a != nil {
 				a.ApprovalOpened(o)
 			}
-		}})
+		},
+		Journal: s.journal, Clearer: client})
+	g.approvals = approvals
 	if _, err := client.SubscribeEvents(ctx, ha.EventMobileAppNotificationAction, approvals.HandleEvent); err != nil {
 		return nil, fmt.Errorf("subscribe %s: %w", ha.EventMobileAppNotificationAction, err)
 	}
@@ -253,7 +289,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	gw := mcp.New(mcp.Config{Resource: resource, ResourceMetadataURL: metadata, Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
 		TemperatureUnit: g.temperatureUnit, TimeZone: g.householdTimeZone, ServiceUser: g.serviceUser,
-		Limiter: restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, Clock: s.log, Audit: s.log, Approvals: approvals, Logger: logger, Version: version})
+		Limiter: restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, Clock: s.log, Audit: s.log, Approvals: approvals, Journal: s.journal, Logger: logger, Version: version})
 	as, handler, err := withOAuth(s, gw.Handler(), http.HandlerFunc(g.serveDirect), resource, logger)
 	if err != nil {
 		return nil, err
@@ -540,6 +576,22 @@ func (g *gateway) onConnect(ctx context.Context) {
 		return
 	}
 	g.bellClean.Do(func() { go g.clearBells() })
+	g.announce.Do(func() { g.background.Go(g.announceRecovered) })
+}
+
+// announceRecovered replaces, on the approvers' devices, the notifications of requests
+// the restart ended (approval.Journal.Announce).
+func (g *gateway) announceRecovered() {
+	ctx, cancel := context.WithTimeout(context.Background(), bellCleanup)
+	defer cancel()
+	n, err := g.state.journal.Announce(ctx, g.client)
+	if err != nil {
+		g.logger.Error("approvers not told about requests the restart ended", "error", err)
+		return
+	}
+	if n > 0 {
+		g.logger.Info("approvers told about requests the restart ended", "requests", n)
+	}
 }
 
 // readConfig takes over the household's time zone, language, units and Home Assistant's
@@ -634,7 +686,22 @@ func (g *gateway) run(ctx context.Context) int {
 	}
 	g.logger.Info("home-mandate started", "version", version, "mode", g.state.cfg.Mode, "household", g.state.household)
 
-	err := g.client.Run(ctx)
+	// Home Assistant's client runs a little longer than the rest on a stop: notifications
+	// of approval requests that ended are still removed (bounded by clearDrain).
+	clientCtx, stopClient := context.WithCancel(context.WithoutCancel(ctx))
+	defer stopClient()
+	clientDone := make(chan error, 1)
+	go func() { clientDone <- g.client.Run(clientCtx) }()
+	var err error
+	select {
+	case err = <-clientDone:
+	case <-ctx.Done():
+		if !g.approvals.Drain(clearDrain) {
+			g.logger.Warn("notifications of ended approval requests not all removed before the stop")
+		}
+		stopClient()
+		err = <-clientDone
+	}
 	cancel()
 	shutdownCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer stop()
@@ -686,11 +753,15 @@ func expireRemovals(ctx context.Context, s *state, logger *slog.Logger) {
 }
 
 // retention truncates the audit log, removes what no entry refers to any more and
-// deletes expired tokens, at start and then daily.
+// deletes expired tokens and approval requests that ended a day ago, at start and then
+// daily.
 func (g *gateway) retention(ctx context.Context) {
 	for {
 		expireLog(ctx, g.state.log, g.logger)
 		expireRemovals(ctx, g.state, g.logger)
+		if _, err := g.state.journal.Expire(ctx); err != nil {
+			g.logger.Error("deleting ended approval requests failed", "error", err)
+		}
 		if n, err := g.state.agents.PurgeExpiredTokens(ctx, time.Now()); err != nil {
 			g.logger.Error("deleting expired tokens failed", "error", err)
 		} else if n > 0 {

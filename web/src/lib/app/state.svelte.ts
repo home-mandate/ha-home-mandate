@@ -71,6 +71,11 @@ export class AppState {
     this.#now = now;
   }
 
+  /** The server's clock now: the injected browser clock minus the offset (issue #28). */
+  serverNow(): number {
+    return this.#now() - this.offsetMs;
+  }
+
   get api(): ApiClient {
     return this.#api;
   }

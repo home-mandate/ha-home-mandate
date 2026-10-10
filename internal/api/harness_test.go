@@ -458,14 +458,15 @@ func (h *harness) ask(req approval.Request) (string, chan approval.Result) {
 			Mandate:    &audit.Mandate{ID: "m-voice", Digest: "sha256:" + strings.Repeat("a", 64)},
 			Evaluation: &audit.Evaluation{Decision: "ask", Reason: "rule", RuleID: ptr("r-locks")}, ApprovalID: res.ID,
 			Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}}
+		e.Approval = &audit.Approval{Outcome: res.Outcome, By: res.By, Via: res.Via, At: res.At, Cause: res.Cause}
 		switch res.Outcome {
 		case approval.OutcomeCancelled:
 			e.Result.DeniedBy = audit.DeniedByEmergencyStop
-		default:
-			e.Approval = &audit.Approval{Outcome: res.Outcome, By: res.By, Via: res.Via, At: res.At}
-			if res.Outcome == approval.OutcomeApproved {
-				e.Result = &audit.Result{Status: audit.StatusExecuted}
+			if res.Cause == audit.CauseRevoked {
+				e.Result.DeniedBy = audit.DeniedByAuthentication
 			}
+		case approval.OutcomeApproved:
+			e.Result = &audit.Result{Status: audit.StatusExecuted}
 		}
 		if _, err := h.log.Append(context.Background(), e); err != nil {
 			h.t.Errorf("Append: %v", err)

@@ -63,8 +63,10 @@ type wireHistoryEntry struct {
 	DeviceName string       `json:"device_name"`
 	Action     string       `json:"action"`
 	Outcome    string       `json:"outcome"`
+	Cause      string       `json:"cause,omitempty"`
 	ByName     *string      `json:"by_name"`
 	Via        string       `json:"via,omitempty"`
+	Error      string       `json:"error,omitempty"`
 	CreatedAt  string       `json:"created_at"`
 	AnsweredAt string       `json:"answered_at"`
 }
@@ -141,17 +143,22 @@ type historySource struct {
 	} `json:"request"`
 	Approval *struct {
 		Outcome string    `json:"outcome"`
+		Cause   string    `json:"cause"`
 		By      string    `json:"by"`
 		Via     string    `json:"via"`
 		At      time.Time `json:"at"`
 	} `json:"approval"`
 	Result struct {
+		Status   string `json:"status"`
 		DeniedBy string `json:"denied_by"`
+		Error    string `json:"error"`
 	} `json:"result"`
 }
 
-// historyEntry maps a decision entry that ended an approval request; one without an
-// approval was ended by the emergency stop or a revocation (decision F1).
+// historyEntry maps a decision entry that ended an approval request. A cancelled request
+// has its cause; one without an approval was ended by the emergency stop or a
+// revocation in an older version (decision F1) and is shown as cancelled with that cause.
+// error is set for a confirmed action that failed, e.g. outcome_unknown after a restart.
 func (s *Server) historyEntry(ctx context.Context, seq int64, recorded time.Time, entry json.RawMessage) (wireHistoryEntry, error) {
 	var src historySource
 	if err := json.Unmarshal(entry, &src); err != nil {
@@ -165,17 +172,38 @@ func (s *Server) historyEntry(ctx context.Context, seq int64, recorded time.Time
 		CreatedAt: *formatTime(src.Request.Time), AnsweredAt: *formatTime(recorded)}
 	switch {
 	case src.Approval != nil:
-		out.Outcome, out.Via = src.Approval.Outcome, src.Approval.Via
+		out.Outcome, out.Cause, out.Via = src.Approval.Outcome, known(historyCauses, src.Approval.Cause, ""), src.Approval.Via
 		if at := formatTime(src.Approval.At); at != nil {
 			out.AnsweredAt = *at
 		}
 		out.ByName = s.users.name(ctx, src.Approval.By)
 	case src.Result.DeniedBy == audit.DeniedByEmergencyStop:
-		out.Outcome = "emergency_stop"
+		out.Outcome, out.Cause = audit.OutcomeCancelled, audit.CauseEmergencyStop
 	default:
-		out.Outcome = "revoked"
+		out.Outcome, out.Cause = audit.OutcomeCancelled, audit.CauseRevoked
+	}
+	if src.Result.Status == audit.StatusFailed {
+		out.Error = known(historyErrors, src.Result.Error, otherError)
 	}
 	return out, nil
+}
+
+// The causes and errors the history passes on; anything else (a log of another version,
+// or one changed in the database) becomes the generic value: no cause, error "other".
+var (
+	historyCauses = []string{audit.CauseWithdrawn, audit.CauseRevoked, audit.CauseEmergencyStop, audit.CauseInterrupted}
+	historyErrors = []string{"outcome_unknown", "ha_unavailable", "ha_error", "mandate_unavailable", "clock_behind",
+		"journal_unavailable", "timezone_unknown", "service_user_unknown"}
+)
+
+const otherError = "other"
+
+// known is value if it is in set, else fallback.
+func known(set []string, value, fallback string) string {
+	if slices.Contains(set, value) {
+		return value
+	}
+	return fallback
 }
 
 // deviceName is the device's name in the catalog now, else its entity ID.

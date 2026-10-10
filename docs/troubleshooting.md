@@ -222,6 +222,19 @@ device without an agent.
    for a while, and nobody is notified (agent error `approval_cooldown`).
 9. **Home Assistant was disconnected:** while it is unreachable, approvals cannot be
    delivered and affected requests are declined.
+10. **Home-Mandate was restarted** (app update, crash, reboot) while a request waited: the
+    request ended, nothing was executed, and the notification on the phone is replaced by
+    "Approval request ended" once Home Assistant is connected again; an answer given in
+    between does not count. The agent may ask again. The audit log shows the request as
+    "Ended by a restart, not executed" (`cancelled`, `cause: interrupted`; the log message
+    `approval requests ended by the restart` counts them). If the restart came while a
+    confirmed action was being executed, the notification says "Please check: <device>"
+    and the log shows `outcome_unknown`: Home-Mandate does not know whether Home Assistant
+    carried it out and never repeats it on its own.
+11. **The old notification stays on the phone** after a request ended: Home-Mandate asks
+    the Companion App to remove it (`clear_notification`), which needs app version 2021.5
+    or later on iOS and may need the app to have been used recently. Pressing its buttons
+    has no effect.
 
 ## Agents get "unavailable"
 

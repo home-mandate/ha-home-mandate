@@ -101,6 +101,17 @@ const (
 	DeniedByAuthentication = "authentication"
 )
 
+// OutcomeCancelled is the outcome of an approval request that ended before anyone
+// answered, with one of the causes (SPEC-v0 section 11.1 item 8).
+const (
+	OutcomeCancelled = "cancelled"
+
+	CauseWithdrawn     = "withdrawn"
+	CauseRevoked       = "revoked"
+	CauseEmergencyStop = "emergency_stop"
+	CauseInterrupted   = "interrupted"
+)
+
 // Entry is what a caller records; type, id, seq, recorded_at, principal and prev are
 // added by the log.
 type Entry struct {
@@ -123,6 +134,10 @@ type Entry struct {
 	// entry ends. It is not part of the entry: it only tells the OnCommit hook which open
 	// request in the UI the entry closes.
 	ApprovalID string
+	// Also, if set, runs in the transaction that writes the entry, before the action of
+	// WithEntry: both commit or neither (the approval journal ends a request together with
+	// the entry that records its end). It is not part of the entry.
+	Also func(ctx context.Context, tx *sql.Tx) error
 }
 
 // Actor is who triggered a change.
@@ -159,15 +174,31 @@ type Request struct {
 
 // MarshalJSON writes the time in RFC 3339 with milliseconds.
 func (r Request) MarshalJSON() ([]byte, error) {
-	type wire struct {
-		Time       string           `json:"time"`
-		Timezone   string           `json:"timezone,omitempty"`
-		Revoked    bool             `json:"revoked,omitempty"`
-		Resource   Resource         `json:"resource"`
-		Action     string           `json:"action"`
-		Parameters map[string]int64 `json:"parameters,omitempty"`
+	return json.Marshal(requestWire{r.Time.UTC().Format(timeFormat), r.Timezone, r.Revoked, r.Resource, r.Action, r.Parameters})
+}
+
+// UnmarshalJSON reads what MarshalJSON wrote (the approval journal keeps the request of
+// an entry it may have to write after a restart).
+func (r *Request) UnmarshalJSON(data []byte) error {
+	var w requestWire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
 	}
-	return json.Marshal(wire{r.Time.UTC().Format(timeFormat), r.Timezone, r.Revoked, r.Resource, r.Action, r.Parameters})
+	at, err := time.Parse(time.RFC3339Nano, w.Time)
+	if err != nil {
+		return fmt.Errorf("audit: request time: %w", err)
+	}
+	*r = Request{Time: at.UTC(), Timezone: w.Timezone, Revoked: w.Revoked, Resource: w.Resource, Action: w.Action, Parameters: w.Parameters}
+	return nil
+}
+
+type requestWire struct {
+	Time       string           `json:"time"`
+	Timezone   string           `json:"timezone,omitempty"`
+	Revoked    bool             `json:"revoked,omitempty"`
+	Resource   Resource         `json:"resource"`
+	Action     string           `json:"action"`
+	Parameters map[string]int64 `json:"parameters,omitempty"`
 }
 
 // Mandate refers to a mandate version by digest, never by content.
@@ -186,12 +217,14 @@ type Evaluation struct {
 }
 
 // Approval is the outcome of an approval request; Via is the channel the answer came
-// through (push or ui), empty for a timeout.
+// through (push or ui), empty for a timeout. Cause is set only for OutcomeCancelled: why
+// the request ended without an answer (SPEC-v0 section 9.1).
 type Approval struct {
 	Outcome string
 	By      string
 	Via     string
 	At      time.Time
+	Cause   string
 }
 
 // MarshalJSON writes the time in RFC 3339 with milliseconds.
@@ -201,8 +234,9 @@ func (a Approval) MarshalJSON() ([]byte, error) {
 		By      string `json:"by,omitempty"`
 		Via     string `json:"via,omitempty"`
 		At      string `json:"at"`
+		Cause   string `json:"cause,omitempty"`
 	}
-	return json.Marshal(wire{a.Outcome, a.By, a.Via, a.At.UTC().Format(timeFormat)})
+	return json.Marshal(wire{a.Outcome, a.By, a.Via, a.At.UTC().Format(timeFormat), a.Cause})
 }
 
 // Result is what happened with a request.
@@ -461,6 +495,11 @@ func (l *Log) AppendTx(ctx context.Context, tx *sql.Tx, e Entry) (int64, error) 
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_search (seq, text) VALUES (?, ?)`, w.Seq, searchText(e.Agent, e.Request)); err != nil {
 		return 0, fmt.Errorf("audit: insert search text: %w", err)
+	}
+	if e.Also != nil {
+		if err := e.Also(ctx, tx); err != nil {
+			return 0, err
+		}
 	}
 	return w.Seq, nil
 }

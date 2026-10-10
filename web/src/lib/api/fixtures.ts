@@ -372,7 +372,7 @@ export const approvalsHistoryFixture: ApprovalHistoryEntry[] = [
   { seq: 8, agent: voice, entity_id: 'lock.front_door', device_name: 'Haustür', action: 'unlock', outcome: 'approved', by_name: 'Markus', created_at: '2026-10-02T15:00:00Z', answered_at: '2026-10-02T15:00:42Z' },
   { seq: 9, agent: claude, entity_id: 'cover.garage_door', device_name: 'Garagentor', action: 'open', outcome: 'rejected', by_name: 'Alex', created_at: '2026-10-02T16:00:00Z', answered_at: '2026-10-02T16:00:08Z' },
   { seq: 10, agent: claude, entity_id: 'lock.front_door', device_name: 'Haustür', action: 'unlock', outcome: 'invalid_response', by_name: 'Alex', created_at: '2026-10-02T16:10:00Z', answered_at: '2026-10-02T16:10:05Z' },
-  { seq: 11, agent: voice, entity_id: 'lock.front_door', device_name: 'Haustür', action: 'open', outcome: 'emergency_stop', by_name: null, created_at: '2026-10-02T16:29:50Z', answered_at: '2026-10-02T16:30:00Z' },
+  { seq: 11, agent: voice, entity_id: 'lock.front_door', device_name: 'Haustür', action: 'open', outcome: 'cancelled', cause: 'emergency_stop', by_name: null, created_at: '2026-10-02T16:29:50Z', answered_at: '2026-10-02T16:30:00Z' },
 ];
 
 const mandateRef = { id: 'mandate-voice', digest: 'sha256:fixture-0' };
@@ -438,6 +438,7 @@ const entries: Omit<AuditEntry, 'digest' | 'prev'>[] = [
   }, claude),
   decision(11, '2026-10-02T16:30:00.000Z', 'lock.front_door', 'lock', 'hallway', 'open', {
     evaluation: { decision: 'ask', reason: 'rule', rule_id: 'door', approval_timeout: 'PT2M' },
+    approval: { outcome: 'cancelled', cause: 'emergency_stop', at: '2026-10-02T16:30:00.000Z' },
     result: { status: 'denied', denied_by: 'emergency_stop' },
   }),
   { id: '0192-12', seq: 12, recorded_at: '2026-10-02T16:30:00.000Z', event: 'emergency_stop.activated', actor: { kind: 'user', id: 'u-admin', name: 'Markus' } },

@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -476,6 +477,39 @@ func TestReleasedMigrationsAreFrozen(t *testing.T) {
 		sum := sha256.Sum256(data)
 		if got := hex.EncodeToString(sum[:]); got != want {
 			t.Errorf("%s changed (sha256 %s, released %s): installations refuse to start; restore it byte for byte", name, got, want)
+		}
+	}
+}
+
+// Migration 0016: an approval request enters the journal open and only moves forward, so
+// that no row can be turned back into one that is waiting or executing.
+func TestApprovalJournalOnlyMovesForward(t *testing.T) {
+	db := openRaw(t)
+	if err := migrate(context.Background(), db, embeddedMigrations()); err != nil {
+		t.Fatal(err)
+	}
+	insert := func(id, state string) string {
+		return `INSERT INTO approval_journal (id, client_id, entity_id, action, params_digest, created_at, expires_at, state, tag, notified, decision, ended_at)
+			VALUES ('` + id + `', 'hm-client:a', 'lock.front_door', 'unlock', 'sha256:1', 't', 't', '` + state + `', 'hm_x', '[]', '{}', NULL)`
+	}
+	a, b := strings.Repeat("a", 32), strings.Repeat("b", 32)
+	for _, tc := range []struct {
+		stmt string
+		ok   bool
+	}{
+		{insert(a, "open"), true},
+		{insert(b, "executing"), false},
+		{insert(strings.Repeat("c", 31), "open"), false},
+		{`UPDATE approval_journal SET state = 'ended' WHERE id = '` + a + `'`, false}, // without ended_at
+		{`UPDATE approval_journal SET state = 'executing' WHERE id = '` + a + `'`, true},
+		{`UPDATE approval_journal SET state = 'open' WHERE id = '` + a + `'`, false},
+		{`UPDATE approval_journal SET notice = 'other' WHERE id = '` + a + `'`, false},
+		{`UPDATE approval_journal SET state = 'ended', ended_at = 't' WHERE id = '` + a + `'`, true},
+		{`UPDATE approval_journal SET state = 'executing', ended_at = NULL WHERE id = '` + a + `'`, false},
+		{`UPDATE approval_journal SET state = 'open', ended_at = NULL WHERE id = '` + a + `'`, false},
+	} {
+		if _, err := db.Exec(tc.stmt); (err == nil) != tc.ok {
+			t.Errorf("%s: err = %v, want ok %v", tc.stmt, err, tc.ok)
 		}
 	}
 }

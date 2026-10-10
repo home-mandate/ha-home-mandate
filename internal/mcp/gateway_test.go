@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -89,9 +90,17 @@ type fakeHA struct {
 	connected bool
 	err       error
 	calls     []ha.ServiceCall
+	// onCall runs before each call, outside the lock.
+	onCall func()
 }
 
 func (f *fakeHA) CallService(_ context.Context, call ha.ServiceCall) error {
+	f.mu.Lock()
+	onCall := f.onCall
+	f.mu.Unlock()
+	if onCall != nil {
+		onCall()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
@@ -172,6 +181,10 @@ type harness struct {
 	mandates *mandate.Store
 	approver Approver
 	decider  Decider // replaces pdp when set
+	journal  *approval.Journal
+	// journalOverride replaces journal in the gateway when set.
+	journalOverride Journal
+	logger          *slog.Logger
 
 	mu   sync.Mutex
 	tz   string
@@ -225,7 +238,7 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 	}
 
 	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin", self: "hm-service-user", clock: &fakeClock{}, now: &fakeNow{t: time.Now()},
-		ha: &fakeHA{connected: true},
+		ha: &fakeHA{connected: true}, journal: approval.NewJournal(st.DB(), nil),
 		catalog: &fakeCatalog{ready: true, devices: map[string]catalog.Device{
 			"light.kitchen":            {EntityID: "light.kitchen", Category: "light", Area: "kitchen", State: "off", Attributes: map[string]any{"friendly_name": "Kitchen"}},
 			"lock.front_door":          {EntityID: "lock.front_door", Category: "lock", Area: "hallway", State: "locked"},
@@ -245,12 +258,19 @@ func (h *harness) serve(auditor Auditor) string {
 	if h.decider != nil {
 		decider = h.decider
 	}
-	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test",
-		TimeZone: h.timeZone, ServiceUser: h.serviceUser, Now: h.now.Now})
+	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Journal: h.gatewayJournal(), Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test",
+		TimeZone: h.timeZone, ServiceUser: h.serviceUser, Now: h.now.Now, Logger: h.logger})
 	g.cfg.Clock = h.clock
 	srv := httptest.NewServer(g.Handler())
 	h.t.Cleanup(srv.Close)
 	return srv.URL + Path
+}
+
+func (h *harness) gatewayJournal() Journal {
+	if h.journalOverride != nil {
+		return h.journalOverride
+	}
+	return h.journal
 }
 
 // issue returns a new access token of clientID for the test resource.

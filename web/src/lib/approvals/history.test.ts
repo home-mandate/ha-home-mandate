@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { ApprovalHistoryEntry } from '../api/types.ts';
+import type { ApprovalCause, ApprovalHistoryEntry } from '../api/types.ts';
 import { approvalsHistoryFixture } from '../api/fixtures.ts';
 import { setLocale } from '../paraglide/runtime.js';
 import { historyOutcome } from './history.ts';
@@ -24,8 +24,24 @@ describe('historyOutcome', () => {
     expect(historyOutcome(with_({ outcome: 'invalid_response', by_name: 'Alex' }))).toMatchObject({
       icon: 'warning', tone: 'warning', text: 'Invalid response discarded', hint: expect.stringContaining('without permission'),
     });
-    expect(historyOutcome(with_({ outcome: 'emergency_stop', by_name: null }))).toMatchObject({ icon: 'power', text: 'Declined by emergency stop' });
-    expect(historyOutcome(with_({ outcome: 'revoked', by_name: null }))).toMatchObject({ icon: 'deny', text: 'Declined because the agent was revoked' });
+  });
+
+  it('names why a request ended before anyone answered (cancelled, SPEC-v0 11.1 item 8)', () => {
+    const cancelled = (cause: ApprovalCause) => historyOutcome(with_({ outcome: 'cancelled', cause, by_name: null }));
+    expect(cancelled('emergency_stop')).toMatchObject({ icon: 'power', text: 'Declined by emergency stop', dashed: false });
+    expect(cancelled('revoked')).toMatchObject({ icon: 'deny', text: 'Ended: the agent or its mandate was revoked' });
+    expect(cancelled('interrupted')).toEqual({
+      icon: 'warning', tone: 'muted', text: 'Ended by a restart, not executed', hint: expect.stringContaining('restarted'), dashed: true,
+    });
+    expect(cancelled('withdrawn')).toMatchObject({ text: 'Withdrawn by the agent', dashed: true });
+    // A cause the server did not pass on (unknown to it) is shown generically.
+    expect(historyOutcome(with_({ outcome: 'cancelled', by_name: null }))).toMatchObject({ text: 'Ended before an answer', dashed: true });
+  });
+
+  it('warns when the outcome of a confirmed action is unknown after a restart', () => {
+    expect(historyOutcome(with_({ error: 'outcome_unknown' }))).toMatchObject({
+      icon: 'warning', tone: 'warning', text: `Approved by ${iso('Markus')} · after 0:42`, hint: expect.stringContaining('check the device'),
+    });
   });
 
   it('says where an answer was given when it came from the UI or a phone (F2)', () => {

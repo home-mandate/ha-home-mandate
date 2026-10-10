@@ -9,6 +9,7 @@ package mcp
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -39,6 +40,12 @@ const (
 	defaultCallTimeout = 10 * time.Second
 	// errClockBehind is the error of a request refused because the clock is wrong.
 	errClockBehind = "clock_behind"
+	// errJournal is the error of a request the approval journal could not follow.
+	errJournal = "journal_unavailable"
+	// journalTimeout bounds marking a confirmed request as executing: below the
+	// database's lock wait (15 s), above the longest call to Home Assistant that may hold
+	// the lock (defaultCallTimeout), so a locked database fails closed in bounded time.
+	journalTimeout = 12 * time.Second
 	// defaultApprovalLimit is the upper limit of an approval wait without configuration.
 	defaultApprovalLimit = 2 * time.Minute
 	// noMandateLimit bounds requests of agents without a usable mandate, which would
@@ -102,6 +109,15 @@ type (
 	Approver interface {
 		Ask(ctx context.Context, req approval.Request) (approval.Result, error)
 	}
+	// Journal follows approval requests in the approval journal (approval.Journal): a
+	// confirmed one is marked executing before Home Assistant is called, and every one
+	// ends together with the audit entry that records its end (End), or on its own when
+	// that failed (EndNow).
+	Journal interface {
+		Executing(ctx context.Context, id string, a audit.Approval) error
+		End(id string, a *audit.Approval, result audit.Result) func(context.Context, *sql.Tx) error
+		EndNow(ctx context.Context, id string, a *audit.Approval, result audit.Result) error
+	}
 )
 
 // Config wires the gateway.
@@ -122,8 +138,10 @@ type Config struct {
 	Audit Auditor
 	// Approvals asks humans for ask decisions; nil refuses every ask.
 	Approvals Approver
-	Logger    *slog.Logger
-	Version   string
+	// Journal, if set, follows the requests Approvals made (ARCHITECTURE section 7).
+	Journal Journal
+	Logger  *slog.Logger
+	Version string
 	// TimeZone returns the household's time zone and ServiceUser Home-Mandate's own Home
 	// Assistant user, both read from Home Assistant. While either is unknown (nil or
 	// empty) nothing is decided: time windows would be evaluated in the host's zone, and
@@ -500,14 +518,18 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 
 // execute calls Home Assistant only while its "executed" entry is being written in the
 // same transaction: no entry, no execution. A failed call rolls the entry back and is
-// logged as failed.
-// execute calls the service; a confirmed action ends at expires at the latest (zero: no
-// confirmation).
+// logged as failed. A confirmed action ends at expires at the latest (zero: no
+// confirmation); its request is marked executing in the journal, committed, before the
+// call, and ends with the entry.
 func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, call ha.ServiceCall, appr approvalRef, expires time.Time) (*sdk.CallToolResult, actionOut, error) {
 	start := g.cfg.Now()
 	executed := false
-	e := g.entry(a, d, true, audit.Result{Status: audit.StatusExecuted})
-	e.Approval, e.ApprovalID = appr.approval, appr.id
+	if err := g.executing(ctx, appr); err != nil {
+		g.cfg.Logger.Error("approval journal unavailable, confirmed action not executed", "error", err)
+		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: errJournal}, appr)
+		return nil, actionOut{}, errors.New(codeUnavailable)
+	}
+	e := g.approvalEntry(a, d, audit.Result{Status: audit.StatusExecuted}, appr)
 	err := g.cfg.Audit.WithEntry(context.WithoutCancel(ctx), e, func() error {
 		cctx, cancel := context.WithTimeout(ctx, g.cfg.CallTimeout)
 		defer cancel()
@@ -530,6 +552,12 @@ func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, ca
 		// Executed, but the entry could not be committed: report the truth, log loudly.
 		g.cfg.Logger.Error("action executed but its audit entry was lost", "entity_id", call.EntityID, "error", err)
 		return nil, actionOut{Status: "executed"}, nil
+	case !errors.As(err, &actionErr) && errors.Is(err, approval.ErrJournal):
+		// Fail closed: not executed. The refusal is recorded (without the journal if need
+		// be), so the request does not look like an execution under way after a restart.
+		g.cfg.Logger.Error("approval journal unavailable, confirmed action not executed", "error", err)
+		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: errJournal}, appr)
+		return nil, actionOut{}, errors.New(codeUnavailable)
 	case !errors.As(err, &actionErr):
 		g.cfg.Logger.Error("audit log unavailable, action not executed", "error", err)
 		return nil, actionOut{}, errors.New(codeUnavailable)
@@ -621,11 +649,48 @@ func (g *Gateway) record(ctx context.Context, a agent.Agent, d pdp.Decision, wit
 }
 
 // recordApproval writes a decision entry with the outcome of an approval request (empty
-// if none was asked).
+// if none was asked); the request ends in the journal with it. The journal never costs
+// the entry: if ending the request in the entry's transaction fails, the entry is
+// written without it and the request is ended on its own, both logged.
 func (g *Gateway) recordApproval(ctx context.Context, a agent.Agent, d pdp.Decision, result audit.Result, appr approvalRef) error {
+	ctx = context.WithoutCancel(ctx)
+	e := g.approvalEntry(a, d, result, appr)
+	_, err := g.cfg.Audit.Append(ctx, e)
+	if err != nil && e.Also != nil && errors.Is(err, approval.ErrJournal) {
+		g.cfg.Logger.Error("approval journal not ended with the audit entry, entry written without it", "error", err)
+		e.Also = nil
+		if _, err = g.cfg.Audit.Append(ctx, e); err == nil {
+			if endErr := g.cfg.Journal.EndNow(ctx, appr.row, appr.approval, result); endErr != nil {
+				g.cfg.Logger.Error("approval journal not ended; the next start records the request again", "error", endErr)
+			}
+		}
+	}
+	if err != nil {
+		g.cfg.Logger.Error("audit log write failed", "error", err)
+		return err
+	}
+	return nil
+}
+
+// approvalEntry is the decision entry of an approval request that ends it in the journal.
+func (g *Gateway) approvalEntry(a agent.Agent, d pdp.Decision, result audit.Result, appr approvalRef) audit.Entry {
 	e := g.entry(a, d, true, result)
 	e.Approval, e.ApprovalID = appr.approval, appr.id
-	return g.append(ctx, e)
+	if g.cfg.Journal != nil && appr.row != "" {
+		e.Also = g.cfg.Journal.End(appr.row, appr.approval, result)
+	}
+	return e
+}
+
+// executing marks a confirmed request as executing in the journal; nothing to do for an
+// action without a journaled request.
+func (g *Gateway) executing(ctx context.Context, appr approvalRef) error {
+	if g.cfg.Journal == nil || appr.row == "" || appr.approval == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), journalTimeout)
+	defer cancel()
+	return g.cfg.Journal.Executing(ctx, appr.row, *appr.approval)
 }
 
 func (g *Gateway) append(ctx context.Context, e audit.Entry) error {

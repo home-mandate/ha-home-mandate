@@ -10,7 +10,12 @@
 // Approvers who are Home Assistant administrators may also answer in the Home-Mandate
 // UI (decision F2), with a separate random request ID, never the nonce; critical
 // actions only if they chose so. The first answer on any channel counts. Revoking an
-// agent or the emergency stop ends open requests at once (decision F1).
+// agent or the emergency stop ends open requests at once (decision F1), as cancelled
+// with the cause.
+//
+// Every request enters the approval journal before anyone is notified (journal.go), and
+// its notifications carry a random tag (not the nonce) with which they are cleared
+// however the request ends, or replaced after a restart.
 package approval
 
 import (
@@ -32,6 +37,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
@@ -42,10 +48,9 @@ const (
 	OutcomeRejected        = "rejected"
 	OutcomeTimeout         = "timeout"
 	OutcomeInvalidResponse = "invalid_response"
-	// OutcomeCancelled is no outcome of the specification: the request ended without
-	// an answer because the agent was revoked or the emergency stop was activated. The
-	// audit entry then has no approval, only the denial.
-	OutcomeCancelled = "cancelled"
+	// OutcomeCancelled: the request ended before anyone answered; Result.Cause says why
+	// (SPEC-v0 section 11.1 item 8).
+	OutcomeCancelled = audit.OutcomeCancelled
 )
 
 // Channels an answer came through (audit approval.via).
@@ -74,6 +79,7 @@ const (
 	denyPrefix    = "HM_DENY_"
 	nonceBytes    = 16
 	bellPrefix    = "hm_approval_"
+	tagPrefix     = "hm_request_"
 
 	maxReason = 200 // runes of the agent's reason shown to the human
 	maxName   = 80  // runes of agent and device names
@@ -103,6 +109,16 @@ type (
 		Ring(ctx context.Context, id string, n ha.Notification) error
 		Clear(ctx context.Context, id string) error
 	}
+	// Clearer removes a notification by its tag from a device of the Companion App.
+	Clearer interface {
+		ClearNotification(ctx context.Context, service, tag string) error
+	}
+	// JournalWriter enters a request in the approval journal (Journal) and then records
+	// the devices it reached.
+	JournalWriter interface {
+		Open(ctx context.Context, o Opened) error
+		Delivered(ctx context.Context, id string, notified []Notified) error
+	}
 )
 
 // Config wires the service.
@@ -127,8 +143,14 @@ type Config struct {
 	// OnOpened is called when a request was delivered and is open (shown by Open); the UI
 	// announces it. It must not block.
 	OnOpened func(Open)
-	Logger   *slog.Logger
-	Now      func() time.Time
+	// Journal, if set, enters every request before anyone is notified; a request it
+	// cannot enter is denied (ErrJournal).
+	Journal JournalWriter
+	// Clearer, if set, removes a request's notifications from the devices once it ended,
+	// however it ended.
+	Clearer Clearer
+	Logger  *slog.Logger
+	Now     func() time.Time
 }
 
 // Request is one action waiting for a human.
@@ -144,17 +166,22 @@ type Request struct {
 	Approvers []string
 	Timeout   time.Duration // from the mandate's approval settings
 	Critical  bool          // a critical action (SPEC-v0 section 5)
+	// Record is what the approval journal keeps for an audit entry after a restart.
+	Record *Record
 }
 
 // Result is the outcome of a request; By and Via are empty for a timeout and a
-// cancellation. ID is the request's ID in the UI, so that the audit entry written for
-// the outcome can be matched to the request it closes (never the nonce).
+// cancellation, Cause is set only for a cancellation (audit.Cause…). ID is the request's
+// ID in the UI and in the journal, so that the audit entry written for the outcome can
+// be matched to the request it closes (never the nonce). Ask also returns it with an
+// error when the request was entered in the journal but reached nobody.
 type Result struct {
 	ID      string
 	Outcome string
 	By      string
 	Via     string
 	At      time.Time
+	Cause   string
 }
 
 // Open is an open request as the UI shows it.
@@ -175,7 +202,9 @@ type recipient struct {
 
 type pending struct {
 	id         string
-	bellID     string // separate from id: every Home Assistant user sees the bell
+	bellID     string     // separate from id: every Home Assistant user sees the bell
+	tag        string     // of the notifications; separate from id and nonce
+	delivered  []Notified // devices the request reached
 	seq        uint64
 	approvers  map[string]bool
 	recipients []recipient
@@ -197,6 +226,9 @@ type Service struct {
 	pending map[string]*pending // by SHA-256 of the nonce
 	byID    map[string]*pending // by request ID (UI)
 	seq     uint64
+
+	// background holds the removal of notifications of ended requests.
+	background sync.WaitGroup
 }
 
 // New returns the service for cfg.
@@ -224,11 +256,14 @@ func (s *Service) Ask(ctx context.Context, req Request) (Result, error) {
 	if len(recipients) == 0 {
 		return Result{}, ErrNoApprover
 	}
-	p := &pending{id: newNonce(), bellID: bellPrefix + newNonce(), approvers: map[string]bool{}, recipients: recipients, req: req,
-		result: make(chan Result, 1), created: s.cfg.Now()}
+	p := &pending{id: newNonce(), bellID: bellPrefix + newNonce(), tag: tagPrefix + newNonce(), approvers: map[string]bool{},
+		recipients: recipients, req: req, result: make(chan Result, 1), created: s.cfg.Now()}
 	p.expires = p.created.Add(s.timeout(req))
 	for _, r := range recipients {
 		p.approvers[r.UserID] = true
+	}
+	if err := s.enter(ctx, p); err != nil {
+		return Result{}, err
 	}
 	nonce := newNonce()
 	key := hashKey(nonce)
@@ -243,9 +278,11 @@ func (s *Service) Ask(ctx context.Context, req Request) (Result, error) {
 		delete(s.pending, key)
 		delete(s.byID, p.id)
 		s.mu.Unlock()
+		s.clearPush(p)
 	}()
 
 	reached, uiUsers := s.deliver(ctx, p, nonce)
+	s.recordDelivered(ctx, p)
 	s.mu.Lock()
 	if p.done { // answered on a phone or cancelled during the delivery
 		s.mu.Unlock()
@@ -253,7 +290,7 @@ func (s *Service) Ask(ctx context.Context, req Request) (Result, error) {
 	}
 	if len(reached) == 0 {
 		s.mu.Unlock()
-		return Result{}, fmt.Errorf("%w: no notification delivered", ErrNoApprover)
+		return Result{ID: p.id}, fmt.Errorf("%w: no notification delivered", ErrNoApprover)
 	}
 	p.reached, p.uiUsers, p.listed = reached, uiUsers, true
 	opened := s.openOf(p)
@@ -270,6 +307,82 @@ func (s *Service) Ask(ctx context.Context, req Request) (Result, error) {
 func withID(r Result, id string) Result {
 	r.ID = id
 	return r
+}
+
+// enter writes p into the journal before anyone is notified; without a journal there is
+// nothing to do.
+func (s *Service) enter(ctx context.Context, p *pending) error {
+	if s.cfg.Journal == nil {
+		return nil
+	}
+	var notified []Notified
+	for _, r := range p.recipients {
+		lang := string(s.language(r.Approver))
+		for _, device := range r.channels.Devices {
+			notified = append(notified, Notified{UserID: r.UserID, Service: device, Lang: lang})
+		}
+	}
+	err := s.cfg.Journal.Open(context.WithoutCancel(ctx), Opened{ID: p.id, Tag: p.tag, Request: p.req, Created: p.created,
+		Expires: p.expires, Notified: notified})
+	if err != nil {
+		s.cfg.Logger.Error("approval request not entered in the journal, denied", "error", err)
+		if errors.Is(err, ErrJournal) {
+			return err
+		}
+		return fmt.Errorf("%w: %w", ErrJournal, err)
+	}
+	return nil
+}
+
+// Drain waits at most timeout for the removals of notifications of ended requests that
+// are still being sent, and tells whether they all finished. The gateway calls it on
+// shutdown, before Home Assistant's client stops.
+func (s *Service) Drain(timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		s.background.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+// recordDelivered narrows the devices in the journal to those the request reached; the
+// devices planned stay if that fails (a notice after a restart may then also go to a
+// device that never had the request).
+func (s *Service) recordDelivered(ctx context.Context, p *pending) {
+	if s.cfg.Journal == nil {
+		return
+	}
+	s.mu.Lock()
+	delivered := slices.Clone(p.delivered)
+	s.mu.Unlock()
+	if err := s.cfg.Journal.Delivered(context.WithoutCancel(ctx), p.id, delivered); err != nil {
+		s.cfg.Logger.Warn("devices reached not recorded in the journal", "error", err)
+	}
+}
+
+// clearPush removes the notifications of an ended request from the devices it reached,
+// in the background so that an execution after a confirmation does not wait for it.
+func (s *Service) clearPush(p *pending) {
+	if s.cfg.Clearer == nil || len(p.delivered) == 0 {
+		return
+	}
+	s.background.Go(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), warnTimeout)
+		defer cancel()
+		for _, device := range p.delivered {
+			if err := s.cfg.Clearer.ClearNotification(ctx, device.Service, p.tag); err != nil {
+				s.cfg.Logger.Warn("notification of an ended approval request not removed", "notify_service", device.Service, "error", err)
+			}
+		}
+	})
 }
 
 // recipients are the configured approvers of req who can be reached for it, each once;
@@ -305,7 +418,9 @@ func (s *Service) deliver(ctx context.Context, p *pending, nonce string) (reache
 		if ok {
 			uiUsers = append(uiUsers, r.UserID)
 		}
-		n := buildRequest(s.language(r.Approver), p.req, nonce)
+		lang := s.language(r.Approver)
+		n := buildRequest(lang, p.req, nonce)
+		n.Tag = p.tag
 		for _, device := range r.channels.Devices {
 			if s.ended(p) {
 				return reached, uiUsers
@@ -314,6 +429,9 @@ func (s *Service) deliver(ctx context.Context, p *pending, nonce string) (reache
 				s.cfg.Logger.Warn("approval request not delivered", "approver", r.UserID, "notify_service", device, "error", err)
 				continue
 			}
+			s.mu.Lock()
+			p.delivered = append(p.delivered, Notified{UserID: r.UserID, Service: device, Lang: string(lang)})
+			s.mu.Unlock()
 			ok = true
 		}
 		if ok {
@@ -470,12 +588,13 @@ func (s *Service) openOf(p *pending) Open {
 		CreatedAt: p.created, ExpiresAt: p.expires}
 }
 
-// CancelAgent ends the open requests of an agent that was revoked and returns how many.
+// CancelAgent ends the open requests of an agent that was revoked, or whose mandate was,
+// and returns how many (cause revoked).
 func (s *Service) CancelAgent(clientID string) int {
 	if clientID == "" {
 		return 0
 	}
-	return s.cancel(func(p *pending) bool { return p.req.ClientID == clientID })
+	return s.cancel(func(p *pending) bool { return p.req.ClientID == clientID }, audit.CauseRevoked)
 }
 
 // Withdraw takes a person out of every open request, e.g. after they were removed from
@@ -496,17 +615,17 @@ func (s *Service) Withdraw(userID string) int {
 
 // CancelAll ends every open request (emergency stop) and returns how many.
 func (s *Service) CancelAll() int {
-	return s.cancel(func(*pending) bool { return true })
+	return s.cancel(func(*pending) bool { return true }, audit.CauseEmergencyStop)
 }
 
-func (s *Service) cancel(match func(*pending) bool) int {
+func (s *Service) cancel(match func(*pending) bool, cause string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := 0
 	for _, p := range s.byID {
 		if !p.done && match(p) {
 			p.done = true
-			p.result <- Result{Outcome: OutcomeCancelled, At: s.cfg.Now()}
+			p.result <- Result{Outcome: OutcomeCancelled, Cause: cause, At: s.cfg.Now()}
 			n++
 		}
 	}

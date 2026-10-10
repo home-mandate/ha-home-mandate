@@ -34,7 +34,10 @@ var (
 const (
 	driverName = "sqlite"
 	// busyTimeoutMillis bounds how long a connection waits for a lock held by another one.
-	busyTimeoutMillis = 5000
+	// It lies above the longest call to Home Assistant (10 s), during which the audit log
+	// holds the write lock (internal/mcp), so that other writers wait for it instead of
+	// failing (ARCHITECTURE section 9).
+	busyTimeoutMillis = 15000
 	fileMode          = 0o600
 )
 

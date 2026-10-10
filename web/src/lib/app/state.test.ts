@@ -35,6 +35,8 @@ describe('AppState', () => {
     expect(app.connection).toBe('open');
     // Browser 3 s ahead of the mock server clock.
     expect(app.offsetMs).toBe(3000);
+    // The server clock comes from the injected clock, never the real one (issue #28).
+    expect(app.serverNow()).toBe(Date.parse('2026-10-02T17:42:00Z'));
   });
 
   it('shows no access for a non-admin and an error for anything else', async () => {

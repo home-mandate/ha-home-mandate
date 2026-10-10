@@ -74,7 +74,7 @@
   /** Entry that is being loaded alone, so the selection fetches it once. */
   let requested: number | null = null;
 
-  const serverNow = () => Date.now() - app.offsetMs;
+  const serverNow = () => app.serverNow();
 
   /** The list without the desktop selection, as a hash: what an entry page leads back to. */
   const listHash = () => href({ name: 'audit', query: toQuery({ ...filters, seq: null }) });
