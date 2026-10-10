@@ -32,6 +32,23 @@ describe('outcomeOf', () => {
     expect(outcomeOf(bySeq(11))).toEqual({ tone: 'danger', text: 'Declined by emergency stop', why: null });
   });
 
+  it('names the cause of a request that ended before anyone answered (cancelled)', () => {
+    const cancelled = (cause: 'revoked' | 'interrupted' | 'withdrawn', denied_by: 'mandate' | 'approval'): AuditEntry => ({
+      ...bySeq(4), approval: { outcome: 'cancelled', cause, at: '2026-10-02T14:45:30.000Z' }, result: { status: 'denied', denied_by },
+    });
+    expect(outcomeOf(cancelled('revoked', 'mandate'))).toEqual({ tone: 'danger', text: 'Ended: the agent or its mandate was revoked', why: null });
+    expect(outcomeOf(cancelled('interrupted', 'approval'))).toEqual({ tone: 'warning', text: 'Ended by a restart, not executed', why: null });
+    expect(outcomeOf(cancelled('withdrawn', 'approval'))).toEqual({ tone: 'danger', text: 'Withdrawn by the agent', why: null });
+    expect(approvalText(cancelled('interrupted', 'approval'))).toBeNull();
+    const noCause: AuditEntry = { ...bySeq(4), approval: { outcome: 'cancelled', at: '2026-10-02T14:45:30.000Z' }, result: { status: 'denied', denied_by: 'approval' } };
+    expect(outcomeOf(noCause)).toEqual({ tone: 'danger', text: 'Ended before an answer', why: null });
+  });
+
+  it('warns when a confirmed action was under way at a restart', () => {
+    const unknown: AuditEntry = { ...bySeq(8), result: { status: 'failed', error: 'outcome_unknown' } };
+    expect(outcomeOf(unknown)).toEqual({ tone: 'warning', text: 'Failed', why: expect.stringContaining('check the device') });
+  });
+
   it('says why the mandate denied, or that sign-in failed', () => {
     expect(outcomeOf(bySeq(5))).toEqual({ tone: 'danger', text: 'Declined', why: 'Mandate' });
     const auth: AuditEntry = { ...bySeq(4), approval: undefined, result: { status: 'denied', denied_by: 'authentication' } };

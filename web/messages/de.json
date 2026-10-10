@@ -712,7 +712,7 @@
   "audit_field_action": "Aktion",
   "audit_field_actor": "Ausgelöst von",
   "audit_seq_short": "Nr. {number}",
-  "result_revoked": "Durch Entziehen des Agenten abgelehnt",
+  "result_revoked": "Beendet: Agent oder sein Mandat widerrufen",
   "request_gone": "Diese Rückfrage ist schon beantwortet oder beendet.",
   "request_answer_failed": "Die Antwort konnte nicht gesendet werden. Am Handy geht es weiterhin.",
   "request_answer_unknown": "Unklar, ob die Antwort angekommen ist. Der Verlauf zeigt, wie es ausging.",
@@ -952,5 +952,10 @@
   "pair_reconnect_button": "Wieder verbinden",
   "pair_reconnect_failed": "Wiederverbinden hat nicht geklappt: Der Agent wird nicht mehr angeboten oder die Anfrage hat sich geändert. Prüfe den Code erneut.",
   "pair_reconnected_body": "Er macht mit seinem bestehenden Eintrag, seinem Verlauf und dem Mandat „{mandate}“ weiter.",
-  "pair_reconnect_unverified": "Diese Anfrage kommt von {address}. Sie nutzt einen Kopplungscode, daher passen diese Agenten nur über den Namen, den sich der Agent selbst gegeben hat – den kann jeder Agent angeben. Verbinde nur wieder, wenn du sicher bist, dass die Anfrage wirklich von diesem Agenten kommt."
+  "pair_reconnect_unverified": "Diese Anfrage kommt von {address}. Sie nutzt einen Kopplungscode, daher passen diese Agenten nur über den Namen, den sich der Agent selbst gegeben hat – den kann jeder Agent angeben. Verbinde nur wieder, wenn du sicher bist, dass die Anfrage wirklich von diesem Agenten kommt.",
+  "result_interrupted": "Durch Neustart beendet, nicht ausgeführt",
+  "result_interrupted_hint": "Home-Mandate wurde neu gestartet, während die Anfrage wartete. Es wurde nichts ausgeführt; eine Antwort in dieser Zeit zählt nicht mehr.",
+  "result_withdrawn": "Vom Agenten zurückgezogen",
+  "result_outcome_unknown": "Home-Mandate wurde während der Ausführung neu gestartet: unbekannt, ob sie erfolgt ist, bitte das Gerät prüfen",
+  "result_cancelled": "Vor einer Antwort beendet"
 }

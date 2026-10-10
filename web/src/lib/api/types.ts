@@ -718,7 +718,14 @@ export interface Defaults {
 // ---------------------------------------------------------------------------
 // Approval requests: GET api/approvals – open ones and the recent history (newest first)
 
-export type ApprovalOutcome = 'approved' | 'rejected' | 'timeout' | 'invalid_response';
+export type ApprovalOutcome = 'approved' | 'rejected' | 'timeout' | 'invalid_response' | 'cancelled';
+
+/**
+ * Why a request ended before anyone answered (outcome cancelled, SPEC-v0 section 11.1 item
+ * 8): the agent withdrew it, the agent or its mandate was revoked, the emergency stop, or
+ * Home-Mandate was restarted (interrupted).
+ */
+export type ApprovalCause = 'withdrawn' | 'revoked' | 'emergency_stop' | 'interrupted';
 
 /** One service data field of a request, e.g. brightness_pct=100; sorted by name by the server. */
 export interface ApprovalParam {
@@ -761,11 +768,17 @@ export interface ApprovalHistoryEntry {
   entity_id: string;
   device_name: string;
   action: string;
-  /** emergency_stop / revoked: the stop or the agent's revocation ended the request before an answer (F1). */
-  outcome: ApprovalOutcome | 'emergency_stop' | 'revoked';
+  outcome: ApprovalOutcome;
+  /** Only with cancelled: why the request ended before an answer. */
+  cause?: ApprovalCause;
   by_name: string | null;
   /** Channel of the answer (decision F2); absent without an answer by a person. */
   via?: 'push' | 'ui';
+  /**
+   * Error of a confirmed action that failed, e.g. outcome_unknown: Home-Mandate was
+   * restarted while it executed the action; whether it happened is unknown.
+   */
+  error?: string;
   created_at: string;
   answered_at: string;
 }
@@ -841,7 +854,7 @@ export interface AuditEntry {
   mandate?: { id: string; digest: string; previous_digest?: string; version?: number; name?: string };
   evaluation?: { decision: Decision; reason: Reason; rule_id: string | null; approval_timeout?: string };
   /** via: the channel the answer came through, push or ui (decision F2). */
-  approval?: { outcome: ApprovalOutcome; by?: string; by_name?: string; via?: 'push' | 'ui'; at: string };
+  approval?: { outcome: ApprovalOutcome; cause?: ApprovalCause; by?: string; by_name?: string; via?: 'push' | 'ui'; at: string };
   result?: { status: ResultStatus; denied_by?: DeniedBy; error?: string; duration_ms?: number };
   truncated?: { up_to_seq: number; last_digest: string };
   /** directory.changed: the device, and for a rename its former ID. */

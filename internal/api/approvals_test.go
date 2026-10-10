@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -173,7 +174,9 @@ func TestAnswerWithoutAuditEntryInTime(t *testing.T) {
 	}
 }
 
-// The history: five endings with an answer, and the two of decision F1 without one.
+// The history: endings with an answer, cancelled ones with their cause (SPEC-v0 section
+// 11.1 item 8), and the two of decision F1 that older logs hold without an approval,
+// shown as cancelled with the cause they stand for.
 func TestApprovalHistory(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
@@ -187,32 +190,68 @@ func TestApprovalHistory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	cancelled := func(cause string) *audit.Approval {
+		return &audit.Approval{Outcome: audit.OutcomeCancelled, Cause: cause, At: at}
+	}
 	ask(audit.Result{Status: audit.StatusExecuted}, &audit.Approval{Outcome: "approved", By: adminID, Via: "push", At: at})
 	ask(audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}, &audit.Approval{Outcome: "timeout", At: at})
 	ask(audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop}, nil)
 	ask(audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication}, nil)
+	ask(audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}, cancelled(audit.CauseInterrupted))
+	ask(audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate}, cancelled(audit.CauseRevoked))
+	ask(audit.Result{Status: audit.StatusFailed, Error: "outcome_unknown"}, &audit.Approval{Outcome: "approved", By: adminID, Via: "ui", At: at})
 	var got wireApprovals
 	h.ok(http.MethodGet, "/api/approvals", nil, &got)
-	if len(got.History) != 4 {
+	if len(got.History) != 7 {
 		t.Fatalf("history = %+v", got.History)
 	}
-	want := []string{"revoked", "emergency_stop", "timeout", "approved"}
+	want := []struct{ outcome, cause string }{{"approved", ""}, {"cancelled", "revoked"}, {"cancelled", "interrupted"},
+		{"cancelled", "revoked"}, {"cancelled", "emergency_stop"}, {"timeout", ""}, {"approved", ""}}
 	for i, e := range got.History {
-		if e.Outcome != want[i] || e.DeviceName != "Haustür" || e.CreatedAt != "2026-10-03T09:58:30.000Z" {
+		if e.Outcome != want[i].outcome || e.Cause != want[i].cause || e.DeviceName != "Haustür" || e.CreatedAt != "2026-10-03T09:58:30.000Z" {
 			t.Errorf("history[%d] = %+v", i, e)
 		}
 	}
-	if a := got.History[3]; *a.ByName != "Markus" || a.Via != "push" || a.AnsweredAt != "2026-10-03T09:59:00.000Z" {
+	if a := got.History[6]; *a.ByName != "Markus" || a.Via != "push" || a.AnsweredAt != "2026-10-03T09:59:00.000Z" {
 		t.Errorf("approved = %+v", a)
 	}
-	if got.History[1].ByName != nil || got.History[1].Via != "" {
-		t.Errorf("emergency stop = %+v", got.History[1])
+	if e := got.History[2]; e.ByName != nil || e.Via != "" || e.AnsweredAt != "2026-10-03T09:59:00.000Z" {
+		t.Errorf("interrupted = %+v", e)
+	}
+	if got.History[4].ByName != nil || got.History[4].Via != "" {
+		t.Errorf("emergency stop = %+v", got.History[4])
+	}
+	// The result is part of the history: an approval whose execution has an unknown outcome
+	// says so.
+	if e := got.History[0]; e.Error != "outcome_unknown" {
+		t.Errorf("outcome unknown = %+v", e)
 	}
 	// A device that is gone from the catalog shows its entity ID.
 	h.cat.devices = nil
 	h.ok(http.MethodGet, "/api/approvals", nil, &got)
 	if got.History[0].DeviceName != "lock.front_door" {
 		t.Errorf("device name = %q", got.History[0].DeviceName)
+	}
+}
+
+// Cause and error reach the UI only from the known sets; anything else (a log written by
+// another version, or changed in the database) is shown as a generic value.
+func TestHistoryShowsOnlyKnownCausesAndErrors(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	for _, tc := range []struct {
+		entry      string
+		cause, err string
+	}{
+		{`{"request":{"time":"2026-10-03T09:58:30Z"},"approval":{"outcome":"cancelled","cause":"interrupted"},"result":{"status":"denied"}}`, "interrupted", ""},
+		{`{"request":{"time":"2026-10-03T09:58:30Z"},"approval":{"outcome":"cancelled","cause":"<b>later</b>"},"result":{"status":"denied"}}`, "", ""},
+		{`{"request":{"time":"2026-10-03T09:58:30Z"},"approval":{"outcome":"approved"},"result":{"status":"failed","error":"outcome_unknown"}}`, "", "outcome_unknown"},
+		{`{"request":{"time":"2026-10-03T09:58:30Z"},"approval":{"outcome":"approved"},"result":{"status":"failed","error":"\u202e"}}`, "", "other"},
+	} {
+		got, err := h.srv.historyEntry(ctx, 1, testStart, json.RawMessage(tc.entry))
+		if err != nil || got.Cause != tc.cause || got.Error != tc.err {
+			t.Errorf("%s: %+v, %v", tc.entry, got, err)
+		}
 	}
 }
 

@@ -3,7 +3,11 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -11,6 +15,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/home-mandate/spec/evaluator"
+	"github.com/home-mandate/spec/jcs"
 
 	"github.com/home-mandate/ha-home-mandate/internal/agent"
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
@@ -55,7 +60,8 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 	}()
 
 	req := approval.Request{ClientID: a.ClientID, Agent: a.DisplayName, EntityID: d.Resource.EntityID, Area: d.Resource.Area,
-		Device: d.Resource.EntityID, Action: d.Action, Reason: reason, Params: shownParams(d, call), Critical: criticalRequest(d)}
+		Device: d.Resource.EntityID, Action: d.Action, Reason: reason, Params: shownParams(d, call), Critical: criticalRequest(d),
+		Record: &approval.Record{Entry: g.entry(a, d, true, audit.Result{}), ParamsDigest: callDigest(call)}}
 	if dev, ok := g.cfg.Catalog.Lookup(d.Resource.EntityID); ok {
 		if name, _ := dev.Attributes["friendly_name"].(string); name != "" {
 			req.Device = name
@@ -66,16 +72,24 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 	}
 	res, err := g.cfg.Approvals.Ask(ctx, req)
 	if err != nil {
+		// No request was made (SPEC-v0 section 9.1): no approval, and no request in the UI
+		// to close; one that is in the journal but reached nobody ends there.
+		ref := approvalRef{row: res.ID}
+		if errors.Is(err, approval.ErrJournal) {
+			_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: errJournal}, ref)
+			return nil, actionOut{}, errors.New(codeUnavailable)
+		}
 		if !errors.Is(err, approval.ErrNoApprover) {
 			g.cfg.Logger.Error("approval request failed", "error", err)
 		}
-		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval})
+		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}, ref)
 		return nil, actionOut{}, errors.New(codeDenied + ": no_approver")
 	}
+	appr := approvalRef{approval: &audit.Approval{Outcome: res.Outcome, By: res.By, Via: res.Via, At: res.At, Cause: res.Cause},
+		id: res.ID, row: res.ID}
 	if res.Outcome == approval.OutcomeCancelled {
-		return g.cancelled(ctx, a, d, res.ID)
+		return g.cancelled(ctx, a, token, d, appr)
 	}
-	appr := approvalRef{approval: &audit.Approval{Outcome: res.Outcome, By: res.By, Via: res.Via, At: res.At}, id: res.ID}
 	if res.Outcome == approval.OutcomeApproved {
 		g.forgive(a.ClientID, d.Resource.EntityID)
 		return g.afterApproval(ctx, a, token, d, call, appr, res.At.Add(g.approvalValidity(req.Timeout)))
@@ -104,23 +118,58 @@ func shownParams(d pdp.Decision, call ha.ServiceCall) map[string]any {
 }
 
 // approvalRef is the outcome of an approval request for its audit entry: the approval
-// (nil when the request ended without an answer) and the request's ID, which tells the UI
-// which open request the entry closes.
+// (nil when no request was made), the request's ID, which tells the UI which open
+// request the entry closes, and the request in the journal that the entry ends (the same
+// ID; also set when the request reached nobody, which the UI never showed).
 type approvalRef struct {
 	approval *audit.Approval
 	id       string
+	row      string
 }
 
-// cancelled records a request that the emergency stop or a revocation ended before
-// anyone answered (decision F1): no approval, only the denial with its cause.
-func (g *Gateway) cancelled(ctx context.Context, a agent.Agent, d pdp.Decision, id string) (*sdk.CallToolResult, actionOut, error) {
-	ref := approvalRef{id: id}
-	if g.stopped(ctx) {
-		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop}, ref)
-		return nil, actionOut{}, errors.New(codeDenied + ": emergency_stop")
+// cancelled records a request that ended before anyone answered (SPEC-v0 section 11.1
+// item 8, decision F1) as cancelled with its cause and the denied_by that matches it: a
+// revocation of the agent (its token no longer counts) denies by authentication, one of
+// only its mandate by mandate.
+func (g *Gateway) cancelled(ctx context.Context, a agent.Agent, token string, d pdp.Decision, appr approvalRef) (*sdk.CallToolResult, actionOut, error) {
+	deniedBy, code := audit.DeniedByApproval, "approval_cancelled"
+	switch appr.approval.Cause {
+	case audit.CauseEmergencyStop:
+		deniedBy, code = audit.DeniedByEmergencyStop, "emergency_stop"
+	case audit.CauseRevoked:
+		deniedBy, code = audit.DeniedByMandate, "revoked"
+		if _, err := g.cfg.Agents.Authenticate(ctx, token, g.cfg.Resource); err != nil {
+			if !errors.Is(err, agent.ErrUnauthorized) {
+				g.cfg.Logger.Error("token check after a revocation failed", "error", err)
+			}
+			deniedBy, code = audit.DeniedByAuthentication, "unauthorized"
+		}
 	}
-	_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication}, ref)
-	return nil, actionOut{}, errors.New(codeDenied + ": unauthorized")
+	_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: deniedBy}, appr)
+	return nil, actionOut{}, errors.New(codeDenied + ": " + code)
+}
+
+// callDigest is the digest of the effective call: domain, service and data as they would
+// be executed, canonicalised (RFC 8785), so that 50 and 50.0 or another key order are the
+// same call. It is empty if the call cannot be encoded, which never happens for data
+// that came from JSON.
+func callDigest(call ha.ServiceCall) string {
+	data, err := json.Marshal(map[string]any{"domain": call.Domain, "service": call.Service, "entity_id": call.EntityID, "data": call.Data})
+	if err != nil {
+		return ""
+	}
+	var generic any
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(&generic); err != nil {
+		return ""
+	}
+	canonical, err := jcs.Canonicalize(generic)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(canonical)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 // afterApproval checks again what may have changed while the human decided: the

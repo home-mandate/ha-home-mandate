@@ -91,3 +91,44 @@ func TestNotifyRejects(t *testing.T) {
 		t.Errorf("%d calls reached Home Assistant", n)
 	}
 }
+
+// A tag lets a notification be replaced or cleared later (Companion App data.tag).
+func TestNotifyWithTagAndClear(t *testing.T) {
+	f := newFakeHA(t)
+	got := make(chan fakeMsg, 2)
+	f.handle("call_service", func(m fakeMsg) (any, *CommandError) {
+		got <- m
+		return map[string]any{}, nil
+	})
+	c, _ := startClient(t, testConfig(f.url()))
+	waitReady(t, c)
+	tag := "hm_request_00112233445566778899aabbccddeeff"
+	if err := c.Notify(context.Background(), "mobile_app_pixel_9", Notification{Title: "t", Message: "m", Tag: tag}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := (<-got)["service_data"].(map[string]any)
+	if inner, _ := data["data"].(map[string]any); inner["tag"] != tag || inner["actions"] != nil {
+		t.Errorf("service data = %v", data)
+	}
+	if err := c.ClearNotification(context.Background(), "mobile_app_pixel_9", tag); err != nil {
+		t.Fatal(err)
+	}
+	sent := <-got
+	data, _ = sent["service_data"].(map[string]any)
+	if sent["service"] != "mobile_app_pixel_9" || data["message"] != "clear_notification" || data["title"] != nil ||
+		!reflect.DeepEqual(data["data"], map[string]any{"tag": tag}) {
+		t.Errorf("clear = %v", sent)
+	}
+	for name, tc := range map[string]struct{ service, tag string }{
+		"bad service": {"notify", tag},
+		"no tag":      {"mobile_app_pixel_9", ""},
+		"bad tag":     {"mobile_app_pixel_9", "a b"},
+	} {
+		if err := c.ClearNotification(context.Background(), tc.service, tc.tag); !errors.Is(err, ErrCommandNotAllowed) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if err := c.Notify(context.Background(), "mobile_app_pixel_9", Notification{Title: "t", Message: "m", Tag: "x/y"}); !errors.Is(err, ErrCommandNotAllowed) {
+		t.Errorf("bad tag in notification: %v", err)
+	}
+}

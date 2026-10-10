@@ -20,20 +20,28 @@ import (
 )
 
 // fakeApprover answers with result, after running during (e.g. to change the world
-// while the human decides).
+// while the human decides). A result with an ID enters the journal first, as
+// approval.Service does.
 type fakeApprover struct {
-	mu     sync.Mutex
-	result approval.Result
-	err    error
-	during func()
-	asked  []approval.Request
+	mu      sync.Mutex
+	result  approval.Result
+	err     error
+	during  func()
+	asked   []approval.Request
+	journal *approval.Journal
 }
 
-func (f *fakeApprover) Ask(_ context.Context, req approval.Request) (approval.Result, error) {
+func (f *fakeApprover) Ask(ctx context.Context, req approval.Request) (approval.Result, error) {
 	f.mu.Lock()
 	f.asked = append(f.asked, req)
-	during, res, err := f.during, f.result, f.err
+	during, res, err, journal := f.during, f.result, f.err, f.journal
 	f.mu.Unlock()
+	if journal != nil && res.ID != "" {
+		if err := journal.Open(ctx, approval.Opened{ID: res.ID, Tag: "hm_request_" + res.ID, Request: req, Created: time.Now(),
+			Expires: time.Now().Add(time.Minute)}); err != nil {
+			return approval.Result{}, err
+		}
+	}
 	if during != nil {
 		during()
 	}
@@ -53,6 +61,7 @@ var answeredAt = time.Date(2026, 10, 13, 12, 0, 30, 0, time.UTC)
 func approvalHarness(t *testing.T, f *fakeApprover) *harness {
 	t.Helper()
 	h := newHarness(t, nil)
+	f.journal = h.journal
 	h.approver = f
 	h.url = h.serve(h.log)
 	return h
@@ -391,21 +400,29 @@ func TestRequestIsMarkedAndChannelRecorded(t *testing.T) {
 	}
 }
 
-// Decision F1: a request ended by the emergency stop or a revocation is denied without
-// an approval in the audit entry, with the cause as denied_by.
+// SPEC-v0 section 11.1 item 8 and 11.3: a request ended by the emergency stop or a
+// revocation before anyone answered is cancelled with its cause and the denied_by that
+// matches it; nobody answered, so there is no by or via.
 func TestCancelledApprovals(t *testing.T) {
-	cancelled := approval.Result{Outcome: approval.OutcomeCancelled, At: answeredAt}
 	for name, tc := range map[string]struct {
+		cause    string
 		during   func(h *harness)
 		errText  string
 		deniedBy string
 	}{
-		"emergency stop": {func(h *harness) {
+		"emergency stop": {audit.CauseEmergencyStop, func(h *harness) {
 			_, _ = h.db.Exec(`INSERT INTO settings (key, value, updated_at) VALUES ('emergency_stop', 'on', '2026-10-13T12:00:00Z')`)
 		}, "denied: emergency_stop", "emergency_stop"},
-		"agent revoked": {func(*harness) {}, "denied: unauthorized", "authentication"},
+		"agent revoked": {audit.CauseRevoked, func(h *harness) {
+			_, _ = h.db.Exec(`UPDATE tokens SET revoked_at = '2026-10-13T12:00:00Z'`)
+		}, "denied: unauthorized", "authentication"},
+		"only the mandate revoked": {audit.CauseRevoked, func(h *harness) {
+			_ = h.mandates.Revoke(context.Background(), "m-voice-assistant", admin)
+		}, "denied: revoked", "mandate"},
+		"withdrawn": {audit.CauseWithdrawn, func(*harness) {}, "denied: approval_cancelled", "approval"},
 	} {
-		f := &fakeApprover{result: cancelled}
+		id := strings.Repeat("c", 32)
+		f := &fakeApprover{result: approval.Result{ID: id, Outcome: approval.OutcomeCancelled, Cause: tc.cause, At: answeredAt}}
 		h := approvalHarness(t, f)
 		f.during = func() { tc.during(h) }
 		if errText := unlock(h, nil); errText != tc.errText {
@@ -415,13 +432,25 @@ func TestCancelledApprovals(t *testing.T) {
 			t.Errorf("%s: Home Assistant called", name)
 		}
 		e := h.lastEntry()
-		if path(e, "approval") != nil || path(e, "result", "status") != "denied" || path(e, "result", "denied_by") != tc.deniedBy {
+		if path(e, "approval", "outcome") != "cancelled" || path(e, "approval", "cause") != tc.cause || path(e, "approval", "by") != nil ||
+			path(e, "approval", "via") != nil || path(e, "result", "status") != "denied" || path(e, "result", "denied_by") != tc.deniedBy {
 			t.Errorf("%s: audit entry = %v", name, e)
+		}
+		if state, outcome := h.journalRow(id); state != "ended" || outcome != "cancelled" {
+			t.Errorf("%s: journal %s %s", name, state, outcome)
 		}
 		if r, err := h.log.Verify(context.Background()); err != nil || !r.Valid {
 			t.Errorf("%s: audit log = %+v, %v", name, r, err)
 		}
 	}
+}
+
+func (h *harness) journalRow(id string) (state, outcome string) {
+	h.t.Helper()
+	if err := h.db.QueryRow(`SELECT state, outcome FROM approval_journal WHERE id = ?`, id).Scan(&state, &outcome); err != nil {
+		h.t.Fatal(err)
+	}
+	return state, outcome
 }
 
 // Every audit entry that ends an approval request carries the request's ID for the UI
@@ -430,8 +459,11 @@ func TestApprovalEntriesNameTheirRequest(t *testing.T) {
 	for _, outcome := range []string{approval.OutcomeApproved, approval.OutcomeRejected, approval.OutcomeTimeout, approval.OutcomeCancelled} {
 		t.Run(outcome, func(t *testing.T) {
 			res := approval.Result{ID: "0123456789abcdef0123456789abcdef", Outcome: outcome, At: answeredAt}
-			if outcome == approval.OutcomeApproved || outcome == approval.OutcomeRejected {
+			switch outcome {
+			case approval.OutcomeApproved, approval.OutcomeRejected:
 				res.By, res.Via = approverID, approval.ViaUI
+			case approval.OutcomeCancelled:
+				res.Cause = audit.CauseEmergencyStop
 			}
 			f := &fakeApprover{result: res}
 			h := approvalHarness(t, f)

@@ -4,7 +4,7 @@
 // from the decision ("allowed, but failed" exists), the event names, the reason codes in
 // plain words and who answered an approval, where and how fast.
 
-import type { AuditEntry, AuditEvent, Reason } from '../api/types.ts';
+import type { ApprovalCause, AuditEntry, AuditEvent, Reason } from '../api/types.ts';
 import { m } from '../i18n.ts';
 import { cleanUntrusted, isolate } from '../untrusted.ts';
 
@@ -83,10 +83,12 @@ export function outcomeOf(entry: AuditEntry): Outcome | null {
         why: approval?.outcome === 'approved' ? m.result_approved_by({ person: person(approval) }) : null,
       };
     case 'failed':
+      if (result.error === 'outcome_unknown') return { tone: 'warning', text: m.result_failed(), why: m.result_outcome_unknown() };
       return { tone: 'danger', text: m.result_failed(), why: result.error ? cleanUntrusted(result.error, MAX_ERROR) : null };
     case 'denied':
       break;
   }
+  if (approval?.outcome === 'cancelled') return cancelledOutcome(approval.cause);
   switch (result.denied_by) {
     case 'emergency_stop':
       return { tone: 'danger', text: m.result_estop(), why: null };
@@ -107,6 +109,22 @@ export function outcomeOf(entry: AuditEntry): Outcome | null {
       }
     default:
       return { tone: 'danger', text: m.result_denied(), why: m.reason_mandate() };
+  }
+}
+
+/** cancelledOutcome: a request that ended before anyone answered, by its cause. */
+function cancelledOutcome(cause: ApprovalCause | undefined): Outcome {
+  switch (cause) {
+    case 'emergency_stop':
+      return { tone: 'danger', text: m.result_estop(), why: null };
+    case 'revoked':
+      return { tone: 'danger', text: m.result_revoked(), why: null };
+    case 'interrupted':
+      return { tone: 'warning', text: m.result_interrupted(), why: null };
+    case 'withdrawn':
+      return { tone: 'danger', text: m.result_withdrawn(), why: null };
+    default:
+      return { tone: 'danger', text: m.result_cancelled(), why: null };
   }
 }
 

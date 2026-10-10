@@ -316,7 +316,87 @@ checked on every request.
   part of the service, not of the data; the UI shows the same.
 - Timeout: the mandate's `approval.timeout`, capped by `HM_APPROVAL_TIMEOUT` (default
   2 minutes, at most 10) because the agent's request waits → `deny`. Every nonce is valid
-  exactly once; open requests live in memory.
+  exactly once and lives only in memory (as a hash); the request itself is also in the
+  approval journal (below).
+- **Notification tag:** every request's notifications carry a Companion App `data.tag`, a
+  random value of its own (`hm_request_…`, neither the nonce nor the request ID). However
+  the request ends (answered on any channel, timeout, invalid answer, revocation,
+  emergency stop), the gateway sends `message: clear_notification` with that tag to every
+  device the request reached, which removes the notification and its buttons on iOS (app
+  2021.5 or later) and Android; the Companion App may need to have been used recently for
+  that (a platform limit), and Home-Mandate never sends critical notifications, which iOS
+  would not clear. Clearing runs in the background, so an approved action does not wait
+  for it; failures are logged. On a stop the gateway waits up to 2 seconds for removals
+  still being sent before Home Assistant's client stops.
+- **Waiting of the agent (decision 2026-10-10, planned, issue #27):** clients cut tool calls
+  off long before the timeout (Claude Desktop reportedly after about 60 s, also through
+  `mcp-remote`; remote connectors after about 4 minutes; to be measured), and the MCP Tasks
+  extension has no client support yet. Therefore: the call waits at most about 45 s; without
+  an answer by then the agent gets a normal result stating that the action is **not executed
+  yet**, with an opaque ID (not the nonce, bound to the agent and its token) and the time
+  until which the request is open. The new tool `approval_status` waits up to about 45 s
+  itself and returns the result of the execution, the refusal or "still waiting";
+  `approval_cancel` withdraws an open request. Rules: the action is executed when the
+  confirmation arrives (SPEC-v0 11.1 item 5), never when the agent fetches the result,
+  which is kept for a bounded time; a request counts towards the limit of 2 waiting
+  requests until it ends, not until the tool call returns; status calls are rate limited
+  and are no actions. A client that declares the Tasks extension later gets a task instead,
+  with the same logic behind it. A repeated call of the same agent for the same resource,
+  action and parameters while a request is open creates no second request (observed with
+  Claude Desktop, which calls again after its cut-off). The approval journal and the
+  restart handling below are built (issue #27, part A); the short wait, the pending
+  result, `approval_status`, `approval_cancel`, counting the limit of 2 from the journal
+  and the detection of repeated requests are not yet.
+- **Approval journal (issue #27, SPEC-v0 section 11.1 item 9):** every request is a row of
+  `approval_journal` (section 9). The row is written, state `open`, before the first
+  notification leaves; if it cannot be written the request is denied and nobody is
+  notified (`failed`, `error: journal_unavailable`). After a confirmation, right before
+  Home Assistant is called and after the checks below, the row is set to `executing` with
+  the answer (who, channel, when) and committed in its own transaction; if that fails,
+  nothing is executed (`journal_unavailable`). Every end of a request sets the row to
+  `ended` with the approval outcome and the audit result in the same transaction as the
+  audit entry that records the end (for an execution: the `executed` entry, written while
+  Home Assistant is called), so entry and end commit together or not at all. If ending the
+  row fails inside that transaction, the entry is written again without it and the row is
+  ended in a transaction of its own (both logged as errors): the journal never costs an
+  audit entry. An execution stays fail closed: no journal, no call, and the refusal is
+  recorded (`journal_unavailable`). States only
+  move forward (`open` → `executing` → `ended`, or `open` → `ended`; database triggers).
+  The row holds the request ID (the one the UI knows), agent, entity, action, the digest
+  of the effective call (domain, service, entity and data, RFC 8785, SHA-256), created and
+  expiry time, the tag, the devices notified with their approver and language (written
+  as planned, then narrowed to the devices the request reached once the delivery is
+  over), and the
+  agent, request, mandate (ID and digest) and evaluation of the audit entry. Never the
+  nonce, a token or a credential: a journal read from a backup confirms nothing. Ended
+  rows are kept 24 hours (for the outcome an agent may fetch later) and then deleted, when
+  a request is opened, at start and daily.
+- **Restart (SPEC-v0 section 11.1 item 9):** at start, after the audit log was verified
+  and before the gateway, and so the MCP endpoint, exists, every row that is not `ended`
+  is closed. An `open` row gets a `decision` entry with `approval: {outcome: cancelled,
+  cause: interrupted, at: <now>}` and `result: denied, denied_by: approval`; an
+  `executing` row one with the approval as recorded (`approved`, `by`, `via`, `at`) and
+  `result: failed, error: outcome_unknown`. Nothing is executed, reopened or accepted as an
+  answer: nonces did not survive, so a tap on an old notification is discarded and logged.
+  Each entry commits together with the end of its row, so a crash during this step leaves
+  no duplicate. A row whose stored entry cannot be read or is refused by the schema gets a
+  minimal `decision` entry from its columns (agent `client_id`, request time = created,
+  `entity_id`, action; no evaluation, no approval): `denied`, `denied_by: approval`,
+  `error: approval_interrupted` for an open row, `failed`, `error: outcome_unknown` for an
+  executing one. Only if even that is refused does the row end without an entry (logged
+  as an error), so it cannot block the start; a database error stops the start.
+  Once Home Assistant is connected (once per process), each such row's notification is
+  replaced on every device it went to, under the same tag and without buttons, in the
+  approver's language: "Home-Mandate was restarted … nothing was executed" for a waiting
+  request, "… whether it was executed is unknown; please check the device. It will not be
+  repeated" for an execution under way. Once it reached a device the notice is marked
+  sent in the row; one that reached nobody is tried again after the next start.
+  Residual: a row that could not be ended at all (the audit log and the journal both
+  failing) is recorded at the next start as `interrupted` or `outcome_unknown`, although
+  it may have ended otherwise (a rejection, a refusal after the answer); conservative,
+  never an execution. A crash after the first notification and before the devices
+  reached are recorded leaves the planned devices in the row, so the notice may also go
+  to a device that never had the request.
 - After an approval the PEP checks emergency stop, token and mandate again before executing.
 - **Approver fatigue:** an agent has at most 2 requests waiting, and every request counts
   towards its rate limit. After a rejection, a timeout or an invalid answer, the same
@@ -338,12 +418,17 @@ checked on every request.
   (`hm_approval_…`, not the request ID: persistent notifications are visible to every HA
   user), removed however the request ends. At start the gateway removes such hints a crash
   left behind (`persistent_notification/get`, only IDs of this form are touched).
-- **Revocation and emergency stop (decision F1):** when triggered in the running gateway
-  (UI), open requests of the agent, or all, end at once and no further notification goes
-  out; the audit entry has no approval and is denied with `authentication` or
-  `emergency_stop`. The command line runs in a separate process and cannot reach open
-  requests; there the check after the answer (above) prevents the execution. Removing an
-  approver in the UI also takes them out of open requests.
+- **Revocation and emergency stop (decision F1, SPEC-v0 sections 11.1 item 8 and 11.3):**
+  when triggered in the running gateway (UI), open requests of the agent, or all, end at
+  once, no further notification goes out and the sent ones are cleared. The audit entry
+  has `approval: {outcome: cancelled, cause, at}` without `by` or `via`: `cause: revoked`
+  with `denied_by: authentication` when the agent was revoked (its token no longer
+  counts, checked when the request ends) or `denied_by: mandate` when only its mandate
+  was; `cause: emergency_stop` with `denied_by: emergency_stop`. Older logs have such
+  entries without an approval; the history shows them as cancelled with the cause they
+  stand for. The command line runs in a separate process and cannot reach open requests;
+  there the check after the answer (above) prevents the execution. Removing an approver in
+  the UI also takes them out of open requests.
 
 ## 8. Operating modes
 
@@ -394,7 +479,16 @@ SQLite at `/data/home-mandate.db`:
 revoked one stays as it was; removed ones carry `removed_at`/`removed_by`, and `purged_at`
 once their data is deleted and only the tombstone is left), `tokens` (hashes), `audit_log`
 (hash-chained) with its search index `audit_search`, `approvers`, `mandate_templates`,
-`settings`.
+`settings`, `approval_journal` (every approval request from before its first
+notification until a day after its end, so that a restart ends waiting ones visibly;
+section 7, migration 0016).
+
+Every connection waits up to 15 seconds for a lock (`busy_timeout`): longer than the
+longest call to Home Assistant (10 seconds), during which the audit log holds the write
+lock because the `executed` entry and the call share one transaction (section 5). Marking
+a confirmed request as executing in the journal is bounded to 12 seconds, so a database
+that stays locked fails closed (`journal_unavailable`, nothing executed) instead of
+holding the action.
 
 Further tables: `critical_entities` (the household's critical marks), the settings
 `mandate_issuer` and `audit_log_id`; the key of the audit checkpoints lies in

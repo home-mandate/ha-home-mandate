@@ -338,3 +338,16 @@ func writeFile(t *testing.T, path string, mode os.FileMode) {
 	}
 	chmod(t, path, mode) // umask may have removed bits
 }
+
+// A connection waits longer for a lock than Home-Mandate's longest call to Home Assistant,
+// during which the audit log holds the write lock (ARCHITECTURE section 9).
+func TestBusyTimeoutCoversTheCallToHomeAssistant(t *testing.T) {
+	s, _ := openTemp(t)
+	var ms int
+	if err := s.DB().QueryRow(`PRAGMA busy_timeout`).Scan(&ms); err != nil {
+		t.Fatal(err)
+	}
+	if ms != 15000 {
+		t.Errorf("busy_timeout = %d ms", ms)
+	}
+}

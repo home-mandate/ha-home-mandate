@@ -81,7 +81,7 @@ describe('createMockClient: agents and pairing', () => {
     const approvals = await api.approvals();
     expect(approvals.open).toEqual([]);
     // F1: the revocation ends the request; it is not a "rejected" by a person.
-    expect(approvals.history[0]).toMatchObject({ outcome: 'revoked', by_name: null });
+    expect(approvals.history[0]).toMatchObject({ outcome: 'cancelled', cause: 'revoked', by_name: null });
     expect(types(events)).toEqual(['mandates.changed', 'approval.closed', 'audit.appended', 'audit.appended', 'agents.changed']);
   });
 
@@ -827,7 +827,7 @@ describe('createMockClient: approvals, settings, audit, approvers, emergency sto
     const { events } = listen(api);
     expect(await api.setEmergencyStop(true)).toEqual({ active: true, since: '2026-10-02T17:42:00.000Z', by_name: 'Markus' });
     expect(await api.setEmergencyStop(true)).toMatchObject({ active: true });
-    expect((await api.approvals()).history[0]).toMatchObject({ outcome: 'emergency_stop' });
+    expect((await api.approvals()).history[0]).toMatchObject({ outcome: 'cancelled', cause: 'emergency_stop' });
     expect(types(events)).toEqual(['approval.closed', 'system', 'audit.appended']);
     expect(await api.setEmergencyStop(false)).toEqual({ active: false, since: null, by_name: null });
   });

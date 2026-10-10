@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
@@ -325,8 +326,9 @@ func TestSecondAnswerAfterTheEnd(t *testing.T) {
 		}, Result{Outcome: OutcomeInvalidResponse, By: u3, Via: ViaPush}},
 		{"timed out", func(*channelEnv, *testing.T, string, string) {}, Result{Outcome: OutcomeTimeout}},
 		{"agent revoked", func(e *channelEnv, _ *testing.T, _, _ string) { e.svc.CancelAgent("hm-client:voice") },
-			Result{Outcome: OutcomeCancelled}},
-		{"emergency stop", func(e *channelEnv, _ *testing.T, _, _ string) { e.svc.CancelAll() }, Result{Outcome: OutcomeCancelled}},
+			Result{Outcome: OutcomeCancelled, Cause: audit.CauseRevoked}},
+		{"emergency stop", func(e *channelEnv, _ *testing.T, _, _ string) { e.svc.CancelAll() },
+			Result{Outcome: OutcomeCancelled, Cause: audit.CauseEmergencyStop}},
 	}
 	for _, end := range ends {
 		for _, second := range []string{"phone", "UI"} {

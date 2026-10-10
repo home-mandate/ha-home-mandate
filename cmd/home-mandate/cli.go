@@ -53,6 +53,8 @@ type state struct {
 	mandates  *mandate.Store
 	admission *admission.Store
 	approvers *approval.Approvers
+	// journal is the approval journal; serve gives it its logger.
+	journal *approval.Journal
 }
 
 // openState opens the database for the administration commands; they need the data
@@ -130,7 +132,7 @@ func openStore(ctx context.Context, dataDir string) (*state, error) {
 		return ids, nil
 	})
 	return &state{store: st, household: household, log: log, agents: agents, mandates: mandates,
-		admission: adm, approvers: approvers}, nil
+		admission: adm, approvers: approvers, journal: approval.NewJournal(st.DB(), nil)}, nil
 }
 
 // settingMandateIssuer holds the issuer of the mandates this installation stores.

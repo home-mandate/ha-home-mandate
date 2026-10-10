@@ -712,7 +712,7 @@
   "audit_field_action": "Action",
   "audit_field_actor": "Triggered by",
   "audit_seq_short": "No. {number}",
-  "result_revoked": "Declined because the agent was revoked",
+  "result_revoked": "Ended: the agent or its mandate was revoked",
   "request_gone": "This approval was already answered or has ended.",
   "request_answer_failed": "The answer couldn’t be sent. Answering on the phone still works.",
   "request_answer_unknown": "It’s unclear whether the answer arrived. The history shows how it ended.",
@@ -952,5 +952,10 @@
   "pair_reconnect_button": "Reconnect",
   "pair_reconnect_failed": "Couldn’t reconnect: the agent is no longer offered or the request changed. Check the code again.",
   "pair_reconnected_body": "It continues with its existing entry, its history and the mandate “{mandate}”.",
-  "pair_reconnect_unverified": "This request comes from {address}. It uses a pairing code, so these agents match only by the name the agent gave itself, which any agent can give. Reconnect only if you are sure this request really comes from that agent."
+  "pair_reconnect_unverified": "This request comes from {address}. It uses a pairing code, so these agents match only by the name the agent gave itself, which any agent can give. Reconnect only if you are sure this request really comes from that agent.",
+  "result_interrupted": "Ended by a restart, not executed",
+  "result_interrupted_hint": "Home-Mandate was restarted while the request waited. Nothing was executed; an answer given meanwhile no longer counts.",
+  "result_withdrawn": "Withdrawn by the agent",
+  "result_outcome_unknown": "Home-Mandate was restarted while executing it: unknown whether it happened, please check the device",
+  "result_cancelled": "Ended before an answer"
 }

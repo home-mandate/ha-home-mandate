@@ -36,6 +36,7 @@ import {
 import type {
   Agent,
   ApiErrorCode,
+  ApprovalCause,
   ApprovalHistoryEntry,
   ApprovalRequest,
   Approvals,
@@ -138,7 +139,7 @@ interface State {
 export interface MockControls {
   emit(event: ServerEvent): void;
   openApproval(request: ApprovalRequest): void;
-  closeApproval(id: string, outcome: ApprovalHistoryEntry['outcome'], byName: string | null, via?: 'push' | 'ui'): void;
+  closeApproval(id: string, outcome: ApprovalHistoryEntry['outcome'], byName: string | null, via?: 'push' | 'ui', cause?: ApprovalCause): void;
   setHaConnected(connected: boolean): void;
   /** As a host clock behind the newest audit entry. */
   setClockBehind(behind: boolean): void;
@@ -660,7 +661,13 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     if (base !== approverList().version) fail('conflict');
   }
 
-  function closeApproval(id: string, outcome: ApprovalHistoryEntry['outcome'], byName: string | null, via?: 'push' | 'ui'): ApprovalHistoryEntry | null {
+  function closeApproval(
+    id: string,
+    outcome: ApprovalHistoryEntry['outcome'],
+    byName: string | null,
+    via?: 'push' | 'ui',
+    cause?: ApprovalCause,
+  ): ApprovalHistoryEntry | null {
     const request = state.approvals.open.find((r) => r.id === id);
     if (!request) return null;
     // The mock writes no audit entry here; the seq only has to be unique in the history.
@@ -672,6 +679,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       device_name: request.device_name,
       action: request.action,
       outcome,
+      ...(cause ? { cause } : {}),
       by_name: byName,
       created_at: request.created_at,
       answered_at: now().toISOString(),
@@ -768,7 +776,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       if (agent.mandate) setMandateStatus(agent.mandate.id, 'revoked');
       const revoked = { status: 'revoked' as const, revoked_at: now().toISOString(), revoked_by_name: user().name, connected: false };
       state = { ...state, agents: state.agents.map((a) => (a.client_id === clientId ? { ...a, ...revoked } : a)) };
-      for (const r of state.approvals.open.filter((x) => x.agent.client_id === clientId)) closeApproval(r.id, 'revoked', null);
+      for (const r of state.approvals.open.filter((x) => x.agent.client_id === clientId)) closeApproval(r.id, 'cancelled', null, undefined, 'revoked');
       if (agent.status === 'active') {
         log('agent.revoked', { agent: { client_id: agent.client_id, display_name: agent.display_name } });
         if (active) log('mandate.revoked', { mandate: { id: active, digest: detail(active).summary.digest } });
@@ -1189,7 +1197,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     async setEmergencyStop(active) {
       if (active !== state.system.emergency_stop.active) {
         const stop = active ? { active, since: now().toISOString(), by_name: user().name } : { active, since: null, by_name: null };
-        if (active) for (const r of state.approvals.open) closeApproval(r.id, 'emergency_stop', null);
+        if (active) for (const r of state.approvals.open) closeApproval(r.id, 'cancelled', null, undefined, 'emergency_stop');
         // Every token is withdrawn; lifting the stop does not bring them back.
         if (active) state = { ...state, agents: state.agents.map((a) => ({ ...a, connected: false })) };
         setSystem({ ...state.system, emergency_stop: stop });
