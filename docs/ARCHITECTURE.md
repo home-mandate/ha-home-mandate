@@ -75,6 +75,15 @@ Reason: only this way can every request be mapped unambiguously to a device and 
 | `approval_status` | – (no action) | Outcome of the agent's own request that waits for a human, by its approval ID: executed, the refusal, or still pending (section 7) |
 | `approval_cancel` | – (no action) | Withdraws the agent's own open request (`cancelled`, `cause: withdrawn`); never an answer (section 7) |
 
+**Output schemas are open:** every tool advertises an `outputSchema` inferred from its Go
+type, but without `additionalProperties: false` on its objects (`mcp.addTool`). Clients
+cache `tools/list` across server updates and validate `structuredContent` against the
+cached schema (MCP: clients SHOULD validate); a closed schema made a result with a new
+optional field fail in Claude Desktop until it reloaded the tools (acceptance test
+2026-10-10). New output fields are therefore always optional. Input schemas stay strict.
+Error results (`isError`) that carry structured content (`retry_after`, `retry_at`)
+conform to the same schema, and their text says everything on its own.
+
 Devices an agent has no read access to do not exist for that agent (no hint of their
 existence in lists or error messages): `list_devices` lists only devices it may read
 (`allow`), `list_my_permissions` none whose `read` is denied, also when the mandate allows

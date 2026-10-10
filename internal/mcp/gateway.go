@@ -11,6 +11,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -19,6 +20,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -216,23 +218,54 @@ func New(cfg Config) *Gateway {
 	g := &Gateway{cfg: cfg, rateLimitLog: map[string]time.Time{}, pendingAsks: map[string]int{}, waits: map[string]*waiting{}, open: map[string]*waiting{},
 		byKey:         map[string]*waiting{},
 		statusLimiter: ratelimit.New(cfg.Now), cooldowns: map[string]cooldown{}, server: sdk.NewServer(&sdk.Implementation{Name: "home-mandate", Version: cfg.Version}, nil)}
-	sdk.AddTool(g.server, &sdk.Tool{Name: "list_devices",
+	addTool(g.server, &sdk.Tool{Name: "list_devices",
 		Description: "Lists the devices you may read, with category, area and state."}, g.listDevices)
-	sdk.AddTool(g.server, &sdk.Tool{Name: "get_state",
+	addTool(g.server, &sdk.Tool{Name: "get_state",
 		Description: "Returns the state of one device."}, g.getState)
-	sdk.AddTool(g.server, &sdk.Tool{Name: "perform_action",
+	addTool(g.server, &sdk.Tool{Name: "perform_action",
 		Description: "Performs an action on one device, e.g. turn_on or unlock. Some actions need a human to confirm; " +
 			"give a short reason for them. The call waits a while for the answer; if nobody has answered by then, the result " +
 			"has status \"pending\": the action is NOT executed yet, and approval_status with the approval_id tells the outcome."}, g.performAction)
-	sdk.AddTool(g.server, &sdk.Tool{Name: "approval_status",
+	addTool(g.server, &sdk.Tool{Name: "approval_status",
 		Description: "Returns the outcome of an action that waits for a human's approval, by the approval_id perform_action " +
 			"gave: executed, refused (an error with the reason) or still pending. Waits a while for the outcome itself."}, g.approvalStatus)
-	sdk.AddTool(g.server, &sdk.Tool{Name: "approval_cancel",
+	addTool(g.server, &sdk.Tool{Name: "approval_cancel",
 		Description: "Withdraws your own request that still waits for a human's approval, by its approval_id; it is then never " +
 			"executed. A request already answered cannot be withdrawn."}, g.approvalCancel)
-	sdk.AddTool(g.server, &sdk.Tool{Name: "list_my_permissions",
+	addTool(g.server, &sdk.Tool{Name: "list_my_permissions",
 		Description: "Lists what you may do on the devices you may read: allow (immediately) or ask (a human confirms)."}, g.listPermissions)
 	return g
+}
+
+// addTool registers a tool with an output schema that accepts fields added later.
+// Clients cache tools/list across server updates and validate structuredContent against
+// the cached outputSchema (MCP: clients SHOULD validate); with the inferred schema
+// (additionalProperties: false on every struct) a result with a new optional field
+// failed in Claude Desktop until it reloaded the tools (acceptance test 2026-10-10). The
+// SDK has no option for this: the schema is inferred here, the objects are opened, and
+// the SDK uses it as given. Input schemas stay strict.
+func addTool[In, Out any](s *sdk.Server, t *sdk.Tool, h sdk.ToolHandlerFor[In, Out]) {
+	schema, err := jsonschema.For[Out](nil)
+	if err != nil {
+		panic(fmt.Sprintf("mcp: output schema of %s: %v", t.Name, err)) // the types are fixed at compile time
+	}
+	openObjects(schema)
+	t.OutputSchema = schema
+	sdk.AddTool(s, t, h)
+}
+
+// openObjects lets every object with declared properties carry undeclared ones too.
+func openObjects(s *jsonschema.Schema) {
+	if s == nil {
+		return
+	}
+	if len(s.Properties) > 0 {
+		s.AdditionalProperties = nil
+	}
+	for _, p := range s.Properties {
+		openObjects(p)
+	}
+	openObjects(s.Items)
 }
 
 // Handler serves the endpoint at Path, for bearer tokens of active agents only.
