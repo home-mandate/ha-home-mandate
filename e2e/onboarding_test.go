@@ -234,3 +234,59 @@ func TestScenario10PlainUserCannotAdmit(t *testing.T) {
 		t.Error("refused admission not in the audit log")
 	}
 }
+
+// nextApproval is the next approval request among the notifications (removals of ended
+// requests, clear_notification, go to the same device).
+func nextApproval(t *testing.T, ch <-chan notification) notification {
+	t.Helper()
+	for {
+		if n := nextNotification(t, ch); strings.HasPrefix(n.Title, "Approval needed") {
+			return n
+		}
+	}
+}
+
+// Issue #27, layer 3 (SPEC-v0 section 11.1 item 10): two agents ask to open the garage
+// door (Home Assistant's demo cover), both requests are confirmed. The door opens once;
+// the second confirmation finds it open already and is not executed (already_in_state).
+// The request shows the state the door was in.
+func TestScenarioGarageDoorOpensOnce(t *testing.T) {
+	notes := watchNotifications(t)
+	garage := func(d map[string]any) {
+		d["rules"] = append([]any{map[string]any{"id": "r-garage", "resource": map[string]any{"entity_id": "cover.garage_door"},
+			"actions": []any{"open", "close"}, "decision": "ask"}}, d["rules"].([]any)...)
+	}
+	a := session(t, newAgent(t, "Garage A", garage))
+	ready(t, a)
+	b := session(t, newAgent(t, "Garage B", garage))
+	ready(t, b)
+	if state := haState(t, "cover.garage_door"); state != "closed" {
+		t.Fatalf("cover.garage_door is %q before the test, want closed (demo default)", state)
+	}
+	open := map[string]any{"entity_id": "cover.garage_door", "action": "open"}
+	ra := callAsync(t, a, "perform_action", open)
+	na := nextApproval(t, notes)
+	rb := callAsync(t, b, "perform_action", open)
+	nb := nextApproval(t, notes)
+	for _, n := range []notification{na, nb} {
+		env.secrets = append(env.secrets, strings.TrimPrefix(n.Actions[0], "HM_APPROVE_"))
+		if !strings.Contains(n.Message, "(closed)") {
+			t.Errorf("request does not show the state: %q", n.Message)
+		}
+	}
+	answer(t, adminApprover, na.Actions[0])
+	if r := settled(t, a, awaitResult(t, ra)); r.errText != "" || r.out["status"] != "executed" {
+		t.Fatalf("first = %v, %q", r.out, r.errText)
+	}
+	eventually(t, "garage door open in Home Assistant", 15*time.Second, func() bool {
+		s := haState(t, "cover.garage_door")
+		return s == "open" || s == "opening"
+	})
+	answer(t, adminApprover, nb.Actions[0])
+	if r := settled(t, b, awaitResult(t, rb)); r.errText != "failed: already_in_state" {
+		t.Errorf("second = %v, %q", r.out, r.errText)
+	}
+	if !hasLine(auditLog(t), `"entity_id":"cover.garage_door"`, `"error":"already_in_state"`, `"outcome":"approved"`) {
+		t.Error("no already_in_state decision for the garage door in the audit log")
+	}
+}

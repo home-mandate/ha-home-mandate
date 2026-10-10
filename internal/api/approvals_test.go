@@ -39,7 +39,8 @@ func TestOpenApprovals(t *testing.T) {
 	if req.Agent.DisplayName != "Voice <b>" || req.EntityID != "lock.front_door" || req.DeviceName != "Haustür" || *req.Area != "hall" ||
 		req.Action != "unlock" || !req.Critical || req.Reason == nil || strings.Contains(*req.Reason, "://") ||
 		strings.ContainsAny(*req.Reason, "[]()") || len(req.Params) != 1 || req.Params[0] != (wireParam{"code", "1234"}) ||
-		strings.Join(req.Recipients, ",") != "Markus" || !req.CanAnswer || req.ExpiresAt <= req.CreatedAt {
+		strings.Join(req.Recipients, ",") != "Markus" || !req.CanAnswer || req.ExpiresAt <= req.CreatedAt ||
+		req.State == nil || *req.State != "locked" {
 		t.Errorf("request = %+v", req)
 	}
 	// Anna has no UI for critical actions: not reached, she sees it but cannot answer here.
@@ -247,6 +248,8 @@ func TestHistoryShowsOnlyKnownCausesAndErrors(t *testing.T) {
 		{`{"request":{"time":"2026-10-03T09:58:30Z"},"approval":{"outcome":"cancelled","cause":"<b>later</b>"},"result":{"status":"denied"}}`, "", ""},
 		{`{"request":{"time":"2026-10-03T09:58:30Z"},"approval":{"outcome":"approved"},"result":{"status":"failed","error":"outcome_unknown"}}`, "", "outcome_unknown"},
 		{`{"request":{"time":"2026-10-03T09:58:30Z"},"approval":{"outcome":"approved"},"result":{"status":"failed","error":"\u202e"}}`, "", "other"},
+		{`{"request":{"time":"2026-10-03T09:58:30Z"},"approval":{"outcome":"approved"},"result":{"status":"failed","error":"already_in_state"}}`, "", "already_in_state"},
+		{`{"request":{"time":"2026-10-03T09:58:30Z"},"approval":{"outcome":"approved"},"result":{"status":"failed","error":"state_changed"}}`, "", "state_changed"},
 	} {
 		got, err := h.srv.historyEntry(ctx, 1, testStart, json.RawMessage(tc.entry))
 		if err != nil || got.Cause != tc.cause || got.Error != tc.err {

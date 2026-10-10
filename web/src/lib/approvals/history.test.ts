@@ -38,6 +38,11 @@ describe('historyOutcome', () => {
     expect(historyOutcome(with_({ outcome: 'cancelled', by_name: null }))).toMatchObject({ text: 'Ended before an answer', dashed: true });
   });
 
+  it('says when a confirmed action was not executed because of the state', () => {
+    expect(historyOutcome(with_({ error: 'already_in_state' }))).toMatchObject({ icon: 'warning', tone: 'warning', hint: 'Not executed: the device was already in that state' });
+    expect(historyOutcome(with_({ error: 'state_changed' }))).toMatchObject({ icon: 'warning', hint: 'Not executed: the device’s state changed after the request' });
+  });
+
   it('warns when the outcome of a confirmed action is unknown after a restart', () => {
     expect(historyOutcome(with_({ error: 'outcome_unknown' }))).toMatchObject({
       icon: 'warning', tone: 'warning', text: `Approved by ${iso('Markus')} · after 0:42`, hint: expect.stringContaining('check the device'),

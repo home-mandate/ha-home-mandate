@@ -222,11 +222,18 @@ device without an agent.
    afterwards has no effect. Raise the mandate's timeout, up to the
    installation's limit (`approval_timeout_seconds` / `HM_APPROVAL_TIMEOUT`, at most 600
    seconds).
-8. **Cooldown:** after a refusal or timeout the agent may not ask again for the same device
-   for a while, and nobody is notified (agent error `approval_cooldown`).
+8. **Cooldown:** after a refusal or a second unanswered request in a row the agent may not
+   ask again for the same device for a while, and nobody is notified (agent error
+   `approval_cooldown`, which names the time it may ask again).
 9. **Home Assistant was disconnected:** while it is unreachable, approvals cannot be
    delivered and affected requests are declined.
-10. **Home-Mandate was restarted** (app update, crash, reboot) while a request waited: the
+10. **Asked once, although the agent called twice; or "already executed":** repeated
+    calls of an agent for the same device and action are tied to the open request, and
+    the same call shortly after an execution is not executed again
+    ([ARCHITECTURE.md](ARCHITECTURE.md), section 7, repeated requests). A confirmed
+    action that ends `already_in_state` or `state_changed` was not executed because the
+    device was no longer in the state shown with the request.
+11. **Home-Mandate was restarted** (app update, crash, reboot) while a request waited: the
     request ended, nothing was executed, and the notification on the phone is replaced by
     "Approval request ended" once Home Assistant is connected again; an answer given in
     between does not count. The agent may ask again. The audit log shows the request as
@@ -235,7 +242,7 @@ device without an agent.
     confirmed action was being executed, the notification says "Please check: <device>"
     and the log shows `outcome_unknown`: Home-Mandate does not know whether Home Assistant
     carried it out and never repeats it on its own.
-11. **The old notification stays on the phone** after a request ended: Home-Mandate asks
+12. **The old notification stays on the phone** after a request ended: Home-Mandate asks
     the Companion App to remove it (`clear_notification`), which needs app version 2021.5
     or later on iOS and may need the app to have been used recently. Pressing its buttons
     has no effect.

@@ -957,5 +957,10 @@
   "result_interrupted_hint": "Home-Mandate was restarted while the request waited. Nothing was executed; an answer given meanwhile no longer counts.",
   "result_withdrawn": "Withdrawn by the agent",
   "result_outcome_unknown": "Home-Mandate was restarted while executing it: unknown whether it happened, please check the device",
-  "result_cancelled": "Ended before an answer"
+  "result_cancelled": "Ended before an answer",
+  "request_state": "State when asked",
+  "result_already_in_state": "Not executed: the device was already in that state",
+  "result_state_changed": "Not executed: the device’s state changed after the request",
+  "reason_duplicate": "This call executed nothing itself: it was tied to the open request for the same action",
+  "reason_already_executed": "This call executed nothing itself: the same action had been executed shortly before"
 }

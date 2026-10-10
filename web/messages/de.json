@@ -957,5 +957,10 @@
   "result_interrupted_hint": "Home-Mandate wurde neu gestartet, während die Anfrage wartete. Es wurde nichts ausgeführt; eine Antwort in dieser Zeit zählt nicht mehr.",
   "result_withdrawn": "Vom Agenten zurückgezogen",
   "result_outcome_unknown": "Home-Mandate wurde während der Ausführung neu gestartet: unbekannt, ob sie erfolgt ist, bitte das Gerät prüfen",
-  "result_cancelled": "Vor einer Antwort beendet"
+  "result_cancelled": "Vor einer Antwort beendet",
+  "request_state": "Zustand bei der Anfrage",
+  "result_already_in_state": "Nicht ausgeführt: das Gerät war schon in diesem Zustand",
+  "result_state_changed": "Nicht ausgeführt: der Zustand des Geräts hat sich nach der Anfrage geändert",
+  "reason_duplicate": "Dieser Aufruf hat selbst nichts ausgeführt: er wurde an die offene Anfrage für dieselbe Aktion gebunden",
+  "reason_already_executed": "Dieser Aufruf hat selbst nichts ausgeführt: dieselbe Aktion war kurz zuvor ausgeführt worden"
 }

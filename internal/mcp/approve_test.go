@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/home-mandate/spec/evaluator"
 
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
@@ -343,11 +345,11 @@ func TestPendingAsksAreBounded(t *testing.T) {
 	f.during = func() { <-release }
 	h := approvalHarness(t, f)
 	results := make(chan string, maxPendingAsks)
-	for range maxPendingAsks {
-		go func() { results <- unlock(h, nil) }()
+	for _, id := range []string{"lock.front_door", "lock.back_door"} {
+		go func() { results <- unlock(h, map[string]any{"entity_id": id}) }()
 	}
 	waitFor(t, func() bool { return len(f.requests()) == maxPendingAsks })
-	if errText := unlock(h, nil); errText != "denied: approval_pending" {
+	if errText := unlock(h, map[string]any{"entity_id": "lock.garden_gate"}); !strings.HasPrefix(errText, "denied: approval_pending") {
 		t.Errorf("third request = %q", errText)
 	}
 	close(release)
@@ -613,7 +615,7 @@ func TestAskingAgainAfterARefusalWaits(t *testing.T) {
 	if errText := unlock(h, nil); errText != "denied: approval_rejected" {
 		t.Fatalf("first ask = %q", errText)
 	}
-	if errText := unlock(h, nil); errText != "denied: approval_cooldown" {
+	if errText := unlock(h, nil); !strings.HasPrefix(errText, "denied: approval_cooldown") {
 		t.Errorf("asked again at once = %q", errText)
 	}
 	if n := len(f.requests()); n != 1 {
@@ -628,7 +630,7 @@ func TestAskingAgainAfterARefusalWaits(t *testing.T) {
 		t.Fatalf("after a minute = %q", errText)
 	}
 	h.now.advance(cooldownMin) // the second wait is twice as long
-	if errText := unlock(h, nil); errText != "denied: approval_cooldown" {
+	if errText := unlock(h, nil); !strings.HasPrefix(errText, "denied: approval_cooldown") {
 		t.Errorf("a minute after the second refusal = %q", errText)
 	}
 	h.now.advance(cooldownMin)
@@ -645,17 +647,86 @@ func TestAskingAgainAfterARefusalWaits(t *testing.T) {
 	}
 }
 
+// An invalid answer starts the wait like a refusal. A single timeout does not (the human
+// may just not have seen it, decision 2026-10-10): only a second timeout in a row of the
+// agent for the device does, then doubling as for refusals.
 func TestTimeoutsAndInvalidAnswersStartTheWait(t *testing.T) {
-	for _, res := range []approval.Result{
-		{Outcome: approval.OutcomeTimeout, At: answeredAt},
-		{Outcome: approval.OutcomeInvalidResponse, By: "user-2", At: answeredAt},
-	} {
-		f := &fakeApprover{result: res}
-		h := approvalHarness(t, f)
-		_ = unlock(h, nil)
-		if errText := unlock(h, nil); errText != "denied: approval_cooldown" || len(f.requests()) != 1 {
-			t.Errorf("%s: asked again = %q, %d requests", res.Outcome, errText, len(f.requests()))
-		}
+	f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeInvalidResponse, By: "user-2", At: answeredAt}}
+	h := approvalHarness(t, f)
+	_ = unlock(h, nil)
+	if errText := unlock(h, nil); !strings.HasPrefix(errText, "denied: approval_cooldown") || len(f.requests()) != 1 {
+		t.Errorf("invalid answer: asked again = %q, %d requests", errText, len(f.requests()))
+	}
+
+	f = &fakeApprover{result: approval.Result{Outcome: approval.OutcomeTimeout, At: answeredAt}}
+	h = approvalHarness(t, f)
+	if errText := unlock(h, nil); errText != "denied: approval_timeout" {
+		t.Fatalf("first = %q", errText)
+	}
+	if errText := unlock(h, nil); errText != "denied: approval_timeout" || len(f.requests()) != 2 {
+		t.Errorf("after one timeout: %q, %d requests", errText, len(f.requests()))
+	}
+	if errText := unlock(h, nil); !strings.HasPrefix(errText, "denied: approval_cooldown") || len(f.requests()) != 2 {
+		t.Errorf("after two timeouts: %q, %d requests", errText, len(f.requests()))
+	}
+}
+
+// The timeouts in a row per agent and device, as the gateway counts them.
+func TestOnlyConsecutiveTimeoutsWait(t *testing.T) {
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	g := New(Config{Now: func() time.Time { return now }})
+	const c, e = "agent", "lock.front_door"
+	g.coolDownAfterTimeout(c, e)
+	if left := g.cooling(c, e); left != 0 {
+		t.Errorf("first timeout: %v", left)
+	}
+	g.coolDownAfterTimeout(c, e)
+	if left := g.cooling(c, e); left != time.Minute {
+		t.Errorf("second timeout: %v", left)
+	}
+	now = now.Add(time.Minute)
+	g.coolDownAfterTimeout(c, e)
+	if left := g.cooling(c, e); left != 2*time.Minute {
+		t.Errorf("third timeout: %v", left)
+	}
+	// A refusal, then a timeout: not two timeouts in a row; the refusal's wait stands.
+	g.forgive(c, e)
+	g.coolDown(c, e)
+	g.coolDownAfterTimeout(c, e)
+	if left := g.cooling(c, e); left != time.Minute {
+		t.Errorf("refusal then timeout: %v", left)
+	}
+	now = now.Add(time.Minute)
+	g.coolDownAfterTimeout(c, e)
+	if left := g.cooling(c, e); left != 2*time.Minute {
+		t.Errorf("refusal, timeout, timeout: %v", left)
+	}
+	// An approval forgets the timeouts too.
+	g.forgive(c, e)
+	g.coolDownAfterTimeout(c, e)
+	if left := g.cooling(c, e); left != 0 {
+		t.Errorf("after an approval: %v", left)
+	}
+}
+
+// The refusal says when the agent may ask again, in the text and structured.
+func TestTheCooldownSaysWhenToAskAgain(t *testing.T) {
+	f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeRejected, By: approverID, At: answeredAt}}
+	h := approvalHarness(t, f)
+	_ = unlock(h, nil)
+	h.now.advance(20 * time.Second)
+	res, err := h.session().CallTool(context.Background(), &sdk.CallToolParams{Name: "perform_action",
+		Arguments: map[string]any{"entity_id": "lock.front_door", "action": "unlock"}})
+	if err != nil || !res.IsError {
+		t.Fatalf("result = %+v, %v", res, err)
+	}
+	text := res.Content[0].(*sdk.TextContent).Text
+	out, _ := res.StructuredContent.(map[string]any)
+	at := h.now.Now().Add(40 * time.Second).UTC().Format(time.RFC3339)
+	if !strings.HasPrefix(text, "denied: approval_cooldown: you may ask again for this device at "+at+" (in 40 s)") ||
+		!strings.Contains(text, "refused without notifying anyone") || out["retry_after"] != float64(40) || out["retry_at"] != at ||
+		out["status"] != "denied" {
+		t.Errorf("text %q, structured %v", text, out)
 	}
 }
 
@@ -728,6 +799,10 @@ func TestApprovalShowsTheAlarmMode(t *testing.T) {
 		})
 		h.approver = f
 		h.url = h.serve(h.log)
+		// Disarmed: arming is not already done (SPEC-v0 section 11.1 item 10).
+		dev := h.catalog.devices["alarm_control_panel.home"]
+		dev.State = "disarmed"
+		h.catalog.devices["alarm_control_panel.home"] = dev
 		args := map[string]any{"entity_id": "alarm_control_panel.home", "action": "arm"}
 		if mode != "" {
 			args["params"] = map[string]any{"mode": mode}
