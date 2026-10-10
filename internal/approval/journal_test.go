@@ -263,7 +263,9 @@ func TestUndeliveredRequestNamesItsJournalEntry(t *testing.T) {
 // open enters a request directly, as Ask does.
 func (je *journalEnv) open(t *testing.T, id string) Opened {
 	t.Helper()
-	o := Opened{ID: id, Tag: tagPrefix + id, Request: journaled(), Created: je.now, Expires: je.now.Add(time.Minute),
+	req := journaled()
+	req.Record.AgentRef = "apr_" + id
+	o := Opened{ID: id, Tag: tagPrefix + id, Request: req, Created: je.now, Expires: je.now.Add(time.Minute),
 		Notified: []Notified{{u1, "mobile_app_markus", "de"}, {u2, "mobile_app_anna", "en"}}}
 	if err := je.journal.Open(context.Background(), o); err != nil {
 		t.Fatal(err)
@@ -692,5 +694,72 @@ func TestDrainWaitsForRemovalsBounded(t *testing.T) {
 	}
 	if !New(Config{}).Drain(time.Millisecond) {
 		t.Error("Drain without anything pending")
+	}
+}
+
+// An agent finds its request by the reference it was given, and only its own; after the
+// end the outcome is there, after a day nothing.
+func TestLookupByTheAgentsReference(t *testing.T) {
+	je := newJournalEnv(t)
+	ctx := context.Background()
+	o := je.open(t, idOpen)
+	ref := o.Request.Record.AgentRef
+	got, ok, err := je.journal.Lookup(ctx, ref, "hm-client:voice")
+	if err != nil || !ok || got.State != stateOpen || !got.Expires.Equal(o.Expires) {
+		t.Fatalf("Lookup = %+v, %v, %v", got, ok, err)
+	}
+	for name, args := range map[string][2]string{
+		"other agent": {ref, "hm-client:other"}, "unknown": {"apr_" + strings.Repeat("0", 32), "hm-client:voice"},
+		"request ID": {idOpen, "hm-client:voice"}, "tag": {o.Tag, "hm-client:voice"}, "empty": {"", "hm-client:voice"},
+	} {
+		if _, ok, err := je.journal.Lookup(ctx, args[0], args[1]); ok || err != nil {
+			t.Errorf("%s: found (%v)", name, err)
+		}
+	}
+	result := audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}
+	e := journaled().Record.Entry
+	e.Event, e.Result, e.Approval = audit.EventDecision, &result, &audit.Approval{Outcome: OutcomeRejected, By: u2, Via: ViaUI, At: je.now}
+	e.Also = je.journal.End(idOpen, e.Approval, result)
+	if _, err := je.log.Append(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err = je.journal.Lookup(ctx, ref, "hm-client:voice")
+	if err != nil || !ok || got.State != stateEnded || got.Outcome != OutcomeRejected || got.Result != result {
+		t.Errorf("after the end = %+v, %v, %v", got, ok, err)
+	}
+	je.now = je.now.Add(keepEnded + time.Minute)
+	if _, err := je.journal.Expire(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := je.journal.Lookup(ctx, ref, "hm-client:voice"); ok {
+		t.Error("found after a day")
+	}
+}
+
+// EndNow ends a request on its own; Lookup reports what it cannot read as an error,
+// never as a request that does not exist.
+func TestEndNowAndUnreadableLookups(t *testing.T) {
+	je := newJournalEnv(t)
+	ctx := context.Background()
+	o := je.open(t, idOpen)
+	ref := o.Request.Record.AgentRef
+	result := audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}
+	if err := je.journal.EndNow(ctx, idOpen, &audit.Approval{Outcome: OutcomeTimeout, At: je.now}, result); err != nil {
+		t.Fatal(err)
+	}
+	if st, ok, err := je.journal.Lookup(ctx, ref, "hm-client:voice"); err != nil || !ok || !st.Ended() || st.Outcome != OutcomeTimeout {
+		t.Errorf("after EndNow = %+v, %v, %v", st, ok, err)
+	}
+	for _, stmt := range []string{`UPDATE approval_journal SET result = 'garbage'`, `UPDATE approval_journal SET expires_at = 'never'`} {
+		if _, err := je.db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok, err := je.journal.Lookup(ctx, ref, "hm-client:voice"); ok || !errors.Is(err, ErrJournal) {
+			t.Errorf("%s: %v, %v", stmt, ok, err)
+		}
+	}
+	_ = je.db.Close()
+	if _, _, err := je.journal.Lookup(ctx, ref, "hm-client:voice"); !errors.Is(err, ErrJournal) {
+		t.Errorf("closed database: %v", err)
 	}
 }

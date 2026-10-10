@@ -185,6 +185,8 @@ type harness struct {
 	// journalOverride replaces journal in the gateway when set.
 	journalOverride Journal
 	logger          *slog.Logger
+	approvalWait    time.Duration // the gateway's ApprovalWait; zero: the default
+	gw              *Gateway      // the gateway serve started last
 
 	mu   sync.Mutex
 	tz   string
@@ -259,8 +261,9 @@ func (h *harness) serve(auditor Auditor) string {
 		decider = h.decider
 	}
 	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Journal: h.gatewayJournal(), Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test",
-		TimeZone: h.timeZone, ServiceUser: h.serviceUser, Now: h.now.Now, Logger: h.logger})
+		TimeZone: h.timeZone, ServiceUser: h.serviceUser, Now: h.now.Now, Logger: h.logger, ApprovalWait: h.approvalWait})
 	g.cfg.Clock = h.clock
+	h.gw = g
 	srv := httptest.NewServer(g.Handler())
 	h.t.Cleanup(srv.Close)
 	return srv.URL + Path
@@ -655,7 +658,9 @@ func TestMalformedToolCalls(t *testing.T) {
 	}
 }
 
-func TestOnlyTheFourToolsExist(t *testing.T) {
+// The six tools; none of them answers an approval request (SPEC-v0 section 11.1 item 4):
+// approval_status only reads, approval_cancel only withdraws.
+func TestOnlyTheSixToolsExist(t *testing.T) {
 	h := newHarness(t, nil)
 	res, err := h.session().ListTools(context.Background(), nil)
 	if err != nil {
@@ -665,7 +670,7 @@ func TestOnlyTheFourToolsExist(t *testing.T) {
 	for _, tool := range res.Tools {
 		names = append(names, tool.Name)
 	}
-	if strings.Join(names, ",") != "get_state,list_devices,list_my_permissions,perform_action" {
+	if strings.Join(names, ",") != "approval_cancel,approval_status,get_state,list_devices,list_my_permissions,perform_action" {
 		t.Errorf("tools = %v", names)
 	}
 }

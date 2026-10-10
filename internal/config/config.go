@@ -36,18 +36,25 @@ const (
 )
 
 const (
-	appDataDir    = "/data"
-	appOptions    = "/data/options.json"
-	appSSLDir     = "/ssl"
-	supervisorWS  = "ws://supervisor/core/websocket"
-	mcpPort       = "8765"
-	ingressPort   = "8099"
-	minApproval   = 30 * time.Second
-	maxApproval   = 600 * time.Second
-	maxTokenBytes = 4096
+	appDataDir   = "/data"
+	appOptions   = "/data/options.json"
+	appSSLDir    = "/ssl"
+	supervisorWS = "ws://supervisor/core/websocket"
+	mcpPort      = "8765"
+	ingressPort  = "8099"
+	minApproval  = 30 * time.Second
+	// The wait for an approval within one tool call stays below the clients' cut-off of
+	// about 60 seconds.
+	minApprovalWait = 5 * time.Second
+	maxApprovalWait = 55 * time.Second
+	maxApproval     = 600 * time.Second
+	maxTokenBytes   = 4096
 
 	// DefaultApprovalTimeout is the timeout of approval requests unless configured.
 	DefaultApprovalTimeout = 2 * time.Minute
+	// DefaultApprovalWait is how long a tool call waits for an approval before the agent
+	// gets the pending result (issue #27), unless configured.
+	DefaultApprovalWait = 45 * time.Second
 )
 
 // Config is the validated configuration.
@@ -102,7 +109,10 @@ type Config struct {
 	// ApprovalTimeout is the upper limit for waiting for an approval; a mandate may
 	// only shorten it.
 	ApprovalTimeout time.Duration
-	LogLevel        slog.Level
+	// ApprovalWait is how long a tool call waits for an approval before the agent gets
+	// the pending result; a request whose timeout is shorter ends within the call.
+	ApprovalWait time.Duration
+	LogLevel     slog.Level
 }
 
 // String omits nothing but the token, which Secret redacts.
@@ -111,8 +121,9 @@ func (c Config) String() string {
 	if c.Proxy.IsValid() {
 		proxy = c.Proxy.String()
 	}
-	return fmt.Sprintf("mode=%s data=%s ha=%s token=%s tls=%t mcp=%s proxy=%s ingress=%s public=%s approval=%s log=%s",
-		c.Mode, c.DataDir, c.HAURL, c.HAToken, c.TLSCert != "", c.MCPAddr, proxy, c.IngressAddr, c.PublicURL, c.ApprovalTimeout, c.LogLevel)
+	return fmt.Sprintf("mode=%s data=%s ha=%s token=%s tls=%t mcp=%s proxy=%s ingress=%s public=%s approval=%s wait=%s log=%s",
+		c.Mode, c.DataDir, c.HAURL, c.HAToken, c.TLSCert != "", c.MCPAddr, proxy, c.IngressAddr, c.PublicURL, c.ApprovalTimeout,
+		c.ApprovalWait, c.LogLevel)
 }
 
 // DataDir returns the data directory without reading the rest of the configuration, so
@@ -156,6 +167,7 @@ type appOptionsFile struct {
 	TLSCertFile            string `json:"tls_certfile"`
 	TLSKeyFile             string `json:"tls_keyfile"`
 	ApprovalTimeoutSeconds int    `json:"approval_timeout_seconds"`
+	ApprovalWaitSeconds    int    `json:"approval_wait_seconds"`
 	LogLevel               string `json:"log_level"`
 	PublicURL              string `json:"public_url"`
 	HABrowserURL           string `json:"ha_browser_url"`
@@ -178,6 +190,12 @@ func loadApp(token ha.Secret, readFile func(string) ([]byte, error)) (Config, er
 	}
 	if cfg.ApprovalTimeout, err = approvalTimeout(opts.ApprovalTimeoutSeconds); err != nil {
 		return Config{}, err
+	}
+	cfg.ApprovalWait = DefaultApprovalWait
+	if opts.ApprovalWaitSeconds != 0 {
+		if cfg.ApprovalWait, err = approvalWait(opts.ApprovalWaitSeconds); err != nil {
+			return Config{}, err
+		}
 	}
 	if cfg.LogLevel, err = logLevel(opts.LogLevel); err != nil {
 		return Config{}, err
@@ -265,6 +283,16 @@ func loadContainer(e Env) (Config, error) {
 			return Config{}, fmt.Errorf("%w: HM_APPROVAL_TIMEOUT must be a number of seconds", ErrInvalid)
 		}
 		if cfg.ApprovalTimeout, err = approvalTimeout(seconds); err != nil {
+			return Config{}, err
+		}
+	}
+	cfg.ApprovalWait = DefaultApprovalWait
+	if s := getenv("HM_APPROVAL_WAIT"); s != "" {
+		seconds, err := strconv.Atoi(s)
+		if err != nil {
+			return Config{}, fmt.Errorf("%w: HM_APPROVAL_WAIT must be a number of seconds", ErrInvalid)
+		}
+		if cfg.ApprovalWait, err = approvalWait(seconds); err != nil {
 			return Config{}, err
 		}
 	}
@@ -429,6 +457,14 @@ func approvalTimeout(seconds int) (time.Duration, error) {
 	d := time.Duration(seconds) * time.Second
 	if d < minApproval || d > maxApproval {
 		return 0, fmt.Errorf("%w: approval timeout must be between %s and %s", ErrInvalid, minApproval, maxApproval)
+	}
+	return d, nil
+}
+
+func approvalWait(seconds int) (time.Duration, error) {
+	d := time.Duration(seconds) * time.Second
+	if d < minApprovalWait || d > maxApprovalWait {
+		return 0, fmt.Errorf("%w: approval wait must be between %s and %s", ErrInvalid, minApprovalWait, maxApprovalWait)
 	}
 	return d, nil
 }

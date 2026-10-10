@@ -549,7 +549,8 @@ func TestBellIsClearedAtEveryEnd(t *testing.T) {
 		"agent revoked": func(e *channelEnv, _ *testing.T, _, _ string, _ context.CancelFunc) {
 			e.svc.CancelAgent("hm-client:voice")
 		},
-		"emergency stop":   func(e *channelEnv, _ *testing.T, _, _ string, _ context.CancelFunc) { e.svc.CancelAll() },
+		"emergency stop": func(e *channelEnv, _ *testing.T, _, _ string, _ context.CancelFunc) { e.svc.CancelAll() },
+		// The caller's end does not end the request (issue #27); its timeout does.
 		"caller went away": func(_ *channelEnv, _ *testing.T, _, _ string, cancel context.CancelFunc) { cancel() },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -561,7 +562,7 @@ func TestBellIsClearedAtEveryEnd(t *testing.T) {
 			defer cancel()
 			ch := make(chan answer, 1)
 			req := request()
-			if name == "timeout" {
+			if name == "timeout" || name == "caller went away" {
 				req.Timeout = 300 * time.Millisecond
 			}
 			go func() {

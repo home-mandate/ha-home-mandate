@@ -21,8 +21,8 @@ model, so no agent can talk itself into more.
 
 1. An agent connects to Home-Mandate's MCP endpoint (MCP over HTTPS) and signs in with
    OAuth 2.1; a Home Assistant administrator admits it and picks its mandate.
-2. The agent sees four tools: list devices, read a state, perform an action, list its own
-   permissions.
+2. The agent sees six tools: list devices, read a state, perform an action, list its own
+   permissions, and ask for or withdraw an action that waits for a human's approval.
 3. For every request, Home-Mandate looks up the device in Home Assistant (category, area,
    critical or not) and evaluates the agent's mandate: **allow**, **ask** or **deny**.
 4. *Allow* calls Home Assistant; *ask* sends a notification with **Allow** and **Deny** to
@@ -114,8 +114,10 @@ The threat model and how to report vulnerabilities: [SECURITY.md](SECURITY.md).
 - Reading a device with the decision *ask* is refused; only actions are confirmed by a
   human.
 - An approval waits at most 10 minutes (the approval timeout setting, 30 to 600 seconds),
-  although a mandate may name up to an hour: the agent's request waits for the answer.
-- Open approval requests live in memory: a restart ends them without execution.
+  although a mandate may name up to an hour. The agent's call waits up to 45 seconds and
+  then gets a pending result; it learns the outcome with `approval_status`.
+- A restart ends open approval requests without execution; they are recorded in the audit
+  log and the notifications on the phones are replaced.
 - Reconnecting after an emergency stop is offered only for agents of the same OAuth client
   without valid access, and only on the sign-in or pairing page when the agent signs in
   again; the administrator chooses the agent, Home-Mandate never matches one by itself.

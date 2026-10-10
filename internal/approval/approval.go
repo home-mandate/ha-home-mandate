@@ -227,6 +227,9 @@ type Service struct {
 	byID    map[string]*pending // by request ID (UI)
 	seq     uint64
 
+	// stopped: no answer is taken any more (StopAnswers).
+	stopped bool
+
 	// background holds the removal of notifications of ended requests.
 	background sync.WaitGroup
 }
@@ -245,16 +248,36 @@ func New(cfg Config) *Service {
 	return &Service{cfg: cfg, pending: map[string]*pending{}, byID: map[string]*pending{}}
 }
 
-// Ask notifies the approvers of req on their channels and waits for the first valid
-// answer, the timeout, a cancellation or the end of ctx. Only ErrNoApprover and errors
-// reading the approvers are returned as errors; everything else is a Result.
+// Pending is a request that waits for an answer. Done receives its result exactly once,
+// when the request ends: answered, timed out or cancelled. The context of the call that
+// started it does not end it (issue #27): an agent's tool call may give up long before.
+type Pending struct {
+	ID      string
+	Expires time.Time
+	Done    <-chan Result
+}
+
+// Ask is Start followed by waiting for the result.
 func (s *Service) Ask(ctx context.Context, req Request) (Result, error) {
+	p, err := s.Start(ctx, req)
+	if err != nil {
+		return Result{ID: p.ID}, err
+	}
+	return <-p.Done, nil
+}
+
+// Start enters req in the journal, notifies its approvers on their channels and returns
+// while the request waits for the first valid answer, its timeout or a cancellation. Only
+// ErrNoApprover, ErrJournal and errors reading the approvers are returned as errors;
+// everything else is a Result on Done. With ErrNoApprover after the request was entered
+// in the journal, the Pending names it (ID) so that its denial can end it there.
+func (s *Service) Start(ctx context.Context, req Request) (Pending, error) {
 	recipients, err := s.recipients(ctx, req)
 	if err != nil {
-		return Result{}, err
+		return Pending{}, err
 	}
 	if len(recipients) == 0 {
-		return Result{}, ErrNoApprover
+		return Pending{}, ErrNoApprover
 	}
 	p := &pending{id: newNonce(), bellID: bellPrefix + newNonce(), tag: tagPrefix + newNonce(), approvers: map[string]bool{},
 		recipients: recipients, req: req, result: make(chan Result, 1), created: s.cfg.Now()}
@@ -263,7 +286,7 @@ func (s *Service) Ask(ctx context.Context, req Request) (Result, error) {
 		p.approvers[r.UserID] = true
 	}
 	if err := s.enter(ctx, p); err != nil {
-		return Result{}, err
+		return Pending{}, err
 	}
 	nonce := newNonce()
 	key := hashKey(nonce)
@@ -272,25 +295,32 @@ func (s *Service) Ask(ctx context.Context, req Request) (Result, error) {
 	p.seq = s.seq
 	s.pending[key], s.byID[p.id] = p, p
 	s.mu.Unlock()
-	defer func() {
+	end := func() {
 		s.mu.Lock()
 		p.done = true
 		delete(s.pending, key)
 		delete(s.byID, p.id)
 		s.mu.Unlock()
 		s.clearPush(p)
-	}()
-
+	}
+	// The delivery belongs to the request, not to the call: it goes on if the call ends.
+	ctx = context.WithoutCancel(ctx)
+	out := make(chan Result, 1)
+	pend := Pending{ID: p.id, Expires: p.expires, Done: out}
 	reached, uiUsers := s.deliver(ctx, p, nonce)
 	s.recordDelivered(ctx, p)
 	s.mu.Lock()
 	if p.done { // answered on a phone or cancelled during the delivery
 		s.mu.Unlock()
-		return withID(<-p.result, p.id), nil
+		res := withID(<-p.result, p.id)
+		end()
+		out <- res
+		return pend, nil
 	}
 	if len(reached) == 0 {
 		s.mu.Unlock()
-		return Result{ID: p.id}, fmt.Errorf("%w: no notification delivered", ErrNoApprover)
+		end()
+		return Pending{ID: p.id}, fmt.Errorf("%w: no notification delivered", ErrNoApprover)
 	}
 	p.reached, p.uiUsers, p.listed = reached, uiUsers, true
 	opened := s.openOf(p)
@@ -298,10 +328,16 @@ func (s *Service) Ask(ctx context.Context, req Request) (Result, error) {
 	if s.cfg.OnOpened != nil {
 		s.cfg.OnOpened(opened)
 	}
-	if rung := s.ring(ctx, p); rung {
-		defer s.clear(p.bellID)
-	}
-	return withID(s.wait(ctx, key, p), p.id), nil
+	rung := s.ring(ctx, p)
+	go func() {
+		res := withID(s.wait(key, p), p.id)
+		if rung {
+			s.clear(p.bellID)
+		}
+		end()
+		out <- res
+	}()
+	return pend, nil
 }
 
 func withID(r Result, id string) Result {
@@ -478,15 +514,15 @@ func (s *Service) timeout(req Request) time.Duration {
 	return s.cfg.MaxTimeout
 }
 
-// wait waits until p.expires, so that the end is the one the UI shows.
-func (s *Service) wait(ctx context.Context, key string, p *pending) Result {
+// wait waits until p.expires, so that the end is the one the UI shows; nothing else but
+// an answer or a cancellation ends it earlier.
+func (s *Service) wait(key string, p *pending) Result {
 	timer := time.NewTimer(max(p.expires.Sub(s.cfg.Now()), 0))
 	defer timer.Stop()
 	select {
 	case res := <-p.result:
 		return res
 	case <-timer.C:
-	case <-ctx.Done():
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -505,7 +541,7 @@ func (s *Service) wait(ctx context.Context, key string, p *pending) Result {
 func (s *Service) Answer(ctx context.Context, id, user string, approve bool) (Result, error) {
 	s.mu.Lock()
 	p, ok := s.byID[id]
-	if !ok || p.done || !p.listed {
+	if !ok || p.done || !p.listed || s.stopped {
 		s.mu.Unlock()
 		return Result{}, ErrNotPending
 	}
@@ -519,7 +555,7 @@ func (s *Service) Answer(ctx context.Context, id, user string, approve bool) (Re
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if p.done {
+	if p.done || s.stopped {
 		return Result{}, ErrNotPending
 	}
 	p.done = true
@@ -613,6 +649,35 @@ func (s *Service) Withdraw(userID string) int {
 	return n
 }
 
+// StopAnswers closes the door on shutdown: from now on every answer, on a phone or in
+// the UI, is discarded and logged like one to a request that is no longer open. It holds
+// the lock answers are taken under, so an answer is either taken before (and settled by
+// the gateway) or discarded; requests still open end at the next start as interrupted,
+// which then is true: nobody's answer was accepted (SPEC-v0 section 11.1 items 8 and 9).
+func (s *Service) StopAnswers() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopped = true
+}
+
+// IsOpen tells whether the request with the ID still waits for an answer.
+func (s *Service) IsOpen(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.byID[id]
+	return ok && !p.done
+}
+
+// CancelRequest withdraws the open request with the ID for its agent (cause withdrawn,
+// SPEC-v0 section 11.1 item 8). It is no answer: a request that was answered or ended
+// already stays as it is, and false is returned. The caller checks that the agent owns it.
+func (s *Service) CancelRequest(id string) bool {
+	if id == "" {
+		return false
+	}
+	return s.cancel(func(p *pending) bool { return p.id == id }, audit.CauseWithdrawn) == 1
+}
+
 // CancelAll ends every open request (emergency stop) and returns how many.
 func (s *Service) CancelAll() int {
 	return s.cancel(func(*pending) bool { return true }, audit.CauseEmergencyStop)
@@ -658,7 +723,7 @@ func (s *Service) HandleEvent(e ha.Event) {
 	}
 	s.mu.Lock()
 	p, ok := s.pending[hashKey(nonce)]
-	if !ok || p.done {
+	if !ok || p.done || s.stopped {
 		s.mu.Unlock()
 		s.cfg.Logger.Warn("approval answer discarded: unknown, expired or already answered", "user_id", loggable(user))
 		return

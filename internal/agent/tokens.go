@@ -124,6 +124,18 @@ func (s *Store) insertPair(ctx context.Context, tx *sql.Tx, clientID, family, re
 // resource. Every failure is ErrUnauthorized, except database errors. The emergency
 // stop, the agent's status and the token's revocation are read on every call.
 func (s *Store) Authenticate(ctx context.Context, token, resource string) (Agent, error) {
+	return s.authenticate(ctx, token, resource, true)
+}
+
+// StillAuthorized is Authenticate without the token's expiry: whether the access token
+// that made an approval request still counts when the answer comes, possibly after the
+// token expired (issue #27). A revocation of the token, its family or the agent, the
+// emergency stop and another resource still fail.
+func (s *Store) StillAuthorized(ctx context.Context, token, resource string) (Agent, error) {
+	return s.authenticate(ctx, token, resource, false)
+}
+
+func (s *Store) authenticate(ctx context.Context, token, resource string, checkExpiry bool) (Agent, error) {
 	if resource == "" || !wellFormed(token, accessPrefix) {
 		return Agent{}, ErrUnauthorized
 	}
@@ -145,7 +157,7 @@ func (s *Store) Authenticate(ctx context.Context, token, resource string) (Agent
 	}
 	expires, err := time.Parse(timeFormat, expiresAt)
 	if err != nil || kind != kindAccess || tokenResource != resource || revokedAt.Valid || a.Status != StatusActive ||
-		stop != stopOff || !s.clock().Before(expires) {
+		stop != stopOff || checkExpiry && !s.clock().Before(expires) {
 		return Agent{}, ErrUnauthorized
 	}
 	a.CreatedAt, _ = time.Parse(timeFormat, createdAt)

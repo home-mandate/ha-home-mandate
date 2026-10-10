@@ -23,6 +23,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/home-mandate/spec/evaluator"
+	"github.com/home-mandate/spec/ratelimit"
 
 	"github.com/home-mandate/ha-home-mandate/internal/agent"
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
@@ -79,6 +80,9 @@ var (
 type (
 	Authenticator interface {
 		Authenticate(ctx context.Context, token, resource string) (agent.Agent, error)
+		// StillAuthorized is Authenticate without the token's expiry, for the check after
+		// a late answer to an approval request.
+		StillAuthorized(ctx context.Context, token, resource string) (agent.Agent, error)
 		EmergencyStopActive(ctx context.Context) (bool, error)
 	}
 	Decider interface {
@@ -105,9 +109,16 @@ type (
 		Append(ctx context.Context, e audit.Entry) (int64, error)
 		WithEntry(ctx context.Context, e audit.Entry, action func() error) error
 	}
-	// Approver asks a human to confirm an action with the decision ask.
+	// Approver asks a human to confirm an action with the decision ask; the request
+	// lives on after Start returns, until it ends (approval.Pending). CancelRequest
+	// withdraws an open one.
 	Approver interface {
-		Ask(ctx context.Context, req approval.Request) (approval.Result, error)
+		Start(ctx context.Context, req approval.Request) (approval.Pending, error)
+		CancelRequest(id string) bool
+		// StopAnswers closes the door on shutdown; IsOpen tells whether a request still
+		// waits for an answer.
+		StopAnswers()
+		IsOpen(id string) bool
 	}
 	// Journal follows approval requests in the approval journal (approval.Journal): a
 	// confirmed one is marked executing before Home Assistant is called, and every one
@@ -117,6 +128,7 @@ type (
 		Executing(ctx context.Context, id string, a audit.Approval) error
 		End(id string, a *audit.Approval, result audit.Result) func(context.Context, *sql.Tx) error
 		EndNow(ctx context.Context, id string, a *audit.Approval, result audit.Result) error
+		Lookup(ctx context.Context, ref, clientID string) (approval.Status, bool, error)
 	}
 )
 
@@ -156,6 +168,9 @@ type Config struct {
 	// ApprovalLimit is the upper limit of a wait for an approval (HM_APPROVAL_TIMEOUT); a
 	// confirmation is valid for the request's timeout, at most this long.
 	ApprovalLimit time.Duration
+	// ApprovalWait is how long a tool call waits for the answer to an approval request
+	// before it returns the pending result (HM_APPROVAL_WAIT, default 45 s).
+	ApprovalWait time.Duration
 }
 
 // Gateway serves the MCP tools.
@@ -165,9 +180,14 @@ type Gateway struct {
 
 	mu           sync.Mutex
 	rateLimitLog map[string]time.Time // last rate-limit entry per agent
-	pendingAsks  map[string]int       // approval requests waiting, per agent
+	pendingAsks  map[string]int       // approval requests until they end, per agent
+	waits        map[string]*waiting  // approval requests followed, by the agent's approval ID
 	cooldowns    map[string]cooldown  // waits after requests not approved, per agent and device
 	rejectedLog  time.Time            // last auth.rejected entry for an invalid token
+	// statusLimiter bounds approval_status and approval_cancel per agent.
+	statusLimiter *ratelimit.Limiter
+	// closing: after Close, requests that end are left to the next start.
+	closing bool
 }
 
 // New registers the tools.
@@ -184,14 +204,25 @@ func New(cfg Config) *Gateway {
 	if cfg.CallTimeout <= 0 {
 		cfg.CallTimeout = defaultCallTimeout
 	}
-	g := &Gateway{cfg: cfg, rateLimitLog: map[string]time.Time{}, pendingAsks: map[string]int{}, cooldowns: map[string]cooldown{}, server: sdk.NewServer(&sdk.Implementation{Name: "home-mandate", Version: cfg.Version}, nil)}
+	if cfg.ApprovalWait <= 0 {
+		cfg.ApprovalWait = defaultApprovalWait
+	}
+	g := &Gateway{cfg: cfg, rateLimitLog: map[string]time.Time{}, pendingAsks: map[string]int{}, waits: map[string]*waiting{},
+		statusLimiter: ratelimit.New(cfg.Now), cooldowns: map[string]cooldown{}, server: sdk.NewServer(&sdk.Implementation{Name: "home-mandate", Version: cfg.Version}, nil)}
 	sdk.AddTool(g.server, &sdk.Tool{Name: "list_devices",
 		Description: "Lists the devices you may read, with category, area and state."}, g.listDevices)
 	sdk.AddTool(g.server, &sdk.Tool{Name: "get_state",
 		Description: "Returns the state of one device."}, g.getState)
 	sdk.AddTool(g.server, &sdk.Tool{Name: "perform_action",
 		Description: "Performs an action on one device, e.g. turn_on or unlock. Some actions need a human to confirm; " +
-			"then the call waits for the answer and you should give a short reason."}, g.performAction)
+			"give a short reason for them. The call waits a while for the answer; if nobody has answered by then, the result " +
+			"has status \"pending\": the action is NOT executed yet, and approval_status with the approval_id tells the outcome."}, g.performAction)
+	sdk.AddTool(g.server, &sdk.Tool{Name: "approval_status",
+		Description: "Returns the outcome of an action that waits for a human's approval, by the approval_id perform_action " +
+			"gave: executed, refused (an error with the reason) or still pending. Waits a while for the outcome itself."}, g.approvalStatus)
+	sdk.AddTool(g.server, &sdk.Tool{Name: "approval_cancel",
+		Description: "Withdraws your own request that still waits for a human's approval, by its approval_id; it is then never " +
+			"executed. A request already answered cannot be withdrawn."}, g.approvalCancel)
 	sdk.AddTool(g.server, &sdk.Tool{Name: "list_my_permissions",
 		Description: "Lists what you may do on the devices you may read: allow (immediately) or ask (a human confirms)."}, g.listPermissions)
 	return g
@@ -339,7 +370,20 @@ type (
 		Attributes map[string]any `json:"attributes,omitempty"`
 	}
 	actionOut struct {
+		// Status is executed, pending (NOT executed yet) or withdrawn.
 		Status string `json:"status"`
+		// Phase of a pending request: waiting (for a human's answer) or answered (the
+		// outcome, an execution after a confirmation, is not settled yet).
+		Phase string `json:"phase,omitempty"`
+		// ApprovalID names a pending request for approval_status and approval_cancel.
+		ApprovalID string `json:"approval_id,omitempty"`
+		// OpenUntil is when a pending request is denied without an answer (RFC 3339, UTC).
+		OpenUntil string `json:"open_until,omitempty"`
+		// Next is the tool to call for a pending request.
+		Next string `json:"next,omitempty"`
+	}
+	approvalInput struct {
+		ApprovalID string `json:"approval_id" jsonschema:"the approval_id perform_action returned with status pending"`
 	}
 	permissionOut struct {
 		EntityID string            `json:"entity_id"`

@@ -59,6 +59,9 @@ type Notified struct {
 type Record struct {
 	Entry        audit.Entry
 	ParamsDigest string
+	// AgentRef is the ID the agent knows the request by (issue #27): random, neither the
+	// nonce, the request ID nor the tag; found only together with the agent's client_id.
+	AgentRef string
 }
 
 // Opened is a request as it enters the journal.
@@ -125,9 +128,9 @@ func (j *Journal) Open(ctx context.Context, o Opened) error {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO approval_journal (id, client_id, entity_id, action, params_digest, created_at,
-			expires_at, state, tag, notified, decision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			expires_at, state, tag, notified, decision, agent_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			o.ID, o.Request.ClientID, o.Request.EntityID, o.Request.Action, o.Request.Record.ParamsDigest, format(o.Created),
-			format(o.Expires), stateOpen, o.Tag, string(notified), string(stored))
+			format(o.Expires), stateOpen, o.Tag, string(notified), string(stored), o.Request.Record.AgentRef)
 		return err
 	})
 }
@@ -192,6 +195,46 @@ func (j *Journal) end(ctx context.Context, tx *sql.Tx, id string, a *audit.Appro
 		return fmt.Errorf("%w: %w", ErrJournal, err)
 	}
 	return nil
+}
+
+// Status is what the journal knows of a request for its agent.
+type Status struct {
+	State   string // open, executing or ended
+	Expires time.Time
+	Outcome string       // the approval outcome once known
+	Cause   string       // with cancelled
+	Result  audit.Result // once ended
+}
+
+// Ended tells whether the request has ended.
+func (s Status) Ended() bool { return s.State == stateEnded }
+
+// Lookup finds the request the agent clientID knows by ref. Unknown references, those of
+// other agents and those of requests deleted after a day all give false, alike.
+func (j *Journal) Lookup(ctx context.Context, ref, clientID string) (Status, bool, error) {
+	if ref == "" {
+		return Status{}, false, nil
+	}
+	var st Status
+	var expires string
+	var result sql.NullString
+	err := j.db.QueryRowContext(ctx, `SELECT state, expires_at, outcome, cause, result FROM approval_journal
+		WHERE agent_ref = ? AND client_id = ?`, ref, clientID).Scan(&st.State, &expires, &st.Outcome, &st.Cause, &result)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Status{}, false, nil
+	}
+	if err != nil {
+		return Status{}, false, fmt.Errorf("%w: %w", ErrJournal, err)
+	}
+	if st.Expires, err = time.Parse(time.RFC3339Nano, expires); err != nil {
+		return Status{}, false, fmt.Errorf("%w: expiry: %w", ErrJournal, err)
+	}
+	if result.Valid {
+		if err := json.Unmarshal([]byte(result.String), &st.Result); err != nil {
+			return Status{}, false, fmt.Errorf("%w: result: %w", ErrJournal, err)
+		}
+	}
+	return st, true, nil
 }
 
 // Recovered counts what Recover ended.

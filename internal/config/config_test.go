@@ -155,8 +155,35 @@ func TestLoadContainerMode(t *testing.T) {
 	}
 	if cfg.Mode != ModeContainer || cfg.HAURL != "wss://ha.example.org/api/websocket" || string(cfg.HAToken) != "long-lived" ||
 		cfg.DataDir != "/var/lib/home-mandate" || cfg.MCPAddr != "0.0.0.0:9000" || cfg.ApprovalTimeout != DefaultApprovalTimeout ||
-		cfg.LogLevel != slog.LevelWarn || cfg.IngressAddr != "" {
+		cfg.LogLevel != slog.LevelWarn || cfg.IngressAddr != "" || cfg.ApprovalWait != DefaultApprovalWait {
 		t.Errorf("config = %+v", cfg)
+	}
+}
+
+// Issue #27: how long a tool call waits for an approval before the pending result,
+// 5 to 55 seconds (below the clients' cut-off of about 60), 45 by default.
+func TestApprovalWait(t *testing.T) {
+	base := map[string]string{"HM_HA_URL": "ws://localhost:8123/api/websocket", "HM_HA_TOKEN": "t"}
+	for value, want := range map[string]time.Duration{"5": 5 * time.Second, "55": 55 * time.Second, "30": 30 * time.Second} {
+		m := map[string]string{"HM_APPROVAL_WAIT": value}
+		for k, v := range base {
+			m[k] = v
+		}
+		if cfg, err := load(env(m), files(nil)); err != nil || cfg.ApprovalWait != want {
+			t.Errorf("%s: %v, %v", value, cfg.ApprovalWait, err)
+		}
+	}
+	app := func(opts string) (Config, error) {
+		return load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": opts}))
+	}
+	if cfg, err := app(`{"approval_timeout_seconds":120,"log_level":"info","approval_wait_seconds":20}`); err != nil || cfg.ApprovalWait != 20*time.Second {
+		t.Errorf("app option: %v, %v", cfg.ApprovalWait, err)
+	}
+	if cfg, err := app(options); err != nil || cfg.ApprovalWait != DefaultApprovalWait {
+		t.Errorf("app default: %v, %v", cfg.ApprovalWait, err)
+	}
+	if _, err := app(`{"approval_timeout_seconds":120,"log_level":"info","approval_wait_seconds":60}`); !errors.Is(err, ErrInvalid) {
+		t.Errorf("app option too long: %v", err)
 	}
 }
 
@@ -196,6 +223,9 @@ func TestLoadContainerModeRejects(t *testing.T) {
 		"relative data dir":        with("HM_DATA_DIR", "data"),
 		"approval timeout":         with("HM_APPROVAL_TIMEOUT", "5"),
 		"approval timeout text":    with("HM_APPROVAL_TIMEOUT", "two minutes"),
+		"approval wait too short":  with("HM_APPROVAL_WAIT", "4"),
+		"approval wait too long":   with("HM_APPROVAL_WAIT", "56"),
+		"approval wait text":       with("HM_APPROVAL_WAIT", "soon"),
 		"log level":                with("HM_LOG_LEVEL", "loud"),
 	}
 	for name, m := range tests {

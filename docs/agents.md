@@ -155,9 +155,9 @@ admit it in the browser as above. This needs:
 - The sign-in sends your browser to Home Assistant at `ha_browser_url` /
   `HM_HA_BROWSER_URL`, so that address must work in the browser you admit the agent with.
 
-Approvals: the tool call waits while an approval is pending. If a client gives up
-earlier than the approval timeout, the request ends like a timeout: nothing is executed,
-and the cooldown applies.
+Approvals: the tool call waits up to 45 seconds for the answer, then returns a pending
+result (see [Actions that need a confirmation](#actions-that-need-a-confirmation)). The
+request stays open if the client gives up; a confirmation still executes it once.
 
 ## Other MCP clients
 
@@ -173,8 +173,10 @@ with `resource` set to the MCP endpoint URL, and show the user code to the human
 |---|---|---|
 | `list_devices` | – | Lists the devices the agent may read (decision *allow* for `read`), with `entity_id`, name, category, area and state. |
 | `get_state` | `entity_id` | Returns the state and attributes of one device. Attributes that could carry access tokens (pictures, `token=` URLs) are removed. |
-| `perform_action` | `entity_id`, `action`, optional `params`, optional `reason` | Performs an action on one device. If a human must confirm, the call waits for the answer. `reason` (up to 1000 characters; the human sees the first 200) is shown to the approver as the agent's unverified claim. On success it returns `{"status": "executed"}`. |
+| `perform_action` | `entity_id`, `action`, optional `params`, optional `reason` | Performs an action on one device. On success it returns `{"status": "executed"}`. If a human must confirm, the call waits up to 45 seconds for the answer, then returns `{"status": "pending", …}` (below). `reason` (up to 1000 characters; the human sees the first 200) is shown to the approver as the agent's unverified claim. |
 | `list_my_permissions` | – | Lists, for each device the agent may read, the actions that are `allow` or `ask`. |
+| `approval_status` | `approval_id` | The outcome of the agent's own pending request: `{"status": "executed"}`, the refusal as the error `perform_action` would have given, or `{"status": "pending", …}` again. Waits up to 45 seconds for the outcome. |
+| `approval_cancel` | `approval_id` | Withdraws the agent's own pending request; it is then never executed (`{"status": "withdrawn"}`). An answered request cannot be withdrawn (`conflict`). |
 
 Devices the agent may not read do not exist for it: they are not listed, and every refusal
 on them is `not_found`, exactly as for a device that does not exist.
@@ -198,6 +200,44 @@ Actions and their parameters (`params`):
 
 Reading is `get_state`, not an action of `perform_action`.
 
+## Actions that need a confirmation
+
+When the mandate says *ask*, Home-Mandate notifies the approvers and waits up to 45 seconds
+(`approval_wait_seconds` / `HM_APPROVAL_WAIT`) inside the call. Clients often give up on a
+call after about a minute, so a slower answer does not come back in the same call. Instead
+the agent gets a normal result:
+
+```json
+{"status": "pending", "phase": "waiting", "approval_id": "apr_3f9c…", "open_until": "2026-10-10T12:04:00Z", "next": "approval_status"}
+```
+
+with the text: "NOT EXECUTED YET. unlock on lock.front_door is waiting for a human to
+approve it; nothing has happened so far. Do not tell the user it was done. Approval ID:
+apr_3f9c…. The request stays open until 2026-10-10T12:04:00Z (3m0s from now); without an
+approval by then it is denied. Call approval_status with this approval_id to learn the
+outcome (it waits up to 45s for it), or approval_cancel to withdraw the request."
+
+For agent builders:
+
+- **Never report a pending action as done.** Tell the user it waits for a confirmation.
+- **Poll with `approval_status`**: each call waits up to 45 seconds itself, so calling it
+  again right after it returns is enough; stop at `open_until`. It returns `executed`, the
+  refusal (`denied: approval_rejected`, `denied: approval_timeout`, …) or `pending`.
+- **Do not call `perform_action` again** for the same action while it is pending: that
+  asks the human a second time.
+- The action is executed **when the human confirms**, not when you poll. If your agent
+  stops polling, a confirmation still executes it once; `approval_status` tells the outcome
+  for 24 hours.
+- **`approval_cancel`** withdraws the request if the user changed their mind; the
+  approvers' notifications are removed. A request someone already answered keeps that
+  answer. Withdrawing starts the same wait as a refusal: asking again for the same device
+  right after gives `denied: approval_cooldown`.
+- `"phase": "answered"` means a human answered but the outcome (the execution) is not
+  settled yet; the text then says so. Keep polling; it is still not done.
+- The `approval_id` works only for the agent that made the request. At most 2 requests of
+  an agent wait at a time, until they end; status and cancel calls are limited to 120 per
+  hour and do not count towards the mandate's requests per hour.
+
 ## Errors agents get
 
 Tool errors are short codes without internal details. Every refusal is in the audit log.
@@ -207,15 +247,20 @@ Tool errors are short codes without internal details. Every refusal is in the au
 | `not_found` | The device does not exist, or the agent may not read it. | Check the mandate; the agent cannot tell the two apart by design. |
 | `denied: <reason>` | The mandate denies it, for example `denied: no_match` (no rule applies), `denied: rule`, `denied: expired`, `denied: no_mandate`. | Adjust the mandate if the agent should be allowed. |
 | `denied: approval_rejected`, `denied: approval_timeout`, `denied: approval_invalid` | A human declined, nobody answered in time, or someone who may not approve answered. | – |
-| `denied: approval_cooldown` | The agent asked for the same device recently and was not approved; it must wait (1 minute, doubling up to 1 hour). | Wait, or answer *Allow* to a later request. |
-| `denied: approval_pending` | The agent already has 2 approval requests waiting. | Answer or let them end. |
+| `denied: approval_cooldown` | The agent asked for the same device recently and was not approved, or withdrew that request; it must wait (1 minute, doubling up to 1 hour). | Wait, or answer *Allow* to a later request. |
+| `denied: approval_pending` | The agent already has 2 approval requests waiting (pending results count until they end). | Answer, let them end, or withdraw one with `approval_cancel`. |
+| `denied: approval_withdrawn` | The agent withdrew the request with `approval_cancel`. | – |
+| `denied: approval_interrupted`, `failed: outcome_unknown` | Home-Mandate was restarted while the request waited (nothing executed), or while the confirmed action was being executed (whether it happened is unknown; it is not repeated). | Ask again, or check the device first. |
+| `denied: revoked` | The agent's mandate was revoked while the request waited. | – |
+| `not_found` (from `approval_status`, `approval_cancel`) | No such request for this agent: unknown, another agent's, or ended more than 24 hours ago. | – |
+| `conflict` (from `approval_cancel`) | The request was answered or has ended; it cannot be withdrawn. | `approval_status` gives the outcome. |
 | `denied: no_approver` | Nobody can be asked: no approver with a device (for critical actions: with **Critical requests too**). | Set up approvers ([troubleshooting.md](troubleshooting.md#approvals-do-not-arrive)). |
 | `denied: approval_expired`, `denied: mandate_changed` | The approval came, but its validity had ended, or the mandate changed meanwhile. | Ask again. |
 | `denied: emergency_stop` | The emergency stop is active. | – |
 | `denied: unauthorized` | The agent's access was revoked while it waited. | – |
 | `approval_required: reading this device needs a confirmation, which v0.1 does not ask for` | Reading a device with the decision *ask*. | Allow or deny reading in the mandate. |
-| `rate_limited` | The mandate's requests per hour are used up (60 per hour for an agent without a usable mandate). | Wait; raise the rate limit of the mandate. |
-| `unavailable` | Home-Mandate cannot decide right now: Home Assistant disconnected, its configuration not read yet, the device directory refreshing, or the host clock behind the audit log. | Usually passes within seconds; see [troubleshooting.md](troubleshooting.md#agents-get-unavailable). |
+| `rate_limited` | The mandate's requests per hour are used up (60 per hour for an agent without a usable mandate); for `approval_status` and `approval_cancel`, their own limit of 120 per hour. | Wait; raise the rate limit of the mandate. |
+| `unavailable` | Home-Mandate cannot decide right now: Home Assistant disconnected, its configuration not read yet, the device directory refreshing, or the host clock behind the audit log. From `approval_status` more than 15 minutes after the end or after a restart, it can also stand for Home Assistant dropping during the execution (the call itself said `failed` then). | Usually passes within seconds; see [troubleshooting.md](troubleshooting.md#agents-get-unavailable). |
 | `invalid_params` (with the parameter) | Malformed entity ID or action, unknown or out-of-range parameter. | Fix the call. |
 | `not_supported` | The action is evaluated but cannot be executed in this version (camera snapshot, `set` on `other`). | – |
 | `failed` | Home Assistant reported an error or did not answer when executing. | Look at the audit entry ("Home Assistant reports: …"). |

@@ -146,9 +146,13 @@ request is refused (agents get `unavailable`) until the clock is right.
 7. **Pairing code:** "The code is wrong, expired or already used" — codes are valid for 10
    minutes; let the agent show a new one. After too many wrong codes pairing is locked for
    ten minutes.
-8. **Approval takes long and the agent gives up, or nginx answers 504:** the request waits
-   for the approval; the proxy must allow at least the approval timeout plus 30 seconds
-   ([reverse-proxy.md](deploy/reverse-proxy.md#what-every-proxy-must-do)).
+8. **Approval takes long and the agent gives up, or nginx answers 504:** an agent's call
+   waits up to 45 seconds (`approval_wait_seconds` / `HM_APPROVAL_WAIT`), then gets a
+   pending result and asks again with `approval_status`. Clients cut calls off: Claude
+   Desktop after about 60 seconds, so keep the wait below that. The proxy must allow the
+   wait plus 40 seconds (85 s by default) ([reverse-proxy.md](deploy/reverse-proxy.md#what-every-proxy-must-do)). If
+   the agent says the action is done although it was pending, its model ignored the
+   result's text; answering *Allow* still executes it once.
 9. **After an emergency stop or revocation**, the agent's tokens are gone. After an
    emergency stop, let the agent sign in again and choose **Reconnect** for its existing
    entry on the sign-in or pairing page: it keeps its mandate. If no agent is offered there,

@@ -5,6 +5,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -21,31 +22,91 @@ import (
 
 // fakeApprover answers with result, after running during (e.g. to change the world
 // while the human decides). A result with an ID enters the journal first, as
-// approval.Service does.
+// approval.Service does. With hold, requests wait until the test ends them (end).
 type fakeApprover struct {
-	mu      sync.Mutex
-	result  approval.Result
-	err     error
-	during  func()
-	asked   []approval.Request
-	journal *approval.Journal
+	mu        sync.Mutex
+	result    approval.Result
+	err       error
+	during    func()
+	asked     []approval.Request
+	journal   *approval.Journal
+	hold      bool
+	held      map[string]chan approval.Result
+	cancelled []string
+	stopped   bool // StopAnswers: answers are refused, as by the service
 }
 
-func (f *fakeApprover) Ask(ctx context.Context, req approval.Request) (approval.Result, error) {
+func (f *fakeApprover) Start(ctx context.Context, req approval.Request) (approval.Pending, error) {
 	f.mu.Lock()
 	f.asked = append(f.asked, req)
-	during, res, err, journal := f.during, f.result, f.err, f.journal
+	during, res, err, journal, hold := f.during, f.result, f.err, f.journal, f.hold
+	if hold && res.ID == "" {
+		res.ID = fmt.Sprintf("%032x", len(f.asked))
+	}
 	f.mu.Unlock()
+	expires := time.Now().Add(time.Minute)
 	if journal != nil && res.ID != "" {
 		if err := journal.Open(ctx, approval.Opened{ID: res.ID, Tag: "hm_request_" + res.ID, Request: req, Created: time.Now(),
-			Expires: time.Now().Add(time.Minute)}); err != nil {
-			return approval.Result{}, err
+			Expires: expires}); err != nil {
+			return approval.Pending{}, err
 		}
 	}
 	if during != nil {
 		during()
 	}
-	return res, err
+	if err != nil {
+		return approval.Pending{ID: res.ID}, err
+	}
+	done := make(chan approval.Result, 1)
+	if hold {
+		f.mu.Lock()
+		if f.held == nil {
+			f.held = map[string]chan approval.Result{}
+		}
+		f.held[res.ID] = done
+		f.mu.Unlock()
+	} else {
+		done <- res
+	}
+	return approval.Pending{ID: res.ID, Expires: expires, Done: done}, nil
+}
+
+// end ends the held request id with res; after StopAnswers an answer is refused.
+func (f *fakeApprover) end(id string, res approval.Result) bool {
+	f.mu.Lock()
+	if f.stopped && res.Outcome != approval.OutcomeCancelled && res.Outcome != approval.OutcomeTimeout {
+		f.mu.Unlock()
+		return false
+	}
+	ch, ok := f.held[id]
+	delete(f.held, id)
+	f.mu.Unlock()
+	if ok {
+		res.ID = id
+		ch <- res
+	}
+	return ok
+}
+
+func (f *fakeApprover) StopAnswers() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stopped = true
+}
+
+func (f *fakeApprover) IsOpen(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.held[id]
+	return ok
+}
+
+// CancelRequest withdraws a held request, as the service does for an open one.
+func (f *fakeApprover) CancelRequest(id string) bool {
+	f.mu.Lock()
+	f.cancelled = append(f.cancelled, id)
+	f.mu.Unlock()
+	return f.end(id, approval.Result{Outcome: approval.OutcomeCancelled, Cause: audit.CauseWithdrawn, At: time.Now()})
 }
 
 func (f *fakeApprover) requests() []approval.Request {
@@ -419,7 +480,7 @@ func TestCancelledApprovals(t *testing.T) {
 		"only the mandate revoked": {audit.CauseRevoked, func(h *harness) {
 			_ = h.mandates.Revoke(context.Background(), "m-voice-assistant", admin)
 		}, "denied: revoked", "mandate"},
-		"withdrawn": {audit.CauseWithdrawn, func(*harness) {}, "denied: approval_cancelled", "approval"},
+		"withdrawn": {audit.CauseWithdrawn, func(*harness) {}, "denied: approval_withdrawn", "approval"},
 	} {
 		id := strings.Repeat("c", 32)
 		f := &fakeApprover{result: approval.Result{ID: id, Outcome: approval.OutcomeCancelled, Cause: tc.cause, At: answeredAt}}

@@ -181,10 +181,12 @@ type gateway struct {
 	api     *api.Server
 	// approvals asks humans; on shutdown its removals of notifications are waited for.
 	approvals *approval.Service
-	timeZone  atomic.Value  // string; empty until Home Assistant answered get_config
-	language  atomic.Value  // string; household language from get_config
-	self      atomic.Value  // string; Home-Mandate's own Home Assistant user
-	retryMin  time.Duration // first wait before the configuration is read again
+	// mcp is the gateway for agents; on shutdown it settles what is under way first.
+	mcp      *mcp.Gateway
+	timeZone atomic.Value  // string; empty until Home Assistant answered get_config
+	language atomic.Value  // string; household language from get_config
+	self     atomic.Value  // string; Home-Mandate's own Home Assistant user
+	retryMin time.Duration // first wait before the configuration is read again
 
 	mu        sync.Mutex
 	haSince   time.Time // when the connection was made or lost
@@ -289,7 +291,8 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	gw := mcp.New(mcp.Config{Resource: resource, ResourceMetadataURL: metadata, Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
 		TemperatureUnit: g.temperatureUnit, TimeZone: g.householdTimeZone, ServiceUser: g.serviceUser,
-		Limiter: restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, Clock: s.log, Audit: s.log, Approvals: approvals, Journal: s.journal, Logger: logger, Version: version})
+		Limiter: restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, ApprovalWait: s.cfg.ApprovalWait, Clock: s.log, Audit: s.log, Approvals: approvals, Journal: s.journal, Logger: logger, Version: version})
+	g.mcp = gw
 	as, handler, err := withOAuth(s, gw.Handler(), http.HandlerFunc(g.serveDirect), resource, logger)
 	if err != nil {
 		return nil, err
@@ -298,7 +301,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		handler, g.proxied = onlyProxy(s.cfg.Proxy, handler, time.Now, logger), true
 	}
 	g.server = &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
-		WriteTimeout: writeTimeout(s.cfg.ApprovalTimeout), IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10,
+		WriteTimeout: writeTimeout(s.cfg.ApprovalWait), IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10,
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelWarn)}
 	if g.listener, g.certs, err = listen(s.cfg, g.server, time.Now, logger); err != nil {
 		return nil, err
@@ -539,10 +542,21 @@ func (g *gateway) status() api.Status {
 		TimeZone: g.householdTimeZone(), Language: g.language.Load().(string), Units: maps.Clone(g.units)}
 }
 
-// writeTimeout lets a perform_action wait for an approval: the longest wait plus time
-// for the action itself.
-func writeTimeout(approval time.Duration) time.Duration {
-	return max(minWriteTimeout, approval+approvalSlack)
+// tokenKeepMargin is how long beyond the approval timeout an expired access token is kept.
+const tokenKeepMargin = 15 * time.Minute
+
+// tokenPurgeCutoff is before when expired tokens are deleted: an access token that made
+// an approval request is checked again when the answer comes (agent.Store.StillAuthorized),
+// up to the approval timeout later, so it is kept that long and a margin.
+func tokenPurgeCutoff(now time.Time, approvalTimeout time.Duration) time.Time {
+	return now.Add(-approvalTimeout - tokenKeepMargin)
+}
+
+// writeTimeout lets a perform_action wait for an approval: the agent's wait, the grace
+// for the execution after an answer within it (mcp.AnswerGrace) and a margin; longer
+// approvals continue through approval_status.
+func writeTimeout(wait time.Duration) time.Duration {
+	return max(minWriteTimeout, wait+mcp.AnswerGrace+approvalSlack)
 }
 
 // onDisconnect stops decisions until the catalog and the time zone are reloaded.
@@ -696,6 +710,11 @@ func (g *gateway) run(ctx context.Context) int {
 	select {
 	case err = <-clientDone:
 	case <-ctx.Done():
+		// Executions of confirmed actions under way finish while Home Assistant is there;
+		// requests that end from now on are left to the next start (recovery).
+		if !g.mcp.Close(shutdownTimeout) {
+			g.logger.Warn("approval requests still being settled at the stop; the next start records them")
+		}
 		if !g.approvals.Drain(clearDrain) {
 			g.logger.Warn("notifications of ended approval requests not all removed before the stop")
 		}
@@ -703,6 +722,7 @@ func (g *gateway) run(ctx context.Context) int {
 		err = <-clientDone
 	}
 	cancel()
+	g.mcp.Close(0) // nothing is settled once the client is gone (no-op after the stop above)
 	shutdownCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer stop()
 	_ = g.server.Shutdown(shutdownCtx)
@@ -762,7 +782,7 @@ func (g *gateway) retention(ctx context.Context) {
 		if _, err := g.state.journal.Expire(ctx); err != nil {
 			g.logger.Error("deleting ended approval requests failed", "error", err)
 		}
-		if n, err := g.state.agents.PurgeExpiredTokens(ctx, time.Now()); err != nil {
+		if n, err := g.state.agents.PurgeExpiredTokens(ctx, tokenPurgeCutoff(time.Now(), g.state.cfg.ApprovalTimeout)); err != nil {
 			g.logger.Error("deleting expired tokens failed", "error", err)
 		} else if n > 0 {
 			g.logger.Info("expired tokens deleted", "tokens", n)
