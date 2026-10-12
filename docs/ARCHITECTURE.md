@@ -587,9 +587,14 @@ checked on every request.
   Every person needs at least one channel; the settings show who cannot be reached for
   ordinary or critical requests.
 - **Hint in Home Assistant (B2, off by default):** a persistent notification without any
-  content of the request (no agent, device, reason or link) and with its own random ID
-  (`hm_approval_…`, not the request ID: persistent notifications are visible to every HA
-  user), removed however the request ends. At start the gateway removes such hints a crash
+  content of the request (no agent, device, reason, request ID or nonce) and with its own
+  random ID (`hm_approval_…`, not the request ID: persistent notifications are visible to
+  every HA user), removed however the request ends. It says where to answer: as an app,
+  Home-Mandate in the sidebar; in container mode, the Home-Mandate UI, with a Markdown
+  link to the UI's address (`<public URL>/ui/`) only in direct mode (section 12), because
+  `/ui/` exists nowhere else. The link is the configured address and nothing else, so
+  every HA user sees the UI's address, never anything about the request. It has no
+  buttons. At start the gateway removes such hints a crash
   left behind (`persistent_notification/get`, only IDs of this form are touched).
 - **Revocation and emergency stop (decision F1, SPEC-v0 sections 11.1 item 8 and 11.3):**
   when triggered in the running gateway (UI), open requests of the agent, or all, end at

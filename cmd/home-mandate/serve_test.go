@@ -367,6 +367,29 @@ func TestDirectModeNeedsContainerModeTLSAndHTTPS(t *testing.T) {
 	}
 }
 
+// The UI has an address of its own only in direct mode (issue #48): a public URL alone
+// is not enough, /ui/ would answer 404. The approval hint links to it.
+func TestUIAddressOnlyInDirectMode(t *testing.T) {
+	direct := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	for _, tc := range []struct {
+		name   string
+		cfg    config.Config
+		direct http.Handler
+		want   string
+	}{
+		{"app mode", config.Config{Mode: config.ModeApp, PublicURL: "https://hm.example.org"}, nil, ""},
+		{"container, direct mode", config.Config{Mode: config.ModeContainer, PublicURL: "https://hm.example.org:8765"}, direct,
+			"https://hm.example.org:8765/ui/"},
+		{"container, public URL without direct mode", config.Config{Mode: config.ModeContainer, PublicURL: "https://hm.example.org"}, nil, ""},
+		{"container, no public URL", config.Config{Mode: config.ModeContainer}, nil, ""},
+	} {
+		g := &gateway{state: &state{cfg: tc.cfg}, direct: tc.direct}
+		if got := g.uiAddress(); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 // A tool call waits at most the agent's wait for an approval, plus the grace for an
 // execution after an answer within it (issue #27); the write timeout covers that and a
 // margin, whatever the approval timeout.

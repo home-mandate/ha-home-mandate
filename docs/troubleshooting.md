@@ -245,7 +245,12 @@ device without an agent.
     confirmed action was being executed, the notification says "Please check: <device>"
     and the log shows `outcome_unknown`: Home-Mandate does not know whether Home Assistant
     carried it out and never repeats it on its own.
-12. **The old notification stays on the phone** after a request ended: Home-Mandate asks
+12. **Only the hint in Home Assistant's notification bell arrives:** the hint has no
+    buttons and only says where to answer (the sidebar of the app, or the Home-Mandate UI
+    with its address in direct mode). To answer on the phone, register the phone as a
+    device of the approver under **Settings → Approvers**. Android devices do not get
+    critical requests by default (**Critical requests too** is off for them).
+13. **The old notification stays on the phone** after a request ended: Home-Mandate asks
     the Companion App to remove it (`clear_notification`), which needs app version 2021.5
     or later on iOS and may need the app to have been used recently. Pressing its buttons
     has no effect.

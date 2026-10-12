@@ -555,7 +555,7 @@
   "set_approver_error_devices": "Prüfe die Geräte: höchstens fünf, jedes nur einmal. Ohne Gerät braucht die Person „In Home-Mandate beantworten“.",
   "set_approver_error_ui": "Nur Personen mit Adminrechten in Home Assistant können hier beantworten.",
   "set_bell": "Zusätzlich in der Home-Assistant-Glocke",
-  "set_bell_desc": "Solange eine Rückfrage wartet, steht dort nur „Eine Rückfrage wartet in Home-Mandate“, ohne Agent, Gerät oder Grund.",
+  "set_bell_desc": "Solange eine Rückfrage wartet, steht dort nur, dass eine wartet und wo du sie beantwortest, ohne Agent, Gerät oder Grund. Alle Benutzer von Home Assistant sehen diesen Hinweis; er kann die Adresse der Oberfläche von Home-Mandate enthalten, aber nichts über die Rückfrage.",
   "set_browser_notify": "Benachrichtigungen in diesem Browser",
   "set_browser_notify_desc": "Meldet neue Rückfragen, die du hier beantworten darfst, solange Home-Mandate in einem Tab geöffnet ist.",
   "set_browser_notify_allow": "Benachrichtigungen erlauben",

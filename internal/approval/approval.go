@@ -142,6 +142,13 @@ type Config struct {
 	// answered in the UI (B2, off by default).
 	Bell        Bell
 	BellEnabled func() bool
+	// App tells that Home-Mandate runs as an app of Home Assistant: its UI opens in the
+	// sidebar, and the bell says so.
+	App bool
+	// UIAddress returns where the UI can be opened in a browser outside Home Assistant,
+	// or "" when it has no address of its own (the app, or a container without direct
+	// mode). The bell links to it; it is never about a request.
+	UIAddress func() string
 	// OnOpened is called when a request was delivered and is open (shown by Open); the UI
 	// announces it. It must not block.
 	OnOpened func(Open)
@@ -497,7 +504,7 @@ func (s *Service) ring(ctx context.Context, p *pending) bool {
 		return false
 	}
 	lang := s.householdLanguage()
-	n := ha.Notification{Title: i18n.T(lang, i18n.ApprovalBellTitle, nil), Message: i18n.T(lang, i18n.ApprovalBellMessage, nil)}
+	n := ha.Notification{Title: i18n.T(lang, i18n.ApprovalBellTitle, nil), Message: bellText(lang, s.cfg.App, s.uiAddress())}
 	if err := s.cfg.Bell.Ring(ctx, p.bellID, n); err != nil {
 		s.cfg.Logger.Warn("approval hint in Home Assistant not shown", "error", err)
 	}

@@ -555,7 +555,7 @@
   "set_approver_error_devices": "Check the devices: at most five, each only once. Without a device, the person needs “Answer in Home-Mandate”.",
   "set_approver_error_ui": "Only people with admin rights in Home Assistant can answer here.",
   "set_bell": "Also in Home Assistant’s notification bell",
-  "set_bell_desc": "While a request waits, it only says “A request is waiting in Home-Mandate”, without agent, device or reason.",
+  "set_bell_desc": "While a request waits, it only says that one is waiting and where to answer it, without agent, device or reason. Every Home Assistant user sees this hint; it may contain the address of the Home-Mandate UI, but nothing about the request.",
   "set_browser_notify": "Notifications in this browser",
   "set_browser_notify_desc": "Announces new requests you may answer here, while Home-Mandate is open in a tab.",
   "set_browser_notify_allow": "Allow notifications",
