@@ -46,9 +46,13 @@ const (
 	ApprovalInvalidTitle   Key = "approval_invalid_title"
 	ApprovalInvalidMessage Key = "approval_invalid_message"
 	ApprovalBellTitle      Key = "approval_bell_title"
-	ApprovalBellMessage    Key = "approval_bell_message"
+	ApprovalBellMessage    Key = "approval_bell_message" // the app: the UI is in the sidebar
 	ApprovalTestTitle      Key = "approval_test_title"
 	ApprovalTestMessage    Key = "approval_test_message"
+	// The bell in container mode: the UI with its address in direct mode ({url}, a
+	// Markdown link), without an address otherwise (issue #48).
+	ApprovalBellMessageLink Key = "approval_bell_message_link"
+	ApprovalBellMessageUI   Key = "approval_bell_message_ui"
 
 	// Sent after a restart in place of a request's notification (same tag).
 	ApprovalInterruptedTitle   Key = "approval_interrupted_title"
@@ -145,7 +149,7 @@ var actions = []string{"read", "turn_on", "turn_off", "set", "set_temperature", 
 // Keys lists every message key.
 var Keys = append([]Key{
 	ApprovalTitle, ApprovalMessage, ApprovalMessageState, ApprovalReason, ApprovalParams, ApprovalIdentity, ApprovalNoAnswer, ApprovalApprove, ApprovalDeny,
-	ApprovalInvalidTitle, ApprovalInvalidMessage, ApprovalBellTitle, ApprovalBellMessage, ApprovalTestTitle, ApprovalTestMessage,
+	ApprovalInvalidTitle, ApprovalInvalidMessage, ApprovalBellTitle, ApprovalBellMessage, ApprovalBellMessageLink, ApprovalBellMessageUI, ApprovalTestTitle, ApprovalTestMessage,
 	ApprovalInterruptedTitle, ApprovalInterruptedMessage, ApprovalUnknownTitle, ApprovalUnknownMessage,
 	CheckpointTitle, CheckpointMessage, RenameFloodTitle, RenameFloodMessage,
 	PageErrorTitle, PageInvalidRequest, PageInvalidClient, PageSessionExpired, PageSignInFailed, PageNotAdmin, PageBusy, PageSignedInAs, PageConsentTitle, PageConsentClaimed, PageConsentVerified, PageConsentUnverified, PageConsentReturn, PageConsentName, PageConsentTemplate, PageConsentApprove, PageConsentDeny, PageConsentNoTemplates, PageConsentInvalid, PageDenied, PageAdmitted, PagePairTitle, PagePairIntro, PagePairCode, PagePairSubmit, PagePairInvalid, PagePairLocked,

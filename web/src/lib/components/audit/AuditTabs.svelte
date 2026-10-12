@@ -49,10 +49,10 @@
     text-decoration: none;
     white-space: nowrap;
   }
+  /* Not bold, so switching tabs moves no other tab (issue #47); the bar at the end marks it. */
   a[aria-current='page'] {
     color: var(--hm-color-accent-text);
     border-block-end-color: var(--hm-color-accent);
-    font-weight: 600;
   }
   @media (forced-colors: active) {
     a[aria-current='page'] {

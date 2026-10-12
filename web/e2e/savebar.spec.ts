@@ -8,7 +8,7 @@
 // No visible texts in the locators: the pseudo build translates them.
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './support.ts';
-import { focusProblems } from './sweep.ts';
+import { a11yProblems, applyVariant, focusProblems, overflowProblems } from './sweep.ts';
 
 const SIZES = [
   { width: 1280, height: 800 },
@@ -102,9 +102,12 @@ for (const size of SIZES) {
       // (e) The keyboard never lands on an element the bar covers.
       expect(await focusProblems(page)).toEqual([]);
 
-      // Saving: the bar goes, and the page does not jump. Only the room the bar took at the
-      // end of the page goes with it, so a page scrolled to its very end may move up by that.
-      const room = (await bar(page).boundingBox())!.height;
+      // Saving: the bar goes, and the page does not jump. Only what saving ends goes with it:
+      // the room the bar took and the rule's unsaved hint. A page scrolled near its end may
+      // move up by at most that much, never more (the longer labels of issue #37 made the
+      // hint taller and showed that the hint was missing here).
+      const hintBox = await page.locator('main li p.unsaved').boundingBox();
+      const room = (await bar(page).boundingBox())!.height + (hintBox?.height ?? 0);
       const saving = await scrollY(page);
       await bar(page).locator('.btn.primary').click();
       const dialog = page.getByRole('dialog');
@@ -116,4 +119,44 @@ for (const size of SIZES) {
       expect(saving - saved).toBeLessThanOrEqual(room + 1);
     });
   }
+}
+
+// Issue #37: the save buttons name the review step ("Review and save", "Review and save now"),
+// which makes them longer. At 320 px, in de, en and the pseudo build, in both directions, the
+// editor header, the rule's unsaved hint and the save bar keep all of their text inside the
+// viewport, nothing is clipped, the page does not scroll sideways, and axe finds nothing.
+const NARROW = { width: 320, height: 700 } as const;
+const NARROW_EDITORS = [
+  ...EDITORS,
+  // A base template cannot be saved in place: its bar offers the longest label, "save as new".
+  { name: 'base template', path: './#/templates/hm-voice-cautious' },
+] as const;
+
+for (const editor of NARROW_EDITORS) {
+  test(`${editor.name} at 320 px: the longer save labels fit and axe stays clean (issue #37)`, async ({ page }) => {
+    test.setTimeout(60_000);
+    await page.setViewportSize(NARROW);
+    await open(page, editor.path);
+    // Rule 1 to the other decision, then "Done": the hint with its save button and the bar appear.
+    await page.locator('main ol > li .head .btn.text').first().click();
+    await page.locator('main li.editing [role="radiogroup"]').first().getByRole('radio', { checked: false }).first().click();
+    await page.locator('main li.editing .btn.primary').click();
+    await expect(bar(page)).toBeVisible();
+    await expect(page.locator('main li p.unsaved')).toBeVisible();
+
+    for (const dir of ['ltr', 'rtl'] as const) {
+      await applyVariant(page, { theme: 'light', dir, width: 375 });
+      await page.setViewportSize(NARROW);
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const buttons = page.locator('main .head .actions .btn, main li p.unsaved .btn, section.savebar .btn');
+      expect(await buttons.count()).toBeGreaterThanOrEqual(3);
+      for (const target of await buttons.all()) {
+        await target.scrollIntoViewIfNeeded();
+        const box = (await target.boundingBox())!;
+        expect(box.x, `${dir}: ${await target.innerText()}`).toBeGreaterThanOrEqual(-1);
+        expect(box.x + box.width, `${dir}: ${await target.innerText()}`).toBeLessThanOrEqual(NARROW.width + 1);
+      }
+      expect([...(await overflowProblems(page)), ...(await a11yProblems(page))].map((p) => `[${dir}] ${p}`)).toEqual([]);
+    }
+  });
 }

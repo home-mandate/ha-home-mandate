@@ -4,11 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { ApiError } from '../api/client.ts';
-import { NOW } from '../api/fixtures.ts';
+import { NOW, usHouseholdFixture } from '../api/fixtures.ts';
 import { createMockClient, type MockClient, type MockOptions } from '../api/mock.ts';
 import type { MandateDraft, MandateUpdate, Rule } from '../api/types.ts';
 import { AppState } from '../app/state.svelte.ts';
 import { draftOf } from '../mandate/versions.ts';
+import { setHouseholdCountry } from '../mandate/week.svelte.ts';
 import { setLocale } from '../paraglide/runtime.js';
 import { toasts } from '../ui/toasts.ts';
 import MandateEditor from './MandateEditor.svelte';
@@ -44,7 +45,12 @@ const card = async (n: number) => within((await cards())[n - 1] as HTMLElement);
 const status = () => document.querySelector('.state')?.textContent?.trim();
 const announcedState = () => screen.getAllByRole('status').find((s) => /saved|unsaved/i.test(s.textContent ?? ''))?.textContent?.trim();
 const live = () => document.querySelector('[aria-live="polite"].hm-visually-hidden')?.textContent ?? '';
-const saveButton = () => screen.getByRole('button', { name: 'Save …' });
+/** The header's save button: the one with the keyboard shortcut. The save bar's button has the same name (issue #37). */
+const saveButton = () => {
+  const found = screen.getAllByRole('button', { name: 'Review and save' }).filter((b) => b.hasAttribute('aria-keyshortcuts'));
+  if (found.length !== 1) throw new Error(`expected one header save button, found ${found.length}`);
+  return found[0] as HTMLElement;
+};
 const toastTexts = () => toasts.list().map((t) => t.text);
 
 async function open(n: number) {
@@ -324,6 +330,32 @@ describe('MandateEditor', () => {
     await fireEvent.click(within(first.getByRole('group', { name: 'Weekdays' })).getByRole('button', { name: 'Sun' }));
     await fireEvent.click(within(first.getByRole('group', { name: 'Weekdays' })).getByRole('button', { name: 'Sat' }));
     expect((await cards())[0]?.textContent).toMatch(/Mon\s–\sFri · 10:00\sPM to 11:30\sPM/);
+  });
+
+  it("lists the weekdays in the order of the household's week (#43)", async () => {
+    const chips = (rule: Awaited<ReturnType<typeof open>>) => within(rule.getByRole('group', { name: 'Weekdays' })).getAllByRole('button');
+    await start();
+    expect(chips(await open(1)).map((b) => b.textContent?.trim())).toEqual(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']);
+    cleanup();
+    await start({ household: usHouseholdFixture });
+    const first = await open(1);
+    expect(chips(first).map((b) => b.textContent?.trim())).toEqual(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
+    for (const day of ['Wed', 'Thu', 'Fri', 'Sat']) await fireEvent.click(within(first.getByRole('group', { name: 'Weekdays' })).getByRole('button', { name: day }));
+    expect((await cards())[0]?.textContent).toMatch(/Sun\s–\sTue/);
+    expect(status()).toBe('1 unsaved change');
+    // Switched back on in the displayed order, the rule is the stored one again: no new version.
+    for (const day of ['Wed', 'Thu', 'Fri', 'Sat']) await fireEvent.click(within(first.getByRole('group', { name: 'Weekdays' })).getByRole('button', { name: day }));
+    expect(status()).toBe('All saved');
+  });
+
+  it('orders the weekdays anew when the household changes its country during the session (#43)', async () => {
+    await start();
+    const first = await open(1);
+    const names = () => within(first.getByRole('group', { name: 'Weekdays' })).getAllByRole('button').map((b) => b.textContent?.trim());
+    expect(names()[0]).toBe('Mon');
+    setHouseholdCountry('US');
+    await tick();
+    expect(names()).toEqual(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
   });
 
   it('gives an "ask" rule its own timeout and approvers, and takes them back', async () => {
@@ -790,7 +822,7 @@ describe('unsaved changes (issue #20)', () => {
     await waitFor(() => expect(live()).toBe(HINT));
     // The focus stays on the rule; the hint offers the way to saving.
     expect(document.activeElement).toBe((await card(1)).getByRole('button', { name: 'Edit: Rule 1' }));
-    await fireEvent.click((await card(1)).getByRole('button', { name: 'Save now …' }));
+    await fireEvent.click((await card(1)).getByRole('button', { name: 'Review and save now' }));
     expect(await screen.findByRole('dialog', { name: 'Save changes?' })).toBeTruthy();
   });
 
@@ -820,7 +852,7 @@ describe('unsaved changes (issue #20)', () => {
   it('saves from the bar: summary, new version, bar and hint gone', async () => {
     const { api } = await start();
     await fireEvent.click((await askFirst()).getByRole('button', { name: 'Done' }));
-    await fireEvent.click(within(bar() as HTMLElement).getByRole('button', { name: 'Save changes …' }));
+    await fireEvent.click(within(bar() as HTMLElement).getByRole('button', { name: 'Review and save' }));
     const dialog = await screen.findByRole('dialog', { name: 'Save changes?' });
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Save as version 2' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -889,7 +921,7 @@ describe('states', () => {
     await rulesRegion();
     expect(screen.getByText('Revoked')).toBeTruthy();
     expect(screen.getByText(/This mandate is revoked and no longer applies/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Save …' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Review and save' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Edit/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Move rule/ })).toBeNull();

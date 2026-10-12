@@ -22,6 +22,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
+    setupFiles: ['src/lib/test/setup.ts'],
     // A machine time zone far from any household, to catch formatting in the wrong zone.
     env: { TZ: 'Pacific/Kiritimati' },
     coverage: {

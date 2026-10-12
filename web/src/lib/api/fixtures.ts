@@ -12,6 +12,7 @@ import type {
   AuditEntry,
   Defaults,
   DeviceCatalog,
+  Household,
   MandateDocument,
   MandateDraft,
   Rule,
@@ -48,8 +49,17 @@ export const sessionFixture: Session = {
     time_zone: 'Europe/Berlin',
     language: 'de',
     unit_system: { temperature: '°C', length: 'km', mass: 'g', volume: 'L', pressure: 'Pa', wind_speed: 'm/s' },
+    country: 'DE',
   },
   sign_out: false,
+};
+
+/** A household in the US: its week starts on Sunday (#43). */
+export const usHouseholdFixture: Household = {
+  time_zone: 'America/New_York',
+  language: 'en',
+  unit_system: { temperature: '°F', length: 'mi', mass: 'lb', volume: 'gal', pressure: 'psi', wind_speed: 'mph' },
+  country: 'US',
 };
 
 export const systemFixture: SystemStatus = {

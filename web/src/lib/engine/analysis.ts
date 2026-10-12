@@ -38,7 +38,8 @@ export interface Cell extends CellOutcome {
   invalid: boolean;
   /** Outcome while time-conditioned rules apply; null if the cell does not depend on time. */
   timed: CellOutcome | null;
-  /** Allowed only within the limits of the deciding rule (SPEC-v0 section 4.5); outside it is denied. */
+  /** Allowed only within the limits of the deciding rule (SPEC-v0 section 4.5); outside them
+   *  the rule does not match, and another rule or the default decides. */
   limited: boolean;
 }
 

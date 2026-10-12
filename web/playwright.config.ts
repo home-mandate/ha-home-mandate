@@ -9,9 +9,11 @@ process.env.INGRESS_PATH = ingressPath;
 const port = 4173;
 const pseudoPort = 4174;
 const at = (p: number) => `http://127.0.0.1:${p}${ingressPath}`;
-// The screen sweep (step 6: themes, rtl, widths, axe), the colour scheme switch and the
-// unsaved changes of the editors (issue #20) run in every language; the flows only in de/en.
-const sweep = /(sweep|hostile|theme|unsaved|savebar)\.spec\.ts$/;
+// The screen sweep (step 6: themes, rtl, widths, axe), the colour scheme switch, the
+// unsaved changes of the editors (issue #20), the steady active marks (issue #47) and the
+// preview legend (issue #41) and the household's first day of the week (issue #43) run in
+// every language; the flows only in de/en.
+const sweep = /(sweep|hostile|theme|unsaved|savebar|steady|legend|weekdays)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: './e2e',

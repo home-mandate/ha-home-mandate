@@ -110,11 +110,16 @@ tells no more than the grant. Its parameters are checked as for any other device
    is denied with `unknown_resource`.
 5. `mcp` derives the parameters of the action in the units of the vocabulary (brightness in
    percent, temperature in hundredths of a degree Celsius, position, volume) and refuses a
-   call that sets the same quantity twice or a value that is no integer in that unit; what
-   is executed is exactly what was evaluated. A value that cannot be expressed in the unit
-   of the vocabulary – a temperature in a household that uses °F – is not passed: a rule
-   with a limit on it does not match, and the request is denied unless a rule without a
-   limit allows it. Limits on temperatures therefore need a household in °C.
+   call that sets the same quantity twice or a value that is no integer in that unit
+   (0.335 as a volume, 21.555 °C), before the decision and also under a rule without a
+   limit (SPEC-v0 section 4.5): `invalid_params` naming the parameter, but only for a
+   device the agent may read; for any other it is `not_found`, logged as `failed` /
+   `invalid_params` without an evaluation. Binary noise (0.29 is 28.999… percent) is no
+   fraction; what is evaluated and executed is the canonical value of the step (0.29).
+   A temperature in a household that uses °F cannot be expressed in the unit of the
+   vocabulary and is refused the same way until the vocabulary has a °F parameter; while
+   the household's unit is not known yet, a request with a temperature is `unavailable`
+   (`temperature_unit_unknown`), never checked as °C.
 6. `pdp` selects the agent's mandate among its candidates (SPEC-v0 section 4.3) and
    evaluates it. Result: `allow`, `ask` or `deny`.
 7. On `ask`: `approval` sends an actionable notification to all approvers and waits at most
@@ -587,9 +592,14 @@ checked on every request.
   Every person needs at least one channel; the settings show who cannot be reached for
   ordinary or critical requests.
 - **Hint in Home Assistant (B2, off by default):** a persistent notification without any
-  content of the request (no agent, device, reason or link) and with its own random ID
-  (`hm_approval_…`, not the request ID: persistent notifications are visible to every HA
-  user), removed however the request ends. At start the gateway removes such hints a crash
+  content of the request (no agent, device, reason, request ID or nonce) and with its own
+  random ID (`hm_approval_…`, not the request ID: persistent notifications are visible to
+  every HA user), removed however the request ends. It says where to answer: as an app,
+  Home-Mandate in the sidebar; in container mode, the Home-Mandate UI, with a Markdown
+  link to the UI's address (`<public URL>/ui/`) only in direct mode (section 12), because
+  `/ui/` exists nowhere else. The link is the configured address and nothing else, so
+  every HA user sees the UI's address, never anything about the request. It has no
+  buttons. At start the gateway removes such hints a crash
   left behind (`persistent_notification/get`, only IDs of this form are touched).
 - **Revocation and emergency stop (decision F1, SPEC-v0 sections 11.1 item 8 and 11.3):**
   when triggered in the running gateway (UI), open requests of the agent, or all, end at
@@ -1013,6 +1023,16 @@ code and at most a JSON pointer, never internal details or the value sent. There
 - **Time zone:** times are always shown in the household's time zone from the HA
   configuration, not in the browser's. Time windows in mandates are household local time.
 - **Units:** temperature and measurements from the HA unit system (°C/°F).
+- **First day of the week:** from the household's country in the HA configuration
+  (`country`, delivered in the session as `household.country`) together with the UI
+  language: `Intl.Locale(language, { region: country })`, `getWeekInfo()` or the older
+  `weekInfo`; Monday when the country is unknown or the browser cannot tell. The language
+  alone is not enough (English would mean the US, while the UK starts on Monday). Every list
+  of weekdays follows it: the picker of the rule form and the rule summaries ("Sun – Tue"),
+  wherever they appear (editor, preview, save summary, versions, templates). Ranges are
+  computed in the displayed order. Only the display follows it: rules store weekdays Monday
+  first, as that order is part of a mandate's digest; the evaluation uses the household's
+  time zone and is unaffected.
 - **Language selection:** order: the user's setting in Home-Mandate → browser language →
   English as fallback.
 - **Prepared for other scripts:** CSS uses logical properties only (`margin-inline-start`

@@ -26,6 +26,7 @@ import {
   withValidFrom,
   withWindow,
 } from './edit.ts';
+import { weekdayOrder, WEEKDAYS } from './labels.ts';
 import { categoryOf, deviceOptions, isEditable, resourceOf, scopeOf, vocabularyOf } from './scope.ts';
 
 const devices = devicesFixture.devices;
@@ -185,6 +186,35 @@ describe('actions and decision', () => {
     ];
     for (const edited of edits) expect(edited.allow_critical).toBeUndefined();
     expect(confirmed.allow_critical).toBe(true);
+  });
+});
+
+describe("weekdays in the order of the household's week", () => {
+  const orders = [WEEKDAYS, weekdayOrder('en', 'US'), weekdayOrder('de', 'AF')];
+
+  it('stores weekdays Monday first whatever order they are switched in', () => {
+    for (const order of orders) {
+      let r = rule();
+      for (const day of order) r = toggleWeekday(r, day);
+      expect(r.conditions?.weekdays).toEqual([]);
+      const on = new Set<string>();
+      for (const day of order) {
+        r = toggleWeekday(r, day);
+        on.add(day);
+        const want = on.size === WEEKDAYS.length ? undefined : WEEKDAYS.filter((d) => on.has(d));
+        expect(r.conditions?.weekdays).toEqual(want);
+      }
+      expect(r.conditions).toBeUndefined();
+    }
+  });
+
+  it('gives back the stored rule when a day is switched off and on again, so the digest stays the same', () => {
+    const stored = rule({ conditions: { weekdays: ['mon', 'tue', 'sun'], time_window: '08:00-12:00' } });
+    for (const day of ['sun', 'sat', 'mon'] as const) {
+      const again = toggleWeekday(toggleWeekday(stored, day), day);
+      expect(again).toEqual(stored);
+      expect(JSON.stringify(again)).toBe(JSON.stringify(stored));
+    }
   });
 });
 

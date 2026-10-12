@@ -19,6 +19,14 @@ interface Screen {
 
 const CLAUDE = encodeURIComponent('https://claude.ai/oauth/claude-code-client-metadata');
 
+/** The US household of the mock (src/lib/api/fixtures.ts usHouseholdFixture): its week starts on Sunday. */
+const US_HOUSEHOLD = {
+  time_zone: 'America/New_York',
+  language: 'en',
+  unit_system: { temperature: '°F', length: 'mi', mass: 'lb', volume: 'gal', pressure: 'psi', wind_speed: 'mph' },
+  country: 'US',
+};
+
 type Mock = { hmMock: { setEmergencyStop(a: boolean): Promise<void>; breakChain(n: number): void; setHaConnected(c: boolean): void } };
 
 const SCREENS: Screen[] = [
@@ -179,6 +187,16 @@ const SCREENS: Screen[] = [
   },
   { name: 'browser sign-in', path: './#/agents/browser' },
   { name: 'settings', path: './#/settings' },
+  { name: 'settings, Home Assistant connection of a household in the US (#43)', path: './#/settings/ha', mock: { household: US_HOUSEHOLD } },
+  {
+    name: 'mandate editor, a rule open in a household in the US (#43)',
+    path: './#/mandates/mandate-voice',
+    mock: { household: US_HOUSEHOLD },
+    setup: async (page) => {
+      await page.locator('main ol > li .head .btn.text').first().click();
+      await expect(page.locator('main li.editing [role="group"][aria-describedby$="-days"]')).toBeVisible();
+    },
+  },
   { name: 'not found', path: './#/does-not-exist' },
   { name: 'no access', path: './', mock: { failures: { session: 'forbidden' } } },
   { name: 'start-up error', path: './', mock: { failures: { session: 'internal' } } },

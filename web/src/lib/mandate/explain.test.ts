@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { devicesFixture, voiceAssistantDraft } from '../api/fixtures.ts';
 import type { Device, MandateDraft, Rule } from '../api/types.ts';
 import { setLocale } from '../paraglide/runtime.js';
 import { removeRule, replaceRule, withDecision } from './edit.ts';
 import { cellDetail, cellLabel, cellReason, cellWhy, shortLabel } from './explain.ts';
 import { buildRows, cellAt, type MatrixCell } from './matrix.ts';
+import { setHouseholdCountry } from './week.svelte.ts';
 
 beforeEach(() => setLocale('en', { reload: false }));
+afterEach(() => setHouseholdCountry(null));
 
 const base = voiceAssistantDraft;
 const catalog = devicesFixture;
@@ -36,7 +38,7 @@ describe('words in and about a cell', () => {
 
   it('gives the reason and the marks in one line for mobile', () => {
     expect(cellWhy({ rule: 2, demoted: false, timed: null, limited: false })).toBe('From Rule 3');
-    expect(cellWhy({ rule: 2, demoted: true, timed: null, limited: false })).toBe('From Rule 3 · Downgraded');
+    expect(cellWhy({ rule: 2, demoted: true, timed: null, limited: false })).toBe('From Rule 3 · Asks because critical');
     expect(cellWhy({ rule: 2, demoted: false, timed: null, limited: true })).toBe('From Rule 3 · Within limits');
     expect(cellWhy({ rule: null, demoted: false, limited: false, timed: { decision: 'allow', rule: 3, demoted: false } })).toBe('No rule applies · Time-dependent: Allowed');
   });
@@ -46,10 +48,10 @@ describe('words in and about a cell', () => {
     expect(cellLabel(device('lock.front_door'), at(base, 'lock.front_door', 'lock'))).toBe('\u2068Haustür\u2069, lock: Default: denied. No rule applies');
   });
 
-  it('adds what the corner marks show: downgraded and changed', () => {
+  it('adds what the corner marks show: asks because critical and changed', () => {
     const draft = replaceRule(base, 2, withDecision(base.rules[2] as Rule, 'allow'));
     const label = cellLabel(device('lock.front_door'), at(draft, 'lock.front_door', 'unlock'));
-    expect(label).toBe('\u2068Haustür\u2069, unlock: Ask first. From Rule 3. Downgraded');
+    expect(label).toBe('\u2068Haustür\u2069, unlock: Ask first. From Rule 3. Asks because critical');
     expect(cellLabel(device('lock.front_door'), at(draft, 'lock.front_door', 'read'))).toMatch(/: Allowed\. From Rule 3\. Changed since the previous version$/);
   });
 
@@ -69,13 +71,34 @@ describe('cellDetail', () => {
     ]);
   });
 
-  it('explains a downgrade and a change', () => {
+  it('explains an action that asks because it is critical, and a change', () => {
     const draft = replaceRule(base, 2, withDecision(base.rules[2] as Rule, 'allow'));
     expect(detail(at(draft, 'lock.front_door', 'unlock'), draft)).toEqual([
       ['rule', 'Rule 3: \u2068Haustür\u2069: read, unlock → Allowed · 1 rule applies'],
-      ['critical', 'Downgraded: Becomes an approval request because the action is critical.'],
+      ['critical', 'Asks because critical: Critical action – asks first, although a rule allows it.'],
     ]);
     expect(detail(at(draft, 'lock.front_door', 'read'), draft)[1]).toEqual(['changed', 'Changed since the previous version · v4: Ask first']);
+  });
+
+  it('explains limits: values outside them are left to another rule or the default, not denied (#41)', () => {
+    const limited: MandateDraft = {
+      ...base,
+      rules: [{ id: 'heat', resource: { category: 'climate' }, actions: ['set_temperature'], decision: 'allow', constraints: { temperature: { min: 1600, max: 2300 } } }],
+    };
+    const [, limits] = detail(at(limited, 'climate.hvac', 'set_temperature'), limited);
+    expect(limits?.[0]).toBe('limits');
+    expect(limits?.[1]).toMatch(/^Allowed only for values within the limits \(.+\); other values are decided by another rule or the default\.$/);
+    setLocale('de', { reload: false });
+    const [, grenzen] = cellDetail(at(limited, 'climate.hvac', 'set_temperature'), limited, catalog, 4, 'de').map((l) => [l.kind, l.text]);
+    expect(grenzen?.[1]).toMatch(/^Nur für Werte innerhalb der Grenzen erlaubt \(.+\); andere Werte entscheidet eine andere Regel oder die Voreinstellung\.$/);
+  });
+
+  it('says in German that a critical action asks first', () => {
+    setLocale('de', { reload: false });
+    const draft = replaceRule(base, 2, withDecision(base.rules[2] as Rule, 'allow'));
+    const c = at(draft, 'lock.front_door', 'unlock');
+    expect(cellWhy(c.cell)).toBe('Aus Regel 3 · Rückfrage, weil kritisch');
+    expect(cellDetail(c, draft, catalog, 4, 'de')[1]).toEqual({ kind: 'critical', text: 'Rückfrage, weil kritisch: Kritische Aktion – fragt nach, obwohl eine Regel sie erlaubt.' });
   });
 
   it('warns when a critical action is allowed without approval', () => {
@@ -96,6 +119,15 @@ describe('cellDetail', () => {
     expect(rule?.[1]).toMatch(/^No rule applies\./);
     expect(timed?.[0]).toBe('timed');
     expect(timed?.[1]).toMatch(/^In time window 07:00\sAM to 10:00\sPM: Allowed \(Rule 4\)\. Otherwise: Default: denied\.$/);
+  });
+
+  it("names the days in the order of the household's week (#43)", () => {
+    const media = base.rules[3] as Rule;
+    const draft = replaceRule(base, 3, { ...media, conditions: { ...media.conditions, weekdays: ['mon', 'tue', 'sun'] } });
+    const timed = () => detail(at(draft, 'media_player.living_room', 'play'), draft)[1]?.[1];
+    expect(timed()).toMatch(/^In time window Mon, Tue, Sun · 07:00\sAM/);
+    setHouseholdCountry('US');
+    expect(timed()).toMatch(/^In time window Sun\s–\sTue · 07:00\sAM/);
   });
 
   it('shows the former outcome when a rule is gone', () => {

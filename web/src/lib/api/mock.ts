@@ -52,6 +52,7 @@ import type {
   AuditQuery,
   DeviceCatalog,
   Defaults,
+  Household,
   MandateDetail,
   MandateDocument,
   MandateDraft,
@@ -168,6 +169,8 @@ export interface MockOptions {
   hostile?: boolean;
   /** Direct mode: signed in through Home-Mandate, so the session offers to sign out. */
   direct?: boolean;
+  /** Another household than the German one of the fixtures, e.g. usHouseholdFixture. */
+  household?: Household;
   /** Starts without any approver set up: nobody but the admitting human, without a channel. */
   noApprovers?: boolean;
   /**
@@ -395,7 +398,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
   const pairingCandidate: PairingCandidate = options.hostile ? { ...pairingFixture, claimed_name: WORST_NAME } : pairingFixture;
   const startAgents = options.afterStop ? [...agentsFixture.map((a) => ({ ...a, connected: false })), tabletAgentFixture] : agentsFixture;
   const initial: State = {
-    session: sessionFixture,
+    session: options.household ? { ...sessionFixture, household: options.household } : sessionFixture,
     system: options.noApprovers ? { ...systemFixture, approvers_configured: 0 } : systemFixture,
     defaults: defaultsFixture,
     devices: devicesFixture,

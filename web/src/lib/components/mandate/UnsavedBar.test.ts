@@ -15,7 +15,7 @@ afterEach(() => {
 function show(count = 2) {
   const onsave = vi.fn();
   const ondiscard = vi.fn();
-  const view = render(UnsavedBar, { count, note: 'They apply only after saving.', saveLabel: 'Save changes …', onsave, ondiscard });
+  const view = render(UnsavedBar, { count, note: 'They apply only after saving.', saveLabel: 'Review and save', onsave, ondiscard });
   return { onsave, ondiscard, view };
 }
 
@@ -28,7 +28,7 @@ describe('UnsavedBar', () => {
 
   it('saves and discards with its buttons', async () => {
     const { onsave, ondiscard } = show();
-    await fireEvent.click(screen.getByRole('button', { name: 'Save changes …' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Review and save' }));
     expect(onsave).toHaveBeenCalledTimes(1);
     await fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }));
     expect(ondiscard).toHaveBeenCalledTimes(1);

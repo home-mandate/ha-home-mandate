@@ -115,8 +115,8 @@
     color: var(--hm-color-text);
     background: var(--hm-color-surface-hover);
   }
+  /* Not bold, so switching tabs moves no other tab (issue #47); the bar at the end marks it. */
   a[aria-current='page'] {
-    font-weight: var(--hm-font-weight-semibold);
     color: var(--hm-color-accent-text);
     border-block-end-color: var(--hm-color-accent);
   }

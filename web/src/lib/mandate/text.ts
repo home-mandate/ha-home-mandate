@@ -11,6 +11,7 @@ import { cleanUntrusted, isolate } from '../untrusted.ts';
 import { actionLabel, categoryLabel, WEEKDAYS, weekdayNames } from './labels.ts';
 import { limitsText } from './limits.ts';
 import { categoryOf } from './scope.ts';
+import { householdWeek } from './week.svelte.ts';
 
 export interface RuleText {
   /** The device, the category or "all devices". */
@@ -46,22 +47,28 @@ export function windowText(window: string | undefined, locale: string): string {
   return w.end < w.start ? m.time_overnight(range) : m.time_same_day(range);
 }
 
-/** daysText lists weekdays, runs of three or more as a range; empty for "every day". */
-export function daysText(weekdays: readonly Weekday[] | undefined, locale: string): string {
+/**
+ * daysText lists weekdays in the order of the household's week (#43), runs of three or more
+ * as a range; empty for "every day". Runs do not wrap past the end of the displayed week.
+ */
+export function daysText(weekdays: readonly Weekday[] | undefined, locale: string, order: readonly Weekday[] = householdWeek(locale)): string {
   if (!weekdays || weekdays.length === 0 || WEEKDAYS.every((d) => weekdays.includes(d))) return '';
   const names = weekdayNames(locale);
   const format = new Intl.DateTimeFormat(locale, { weekday: 'short', timeZone: 'UTC' });
+  // A week that starts on the displayed first day, so a range always runs forwards.
+  const start = A_MONDAY + Math.max(0, WEEKDAYS.indexOf(order[0] ?? 'mon')) * DAY_MS;
+  const selected = (i: number) => i < order.length && weekdays.includes(order[i] as Weekday);
   const parts: string[] = [];
   let i = 0;
-  while (i < WEEKDAYS.length) {
-    if (!weekdays.includes(WEEKDAYS[i] as Weekday)) {
+  while (i < order.length) {
+    if (!selected(i)) {
       i++;
       continue;
     }
     let end = i;
-    while (end + 1 < WEEKDAYS.length && weekdays.includes(WEEKDAYS[end + 1] as Weekday)) end++;
-    if (end - i + 1 >= MIN_RANGE) parts.push(format.formatRange(A_MONDAY + i * DAY_MS, A_MONDAY + end * DAY_MS));
-    else for (let d = i; d <= end; d++) parts.push(names[WEEKDAYS[d] as Weekday]);
+    while (selected(end + 1)) end++;
+    if (end - i + 1 >= MIN_RANGE) parts.push(format.formatRange(start + i * DAY_MS, start + end * DAY_MS));
+    else for (let d = i; d <= end; d++) parts.push(names[order[d] as Weekday]);
     i = end + 1;
   }
   return listText(parts, locale);

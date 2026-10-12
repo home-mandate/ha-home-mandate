@@ -113,21 +113,17 @@ describe('PreviewMatrix on desktop', () => {
     expect(document.activeElement).toBe(cells[2]);
   });
 
-  it('marks downgraded, time-dependent and changed cells, never by colour alone', async () => {
+  it('marks cells that ask because critical, time-dependent and changed cells, never by colour alone', async () => {
     const draft = removeRule(replaceRule(base, 2, withDecision(base.rules[2] as Rule, 'allow')), 4);
     show(draft);
     await fireEvent.click(group(/^Lock/));
-    const unlock = cell(/Haustür.*unlock: Ask first\. From Rule 3\. Downgraded/);
+    const unlock = cell(/Haustür.*unlock: Ask first\. From Rule 3\. Asks because critical/);
     expect(unlock.textContent?.trim()).toBe('Ask first');
     expect(cell(/Haustür.*read: Allowed\. From Rule 3\. Changed since the previous version/).querySelector('.dot')).not.toBeNull();
     await fireEvent.click(unlock);
-    expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain('Downgraded: Becomes an approval request because the action is critical.');
+    expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain('Asks because critical: Critical action – asks first, although a rule allows it.');
     await fireEvent.click(group(/^Media/));
     expect(cell(/Lautsprecher.*play: Default: denied, at times Allowed/)).toBeTruthy();
-    const legend = document.querySelector('.legend')?.textContent ?? '';
-    expect(legend).toContain('Downgraded');
-    expect(legend).toContain('Time-dependent');
-    expect(legend).toContain('Changed since the previous version');
   });
 
   it('groups by area with one grid per category', async () => {
@@ -271,7 +267,7 @@ describe('PreviewMatrix on mobile', () => {
     expect(lines).toEqual([
       'read Allowed From Rule 3',
       'lock Default: denied No rule applies',
-      'unlock Ask first From Rule 3 · Downgraded',
+      'unlock Ask first From Rule 3 · Asks because critical',
       'open Default: denied No rule applies',
     ]);
     expect(within(card).getByRole('img', { name: 'Changed since the previous version' })).toBeTruthy();
@@ -284,5 +280,58 @@ describe('PreviewMatrix on mobile', () => {
     expect(screen.getAllByRole('heading', { level: 4 }).map((h) => h.textContent)).toEqual(['Lights', 'Lights', 'Climate', 'Media']);
     const speaker = screen.getByText('media_player.living_room').closest('li') as HTMLElement;
     expect(speaker.textContent?.replace(/\s+/g, ' ')).toContain('play Default: denied No rule applies · Time-dependent: Allowed');
+  });
+});
+
+// The legend explains each corner mark in one sentence, as a definition list without tooltips
+// (issue #41), in the grid and in the cards on small screens.
+const LEGEND = {
+  en: {
+    entries: [
+      ['Asks because critical', 'Critical action – asks first, although a rule allows it.'],
+      ['Time-dependent', 'Applies only at certain times; otherwise another decision applies.'],
+      ['Within limits', 'Allowed only for values within the limits; other values are decided by another rule or the default.'],
+    ],
+    changed: 'Changed since the previous version',
+  },
+  de: {
+    entries: [
+      ['Rückfrage, weil kritisch', 'Kritische Aktion – fragt nach, obwohl eine Regel sie erlaubt.'],
+      ['Zeitabhängig', 'Gilt nur zu bestimmten Zeiten; sonst gilt eine andere Entscheidung.'],
+      ['Mit Grenzen', 'Nur für Werte innerhalb der Grenzen erlaubt; andere Werte entscheidet eine andere Regel oder die Voreinstellung.'],
+    ],
+    changed: 'Geändert gegenüber der vorigen Version',
+  },
+} as const;
+
+describe('PreviewMatrix legend (issue #41)', () => {
+  for (const locale of ['en', 'de'] as const) {
+    for (const grid of [true, false]) {
+      it(`${locale}, ${grid ? 'grid' : 'cards'}: a term and one sentence per mark, the icons hidden`, () => {
+        setLocale(locale, { reload: false });
+        render(PreviewMatrix, { draft: base, previous: base, version: 4, catalog: devicesFixture, locale, grid, invalid: false });
+        const legend = document.querySelector('.legend') as HTMLElement;
+        expect(legend).not.toBeNull();
+        const list = legend.querySelector('dl') as HTMLElement;
+        const terms = [...list.querySelectorAll('dt')].map((t) => t.textContent?.trim());
+        const sentences = [...list.querySelectorAll('dd')].map((d) => d.textContent?.trim());
+        expect(terms.map((t, i) => [t, sentences[i]])).toEqual(LEGEND[locale].entries);
+        expect(legend.textContent).toContain(LEGEND[locale].changed);
+        // Icons are decoration next to the words; no tooltips.
+        expect(legend.querySelectorAll('svg:not([aria-hidden="true"])')).toHaveLength(0);
+        expect(legend.querySelectorAll('[title]')).toHaveLength(0);
+        // The cell of a critical action shows its own decision icon and the shield: both are in the legend.
+        expect(list.querySelector('dt')?.querySelectorAll('svg')).toHaveLength(2);
+      });
+    }
+  }
+
+  it('shows the decision icon of a cell that asks because critical', async () => {
+    const draft = replaceRule(base, 2, withDecision(base.rules[2] as Rule, 'allow'));
+    show(draft);
+    await fireEvent.click(group(/^Lock/));
+    const icon = cell(/unlock: Ask first\. From Rule 3\. Asks because critical/).querySelector('svg');
+    const legendIcon = document.querySelector('.legend dt svg');
+    expect(legendIcon?.innerHTML).toBe(icon?.innerHTML);
   });
 });

@@ -88,7 +88,7 @@ func (f *fakeHomeAssistant) serve(w http.ResponseWriter, r *http.Request) {
 				write(map[string]any{"id": id, "type": "result", "success": false, "error": map[string]any{"code": "unknown_error", "message": "starting"}})
 				continue
 			}
-			result = map[string]any{"version": "2026.9.4", "time_zone": "Europe/Berlin", "language": "de",
+			result = map[string]any{"version": "2026.9.4", "time_zone": "Europe/Berlin", "language": "de", "country": "DE",
 				"unit_system": map[string]string{"temperature": "°C", "length": "km"}}
 		case "auth/current_user":
 			if f.fails(&f.failUser) {
@@ -159,7 +159,7 @@ func TestGatewayWithHomeAssistantAndIngress(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	st := g.status()
-	if st.HAVersion != "2026.9.4" || st.TimeZone != "Europe/Berlin" || st.Language != "de" || st.Units["temperature"] != "°C" ||
+	if st.HAVersion != "2026.9.4" || st.TimeZone != "Europe/Berlin" || st.Language != "de" || st.Country != "DE" || st.Units["temperature"] != "°C" ||
 		st.ServiceUser != "5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b" || st.HASince.IsZero() || g.householdLanguage() != "de" {
 		t.Errorf("status = %+v", st)
 	}

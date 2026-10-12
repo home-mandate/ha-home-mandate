@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"maps"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -191,12 +193,19 @@ type harness struct {
 	mu   sync.Mutex
 	tz   string
 	self string // Home-Mandate's own Home Assistant user
+	unit string // the household's temperature unit; empty: unknown
 }
 
 func (h *harness) timeZone() string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.tz
+}
+
+func (h *harness) temperatureUnit() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.unit
 }
 
 func (h *harness) serviceUser() string {
@@ -239,7 +248,7 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 		t.Fatal(err)
 	}
 
-	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin", self: "hm-service-user", clock: &fakeClock{}, now: &fakeNow{t: time.Now()},
+	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin", self: "hm-service-user", unit: "°C", clock: &fakeClock{}, now: &fakeNow{t: time.Now()},
 		ha: &fakeHA{connected: true}, journal: approval.NewJournal(st.DB(), nil),
 		catalog: &fakeCatalog{ready: true, devices: map[string]catalog.Device{
 			"light.kitchen":            {EntityID: "light.kitchen", Category: "light", Area: "kitchen", State: "off", Attributes: map[string]any{"friendly_name": "Kitchen"}},
@@ -263,7 +272,7 @@ func (h *harness) serve(auditor Auditor) string {
 		decider = h.decider
 	}
 	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Journal: h.gatewayJournal(), Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test",
-		TimeZone: h.timeZone, ServiceUser: h.serviceUser, Now: h.now.Now, Logger: h.logger, ApprovalWait: h.approvalWait})
+		TimeZone: h.timeZone, ServiceUser: h.serviceUser, TemperatureUnit: h.temperatureUnit, Now: h.now.Now, Logger: h.logger, ApprovalWait: h.approvalWait})
 	g.cfg.Clock = h.clock
 	h.gw = g
 	srv := httptest.NewServer(g.Handler())
@@ -591,7 +600,7 @@ func TestExecutionFailures(t *testing.T) {
 func TestParametersAreChecked(t *testing.T) {
 	h := newHarness(t, func(d map[string]any) {
 		d["rules"] = []any{
-			map[string]any{"id": "r-all", "resource": map[string]any{"any": true}, "actions": []any{"set", "set_temperature", "set_mode", "arm", "snapshot"},
+			map[string]any{"id": "r-all", "resource": map[string]any{"any": true}, "actions": []any{"read", "set", "set_temperature", "set_mode", "arm", "snapshot"},
 				"decision": "allow", "allow_critical": true},
 		}
 	})
@@ -601,8 +610,8 @@ func TestParametersAreChecked(t *testing.T) {
 		want string
 	}{
 		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": 40}}, ""},
-		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": 150}}, "invalid_params"},
-		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": 40.5}}, "invalid_params"},
+		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": 150}}, "invalid_params: brightness_pct must be an integer between 0 and 100"},
+		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": 40.5}}, "invalid_params: brightness_pct must be an integer between 0 and 100"},
 		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"entity_id": "lock.front_door"}}, "invalid_params"},
 		{map[string]any{"entity_id": "light.kitchen", "action": "set"}, "invalid_params"},
 		{map[string]any{"entity_id": "climate.living_room", "action": "set_temperature"}, "invalid_params"},
@@ -919,6 +928,159 @@ func TestActionsOfTheVocabulary(t *testing.T) {
 	}
 }
 
+// While the household's temperature unit is unknown (Home Assistant's configuration not
+// read yet, or no unit in it), a temperature cannot be checked: the gateway is not ready,
+// which is not the agent's fault, so the answer is unavailable, never invalid_params, and
+// a value in °F can never pass a limit meant in °C (#42, #44).
+func TestUnknownTemperatureUnitIsUnavailable(t *testing.T) {
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-heating", "resource": map[string]any{"category": "climate"}, "actions": []any{"set_temperature"},
+				"decision": "allow", "constraints": map[string]any{"temperature": map[string]any{"min": 1600, "max": 2300}}},
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+		}
+	})
+	h.setUnit("")
+	s := h.session()
+	_, errText := h.call(s, "perform_action", map[string]any{"entity_id": "climate.living_room", "action": "set_temperature",
+		"params": map[string]any{"temperature": 20.0}})
+	if errText != "unavailable" {
+		t.Fatalf("20 with an unknown unit: %q, want unavailable", errText)
+	}
+	if calls := h.ha.recorded(); len(calls) != 0 {
+		t.Errorf("HA calls = %+v, want none", calls)
+	}
+	if e := h.lastEntry(); path(e, "result", "status") != "failed" || path(e, "result", "error") != "temperature_unit_unknown" || e["evaluation"] != nil {
+		t.Errorf("audit entry = %v", e)
+	}
+}
+
+func (h *harness) setUnit(unit string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.unit = unit
+}
+
+func (h *harness) addDevice(d catalog.Device) {
+	h.catalog.mu.Lock()
+	defer h.catalog.mu.Unlock()
+	h.catalog.devices[d.EntityID] = d
+}
+
+// A value that the unit of the vocabulary cannot express is refused before the decision,
+// also under a rule without a limit (SPEC-v0 section 4.5, #44): with the reason for a
+// device the agent may read, as not_found for any other. A value off a whole step only by
+// binary noise is accepted, and its canonical value is what Home Assistant receives.
+func TestParameterValuesTheUnitCannotExpress(t *testing.T) {
+	const volumeRule = "invalid_params: volume_level must be a whole percent, 0 to 1 in steps of 0.01 (e.g. 0.33)"
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-hidden", "resource": map[string]any{"entity_id": "media_player.bedroom"}, "actions": []any{"read"}, "decision": "deny"},
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+			map[string]any{"id": "r-media", "resource": map[string]any{"category": "media"}, "actions": []any{"set_volume"}, "decision": "allow"},
+			map[string]any{"id": "r-heating", "resource": map[string]any{"category": "climate"}, "actions": []any{"set_temperature"}, "decision": "allow"},
+		}
+	})
+	h.addDevice(catalog.Device{EntityID: "media_player.kitchen", Category: "media", State: "playing"})
+	h.addDevice(catalog.Device{EntityID: "media_player.bedroom", Category: "media", State: "idle"})
+	s := h.session()
+	tests := []struct {
+		name     string
+		entity   string
+		params   map[string]any
+		unit     string
+		wantErr  string  // exact error text; empty: executed
+		wantSent float64 // the value Home Assistant receives when executed
+		unknown  bool    // the device does not exist: denied by the mandate as always
+	}{
+		{name: "finer than a percent, readable", entity: "media_player.kitchen", params: map[string]any{"volume_level": 0.335}, wantErr: volumeRule},
+		{name: "finer than a percent, not readable", entity: "media_player.bedroom", params: map[string]any{"volume_level": 0.335}, wantErr: "not_found"},
+		{name: "finer than a percent, missing device", entity: "media_player.nowhere", params: map[string]any{"volume_level": 0.335}, wantErr: "not_found", unknown: true},
+		{name: "float noise", entity: "media_player.kitchen", params: map[string]any{"volume_level": 0.29}, wantSent: 0.29},
+		{name: "full volume", entity: "media_player.kitchen", params: map[string]any{"volume_level": 1.0}, wantSent: 1.0},
+		{name: "silence", entity: "media_player.kitchen", params: map[string]any{"volume_level": 0.0}, wantSent: 0.0},
+		{name: "temperature finer than the unit", entity: "climate.living_room", params: map[string]any{"temperature": 21.555},
+			wantErr: "invalid_params: temperature must be a number between -50 and 100 in steps of 0.01 degrees"},
+		{name: "temperature in a Fahrenheit household", entity: "climate.living_room", params: map[string]any{"temperature": 70.0}, unit: "°F",
+			wantErr: "invalid_params: temperature cannot be checked in a household that uses °F yet"},
+		{name: "temperature in °C", entity: "climate.living_room", params: map[string]any{"temperature": 21.5}, wantSent: 21.5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h.setUnit(cmp.Or(tt.unit, "°C"))
+			action := "set_volume"
+			if strings.HasPrefix(tt.entity, "climate.") {
+				action = "set_temperature"
+			}
+			before := len(h.ha.recorded())
+			_, errText := h.call(s, "perform_action", map[string]any{"entity_id": tt.entity, "action": action, "params": tt.params})
+			if errText != tt.wantErr {
+				t.Fatalf("perform_action = %q, want %q", errText, tt.wantErr)
+			}
+			calls := h.ha.recorded()[before:]
+			e := h.lastEntry()
+			if tt.wantErr != "" {
+				if len(calls) != 0 {
+					t.Errorf("HA calls = %+v, want none", calls)
+				}
+				refused := path(e, "result", "status") == "failed" && path(e, "result", "error") == "invalid_params" && e["evaluation"] == nil
+				if tt.unknown {
+					refused = path(e, "result", "denied_by") == "mandate" && path(e, "evaluation", "reason") == "unknown_resource"
+				}
+				if !refused {
+					t.Errorf("audit entry = %v", e)
+				}
+				return
+			}
+			if len(calls) != 1 {
+				t.Fatalf("HA calls = %+v", calls)
+			}
+			for name, value := range calls[0].Data {
+				if v, _ := value.(float64); math.Float64bits(v) != math.Float64bits(tt.wantSent) {
+					t.Errorf("sent %s = %v, want %v", name, value, tt.wantSent)
+				}
+			}
+			if path(e, "result", "status") != "executed" {
+				t.Errorf("audit entry = %v", e)
+			}
+		})
+	}
+	if r, err := h.log.Verify(context.Background()); err != nil || !r.Valid {
+		t.Errorf("audit log = %+v, %v", r, err)
+	}
+}
+
+// A limit on the volume admits a whole percent within it; the evaluated percent is in the
+// audit log and its canonical value goes to Home Assistant.
+func TestConstraintsLimitTheVolume(t *testing.T) {
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-media", "resource": map[string]any{"category": "media"}, "actions": []any{"set_volume"},
+				"decision": "allow", "constraints": map[string]any{"volume": map[string]any{"max": 50}}},
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+		}
+	})
+	h.addDevice(catalog.Device{EntityID: "media_player.kitchen", Category: "media", State: "playing"})
+	s := h.session()
+	set := func(value float64) string {
+		_, errText := h.call(s, "perform_action", map[string]any{"entity_id": "media_player.kitchen", "action": "set_volume",
+			"params": map[string]any{"volume_level": value}})
+		return errText
+	}
+	if errText := set(0.33); errText != "" {
+		t.Fatalf("0.33 within the limit: %q", errText)
+	}
+	if e := h.lastEntry(); path(e, "request", "parameters", "volume") != float64(33) || path(e, "evaluation", "rule_id") != "r-media" {
+		t.Errorf("audit entry = %v", e)
+	}
+	if calls := h.ha.recorded(); len(calls) != 1 || calls[0].Data["volume_level"] != 0.33 {
+		t.Errorf("HA calls = %+v", calls)
+	}
+	if errText := set(0.6); !strings.HasPrefix(errText, "denied") {
+		t.Errorf("0.6 above the limit: %q, want denied", errText)
+	}
+}
+
 // A constraint of the mandate limits what the agent may set; the evaluated value is the
 // one in the audit log and the one sent to Home Assistant (SPEC-v0 section 4.5).
 func TestConstraintsLimitParameters(t *testing.T) {
@@ -945,13 +1107,17 @@ func TestConstraintsLimitParameters(t *testing.T) {
 	if calls := h.ha.recorded(); len(calls) != 1 || calls[0].Data["temperature"] != 21.5 {
 		t.Errorf("HA calls = %+v", calls)
 	}
-	for _, value := range []any{23.5, 15.0, 21.555} {
+	for _, value := range []any{23.5, 15.0} {
 		if errText := set(value); !strings.HasPrefix(errText, "denied") {
 			t.Errorf("%v degrees: %q, want denied", value, errText)
 		}
 		if e := h.lastEntry(); path(e, "evaluation", "reason") != "no_match" {
 			t.Errorf("%v degrees: audit entry = %v", value, e)
 		}
+	}
+	// Finer than the unit: refused with the reason, not denied (#44).
+	if errText := set(21.555); !strings.HasPrefix(errText, "invalid_params: temperature") {
+		t.Errorf("21.555 degrees: %q, want invalid_params", errText)
 	}
 	if calls := h.ha.recorded(); len(calls) != 1 {
 		t.Errorf("a denied value reached Home Assistant: %+v", calls)

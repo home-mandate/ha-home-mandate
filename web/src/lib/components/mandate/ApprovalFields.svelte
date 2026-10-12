@@ -11,6 +11,7 @@
   import { isPlaceholder } from '../../mandate/placeholder.ts';
   import { cleanUntrusted } from '../../untrusted.ts';
   import Icon from '../Icon.svelte';
+  import SelectionMark from '../SelectionMark.svelte';
   import TimeoutField from '../TimeoutField.svelte';
 
   interface Props {
@@ -67,7 +68,8 @@
             {#if isPlaceholder(person.id)}<Icon name="person" size={16} />{:else}{initials(cleanUntrusted(person.name))}{/if}
           </span>
           <bdi>{cleanUntrusted(person.name)}</bdi>
-          {#if on}<Icon name="check" size={16} />{/if}
+          <!-- A check or an x of the same size, so toggling never changes the button's width. -->
+          <SelectionMark {on} />
         </button>
       {/each}
     </div>
@@ -121,14 +123,21 @@
     border: var(--hm-border-width) solid var(--hm-color-border-strong);
     cursor: pointer;
   }
+  /* Not bold and no thicker border (issue #47): the border only changes colour and an inset
+     ring, which takes no room, thickens it; the filled avatar and the check (an x when not
+     selected) mark it without colour. */
   .person[aria-pressed='true'] {
-    font-weight: var(--hm-font-weight-semibold);
     background: var(--hm-color-accent-subtle);
-    border: 2px solid var(--hm-color-accent);
+    border-color: var(--hm-color-accent);
+    box-shadow: inset 0 0 0 var(--hm-border-width) var(--hm-color-accent);
   }
   .person[aria-disabled='true'] {
     color: var(--hm-color-text-disabled);
     cursor: not-allowed;
+  }
+  /* The muted x would look more active than the disabled name. */
+  .person[aria-disabled='true'] :global(.mark) {
+    color: inherit;
   }
   .avatar {
     display: flex;
@@ -156,8 +165,13 @@
     color: var(--hm-color-danger-fg);
   }
   @media (forced-colors: active) {
+    /* An outline inside the button: a thicker border would make it wider. */
     .person[aria-pressed='true'] {
       border-color: Highlight;
+    }
+    .person[aria-pressed='true']:not(:focus-visible) {
+      outline: 2px solid Highlight;
+      outline-offset: -2px;
     }
   }
 </style>

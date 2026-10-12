@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +23,8 @@ func TestSession(t *testing.T) {
 	h.ok(http.MethodGet, "/api/session", nil, &s)
 	if s.User.ID != adminID || s.User.Name != "Markus" || s.CSRFToken == "" || s.Language != nil ||
 		s.Household.TimeZone != "Europe/Berlin" || s.Household.Language != "de" || s.Household.UnitSystem["temperature"] != "°C" ||
-		s.Household.UnitSystem["pressure"] != "" || len(s.Household.UnitSystem) != len(unitKeys) {
+		s.Household.UnitSystem["pressure"] != "" || len(s.Household.UnitSystem) != len(unitKeys) ||
+		s.Household.Country == nil || *s.Household.Country != "DE" {
 		t.Errorf("session = %+v", s)
 	}
 	if !h.srv.validCSRF(adminID, s.CSRFToken) || h.srv.validCSRF(annaID, s.CSRFToken) {
@@ -62,6 +64,35 @@ func TestSession(t *testing.T) {
 	h.ok(http.MethodGet, "/api/session", nil, &s, as("noname0000000000000000000000000"))
 	if s.Household.TimeZone != "UTC" || s.User.Name != "noname0000000000000000000000000" {
 		t.Errorf("session = %+v", s)
+	}
+}
+
+// The household's country (Home Assistant's general settings) decides the first day of
+// the week in the UI (#43): an ISO 3166-1 alpha-2 code, null when there is none.
+func TestSessionCountry(t *testing.T) {
+	h := newHarness(t)
+	for _, c := range []struct {
+		in   string
+		want *string
+	}{
+		{"US", ptr("US")},
+		{"gb", ptr("GB")},
+		{"", nil},
+		{"Germany", nil},
+		{"D1", nil},
+		{"ÄÖ", nil},
+	} {
+		h.status.Country = c.in
+		var s wireSession
+		h.ok(http.MethodGet, "/api/session", nil, &s)
+		if (s.Household.Country == nil) != (c.want == nil) || (c.want != nil && *s.Household.Country != *c.want) {
+			t.Errorf("country %q = %v, want %v", c.in, s.Household.Country, c.want)
+		}
+	}
+	// On the wire: null, never an empty string.
+	h.status.Country = ""
+	if r := h.do(http.MethodGet, "/api/session", nil); !strings.Contains(string(r.body), `"country":null`) {
+		t.Errorf("body = %s", r.body)
 	}
 }
 

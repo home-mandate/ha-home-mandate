@@ -269,15 +269,25 @@
     {/each}
   </div>
 
-  {#if grid}
-    <div class="legend">
-      <span class="heading">{m.matrix_legend()}</span>
-      <span><span class="critical"><Icon name="critical" size={16} /></span>{m.demoted_label()}</span>
-      <span><Icon name="history" size={16} />{m.preview_timed()}</span>
-      <span><Icon name="limits" size={16} />{m.preview_limited()}</span>
-      <span><span class="dot"></span>{m.preview_change_dot()}</span>
-    </div>
-  {/if}
+  <!-- In the grid and in the cards: a term and one sentence per mark, no tooltips (issue #41). -->
+  <div class="legend">
+    <span class="heading">{m.matrix_legend()}</span>
+    <dl>
+      <div>
+        <dt><span class="icons"><Icon name="demoted" size={16} /><span class="critical"><Icon name="critical" size={16} /></span></span>{m.demoted_label()}</dt>
+        <dd>{m.demoted_desc()}</dd>
+      </div>
+      <div>
+        <dt><span class="icons"><Icon name="history" size={16} /></span>{m.preview_timed()}</dt>
+        <dd>{m.preview_timed_desc()}</dd>
+      </div>
+      <div>
+        <dt><span class="icons"><Icon name="limits" size={16} /></span>{m.preview_limited()}</dt>
+        <dd>{m.preview_limited_desc()}</dd>
+      </div>
+    </dl>
+    <p class="changed"><span class="icons"><span class="dot"></span></span>{m.preview_change_dot()}</p>
+  </div>
 </section>
 
 <style>
@@ -340,11 +350,13 @@
     background: transparent;
     cursor: pointer;
   }
+  /* Not bold (issue #47); the inset bar at the end marks the choice without colour and takes no room. */
   .grouping button[aria-checked='true'] {
-    font-weight: var(--hm-font-weight-semibold);
     color: var(--hm-color-text);
     background: var(--hm-color-surface);
-    box-shadow: var(--hm-shadow-sm);
+    box-shadow:
+      inset 0 calc(-1 * var(--hm-mark-width)) 0 var(--hm-color-accent),
+      var(--hm-shadow-sm);
   }
   .search {
     position: relative;
@@ -655,17 +667,53 @@
   }
   .legend {
     display: flex;
-    flex-wrap: wrap;
-    gap: 6px 14px;
+    flex-direction: column;
+    gap: var(--hm-space-2);
     padding-block-start: 10px;
     border-block-start: var(--hm-border-width) solid var(--hm-color-border-subtle);
     font-size: var(--hm-font-size-xs);
     color: var(--hm-color-text-muted);
   }
-  .legend span {
+  .legend dl {
+    display: grid;
+    gap: var(--hm-space-2);
+    margin: 0;
+  }
+  /* Term and sentence side by side when there is room, else the sentence below the term. */
+  .legend dl > div {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--hm-space-0-5) var(--hm-space-2);
+  }
+  .legend dt,
+  .legend .changed {
     display: inline-flex;
     align-items: center;
     gap: var(--hm-space-1);
+    margin: 0;
+    font-weight: var(--hm-font-weight-medium);
+    color: var(--hm-color-text);
+  }
+  .legend dd {
+    flex: 1 1 16em;
+    min-inline-size: 0;
+    margin: 0;
+  }
+  .legend .icons {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hm-space-0-5);
+    min-inline-size: 36px;
+    align-self: center;
+  }
+  /* Every mark is a flex box of its icon's size: an inline wrapper would put the shield on
+     the text's line box, off the centre line of the decision icon next to it. */
+  .legend .icons > * {
+    display: flex;
+    flex: none;
   }
   .heading {
     font-weight: var(--hm-font-weight-semibold);
@@ -679,6 +727,11 @@
     }
   }
   @media (forced-colors: active) {
+    /* An outline inside the button instead of the bar, which forced colours drop. */
+    .grouping button[aria-checked='true']:not(:focus-visible) {
+      outline: 2px solid Highlight;
+      outline-offset: -2px;
+    }
     .circle {
       border: 2px solid CanvasText;
     }

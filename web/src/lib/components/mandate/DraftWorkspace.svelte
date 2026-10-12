@@ -431,11 +431,19 @@
     background: transparent;
     cursor: pointer;
   }
+  /* Not bold (issue #47); the inset bar at the end marks the tab without colour and takes no room. */
   .tabs button[aria-selected='true'] {
-    font-weight: var(--hm-font-weight-semibold);
     color: var(--hm-color-text);
     background: var(--hm-color-surface);
-    box-shadow: var(--hm-shadow-sm);
+    box-shadow:
+      inset 0 calc(-1 * var(--hm-mark-width)) 0 var(--hm-color-accent),
+      var(--hm-shadow-sm);
+  }
+  @media (forced-colors: active) {
+    .tabs button[aria-selected='true']:not(:focus-visible) {
+      outline: 2px solid Highlight;
+      outline-offset: -2px;
+    }
   }
   .columns {
     display: grid;

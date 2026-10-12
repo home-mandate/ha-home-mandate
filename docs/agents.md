@@ -185,20 +185,34 @@ Actions and their parameters (`params`):
 
 | Category | Actions | Parameters |
 |---|---|---|
-| `light` | `turn_on`, `turn_off`, `set` | `set`: `brightness_pct` 0–100 and/or `color_temp_kelvin` 1000–12000 |
+| `light` | `turn_on`, `turn_off`, `set` | `set`: `brightness_pct` 0–100 and/or `color_temp_kelvin` 1000–12000 (integers) |
 | `switch` | `turn_on`, `turn_off` | – |
-| `climate` | `set_temperature`, `set_mode` | `temperature` (in Home Assistant's unit, required); `hvac_mode`: `off`, `heat`, `cool`, `heat_cool`, `auto`, `dry`, `fan_only` (required) |
-| `cover` | `open`, `close`, `stop`, `set_position` | `position` 0–100 (required) |
+| `climate` | `set_temperature`, `set_mode` | `temperature` in °C, −50 to 100 in steps of 0.01 (required; refused in a household that uses °F, see below); `hvac_mode`: `off`, `heat`, `cool`, `heat_cool`, `auto`, `dry`, `fan_only` (required) |
+| `cover` | `open`, `close`, `stop`, `set_position` | `position` 0–100, an integer (required) |
 | `gate` | `open`, `close` | – |
 | `lock` | `lock`, `unlock`, `open` | – |
 | `alarm` | `arm`, `disarm` | `arm`: `mode` `home`, `away` or `night` (default `away`) |
 | `camera` | `snapshot` (evaluated and logged, not executed) | – |
-| `media` | `turn_on`, `turn_off`, `play`, `pause`, `set_volume` | `volume_level` 0–1 (required) |
+| `media` | `turn_on`, `turn_off`, `play`, `pause`, `set_volume` | `volume_level` 0–1 in steps of 0.01, a whole percent (required) |
 | `scene` | `activate` | – |
 | `script` | `run` | – |
 | `other` | `set` (evaluated and logged, not executed) | – |
 
 Reading is `get_state`, not an action of `perform_action`.
+
+A number must be a whole step of its parameter: `volume_level` 0.33 is 33 percent, 0.335
+is refused (`invalid_params: volume_level must be a whole percent, 0 to 1 in steps of 0.01
+(e.g. 0.33)`), as is a temperature of 21.555 degrees. Home-Mandate never rounds: what it
+checks against the mandate is what Home Assistant receives. Values such as 0.29, which
+binary numbers cannot hold exactly, count as the step they stand for. The check comes
+before the mandate's decision, so the agent learns the real reason; for a device it may
+not read the answer stays `not_found`.
+
+**Changed in v0.1.0-rc.3:** an agent that sent a value finer than its step under a rule
+without a limit (`volume_level` 0.335) got it executed until rc.2; it now gets
+`invalid_params`. Temperatures in a household that uses °F are refused with
+`invalid_params: temperature cannot be checked in a household that uses °F yet`, also
+under a rule without a limit, until a later release supports °F.
 
 ## Actions that need a confirmation
 
@@ -284,8 +298,9 @@ Tool errors are short codes without internal details. Every refusal is in the au
 | `denied: unauthorized` | The agent's access was revoked while it waited. | – |
 | `approval_required: reading this device needs a confirmation, which v0.1 does not ask for` | Reading a device with the decision *ask*. | Allow or deny reading in the mandate. |
 | `rate_limited` | The mandate's requests per hour are used up (60 per hour for an agent without a usable mandate); for `approval_status` and `approval_cancel`, their own limit of 120 per hour. | Wait; raise the rate limit of the mandate. |
-| `unavailable` | Home-Mandate cannot decide right now: Home Assistant disconnected, its configuration not read yet, the device directory refreshing, or the host clock behind the audit log. From `approval_status` more than 15 minutes after the end or after a restart, it can also stand for Home Assistant dropping during the execution (the call itself said `failed` then). | Usually passes within seconds; see [troubleshooting.md](troubleshooting.md#agents-get-unavailable). |
-| `invalid_params` (with the parameter) | Malformed entity ID or action, unknown or out-of-range parameter. | Fix the call. |
+| `unavailable` | Home-Mandate cannot decide right now: Home Assistant disconnected, its configuration (time zone, temperature unit) not read yet, the device directory refreshing, or the host clock behind the audit log. From `approval_status` more than 15 minutes after the end or after a restart, it can also stand for Home Assistant dropping during the execution (the call itself said `failed` then). | Usually passes within seconds; see [troubleshooting.md](troubleshooting.md#agents-get-unavailable). |
+| `invalid_params` (with the parameter) | Malformed entity ID or action, unknown or out-of-range parameter, or a value that is no whole step of its parameter, for example `invalid_params: volume_level must be a whole percent, 0 to 1 in steps of 0.01 (e.g. 0.33)`, `invalid_params: temperature must be a number between -50 and 100 in steps of 0.01 degrees`, `invalid_params: brightness_pct must be an integer between 0 and 100`. | Fix the call. |
+| `invalid_params: temperature cannot be checked in a household that uses °F yet` | The household uses °F in Home Assistant; the vocabulary has temperatures only in °C so far. | Set the temperature in Home Assistant; °F support follows in a later release. |
 | `not_supported` | The action is evaluated but cannot be executed in this version (camera snapshot, `set` on `other`). | – |
 | `failed` | Home Assistant reported an error or did not answer when executing. | Look at the audit entry ("Home Assistant reports: …"). |
 

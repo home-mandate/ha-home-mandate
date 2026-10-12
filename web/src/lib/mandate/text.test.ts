@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { devicesFixture, HOSTILE_NAME } from '../api/fixtures.ts';
-import type { Rule } from '../api/types.ts';
+import type { Rule, Weekday } from '../api/types.ts';
 import { setLocale } from '../paraglide/runtime.js';
+import { weekdayNames, weekdayOrder, WEEKDAYS } from './labels.ts';
 import { clockText, conditionsText, daysText, listText, ruleLine, ruleText, windowText } from './text.ts';
+import { setHouseholdCountry } from './week.svelte.ts';
 
 beforeEach(() => setLocale('en', { reload: false }));
 
@@ -45,6 +47,54 @@ describe('time and days', () => {
   it('lists in the habit of the locale', () => {
     expect(listText(['a', 'b', 'c'], 'en')).toBe('a, b, c');
     expect(listText(['a', 'b', 'c'], 'de')).toBe('a, b und c');
+  });
+});
+
+describe("days in the order of the household's week", () => {
+  afterEach(() => setHouseholdCountry(null));
+
+  const SUNDAY_FIRST = weekdayOrder('en', 'US');
+  const SATURDAY_FIRST = weekdayOrder('de', 'AF');
+  /** Every rotation of the week, from a Monday-first to a Sunday-first one. */
+  const rotations = WEEKDAYS.map((_, i) => [...WEEKDAYS.slice(i), ...WEEKDAYS.slice(0, i)]);
+
+  it('writes a run as a range in every rotation of the week', () => {
+    const names = weekdayNames('en');
+    for (const order of rotations) {
+      const first = names[order[0] as Weekday];
+      const fifth = names[order[4] as Weekday];
+      expect(daysText(order.slice(0, 5), 'en', order)).toMatch(new RegExp(`^${first}\\s–\\s${fifth}$`));
+    }
+  });
+
+  it('writes a run across Sunday as a range where the week starts on Sunday or Saturday', () => {
+    expect(daysText(['sun', 'mon', 'tue'], 'de', SUNDAY_FIRST)).toMatch(/^So\s–\sDi$/);
+    expect(daysText(['sun', 'mon', 'tue'], 'de', WEEKDAYS)).toBe('Mo, Di und So');
+    expect(daysText(['sat', 'sun', 'mon'], 'en', SATURDAY_FIRST)).toMatch(/^Sat\s–\sMon$/);
+    expect(daysText(['mon', 'tue', 'wed', 'thu', 'fri'], 'en', SUNDAY_FIRST)).toMatch(/^Mon\s–\sFri$/);
+  });
+
+  it('never runs a range past the end of the displayed week', () => {
+    expect(daysText(['fri', 'sat', 'sun'], 'en', WEEKDAYS)).toMatch(/^Fri\s–\sSun$/);
+    expect(daysText(['fri', 'sat', 'sun'], 'en', SUNDAY_FIRST)).toBe('Sun, Fri, Sat');
+    expect(daysText(['thu', 'fri', 'sat', 'sun'], 'en', SATURDAY_FIRST)).toMatch(/^Sat, Sun, Thu, Fri$/);
+  });
+
+  it('lists single days in the displayed order whatever order they are stored in', () => {
+    expect(daysText(['mon', 'wed', 'sun'], 'en', SUNDAY_FIRST)).toBe('Sun, Mon, Wed');
+    expect(daysText(['sun', 'wed', 'mon'], 'en', WEEKDAYS)).toBe('Mon, Wed, Sun');
+    expect(daysText(['mon', 'sat'], 'en', SATURDAY_FIRST)).toBe('Sat, Mon');
+  });
+
+  it("follows the household's country by default", () => {
+    expect(daysText(['sun', 'mon', 'tue'], 'de')).toBe('Mo, Di und So');
+    setHouseholdCountry('US');
+    expect(daysText(['sun', 'mon', 'tue'], 'de')).toMatch(/^So\s–\sDi$/);
+    expect(conditionsText(rule({ conditions: { weekdays: ['mon', 'sun'] } }), 'en')).toBe('Sun, Mon');
+    setHouseholdCountry('AF');
+    expect(daysText(['mon', 'sat'], 'en')).toBe('Sat, Mon');
+    setHouseholdCountry(null);
+    expect(daysText(['mon', 'sun'], 'en')).toBe('Mon, Sun');
   });
 });
 

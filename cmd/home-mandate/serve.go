@@ -198,6 +198,7 @@ type gateway struct {
 	mu        sync.Mutex
 	haSince   time.Time // when the connection was made or lost
 	haVersion string
+	country   string // household country from get_config; decides the UI's first weekday
 	units     map[string]string
 	bellClean sync.Once
 	announce  sync.Once
@@ -271,6 +272,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 			a := uiAPI.Load()
 			return a != nil && a.BellEnabled()
 		},
+		App: s.cfg.Mode == config.ModeApp, UIAddress: g.uiAddress,
 		OnOpened: func(o approval.Open) {
 			if a := uiAPI.Load(); a != nil {
 				a.ApprovalOpened(o)
@@ -340,7 +342,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	if h := g.api.DirectHandler(); h != nil {
 		g.direct = h
-		logger.Info("UI in direct mode", "url", s.cfg.PublicURL+api.DirectPrefix+"/")
+		logger.Info("UI in direct mode", "url", g.uiAddress())
 	}
 	// Many renames in an hour hint at a broken integration: the approvers are told.
 	approvers := approverAnchor{approvers: s.approvers, notify: client.Notify, language: g.householdLanguage}
@@ -432,6 +434,17 @@ func (g *gateway) tlsStatus() api.TLSStatus {
 // Sec-Fetch-Site need.
 func directMode(cfg config.Config, certs *tlscert.Loader) bool {
 	return cfg.Mode == config.ModeContainer && (certs != nil || cfg.Proxy.IsValid()) && strings.HasPrefix(cfg.PublicURL, "https://")
+}
+
+// uiAddress is where the UI can be opened in a browser outside Home Assistant: the public
+// URL with the UI's path in direct mode, "" otherwise. The app's UI opens in Home
+// Assistant's sidebar, and without direct mode /ui/ does not exist, whatever the public
+// URL. Read only after newGateway set direct, like serveDirect.
+func (g *gateway) uiAddress() string {
+	if g.direct == nil {
+		return ""
+	}
+	return g.state.cfg.PublicURL + api.DirectPrefix + "/"
 }
 
 // serveDirect serves direct mode once the API exists; 404 while it is off.
@@ -546,7 +559,7 @@ func (g *gateway) status() api.Status {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return api.Status{HAConnected: g.client.Connected(), HASince: g.haSince, HAVersion: g.haVersion, ServiceUser: g.serviceUser(),
-		TimeZone: g.householdTimeZone(), Language: g.language.Load().(string), Units: maps.Clone(g.units)}
+		TimeZone: g.householdTimeZone(), Language: g.language.Load().(string), Country: g.country, Units: maps.Clone(g.units)}
 }
 
 // tokenKeepMargin is how long beyond the approval timeout an expired access token is kept.
@@ -615,18 +628,20 @@ func (g *gateway) announceRecovered() {
 	}
 }
 
-// readConfig takes over the household's time zone, language, units and Home Assistant's
-// version.
+// readConfig takes over the household's time zone, language, country, units and Home
+// Assistant's version.
 func (g *gateway) readConfig(ctx context.Context) error {
 	cfg, err := g.client.GetConfig(ctx)
 	if err != nil {
 		return err
 	}
+	// The units first: requests are decided once the time zone is known, and by then the
+	// unit of temperatures must be known too (#42).
+	g.mu.Lock()
+	g.haVersion, g.country, g.units = cfg.Version, cfg.Country, maps.Clone(cfg.UnitSystem)
+	g.mu.Unlock()
 	g.timeZone.Store(cfg.TimeZone)
 	g.language.Store(cfg.Language)
-	g.mu.Lock()
-	g.haVersion, g.units = cfg.Version, maps.Clone(cfg.UnitSystem)
-	g.mu.Unlock()
 	return nil
 }
 

@@ -36,6 +36,12 @@ async function start(template: string | null, prepare?: (api: MockClient) => Pro
 }
 
 const button = (name: string | RegExp) => screen.getByRole('button', { name });
+/** The header's save button: the one with the keyboard shortcut. The save bar's button has the same name (issue #37). */
+const headerSave = () => {
+  const found = screen.getAllByRole('button', { name: 'Review and save' }).filter((b) => b.hasAttribute('aria-keyshortcuts'));
+  if (found.length !== 1) throw new Error(`expected one header save button, found ${found.length}`);
+  return found[0] as HTMLElement;
+};
 const status = () => document.querySelector('.state')?.textContent?.trim();
 const toastTexts = () => toasts.list().map((t) => t.text);
 const rate = () => screen.getByLabelText('Rate limit') as HTMLInputElement;
@@ -65,7 +71,7 @@ describe('TemplateEditor: base templates', () => {
     expect(screen.queryByLabelText('Display name')).toBeNull();
     expect(screen.queryByLabelText('Valid from')).toBeNull();
     // No saving in place and no deleting; hiding and saving as new.
-    expect(screen.queryByRole('button', { name: 'Save …' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Review and save' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
     expect(button('Hide')).toBeTruthy();
     expect(button('Save as new template …')).toBeTruthy();
@@ -134,7 +140,7 @@ describe('TemplateEditor: own templates', () => {
     expect(screen.queryByText('Built in')).toBeNull();
     await changeRate('20');
     const put = vi.spyOn(api, 'putTemplate');
-    await fireEvent.click(button('Save …'));
+    await fireEvent.click(headerSave());
     const dialog = await screen.findByRole('dialog', { name: 'Save changes?' });
     expect(within(dialog).getByText('Applies to agents you admit with this template from now on. Existing mandates don’t change.')).toBeTruthy();
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Save template' }));
@@ -152,7 +158,7 @@ describe('TemplateEditor: own templates', () => {
     await api.putTemplate('voice-assistant', { draft: { ...current.draft, rules: [] }, base_digest: current.digest });
     const alert = await screen.findByText('This template was changed in the meantime');
     expect(rate().value).toBe('20');
-    expect(button('Save …').getAttribute('aria-disabled')).toBe('true');
+    expect(headerSave().getAttribute('aria-disabled')).toBe('true');
     await fireEvent.click(within(alert.closest('.banner') as HTMLElement).getByRole('button', { name: /Load the new state/ }));
     await waitFor(() => expect(rate().value).toBe('60'));
     expect(screen.queryByText('This template was changed in the meantime')).toBeNull();
@@ -168,7 +174,7 @@ describe('TemplateEditor: own templates', () => {
       await put(name, { draft: { ...current.draft, rules: [] }, base_digest: current.digest });
       return put(name, update);
     };
-    await fireEvent.click(button('Save …'));
+    await fireEvent.click(headerSave());
     const dialog = await screen.findByRole('dialog', { name: 'Save changes?' });
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Save template' }));
     await screen.findByText('This template was changed in the meantime');
@@ -226,7 +232,7 @@ describe('TemplateEditor: own templates', () => {
       await remove(name);
       throw new ApiError('not_found', 404);
     };
-    await fireEvent.click(button('Save …'));
+    await fireEvent.click(headerSave());
     const dialog = await screen.findByRole('dialog', { name: 'Save changes?' });
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Save template' }));
     expect(await screen.findByText('This template was deleted in the meantime')).toBeTruthy();
@@ -264,14 +270,14 @@ describe('TemplateEditor: own templates', () => {
     await api.deleteTemplate('voice-assistant');
     expect(await screen.findByText('This template was deleted in the meantime')).toBeTruthy();
     expect(rate().value).toBe('20');
-    expect(button('Save …').getAttribute('aria-disabled')).toBe('true');
+    expect(headerSave().getAttribute('aria-disabled')).toBe('true');
   });
 
   it('shows the problems instead of saving an invalid template', async () => {
     const { api } = await start('voice-assistant');
     await changeRate('0');
     const put = vi.spyOn(api, 'putTemplate');
-    await fireEvent.click(button('Save …'));
+    await fireEvent.click(headerSave());
     expect(await screen.findByText(/1 error/)).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(put).not.toHaveBeenCalled();
@@ -281,7 +287,7 @@ describe('TemplateEditor: own templates', () => {
     const { api } = await start('voice-assistant');
     await changeRate('20');
     api.putTemplate = async () => Promise.reject(new ApiError('invalid_mandate', 422, '/draft/rules/0'));
-    await fireEvent.click(button('Save …'));
+    await fireEvent.click(headerSave());
     const dialog = await screen.findByRole('dialog', { name: 'Save changes?' });
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Save template' }));
     await waitFor(() => expect(within(dialog).getByRole('alert').textContent).toContain('The server rejected the template'));
@@ -300,7 +306,7 @@ describe('TemplateEditor: unsaved changes (issue #20)', () => {
     await fireEvent.click(first.getByRole('radio', { name: 'Ask' }));
     await fireEvent.click(first.getByRole('button', { name: 'Done' }));
     expect(first.getByText(HINT)).toBeTruthy();
-    await fireEvent.click(first.getByRole('button', { name: 'Save now …' }));
+    await fireEvent.click(first.getByRole('button', { name: 'Review and save now' }));
     expect(await screen.findByRole('dialog', { name: 'Save changes?' })).toBeTruthy();
   });
 
@@ -309,7 +315,7 @@ describe('TemplateEditor: unsaved changes (issue #20)', () => {
     expect(bar()).toBeNull();
     await changeRate('20');
     expect(bar()?.textContent).toContain('The template keeps its stored rules until you save.');
-    await fireEvent.click(within(bar() as HTMLElement).getByRole('button', { name: 'Save changes …' }));
+    await fireEvent.click(within(bar() as HTMLElement).getByRole('button', { name: 'Review and save' }));
     const dialog = await screen.findByRole('dialog', { name: 'Save changes?' });
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Save template' }));
     await waitFor(() => expect(status()).toBe('All saved'));
@@ -356,7 +362,7 @@ describe('TemplateEditor: new and loading', () => {
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('New template');
     expect(button(new RegExp(PLACEHOLDER_TEXT)).getAttribute('aria-pressed')).toBe('true');
     expect(rate().value).toBe('60');
-    expect(screen.queryByRole('button', { name: 'Save …' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Review and save' })).toBeNull();
     const put = vi.spyOn(api, 'putTemplate');
     await saveAs('blank');
     await waitFor(() => expect(window.location.hash).toBe('#/templates/blank'));
@@ -400,7 +406,7 @@ describe('TemplateEditor: a changed template and the mandates that use it (#18)'
 
   async function saveRate(value: string) {
     await changeRate(value);
-    await fireEvent.click(button('Save …'));
+    await fireEvent.click(headerSave());
     const dialog = await screen.findByRole('dialog', { name: 'Save changes?' });
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Save template' }));
     await waitFor(() => expect(status()).toBe('All saved'));

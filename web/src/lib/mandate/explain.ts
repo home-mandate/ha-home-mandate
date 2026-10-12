@@ -2,7 +2,7 @@
 
 // Words for a cell of the preview: its accessible name ("Front door, unlock: Ask first.
 // From rule 3.") and the explanation shown when it is selected: which rule decides, how
-// many rules matched, whether a critical action was downgraded, what applies at times and
+// many rules matched, whether a critical action asks although a rule allows it, what applies at times and
 // what the stored version said.
 
 import type { Device, DeviceCatalog, MandateDraft } from '../api/types.ts';
@@ -60,7 +60,7 @@ export function cellDetail(c: MatrixCell, draft: MandateDraft, catalog: DeviceCa
   } else {
     lines.push({ kind: 'rule', text: `${m.matrix_cell_no_rule()}. ${m.decision_default_desc()}` });
   }
-  if (cell.demoted) lines.push({ kind: 'critical', text: `${m.demoted_label()}: ${m.demoted_hint()}` });
+  if (cell.demoted) lines.push({ kind: 'critical', text: `${m.demoted_label()}: ${m.demoted_desc()}` });
   if (cell.limited && rule) lines.push({ kind: 'limits', text: m.preview_limited_detail({ limits: limitsText(rule, locale) }) });
   // A critical action that runs without anyone being asked is never just "allowed".
   if (cell.critical && cell.decision === 'allow') lines.push({ kind: 'danger', text: m.critical_override_active() });

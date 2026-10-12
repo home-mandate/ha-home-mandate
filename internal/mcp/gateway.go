@@ -165,7 +165,8 @@ type Config struct {
 	TimeZone    func() string
 	ServiceUser func() string
 	// TemperatureUnit returns the unit Home Assistant uses for temperatures ("°C" or
-	// "°F"); nil or empty counts as degrees Celsius.
+	// "°F"). Nil or empty means unknown: a request with a temperature is then
+	// unavailable, never taken for degrees Celsius (#42, #44).
 	TemperatureUnit func() string
 	Now             func() time.Time
 	CallTimeout     time.Duration
@@ -533,7 +534,7 @@ func (g *Gateway) getState(ctx context.Context, req *sdk.CallToolRequest, in ent
 	if !entityIDPattern.MatchString(in.EntityID) {
 		return nil, stateOut{}, errors.New(codeInvalidParams)
 	}
-	d, err := g.enforce(ctx, a, in.EntityID, "read", nil)
+	d, err := g.enforce(ctx, a, in.EntityID, "read", nil, nil)
 	if err != nil {
 		return nil, stateOut{}, err
 	}
@@ -583,13 +584,16 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 		utf8.RuneCountInString(in.Reason) > maxReasonRunes || in.IdempotencyKey != "" && !idempotencyKeyPattern.MatchString(in.IdempotencyKey) {
 		return nil, actionOut{}, errors.New(codeInvalidParams)
 	}
-	// The parameters of the evaluation come from what will be executed; the category from
-	// the catalog. An entity the catalog does not know has neither and is denied.
+	// The parameters are checked before the decision, so the agent learns the real reason
+	// for a refusal; the parameters of the evaluation come from what will be executed, the
+	// category from the catalog. An entity the catalog does not know has neither and is
+	// denied.
 	var parameters map[string]int64
+	var paramErr error
 	if dev, ok := g.cfg.Catalog.Lookup(in.EntityID); ok {
-		parameters = evaluationParameters(dev.Category, in.Action, in.Params, g.temperatureUnit())
+		parameters, paramErr = requestParameters(dev.Category, in.Action, in.Params, g.temperatureUnit())
 	}
-	d, err := g.enforce(ctx, a, in.EntityID, in.Action, parameters)
+	d, err := g.enforce(ctx, a, in.EntityID, in.Action, parameters, paramErr)
 	ask := errors.Is(err, errAsk)
 	if err != nil && !ask {
 		return nil, actionOut{}, err
@@ -669,9 +673,10 @@ func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, ca
 }
 
 // enforce runs availability, PDP, rate limit and the decision for one request and logs
-// every refusal. It returns the decision only if the action is allowed. An agent that
-// may not read the entity gets not_found for every refusal, as for a missing entity.
-func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action string, parameters map[string]int64) (pdp.Decision, error) {
+// every refusal. It returns the decision only if the action is allowed. paramErr, the
+// result of checking the parameters, refuses the request before the decision. An agent
+// that may not read the entity gets not_found for every refusal, as for a missing entity.
+func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action string, parameters map[string]int64, paramErr error) (pdp.Decision, error) {
 	if g.stopped(ctx) {
 		d := pdp.Decision{Time: g.cfg.Now(), Resource: evaluator.Resource{EntityID: entityID}, Action: action}
 		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop})
@@ -700,6 +705,9 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 		g.recordRateLimited(ctx, a, d)
 		return pdp.Decision{}, errors.New(codeRateLimited)
 	}
+	if paramErr != nil {
+		return pdp.Decision{}, g.refuseParameters(ctx, a, snap, d, paramErr)
+	}
 	if d.Result.Decision == evaluator.Allow {
 		return d, nil
 	}
@@ -722,6 +730,33 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 		return pdp.Decision{}, errors.New(codeNotFound) // same answer as for an entity that does not exist
 	}
 	return pdp.Decision{}, errors.New(codeDenied + ": " + string(d.Result.Reason))
+}
+
+// refuseParameters logs and answers a request whose parameters were refused before the
+// evaluation (SPEC-v0 section 4.5): invalid_params naming the parameter, or unavailable
+// while a temperature cannot be checked because the household's unit is not known yet.
+// The entry has no evaluation, as none took place. An agent that may not read the
+// entity gets not_found, as for a missing entity.
+func (g *Gateway) refuseParameters(ctx context.Context, a agent.Agent, snap *pdp.Snapshot, d pdp.Decision, paramErr error) error {
+	code, cause := codeInvalidParams, codeInvalidParams
+	switch {
+	case errors.Is(paramErr, errTemperatureUnitUnknown):
+		code, cause = codeUnavailable, errTemperatureUnitUnknown.Error()
+	case !errors.Is(paramErr, errInvalidParams):
+		// Checked values that the vocabulary cannot express: a bug; fail closed.
+		g.cfg.Logger.Error("checked parameters not expressible in the vocabulary", "error", paramErr)
+		code, cause = codeUnavailable, "parameters_unexpressible"
+	}
+	d.Parameters = nil
+	_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusFailed, Error: cause})
+	switch {
+	case !readable(snap, d.Resource.EntityID):
+		return errors.New(codeNotFound)
+	case code == codeInvalidParams:
+		return paramErr // names the parameter, nothing internal
+	default:
+		return errors.New(code)
+	}
 }
 
 // recordRateLimited logs at most one rate-limit refusal per agent and interval, so an

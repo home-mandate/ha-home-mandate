@@ -269,6 +269,19 @@ describe('Switch and ToggleChip', () => {
     expect(onchange).toHaveBeenCalledWith(true);
   });
 
+  it('adds a shared explanation to its own description', () => {
+    const note = document.createElement('p');
+    note.id = 'shared-note';
+    document.body.append(note);
+    render(Switch, { checked: false, label: 'Critical requests too', description: 'Off', describedby: 'shared-note' });
+    const own = screen.getByText('Off');
+    expect(screen.getByRole('switch').getAttribute('aria-describedby')).toBe(`${own.id} shared-note`);
+    cleanup();
+    render(Switch, { checked: false, label: 'Critical requests too', describedby: 'shared-note' });
+    expect(screen.getByRole('switch').getAttribute('aria-describedby')).toBe('shared-note');
+    note.remove();
+  });
+
   it('ignores clicks on a disabled switch but stays focusable', async () => {
     const onchange = vi.fn();
     render(Switch, { checked: false, label: 'Off for now', disabled: true, onchange });
@@ -289,5 +302,20 @@ describe('Switch and ToggleChip', () => {
     await fireEvent.click(chip);
     expect(chip.getAttribute('aria-pressed')).toBe('true');
     expect(onchange).toHaveBeenCalledWith(true);
+  });
+
+  it('shows a check when pressed and an x when not, in the same hidden slot', async () => {
+    render(ToggleChip, { pressed: false, children: text('Mon') });
+    const chip = screen.getByRole('button', { name: 'Mon' });
+    const mark = () => chip.querySelector('.mark');
+    expect(mark()?.getAttribute('data-mark')).toBe('off');
+    expect(mark()?.getAttribute('aria-hidden')).toBe('true');
+    expect(mark()?.querySelectorAll('svg')).toHaveLength(1);
+    await fireEvent.click(chip);
+    expect(mark()?.getAttribute('data-mark')).toBe('on');
+    expect(mark()?.querySelectorAll('svg')).toHaveLength(1);
+    // The state is conveyed by aria-pressed alone; the marks add nothing to the name.
+    expect(chip.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Mon' })).toBe(chip);
   });
 });

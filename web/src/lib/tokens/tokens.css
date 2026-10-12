@@ -55,6 +55,7 @@
   --hm-border-width: 1px;
   --hm-focus-width: 2px;
   --hm-focus-offset: 2px;
+  --hm-mark-width: 3px;           /* accent bar of the active entry or tab; inset, takes no room */
   --hm-content-max: 1280px;
 
   /* Motion — orientation only */

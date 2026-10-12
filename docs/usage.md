@@ -85,8 +85,8 @@ setting a device of the category Other. In addition, you can **mark devices as c
 Home-Mandate suggests candidates by name and device class (door, gate, garage), but marks
 nothing by itself.
 
-A critical action needs an approval even where a rule allows it ("Downgraded: Becomes an
-approval request because the action is critical"), unless the rule explicitly says **Also
+A critical action needs an approval even where a rule allows it ("Asks because critical:
+Critical action – asks first, although a rule allows it"), unless the rule explicitly says **Also
 allow critical actions without approval**. Switching that on needs a separate
 confirmation, and the audit log records who did it.
 
@@ -99,9 +99,21 @@ Under **Conditions (optional)** a rule can apply only within a **Time window** (
 overnight, such as 22:00 to 06:00 the next day) and on chosen **Weekdays**. Times are in
 the household's time zone from Home Assistant, not your browser's.
 
+The weekdays are listed in the order of the household's week: the first day follows the
+**Country** in Home Assistant (Settings → System → General), so a household in the US starts
+on Sunday, one in Germany or the UK on Monday. The rule summaries follow it too, such as
+"Sun – Tue" in a household whose week starts on Sunday. Without a country the week starts on
+Monday. The order only changes how weekdays are shown: a rule stores them the same way in
+every household, so changing the country never makes a new version of a mandate.
+
 An allowing rule can carry **Limits**: brightness, temperature, position or volume from
-and to a value. Values outside the limits are denied. Temperature limits need a household
-that uses °C in Home Assistant; in °F households such a rule does not match.
+and to a value. It allows only values within the limits; other values are decided by
+another rule or the default.
+
+Temperatures can be checked only in a household that uses °C in Home Assistant. In a °F
+household every `set_temperature` request is refused for now, also under a rule without
+limits, until a later version supports °F; set temperatures in Home Assistant itself
+meanwhile.
 
 ### Templates
 
@@ -179,9 +191,18 @@ verified", the values it wants to set, and has two buttons: **Allow** and **Deny
   log records them as ended by the restart, and the notification on your phone is
   replaced by "Approval request ended".
 
-Optionally, **Also in Home Assistant's notification bell** shows a neutral hint ("A
-request is waiting in Home-Mandate") in Home Assistant, without agent, device or reason,
-because every Home Assistant user can see that bell.
+Optionally, **Also in Home Assistant's notification bell** shows a neutral hint in Home
+Assistant while a request waits, without agent, device or reason, because every Home
+Assistant user can see that bell. It says where to answer: as an app, "Open Home-Mandate
+in the sidebar"; in container mode, "Open the Home-Mandate UI", with a link to the UI's
+address (your public URL with `/ui/`) when Home-Mandate serves the UI there (direct mode,
+see [Troubleshooting](troubleshooting.md#the-ui)). Everyone who can sign in to Home
+Assistant then sees that address, never anything about the request; only administrators
+can sign in to the UI.
+
+The hint has no buttons. To answer on your phone, register the phone as a device of the
+approver (see [Approvers and their devices](#approvers-and-their-devices)); Android devices
+do not get critical requests by default.
 
 ### Emergency stop
 
@@ -385,8 +406,8 @@ edit:
 - **Rules**: **Add rule** (new rules start with *Ask first*), then decision, category, area
   or **Single device (optional)**, actions, **Conditions (optional)** and limits.
 
-**Save …** shows the changed rules and their effect on permissions before it stores a new
-version. **Versions** lists all versions with author and time; compare two or **Restore as
+**Review and save** shows the changed rules and their effect on permissions before it
+stores a new version. **Versions** lists all versions with author and time; compare two or **Restore as
 new version**.
 
 **Renamed in Home Assistant.** If you rename an entity in Home Assistant, rules on its
@@ -403,7 +424,7 @@ elsewhere leaves it.
 | Approvers | People, their devices, critical requests, language, answering in the UI, the notification bell, browser notifications |
 | Critical devices | Devices on which every action except reading is critical |
 | Defaults | Approval timeout and rate limit that new templates and mandates start with; interface language |
-| Home Assistant connection | How Home-Mandate is connected (as an app, or as a container with the token of its own user), connection state, Home Assistant version, Home-Mandate's own Home Assistant user, why it needs admin rights and the fixed command list |
+| Home Assistant connection | How Home-Mandate is connected (as an app, or as a container with the token of its own user), connection state, Home Assistant version, Home-Mandate's own Home Assistant user, the household's time zone, units and country from Home Assistant (the country decides the first day of the week), why it needs admin rights and the fixed command list |
 | MCP endpoint | The address agents connect to; the TLS certificate or the reverse proxy |
 | Retention | 30 days for the audit log |
 | Emergency stop | Trigger or lift it |

@@ -199,6 +199,8 @@
   <div class="body" role="group" aria-labelledby="{id}-name" bind:this={body}>
     <fieldset>
       <legend>{m.set_approver_devices()}</legend>
+      <!-- One sentence for all devices (issue #39): each switch reads it as its description. -->
+      <p class="help" id="{id}-critical-help">{m.set_approver_device_critical_help()}</p>
       <ul role="list">
         {#each update.devices as device, index (device.service)}
           {@const label = deviceLabel(device.service)}
@@ -211,6 +213,7 @@
               <Switch
                 checked={device.critical}
                 label={m.set_approver_device_critical()}
+                describedby="{id}-critical-help"
                 onchange={(on) => deviceCritical(device.service, on)}
               />
               <IconButton
@@ -237,7 +240,6 @@
           <Button icon="plus" disabled={full} onclick={add}>{m.set_approver_device_add()}</Button>
         </div>
       {/if}
-      <p class="help">{m.set_approver_device_critical_help()}</p>
     </fieldset>
 
     <div class="switches">

@@ -268,7 +268,7 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{t: t, ha: fakeHousehold(), cat: house(), marks: &fakeMarks{set: map[string]string{}}, renames: renames, st: st, log: log, agents: agents, mandates: mandates, adm: adm,
 		approvers: approval.NewApprovers(st.DB(), log), notifier: &recordingNotifier{}, now: &clock{t: testStart},
 		status: Status{HAConnected: true, HASince: testStart.Add(-time.Hour), HAVersion: "2026.9.4", ServiceUser: serviceID,
-			TimeZone: "Europe/Berlin", Language: "de", Units: map[string]string{"temperature": "°C", "length": "km", "extra": "x"}}}
+			TimeZone: "Europe/Berlin", Language: "de", Country: "DE", Units: map[string]string{"temperature": "°C", "length": "km", "extra": "x"}}}
 	h.build()
 	return h
 }

@@ -2,12 +2,14 @@
 <!--
   Home Assistant connection (design README 6.11 section 3; decisions D7, S6): how
   Home-Mandate is connected (as an app by the Supervisor, as a container with the token of
-  its own user), status, version and that user; no address and no token. Why it needs
-  admin rights, with the fixed command list from the server, in the page.
+  its own user), status, version and that user; no address and no token. The household's
+  time zone, units and country as Home Assistant reports them: the country decides the
+  first day of the week (#43). Why it needs admin rights, with the fixed command list from
+  the server, in the page.
 -->
 <script lang="ts">
-  import type { SystemStatus } from '../../api/types.ts';
-  import { formatDateTime, type FormatContext } from '../../format.ts';
+  import type { Household, SystemStatus } from '../../api/types.ts';
+  import { countryName, formatDateTime, isCountryCode, type FormatContext } from '../../format.ts';
   import { m } from '../../i18n.ts';
   import { cleanUntrusted } from '../../untrusted.ts';
   import StatusPill from '../StatusPill.svelte';
@@ -15,13 +17,22 @@
   interface Props {
     ha: SystemStatus['ha'];
     mode: SystemStatus['mode'];
+    /** From the session; null before it is known. */
+    household: Household | null;
     ctx: FormatContext;
   }
 
-  let { ha, mode, ctx }: Props = $props();
+  let { ha, mode, household, ctx }: Props = $props();
 
   const modeText = $derived(mode === 'container' ? m.set_ha_mode_container() : m.set_ha_mode_app());
   const since = $derived(ha.since ? formatDateTime(new Date(ha.since), ctx) : null);
+  const units = $derived(
+    household
+      ? new Intl.ListFormat(ctx.locale, { style: 'short', type: 'unit' }).format(Object.values(household.unit_system).filter(Boolean).map((u) => cleanUntrusted(u)))
+      : '',
+  );
+  const code = $derived(household && isCountryCode(household.country) ? household.country : null);
+  const country = $derived(code ? m.set_ha_country_value({ name: countryName(code, ctx.locale) ?? code, code }) : m.set_ha_country_unknown());
 </script>
 
 <p class="desc">{modeText}</p>
@@ -40,7 +51,16 @@
   <dd class="mono">{ha.version ?? '—'}</dd>
   <dt>{m.set_ha_user()}</dt>
   <dd><bdi>{ha.user_name ? cleanUntrusted(ha.user_name) : '—'}</bdi></dd>
+  {#if household}
+    <dt>{m.set_ha_time_zone()}</dt>
+    <dd><span dir="ltr">{cleanUntrusted(household.time_zone)}</span></dd>
+    <dt>{m.set_ha_units()}</dt>
+    <dd><span dir="ltr">{units || '—'}</span></dd>
+    <dt>{m.set_ha_country()}</dt>
+    <dd>{country}</dd>
+  {/if}
 </dl>
+{#if household}<p class="muted">{m.set_ha_household_note()}</p>{/if}
 
 <div class="why">
   <h3>{m.set_ha_why_title()}</h3>

@@ -90,6 +90,14 @@ protection class, expired, not yet valid) needs its own named test.
   the bar appear without moving the page or the focus; the bar's bottom is the viewport's
   bottom; the focused element and every keyboard stop stay uncovered; at the very end the
   last rule lies above the bar; saving removes it without a jump.
+  At 320 px (mandate, own and base template, both directions) the longer save labels
+  ("Review and save", "Review and save now", issue #37) in the header, the rule's hint and
+  the bar stay inside the viewport, nothing is clipped, and axe finds nothing.
+- **First day of the week** (`web/e2e/weekdays.spec.ts`, de, en and pseudo, issue #43): in a
+  household in the US the weekday picker of the rule form starts on Sunday and Sunday to
+  Tuesday reads as a range; in a household in Germany both start on Monday; Settings → Home
+  Assistant connection names the country. The sweep has the US household's rule form and
+  settings as screens of their own.
 - **Colour scheme switch** (`web/e2e/theme.spec.ts`, de, en and pseudo): the header switch
   changes the scheme at once and the choice survives a reload; blocked storage or an unknown
   stored value falls back to the system scheme; at 375 px the compact switch sits next to the
@@ -142,7 +150,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - Stored version that no longer parses after a stricter specification, or whose content no longer has its digest (changed in the database) → `invalid_mandate`, never evaluated; `home-mandate mandate check` lists it
 - Entity in a spelling the directory does not have (`Lock.keller` for `lock.keller`) → `unknown_resource`
 - Rule that names a device together with a category the device does not have → refused when saving (mandate and template); a device the directory does not know → stored and reported as a stale reference
-- Parameter that is no integer in the unit of the vocabulary (21.555 °C, a temperature in a °F household) → not passed, a rule with a limit on it does not match; a call that sets one quantity through two fields (`brightness` and `brightness_pct`) → refused; what is executed is exactly the evaluated value
+- Parameter that is no integer in the unit of the vocabulary (volume 0.335, 21.555 °C, a temperature in a °F household) → `invalid_params` naming the parameter before the decision, also under a rule without a limit, `not_found` for a device the agent may not read, logged as `failed` / `invalid_params`; binary noise (0.29) → accepted, the canonical value is evaluated and sent; a temperature while the household's unit is unknown → `unavailable`, never checked as °C; a call that sets one quantity through two fields (`brightness` and `brightness_pct`) → refused; what is executed is exactly the evaluated value (`mcp.TestRequestParameters`, `mcp.TestParameterValuesTheUnitCannotExpress`, `mcp.TestUnknownTemperatureUnitIsUnavailable`)
 - Limits on a `deny` or `ask` rule, on "all actions" or on an action without that value → refused when saving; the editor reports them and never drops them silently (that would widen an allow)
 
 **Resource directory**
