@@ -14,7 +14,8 @@ type evaluationParameter struct {
 	name  string
 	scale float64
 	// celsiusOnly: the value is a temperature in the unit of the household. Only degrees
-	// Celsius can be expressed exactly in the unit of the vocabulary.
+	// Celsius can be expressed exactly in the unit of the vocabulary; in any other or an
+	// unknown unit the value is not passed (#42).
 	celsiusOnly bool
 }
 
@@ -39,7 +40,7 @@ func evaluationParameters(category, action string, params map[string]any, temper
 	var out map[string]int64
 	for callName, p := range evaluationParameterOf[category][action] {
 		value, ok := params[callName].(float64)
-		if !ok || p.celsiusOnly && temperatureUnit != "" && temperatureUnit != celsius {
+		if !ok || p.celsiusOnly && temperatureUnit != celsius {
 			continue
 		}
 		scaled := value * p.scale

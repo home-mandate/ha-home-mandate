@@ -165,7 +165,8 @@ type Config struct {
 	TimeZone    func() string
 	ServiceUser func() string
 	// TemperatureUnit returns the unit Home Assistant uses for temperatures ("°C" or
-	// "°F"); nil or empty counts as degrees Celsius.
+	// "°F"). Nil or empty means unknown: a temperature is then not passed to the
+	// evaluation, never taken for degrees Celsius (#42).
 	TemperatureUnit func() string
 	Now             func() time.Time
 	CallTimeout     time.Duration

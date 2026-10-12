@@ -142,7 +142,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - Stored version that no longer parses after a stricter specification, or whose content no longer has its digest (changed in the database) → `invalid_mandate`, never evaluated; `home-mandate mandate check` lists it
 - Entity in a spelling the directory does not have (`Lock.keller` for `lock.keller`) → `unknown_resource`
 - Rule that names a device together with a category the device does not have → refused when saving (mandate and template); a device the directory does not know → stored and reported as a stale reference
-- Parameter that is no integer in the unit of the vocabulary (21.555 °C, a temperature in a °F household) → not passed, a rule with a limit on it does not match; a call that sets one quantity through two fields (`brightness` and `brightness_pct`) → refused; what is executed is exactly the evaluated value
+- Parameter that is no integer in the unit of the vocabulary (21.555 °C, a temperature in a °F household or while the unit is unknown) → not passed, a rule with a limit on it does not match; a call that sets one quantity through two fields (`brightness` and `brightness_pct`) → refused; what is executed is exactly the evaluated value
 - Limits on a `deny` or `ask` rule, on "all actions" or on an action without that value → refused when saving; the editor reports them and never drops them silently (that would widen an allow)
 
 **Resource directory**

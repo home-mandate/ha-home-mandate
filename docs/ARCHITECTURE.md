@@ -112,9 +112,9 @@ tells no more than the grant. Its parameters are checked as for any other device
    percent, temperature in hundredths of a degree Celsius, position, volume) and refuses a
    call that sets the same quantity twice or a value that is no integer in that unit; what
    is executed is exactly what was evaluated. A value that cannot be expressed in the unit
-   of the vocabulary – a temperature in a household that uses °F – is not passed: a rule
-   with a limit on it does not match, and the request is denied unless a rule without a
-   limit allows it. Limits on temperatures therefore need a household in °C.
+   of the vocabulary – a temperature in a household that uses °F, or while the household's
+   unit is not known yet – is not passed: a rule with a limit on it does not match, and the
+   request is denied unless a rule without a limit allows it. Limits on temperatures therefore need a household in °C.
 6. `pdp` selects the agent's mandate among its candidates (SPEC-v0 section 4.3) and
    evaluates it. Result: `allow`, `ask` or `deny`.
 7. On `ask`: `approval` sends an actionable notification to all approvers and waits at most

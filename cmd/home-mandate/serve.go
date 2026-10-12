@@ -615,11 +615,13 @@ func (g *gateway) readConfig(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	g.timeZone.Store(cfg.TimeZone)
-	g.language.Store(cfg.Language)
+	// The units first: requests are decided once the time zone is known, and by then the
+	// unit of temperatures must be known too (#42).
 	g.mu.Lock()
 	g.haVersion, g.units = cfg.Version, maps.Clone(cfg.UnitSystem)
 	g.mu.Unlock()
+	g.timeZone.Store(cfg.TimeZone)
+	g.language.Store(cfg.Language)
 	return nil
 }
 

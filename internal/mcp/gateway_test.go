@@ -191,12 +191,19 @@ type harness struct {
 	mu   sync.Mutex
 	tz   string
 	self string // Home-Mandate's own Home Assistant user
+	unit string // the household's temperature unit; empty: unknown
 }
 
 func (h *harness) timeZone() string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.tz
+}
+
+func (h *harness) temperatureUnit() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.unit
 }
 
 func (h *harness) serviceUser() string {
@@ -239,7 +246,7 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 		t.Fatal(err)
 	}
 
-	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin", self: "hm-service-user", clock: &fakeClock{}, now: &fakeNow{t: time.Now()},
+	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin", self: "hm-service-user", unit: "°C", clock: &fakeClock{}, now: &fakeNow{t: time.Now()},
 		ha: &fakeHA{connected: true}, journal: approval.NewJournal(st.DB(), nil),
 		catalog: &fakeCatalog{ready: true, devices: map[string]catalog.Device{
 			"light.kitchen":            {EntityID: "light.kitchen", Category: "light", Area: "kitchen", State: "off", Attributes: map[string]any{"friendly_name": "Kitchen"}},
@@ -263,7 +270,7 @@ func (h *harness) serve(auditor Auditor) string {
 		decider = h.decider
 	}
 	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Journal: h.gatewayJournal(), Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test",
-		TimeZone: h.timeZone, ServiceUser: h.serviceUser, Now: h.now.Now, Logger: h.logger, ApprovalWait: h.approvalWait})
+		TimeZone: h.timeZone, ServiceUser: h.serviceUser, TemperatureUnit: h.temperatureUnit, Now: h.now.Now, Logger: h.logger, ApprovalWait: h.approvalWait})
 	g.cfg.Clock = h.clock
 	h.gw = g
 	srv := httptest.NewServer(g.Handler())
@@ -921,6 +928,31 @@ func TestActionsOfTheVocabulary(t *testing.T) {
 
 // A constraint of the mandate limits what the agent may set; the evaluated value is the
 // one in the audit log and the one sent to Home Assistant (SPEC-v0 section 4.5).
+// While the household's temperature unit is unknown (Home Assistant's configuration not
+// read yet, or no unit in it), a temperature is not passed to the evaluation: a rule that
+// limits it does not match, so a value in °F can never pass a limit meant in °C (#42).
+func TestUnknownTemperatureUnitIsNotCelsius(t *testing.T) {
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-heating", "resource": map[string]any{"category": "climate"}, "actions": []any{"set_temperature"},
+				"decision": "allow", "constraints": map[string]any{"temperature": map[string]any{"min": 1600, "max": 2300}}},
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+		}
+	})
+	h.mu.Lock()
+	h.unit = ""
+	h.mu.Unlock()
+	s := h.session()
+	_, errText := h.call(s, "perform_action", map[string]any{"entity_id": "climate.living_room", "action": "set_temperature",
+		"params": map[string]any{"temperature": 20.0}})
+	if !strings.HasPrefix(errText, "denied") {
+		t.Fatalf("20 with an unknown unit: %q, want denied", errText)
+	}
+	if calls := h.ha.recorded(); len(calls) != 0 {
+		t.Errorf("HA calls = %+v, want none", calls)
+	}
+}
+
 func TestConstraintsLimitParameters(t *testing.T) {
 	h := newHarness(t, func(d map[string]any) {
 		d["rules"] = []any{
