@@ -611,3 +611,23 @@ func TestNoAnswerIsTakenAfterStopAnswers(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 }
+
+// SPEC-v0 section 11.1 item 10: the request shows the device's state when it was made, in
+// both languages; without a known state, the sentence as before.
+func TestNotificationShowsTheState(t *testing.T) {
+	req := Request{ClientID: "hm-client:voice", EntityID: "cover.garage", Agent: "Voice", Device: "Garage door", Action: "open", State: "closed"}
+	if n := buildRequest(i18n.EN, req, strings.Repeat("0", 32)); !strings.Contains(n.Message, "“Garage door” (closed): open.") {
+		t.Errorf("en = %q", n.Message)
+	}
+	if n := buildRequest(i18n.DE, req, strings.Repeat("0", 32)); !strings.Contains(n.Message, "„Garage door“ (closed)") {
+		t.Errorf("de = %q", n.Message)
+	}
+	req.State = "<b>x</b>‮"
+	if n := buildRequest(i18n.EN, req, strings.Repeat("0", 32)); strings.ContainsAny(n.Message, "<>‮") {
+		t.Errorf("unclean state = %q", n.Message)
+	}
+	req.State = ""
+	if n := buildRequest(i18n.EN, req, strings.Repeat("0", 32)); !strings.Contains(n.Message, "“Garage door”: open.") {
+		t.Errorf("no state = %q", n.Message)
+	}
+}

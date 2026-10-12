@@ -4,6 +4,7 @@ go 1.27.2
 
 require (
 	github.com/coder/websocket v1.8.15
+	github.com/google/jsonschema-go v0.4.3
 	github.com/home-mandate/spec v0.1.0-alpha.4
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/pressly/goose/v3 v3.28.0
@@ -13,7 +14,6 @@ require (
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect

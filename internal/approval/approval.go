@@ -89,6 +89,8 @@ const (
 	unknownUser = "unknown"
 
 	defaultMaxTimeout = 2 * time.Minute
+	// deliverTimeout bounds the delivery of a request to all devices.
+	deliverTimeout = 30 * time.Second
 )
 
 var noncePattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
@@ -166,6 +168,9 @@ type Request struct {
 	Approvers []string
 	Timeout   time.Duration // from the mandate's approval settings
 	Critical  bool          // a critical action (SPEC-v0 section 5)
+	// State is the device's state when the request was made, shown to the approvers
+	// (SPEC-v0 section 11.1 item 10); empty when unknown.
+	State string
 	// Record is what the approval journal keeps for an audit entry after a restart.
 	Record *Record
 }
@@ -303,8 +308,10 @@ func (s *Service) Start(ctx context.Context, req Request) (Pending, error) {
 		s.mu.Unlock()
 		s.clearPush(p)
 	}
-	// The delivery belongs to the request, not to the call: it goes on if the call ends.
-	ctx = context.WithoutCancel(ctx)
+	// The delivery belongs to the request, not to the call: it goes on if the call ends,
+	// bounded by deliverTimeout.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deliverTimeout)
+	defer cancel()
 	out := make(chan Result, 1)
 	pend := Pending{ID: p.id, Expires: p.expires, Done: out}
 	reached, uiUsers := s.deliver(ctx, p, nonce)
@@ -782,8 +789,14 @@ func (s *Service) householdLanguage() i18n.Lang {
 // sanitized and marked as its claim.
 func buildRequest(lang i18n.Lang, req Request, nonce string) ha.Notification {
 	agentName, device := sanitize(req.Agent, maxName), sanitize(req.Device, maxName)
-	lines := []string{i18n.T(lang, i18n.ApprovalMessage, i18n.Args{"agent": agentName, "device": device,
-		"action": i18n.ActionName(lang, req.Action)})}
+	args := i18n.Args{"agent": agentName, "device": device, "action": i18n.ActionName(lang, req.Action)}
+	message := i18n.ApprovalMessage
+	if state := sanitize(req.State, maxName); state != "" {
+		// The state the request starts from (SPEC-v0 section 11.1 item 10); executed only
+		// while it holds.
+		message, args["state"] = i18n.ApprovalMessageState, state
+	}
+	lines := []string{i18n.T(lang, message, args)}
 	// What is confirmed (SPEC-v0 section 11.1 item 2): the agent by its identifier next
 	// to the name it claims, and the device by its ID; names can look alike, IDs cannot.
 	lines = append(lines, i18n.T(lang, i18n.ApprovalIdentity, i18n.Args{"client_id": shownID(req.ClientID), "entity_id": shownID(req.EntityID)}))

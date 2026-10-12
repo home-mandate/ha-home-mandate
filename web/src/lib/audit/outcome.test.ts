@@ -44,6 +44,18 @@ describe('outcomeOf', () => {
     expect(outcomeOf(noCause)).toEqual({ tone: 'danger', text: 'Ended before an answer', why: null });
   });
 
+  it('says why a confirmed action was not executed: the state that was shown (SPEC-v0 11.1 item 10)', () => {
+    const failed = (error: string): AuditEntry => ({ ...bySeq(8), result: { status: 'failed', error } });
+    expect(outcomeOf(failed('already_in_state'))).toEqual({ tone: 'warning', text: 'Failed', why: 'Not executed: the device was already in that state' });
+    expect(outcomeOf(failed('state_changed'))).toEqual({ tone: 'warning', text: 'Failed', why: 'Not executed: the device’s state changed after the request' });
+  });
+
+  it('names repeated requests that asked nobody (issue #27)', () => {
+    const denied = (error: string): AuditEntry => ({ ...bySeq(4), approval: undefined, result: { status: 'denied', denied_by: 'approval', error } });
+    expect(outcomeOf(denied('approval_duplicate'))).toEqual({ tone: 'danger', text: 'Declined', why: 'This call executed nothing itself: it was tied to the open request for the same action' });
+    expect(outcomeOf(denied('already_executed'))).toEqual({ tone: 'danger', text: 'Declined', why: 'This call executed nothing itself: the same action had been executed shortly before' });
+  });
+
   it('warns when a confirmed action was under way at a restart', () => {
     const unknown: AuditEntry = { ...bySeq(8), result: { status: 'failed', error: 'outcome_unknown' } };
     expect(outcomeOf(unknown)).toEqual({ tone: 'warning', text: 'Failed', why: expect.stringContaining('check the device') });

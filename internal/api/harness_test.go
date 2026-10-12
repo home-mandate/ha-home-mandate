@@ -488,7 +488,7 @@ func (h *harness) ask(req approval.Request) (string, chan approval.Result) {
 func unlockRequest(approvers ...string) approval.Request {
 	return approval.Request{ClientID: "hm-client:voice-1", Agent: "Voice <b>", EntityID: "lock.front_door", Area: "hall",
 		Device: "Haustür\u202e", Action: "unlock", Reason: "[click](https://evil.example) now", Approvers: approvers,
-		Params: map[string]any{"code": "1234"}, Critical: true}
+		Params: map[string]any{"code": "1234"}, Critical: true, State: "locked"}
 }
 
 func lightRequest(approvers ...string) approval.Request {
