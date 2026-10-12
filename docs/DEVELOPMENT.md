@@ -59,26 +59,7 @@ and the key in `/ssl` for root ([ARCHITECTURE.md](ARCHITECTURE.md), section 11, 
 
 ## Releases
 
-A tag `vX.Y.Z` or `vX.Y.Z-rc.N` on `main` runs `.github/workflows/release.yml`. It checks
-that the tag points to a commit on `main` that came from a pull request whose checks all
-passed, and that it matches `version` in `app/config.yaml` (the Supervisor uses that
-version as the image tag). It then builds `ghcr.io/home-mandate/ha-home-mandate:<version>`
-for `linux/amd64` and `linux/arm64`, signs it with cosign (keyless), attaches provenance
-and SBOMs, verifies all of that, tags the image and creates the GitHub release (a
-pre-release for `-rc.N`).
-
-Before tagging: update `app/config.yaml` (`version`) and `app/CHANGELOG.md`.
-
-Create the tag with git, not with GitHub's "Draft a new release": that page creates the
-release together with the tag, and the workflow refuses to publish when the release exists
-already (it never overwrites one). Tags are immutable, so a failed release needs a new
-version (`-rc.N+1`).
-
-```sh
-git switch main && git pull
-git tag -a v0.1.0-rc.2 -m "Home-Mandate 0.1.0-rc.2"
-git push origin v0.1.0-rc.2
-```
+Planning, release candidates, patch releases and publishing: [RELEASING.md](../RELEASING.md).
 
 ## Contributing
 
