@@ -63,3 +63,16 @@ export function dayNumber(d: Date, timeZone: string): number {
 export function formatList(values: readonly string[], ctx: FormatContext): string {
   return new Intl.ListFormat(ctx.locale, { style: 'long', type: 'conjunction' }).format(values);
 }
+
+/** A country as Home Assistant's general settings hold it: ISO 3166-1 alpha-2, e.g. "DE". */
+const COUNTRY_CODE = /^[A-Z]{2}$/;
+
+export function isCountryCode(value: string | null | undefined): value is string {
+  return typeof value === 'string' && COUNTRY_CODE.test(value);
+}
+
+/** countryName names a country code in the UI language; null for a value that is no code. */
+export function countryName(code: string, locale: string): string | null {
+  if (!isCountryCode(code)) return null;
+  return new Intl.DisplayNames([locale], { type: 'region', fallback: 'none' }).of(code) ?? null;
+}

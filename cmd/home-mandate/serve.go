@@ -198,6 +198,7 @@ type gateway struct {
 	mu        sync.Mutex
 	haSince   time.Time // when the connection was made or lost
 	haVersion string
+	country   string // household country from get_config; decides the UI's first weekday
 	units     map[string]string
 	bellClean sync.Once
 	announce  sync.Once
@@ -558,7 +559,7 @@ func (g *gateway) status() api.Status {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return api.Status{HAConnected: g.client.Connected(), HASince: g.haSince, HAVersion: g.haVersion, ServiceUser: g.serviceUser(),
-		TimeZone: g.householdTimeZone(), Language: g.language.Load().(string), Units: maps.Clone(g.units)}
+		TimeZone: g.householdTimeZone(), Language: g.language.Load().(string), Country: g.country, Units: maps.Clone(g.units)}
 }
 
 // tokenKeepMargin is how long beyond the approval timeout an expired access token is kept.
@@ -627,8 +628,8 @@ func (g *gateway) announceRecovered() {
 	}
 }
 
-// readConfig takes over the household's time zone, language, units and Home Assistant's
-// version.
+// readConfig takes over the household's time zone, language, country, units and Home
+// Assistant's version.
 func (g *gateway) readConfig(ctx context.Context) error {
 	cfg, err := g.client.GetConfig(ctx)
 	if err != nil {
@@ -637,7 +638,7 @@ func (g *gateway) readConfig(ctx context.Context) error {
 	// The units first: requests are decided once the time zone is known, and by then the
 	// unit of temperatures must be known too (#42).
 	g.mu.Lock()
-	g.haVersion, g.units = cfg.Version, maps.Clone(cfg.UnitSystem)
+	g.haVersion, g.country, g.units = cfg.Version, cfg.Country, maps.Clone(cfg.UnitSystem)
 	g.mu.Unlock()
 	g.timeZone.Store(cfg.TimeZone)
 	g.language.Store(cfg.Language)

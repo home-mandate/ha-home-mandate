@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import { formatDate, formatDateTime, formatNumber, formatRelative, formatTime, formatList } from './format.ts';
+import { countryName, formatDate, formatDateTime, formatNumber, formatRelative, formatTime, formatList } from './format.ts';
 
 const berlinDE = { locale: 'de-DE', timeZone: 'Europe/Berlin' };
 const newYorkUS = { locale: 'en-US', timeZone: 'America/New_York' };
@@ -86,5 +86,17 @@ describe('formatList', () => {
     expect(formatList(['Anna', 'Jonas', 'Kim'], { locale: 'en', timeZone: 'UTC' })).toBe('Anna, Jonas, and Kim');
     expect(formatList(['Anna'], { locale: 'en', timeZone: 'UTC' })).toBe('Anna');
     expect(formatList([], { locale: 'en', timeZone: 'UTC' })).toBe('');
+  });
+});
+
+describe('countryName', () => {
+  it('names the country in the UI language', () => {
+    expect(countryName('US', 'de')).toBe('Vereinigte Staaten');
+    expect(countryName('DE', 'en')).toBe('Germany');
+  });
+
+  it('has no name for a value that is no country code', () => {
+    expect(countryName('United States', 'en')).toBeNull();
+    expect(countryName('', 'en')).toBeNull();
   });
 });

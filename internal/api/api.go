@@ -75,6 +75,7 @@ type Status struct {
 	ServiceUser string // Home-Mandate's own Home Assistant user ID
 	TimeZone    string // household time zone; empty until Home Assistant answered
 	Language    string // household language
+	Country     string // household country (ISO 3166-1 alpha-2); empty when Home Assistant has none
 	Units       map[string]string
 }
 

@@ -36,6 +36,9 @@ export interface Household {
   /** Language of the Home Assistant configuration, the fallback after the browser. */
   language: string;
   unit_system: UnitSystem;
+  /** Country of Home Assistant's general settings (ISO 3166-1 alpha-2, e.g. "DE"); decides
+   *  the first day of the week in the UI. null when Home Assistant has none. */
+  country: string | null;
 }
 
 export interface Session {

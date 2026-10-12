@@ -10,6 +10,7 @@ import { ApiError, type ApiClient } from '../api/client.ts';
 import type { EventsConnection, EventsState } from '../api/events.ts';
 import type { ChainStatus, ServerEvent, Session, SystemStatus } from '../api/types.ts';
 import type { UnsavedTemplate } from '../mandate/template.ts';
+import { setHouseholdCountry } from '../mandate/week.svelte.ts';
 import type { UnsavedMandate } from '../mandate/versions.ts';
 import { clockOffset } from '../ui/countdown.ts';
 import { Bus } from './bus.ts';
@@ -43,7 +44,7 @@ const RENEW_MAX_MS = 30_000;
 
 export class AppState {
   phase: Phase = $state('loading');
-  session: Session | null = $state(null);
+  #session: Session | null = $state(null);
   system: SystemStatus | null = $state(null);
   connection: EventsState = $state('connecting');
   /** Browser time when the stream was lost; null while connected. */
@@ -74,6 +75,16 @@ export class AppState {
   /** The server's clock now: the injected browser clock minus the offset (issue #28). */
   serverNow(): number {
     return this.#now() - this.offsetMs;
+  }
+
+  get session(): Session | null {
+    return this.#session;
+  }
+
+  /** The household's country decides the first day of the week in every view (#43). */
+  set session(session: Session | null) {
+    this.#session = session;
+    setHouseholdCountry(session?.household.country ?? null);
   }
 
   get api(): ApiClient {

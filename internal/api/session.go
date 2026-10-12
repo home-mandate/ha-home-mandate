@@ -4,6 +4,7 @@ package api
 
 import (
 	"slices"
+	"strings"
 )
 
 // languageKeyPrefix is the settings key of a user's UI language.
@@ -20,6 +21,8 @@ type wireHousehold struct {
 	TimeZone   string            `json:"time_zone"`
 	Language   string            `json:"language"`
 	UnitSystem map[string]string `json:"unit_system"`
+	// Country decides the first day of the week in the UI (#43); null when unknown.
+	Country *string `json:"country"`
 }
 
 type wireSession struct {
@@ -53,7 +56,7 @@ func (s *Server) session(r *request) (wireSession, error) {
 		name = *n
 	}
 	out := wireSession{User: wireUser{ID: r.user, Name: name}, CSRFToken: s.csrfToken(r.user, s.now()),
-		Household: wireHousehold{TimeZone: tz, Language: st.Language, UnitSystem: units}}
+		Household: wireHousehold{TimeZone: tz, Language: st.Language, UnitSystem: units, Country: countryCode(st.Country)}}
 	_, out.SignOut = entryOf(r.Request)
 	lang, ok, err := s.cfg.Store.Setting(r.Context(), languageKeyPrefix+r.user)
 	if err != nil {
@@ -63,6 +66,16 @@ func (s *Server) session(r *request) (wireSession, error) {
 		out.Language = &lang
 	}
 	return out, nil
+}
+
+// countryCode returns Home Assistant's country as an ISO 3166-1 alpha-2 code, nil when it
+// has none or the value is no such code.
+func countryCode(country string) *string {
+	code := strings.ToUpper(country)
+	if len(code) != 2 || strings.Trim(code, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") != "" {
+		return nil
+	}
+	return &code
 }
 
 func (s *Server) putLanguage(r *request) (any, error) {

@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { NOW } from '../api/fixtures.ts';
+import { NOW, sessionFixture, usHouseholdFixture } from '../api/fixtures.ts';
 import { ApiError } from '../api/client.ts';
 import { createMockClient, type MockClient, MOCK_APPROVERS_VERSION } from '../api/mock.ts';
 import { BrowserNotifier, type NotifyEnv } from '../app/notifier.svelte.ts';
@@ -480,6 +480,26 @@ describe('Settings: system sections', () => {
     expect(within(ha).getByText('call_service')).toBeTruthy();
     expect(within(ha).queryByLabelText(/token/i)).toBeNull();
     expect(ha.textContent).toContain('runs as a Home Assistant app');
+  });
+
+  it("shows the household's time zone, units and country from Home Assistant", async () => {
+    await start();
+    const ha = region('Home Assistant connection');
+    const value = (term: string) => within(ha).getByText(term).nextElementSibling?.textContent?.trim();
+    expect(value('Time zone')).toBe('Europe/Berlin');
+    expect(value('Units')).toBe('°C, km, g, L, Pa, m/s');
+    expect(value('Country')).toMatch(/^Germany\s*\(DE\)$/);
+  });
+
+  it('names the country in the UI language and says when Home Assistant has none', async () => {
+    setLocale('de', { reload: false });
+    await start({ prepare: (api) => void (api.session = async () => ({ ...sessionFixture, household: usHouseholdFixture })) });
+    const ha = region('Home-Assistant-Verbindung');
+    expect(within(ha).getByText('Land').nextElementSibling?.textContent).toMatch(/^Vereinigte Staaten\s*\(US\)$/);
+    cleanup();
+    setLocale('en', { reload: false });
+    await start({ prepare: (api) => void (api.session = async () => ({ ...sessionFixture, household: { ...sessionFixture.household, country: null } })) });
+    expect(within(region('Home Assistant connection')).getByText('Country').nextElementSibling?.textContent?.trim()).toBe('Not set in Home Assistant');
   });
 
   it('says in container mode that Home-Mandate connects with the token of its own user', async () => {

@@ -7,6 +7,7 @@
 
 import type { Weekday } from '../api/types.ts';
 import type { CellDecision } from '../engine/analysis.ts';
+import { isCountryCode } from '../format.ts';
 import { m } from '../i18n.ts';
 import { cleanUntrusted } from '../untrusted.ts';
 
@@ -97,4 +98,32 @@ const DAY_MS = 86_400_000;
 export function weekdayNames(locale: string): Record<Weekday, string> {
   const format = new Intl.DateTimeFormat(locale, { weekday: 'short', timeZone: 'UTC' });
   return Object.fromEntries(WEEKDAYS.map((day, i) => [day, format.format(A_MONDAY + i * DAY_MS)])) as Record<Weekday, string>;
+}
+
+/** Intl.Locale week information: getWeekInfo() in current browsers, the weekInfo getter in older ones. */
+type WeekLocale = Intl.Locale & { getWeekInfo?: () => { firstDay: number }; weekInfo?: { firstDay: number } };
+
+/**
+ * weekdayOrder is the week in the order the household's country starts it, in the UI
+ * language (#43): the language alone is not enough, English would mean the US (Sunday)
+ * while the UK starts on Monday. Monday first when the country is unknown or the browser
+ * cannot tell. Only for display: rules keep their weekdays Monday first (WEEKDAYS), the
+ * order is part of a mandate's digest.
+ */
+export function weekdayOrder(language: string, country: string | null | undefined): readonly Weekday[] {
+  const first = firstWeekday(language, country);
+  return [...WEEKDAYS.slice(first), ...WEEKDAYS.slice(0, first)];
+}
+
+/** firstWeekday is the index in WEEKDAYS of the first day of the week; 0 (Monday) when unknown. */
+function firstWeekday(language: string, country: string | null | undefined): number {
+  if (!isCountryCode(country)) return 0;
+  let locale: WeekLocale;
+  try {
+    locale = new Intl.Locale(language, { region: country });
+  } catch {
+    return 0; // a language tag Intl does not take: the fallback, as for an unknown country
+  }
+  const day = (locale.getWeekInfo?.() ?? locale.weekInfo)?.firstDay;
+  return Number.isInteger(day) && day !== undefined && day >= 1 && day <= WEEKDAYS.length ? day - 1 : 0;
 }

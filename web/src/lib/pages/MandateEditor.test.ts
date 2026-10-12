@@ -4,11 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { ApiError } from '../api/client.ts';
-import { NOW } from '../api/fixtures.ts';
+import { NOW, usHouseholdFixture } from '../api/fixtures.ts';
 import { createMockClient, type MockClient, type MockOptions } from '../api/mock.ts';
 import type { MandateDraft, MandateUpdate, Rule } from '../api/types.ts';
 import { AppState } from '../app/state.svelte.ts';
 import { draftOf } from '../mandate/versions.ts';
+import { setHouseholdCountry } from '../mandate/week.svelte.ts';
 import { setLocale } from '../paraglide/runtime.js';
 import { toasts } from '../ui/toasts.ts';
 import MandateEditor from './MandateEditor.svelte';
@@ -329,6 +330,32 @@ describe('MandateEditor', () => {
     await fireEvent.click(within(first.getByRole('group', { name: 'Weekdays' })).getByRole('button', { name: 'Sun' }));
     await fireEvent.click(within(first.getByRole('group', { name: 'Weekdays' })).getByRole('button', { name: 'Sat' }));
     expect((await cards())[0]?.textContent).toMatch(/Mon\s–\sFri · 10:00\sPM to 11:30\sPM/);
+  });
+
+  it("lists the weekdays in the order of the household's week (#43)", async () => {
+    const chips = (rule: Awaited<ReturnType<typeof open>>) => within(rule.getByRole('group', { name: 'Weekdays' })).getAllByRole('button');
+    await start();
+    expect(chips(await open(1)).map((b) => b.textContent?.trim())).toEqual(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']);
+    cleanup();
+    await start({ household: usHouseholdFixture });
+    const first = await open(1);
+    expect(chips(first).map((b) => b.textContent?.trim())).toEqual(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
+    for (const day of ['Wed', 'Thu', 'Fri', 'Sat']) await fireEvent.click(within(first.getByRole('group', { name: 'Weekdays' })).getByRole('button', { name: day }));
+    expect((await cards())[0]?.textContent).toMatch(/Sun\s–\sTue/);
+    expect(status()).toBe('1 unsaved change');
+    // Switched back on in the displayed order, the rule is the stored one again: no new version.
+    for (const day of ['Wed', 'Thu', 'Fri', 'Sat']) await fireEvent.click(within(first.getByRole('group', { name: 'Weekdays' })).getByRole('button', { name: day }));
+    expect(status()).toBe('All saved');
+  });
+
+  it('orders the weekdays anew when the household changes its country during the session (#43)', async () => {
+    await start();
+    const first = await open(1);
+    const names = () => within(first.getByRole('group', { name: 'Weekdays' })).getAllByRole('button').map((b) => b.textContent?.trim());
+    expect(names()[0]).toBe('Mon');
+    setHouseholdCountry('US');
+    await tick();
+    expect(names()).toEqual(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
   });
 
   it('gives an "ask" rule its own timeout and approvers, and takes them back', async () => {

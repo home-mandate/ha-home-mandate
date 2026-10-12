@@ -6,7 +6,7 @@
 -->
 <script lang="ts">
   import { tick } from 'svelte';
-  import type { Approval, DeviceCatalog, Rule, Weekday } from '../../api/types.ts';
+  import type { Approval, DeviceCatalog, Rule } from '../../api/types.ts';
   import { CATEGORIES, isCritical } from '../../engine/vocabulary.ts';
   import { m } from '../../i18n.ts';
   import {
@@ -22,6 +22,7 @@
     withWindow,
   } from '../../mandate/edit.ts';
   import { actionLabel, categoryLabel, WEEKDAYS, weekdayNames } from '../../mandate/labels.ts';
+  import { householdWeek } from '../../mandate/week.svelte.ts';
   import { fromInput, limitableParameters, parameterLabel, toInput, unitOf, withConstraint, withoutConstraints } from '../../mandate/limits.ts';
   import { criticalDevices, demotedNames, includedNames } from '../../mandate/notes.ts';
   import type { FieldProblem, Part } from '../../mandate/problems.ts';
@@ -158,6 +159,8 @@
   const actionProblems = $derived(problems.filter((p) => p.part === 'actions'));
   const days = $derived(rule.conditions?.weekdays ?? WEEKDAYS);
   const dayNames = $derived(weekdayNames(locale));
+  /** In the order of the household's week (#43); toggleWeekday stores them Monday first. */
+  const week = $derived(householdWeek(locale));
 
   function change(next: Rule, touch = true) {
     onchange(next);
@@ -338,8 +341,8 @@
       </span>
     {/if}
     <div class="chips" role="group" aria-label={m.weekdays_label()} aria-describedby="{id}-days">
-      {#each WEEKDAYS as day (day)}
-        <ToggleChip pressed={days.includes(day)} onchange={() => change(toggleWeekday(rule, day as Weekday))}>{dayNames[day]}</ToggleChip>
+      {#each week as day (day)}
+        <ToggleChip pressed={days.includes(day)} onchange={() => change(toggleWeekday(rule, day))}>{dayNames[day]}</ToggleChip>
       {/each}
     </div>
     <span id="{id}-days" class="note" class:danger={weekdaysError}>

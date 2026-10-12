@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, type ApiClient, type EventHandlers } from '../api/client.ts';
 import { createMockClient } from '../api/mock.ts';
 import type { EventsState } from '../api/events.ts';
-import { approvalsOpenFixture, systemFixture } from '../api/fixtures.ts';
+import { approvalsOpenFixture, systemFixture, usHouseholdFixture } from '../api/fixtures.ts';
+import { householdWeek, setHouseholdCountry } from '../mandate/week.svelte.ts';
 import { AppState } from './state.svelte.ts';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -25,6 +26,21 @@ function controllable(api: ApiClient) {
 }
 
 describe('AppState', () => {
+  afterEach(() => setHouseholdCountry(null));
+
+  it("starts the week on the first day of the household's country (#43)", async () => {
+    const us = new AppState(createMockClient({ household: usHouseholdFixture, direct: true }));
+    await us.start();
+    expect(householdWeek('en')[0]).toBe('sun');
+    expect(householdWeek('de')[0]).toBe('sun');
+    // Signed out, nothing is known about the household: Monday.
+    await us.signOut();
+    expect(householdWeek('en')[0]).toBe('mon');
+    const de = new AppState(createMockClient());
+    await de.start();
+    expect(householdWeek('en')[0]).toBe('mon');
+  });
+
   it('loads session and system and connects the event stream', async () => {
     const app = new AppState(createMockClient(), () => Date.parse('2026-10-02T17:42:03Z'));
     expect(app.phase).toBe('loading');

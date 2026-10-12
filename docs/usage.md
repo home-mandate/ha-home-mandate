@@ -99,6 +99,13 @@ Under **Conditions (optional)** a rule can apply only within a **Time window** (
 overnight, such as 22:00 to 06:00 the next day) and on chosen **Weekdays**. Times are in
 the household's time zone from Home Assistant, not your browser's.
 
+The weekdays are listed in the order of the household's week: the first day follows the
+**Country** in Home Assistant (Settings → System → General), so a household in the US starts
+on Sunday, one in Germany or the UK on Monday. The rule summaries follow it too, such as
+"Sun – Tue" in a household whose week starts on Sunday. Without a country the week starts on
+Monday. The order only changes how weekdays are shown: a rule stores them the same way in
+every household, so changing the country never makes a new version of a mandate.
+
 An allowing rule can carry **Limits**: brightness, temperature, position or volume from
 and to a value. It allows only values within the limits; other values are decided by
 another rule or the default.
@@ -417,7 +424,7 @@ elsewhere leaves it.
 | Approvers | People, their devices, critical requests, language, answering in the UI, the notification bell, browser notifications |
 | Critical devices | Devices on which every action except reading is critical |
 | Defaults | Approval timeout and rate limit that new templates and mandates start with; interface language |
-| Home Assistant connection | How Home-Mandate is connected (as an app, or as a container with the token of its own user), connection state, Home Assistant version, Home-Mandate's own Home Assistant user, why it needs admin rights and the fixed command list |
+| Home Assistant connection | How Home-Mandate is connected (as an app, or as a container with the token of its own user), connection state, Home Assistant version, Home-Mandate's own Home Assistant user, the household's time zone, units and country from Home Assistant (the country decides the first day of the week), why it needs admin rights and the fixed command list |
 | MCP endpoint | The address agents connect to; the TLS certificate or the reverse proxy |
 | Retention | 30 days for the audit log |
 | Emergency stop | Trigger or lift it |

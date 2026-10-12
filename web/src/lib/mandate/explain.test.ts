@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { devicesFixture, voiceAssistantDraft } from '../api/fixtures.ts';
 import type { Device, MandateDraft, Rule } from '../api/types.ts';
 import { setLocale } from '../paraglide/runtime.js';
 import { removeRule, replaceRule, withDecision } from './edit.ts';
 import { cellDetail, cellLabel, cellReason, cellWhy, shortLabel } from './explain.ts';
 import { buildRows, cellAt, type MatrixCell } from './matrix.ts';
+import { setHouseholdCountry } from './week.svelte.ts';
 
 beforeEach(() => setLocale('en', { reload: false }));
+afterEach(() => setHouseholdCountry(null));
 
 const base = voiceAssistantDraft;
 const catalog = devicesFixture;
@@ -117,6 +119,15 @@ describe('cellDetail', () => {
     expect(rule?.[1]).toMatch(/^No rule applies\./);
     expect(timed?.[0]).toBe('timed');
     expect(timed?.[1]).toMatch(/^In time window 07:00\sAM to 10:00\sPM: Allowed \(Rule 4\)\. Otherwise: Default: denied\.$/);
+  });
+
+  it("names the days in the order of the household's week (#43)", () => {
+    const media = base.rules[3] as Rule;
+    const draft = replaceRule(base, 3, { ...media, conditions: { ...media.conditions, weekdays: ['mon', 'tue', 'sun'] } });
+    const timed = () => detail(at(draft, 'media_player.living_room', 'play'), draft)[1]?.[1];
+    expect(timed()).toMatch(/^In time window Mon, Tue, Sun · 07:00\sAM/);
+    setHouseholdCountry('US');
+    expect(timed()).toMatch(/^In time window Sun\s–\sTue · 07:00\sAM/);
   });
 
   it('shows the former outcome when a rule is gone', () => {

@@ -1023,6 +1023,16 @@ code and at most a JSON pointer, never internal details or the value sent. There
 - **Time zone:** times are always shown in the household's time zone from the HA
   configuration, not in the browser's. Time windows in mandates are household local time.
 - **Units:** temperature and measurements from the HA unit system (°C/°F).
+- **First day of the week:** from the household's country in the HA configuration
+  (`country`, delivered in the session as `household.country`) together with the UI
+  language: `Intl.Locale(language, { region: country })`, `getWeekInfo()` or the older
+  `weekInfo`; Monday when the country is unknown or the browser cannot tell. The language
+  alone is not enough (English would mean the US, while the UK starts on Monday). Every list
+  of weekdays follows it: the picker of the rule form and the rule summaries ("Sun – Tue"),
+  wherever they appear (editor, preview, save summary, versions, templates). Ranges are
+  computed in the displayed order. Only the display follows it: rules store weekdays Monday
+  first, as that order is part of a mandate's digest; the evaluation uses the household's
+  time zone and is unaffected.
 - **Language selection:** order: the user's setting in Home-Mandate → browser language →
   English as fallback.
 - **Prepared for other scripts:** CSS uses logical properties only (`margin-inline-start`
