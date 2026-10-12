@@ -5,6 +5,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -13,6 +16,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
 // lockedBuffer is a buffer the server may write while the test reads it.
@@ -110,6 +115,90 @@ func TestServeNeedsAValidConfiguration(t *testing.T) {
 	e, _, stderr := bareEnv()
 	if code := run(context.Background(), nil, e); code != exitFailure || stderr.Len() == 0 {
 		t.Errorf("exit code = %d, stderr %q", code, stderr.String())
+	}
+}
+
+// The errors that stop the start before the configured logger exists are JSON lines like
+// everything else the service logs, with the cause in "error" and without the doubled
+// prefix of the configuration package (issue #32).
+func TestServeLogsStartupErrorsAsJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(t *testing.T, c *cli, e *env)
+		msg     string
+		cause   string
+	}{
+		{"no configuration", func(_ *testing.T, c *cli, _ *env) { clear(c.envVars) },
+			"invalid configuration", "HM_HA_URL must be a ws:// or wss:// URL"},
+		{"one TLS file in app mode", func(_ *testing.T, c *cli, e *env) {
+			clear(c.envVars)
+			c.envVars["SUPERVISOR_TOKEN"] = "s"
+			e.readFile = func(name string) ([]byte, error) {
+				if name != "/data/options.json" {
+					return nil, fs.ErrNotExist
+				}
+				return []byte(`{"tls_certfile":"fullchain.pem","tls_keyfile":"","approval_timeout_seconds":120,"log_level":"info"}`), nil
+			}
+		}, "invalid configuration", "tls_keyfile is empty but tls_certfile is set"},
+		{"token file readable by others", func(t *testing.T, c *cli, _ *env) {
+			file := filepath.Join(t.TempDir(), "ha-token")
+			if err := os.WriteFile(file, []byte("test-token\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			c.envVars["HM_HA_TOKEN"], c.envVars["HM_HA_TOKEN_FILE"] = "", file
+		}, "invalid configuration", "chmod 600"},
+		{"Supervisor not reachable", func(t *testing.T, c *cli, e *env) {
+			clear(c.envVars)
+			c.envVars["SUPERVISOR_TOKEN"] = "s"
+			e.readFile = func(name string) ([]byte, error) {
+				return []byte(`{"tls_certfile":"","tls_keyfile":"","approval_timeout_seconds":120,"log_level":"info",` +
+					`"public_url":"https://mandate.example.org","ha_browser_url":"https://ha.example.org"}`), nil
+			}
+			saved := coreInfo
+			t.Cleanup(func() { coreInfo = saved })
+			coreInfo = func(context.Context, string, ha.Secret, ha.Plaintext) (int, bool, error) {
+				return 0, false, errors.New("supervisor unreachable")
+			}
+		}, "cannot ask the Supervisor how Home Assistant is reached", "supervisor unreachable"},
+		{"data directory is a file", func(t *testing.T, c *cli, _ *env) {
+			file := filepath.Join(t.TempDir(), "data")
+			if err := os.WriteFile(file, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			c.envVars["HM_DATA_DIR"] = file
+		}, "cannot open the data store", "not a directory"},
+		{"audit key is a directory", func(t *testing.T, c *cli, _ *env) {
+			c.envVars[envAuditKeyFile] = t.TempDir()
+		}, "cannot open the audit checkpoint key", "not a regular file"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newCLI(t)
+			e, _, stderr := c.env("")
+			tc.prepare(t, c, &e)
+
+			if code := run(context.Background(), []string{"serve"}, e); code != exitFailure {
+				t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitFailure, stderr)
+			}
+
+			lines := strings.Split(strings.TrimRight(stderr.String(), "\n"), "\n")
+			if len(lines) != 1 {
+				t.Errorf("stderr has %d lines, want 1: %s", len(lines), stderr)
+			}
+			for _, line := range lines {
+				var entry struct{ Level, Msg, Error string }
+				if err := json.Unmarshal([]byte(line), &entry); err != nil {
+					t.Fatalf("not a JSON line: %q (%v)", line, err)
+				}
+				if entry.Level != "ERROR" || entry.Msg != tc.msg {
+					t.Errorf("level %q, msg %q; want ERROR, %q", entry.Level, entry.Msg, tc.msg)
+				}
+				if !strings.Contains(entry.Error, tc.cause) || strings.Contains(entry.Error, "invalid configuration") ||
+					strings.HasPrefix(entry.Error, entry.Msg) {
+					t.Errorf("error %q, want the cause %q without a repeated prefix", entry.Error, tc.cause)
+				}
+			}
+		})
 	}
 }
 

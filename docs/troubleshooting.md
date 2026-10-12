@@ -9,9 +9,10 @@ when signing in, with approvals, and while running.
   for more detail.
 - **Container mode:** `docker compose logs home-mandate` (or `podman logs home-mandate`).
   Set `HM_LOG_LEVEL=debug` for more detail.
-- Errors in the configuration are printed as one line starting with `home-mandate:` before
-  the gateway starts; after that the log is JSON, one object per line with `level`, `msg`
-  and details.
+- The log is JSON, one object per line with `level`, `msg` and details. An error that stops
+  the start is one line with `"level":"ERROR"`, a `msg` such as `invalid configuration` or
+  `cannot open the data store`, and the cause in the field `error`; the messages below are
+  what that field says.
 - The **audit log** in the UI shows every refused request with its reason; the UI's
   banners show what currently needs attention.
 
@@ -30,9 +31,9 @@ message names the fix in most cases.
 | `store: insecure permissions: /data is writable by group or others; fix: chmod go-w /data` | Others could replace the database. | `sudo chmod 700 ./data` |
 | `store: insecure permissions: /data/home-mandate.db has mode 644, want 600; fix: chmod 600 …` | A database file readable by others, for example after a copy. | `sudo chmod 600` on the named file. |
 | `… permission denied; Home-Mandate runs as uid 65532 (gid 65532): make the file readable by this user, e.g. chown 65532:65532 on the host file …` | The token file, certificate or key cannot be read by Home-Mandate's user. | `sudo chown 65532:65532` on the named host file (token, `privkey.pem`), mode `600`. Make your ACME client's renewal keep that owner. |
-| `config: invalid configuration: HM_HA_TOKEN_FILE is readable by group or others; make it readable by its owner only (chmod 600)` | The token file is too open. Whoever reads it controls your home. | `sudo chmod 600 ha-token` |
-| `config: invalid configuration: HM_HA_TOKEN_FILE is not a regular file` | For example a directory, because Docker created the missing file as a directory. | Create the file before the first start, then recreate the container. |
-| `config: invalid configuration: HM_HA_TOKEN or HM_HA_TOKEN_FILE is required` / `… not both` | No token, an empty file, or both variables. | Set exactly one of them. |
+| `HM_HA_TOKEN_FILE is readable by group or others; make it readable by its owner only (chmod 600)` | The token file is too open. Whoever reads it controls your home. | `sudo chmod 600 ha-token` |
+| `HM_HA_TOKEN_FILE is not a regular file` | For example a directory, because Docker created the missing file as a directory. | Create the file before the first start, then recreate the container. |
+| `HM_HA_TOKEN or HM_HA_TOKEN_FILE is required` / `… not both` | No token, an empty file, or both variables. | Set exactly one of them. |
 | `audit checkpoint key …: mode … lets others access it; it must be 0600` / `not owned by the user Home-Mandate runs as` / `not a regular file` | The checkpoint key file (in the data directory or at `HM_AUDIT_KEY_FILE`) is too open, belongs to someone else or is a symbolic link (for example a mounted secret). | `chown 65532:65532` and `chmod 600` on it; mount a regular file, not a link. With `HM_AUDIT_KEY_FILE`, the first start needs its directory writable by Home-Mandate's user, to create the key. |
 | `audit checkpoint key … is missing although the audit log has checkpoints: restore the key; a new one could not verify them` | The database was restored or moved without its key. | Restore the key from the same backup. If it is lost for good, the old log cannot be verified any more; see [the audit log is broken](#the-audit-log-is-broken). |
 | `running as root; container mode needs no privileges …` (warning) | The container runs as root. | Set `user: "65532:65532"` and hand the data directory over (above). |
@@ -54,8 +55,10 @@ message names the fix in most cases.
 | `HM_INGRESS_ADDR needs HM_INGRESS_PROXY …` / `HM_INGRESS_PROXY without HM_INGRESS_ADDR` | Set both or neither; normally neither. |
 | `HM_PDP_ADDR must be a loopback address` | Use `127.0.0.1:<port>` or leave it unset. |
 | `public_url needs ha_browser_url for the sign-in of humans` (app) | Set the option `ha_browser_url`. |
-| `TLS file names must be plain file names in /ssl` (app) | `tls_certfile` / `tls_keyfile` without a path, for example `fullchain.pem`. |
-| `cannot ask the Supervisor how Home Assistant is reached: …` (app) | With `public_url` set, the app asks the Supervisor for Home Assistant's port and TLS at start. Restart the app; if it persists, check the Supervisor's health under Settings → System. |
+| `tls_keyfile is empty but tls_certfile is set; …` (or the other way round, app) | Set both to file names in `/ssl` (`fullchain.pem`, `privkey.pem`), or leave both empty: then TLS is off and the MCP endpoint answers on localhost only. |
+| `tls_certfile "…" must be a plain file name in /ssl without a path` (or `tls_keyfile`, app) | Enter the file name only, for example `fullchain.pem`: no `/ssl/`, no other path, not starting with a dot. |
+| `tls_certfile "…" contains a space or control character; …` (or `tls_keyfile`, app) | The quotes show the value as saved; remove the space (often a trailing one from copy and paste) or other invisible character. |
+| `"msg":"cannot ask the Supervisor how Home Assistant is reached"` (app) | With `public_url` set, the app asks the Supervisor for Home Assistant's port and TLS at start. Restart the app; if it persists, check the Supervisor's health under Settings → System. |
 | `home assistant speaks TLS: ha_browser_url must name the host its certificate is for` (app) | Home Assistant serves its own TLS; set `ha_browser_url` to `https://<the name in its certificate>:<port>`. |
 
 ### Certificate

@@ -4,9 +4,12 @@ configuration:
     description: >-
       File in /ssl with the certificate chain for the MCP endpoint, e.g. fullchain.pem. It
       must cover the host of the public URL. Without it, the endpoint answers on localhost only.
+      Leave both TLS options empty to turn TLS off: the endpoint then answers on localhost only.
   tls_keyfile:
     name: TLS private key
-    description: File in /ssl with the certificate's private key, e.g. privkey.pem.
+    description: >-
+      File in /ssl with the certificate's private key, e.g. privkey.pem. Set both TLS options
+      or leave both empty.
   approval_timeout_seconds:
     name: Approval timeout
     description: >-
