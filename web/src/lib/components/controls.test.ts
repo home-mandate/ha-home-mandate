@@ -290,4 +290,19 @@ describe('Switch and ToggleChip', () => {
     expect(chip.getAttribute('aria-pressed')).toBe('true');
     expect(onchange).toHaveBeenCalledWith(true);
   });
+
+  it('shows a check when pressed and an x when not, in the same hidden slot', async () => {
+    render(ToggleChip, { pressed: false, children: text('Mon') });
+    const chip = screen.getByRole('button', { name: 'Mon' });
+    const mark = () => chip.querySelector('.mark');
+    expect(mark()?.getAttribute('data-mark')).toBe('off');
+    expect(mark()?.getAttribute('aria-hidden')).toBe('true');
+    expect(mark()?.querySelectorAll('svg')).toHaveLength(1);
+    await fireEvent.click(chip);
+    expect(mark()?.getAttribute('data-mark')).toBe('on');
+    expect(mark()?.querySelectorAll('svg')).toHaveLength(1);
+    // The state is conveyed by aria-pressed alone; the marks add nothing to the name.
+    expect(chip.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Mon' })).toBe(chip);
+  });
 });

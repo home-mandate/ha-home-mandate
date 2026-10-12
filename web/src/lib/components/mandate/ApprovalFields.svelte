@@ -11,6 +11,7 @@
   import { isPlaceholder } from '../../mandate/placeholder.ts';
   import { cleanUntrusted } from '../../untrusted.ts';
   import Icon from '../Icon.svelte';
+  import SelectionMark from '../SelectionMark.svelte';
   import TimeoutField from '../TimeoutField.svelte';
 
   interface Props {
@@ -67,8 +68,8 @@
             {#if isPlaceholder(person.id)}<Icon name="person" size={16} />{:else}{initials(cleanUntrusted(person.name))}{/if}
           </span>
           <bdi>{cleanUntrusted(person.name)}</bdi>
-          <!-- Kept in place while hidden, so toggling never changes the button's width. -->
-          <span class="tick"><Icon name="check" size={16} /></span>
+          <!-- A check or an x of the same size, so toggling never changes the button's width. -->
+          <SelectionMark {on} />
         </button>
       {/each}
     </div>
@@ -123,23 +124,20 @@
     cursor: pointer;
   }
   /* Not bold and no thicker border (issue #47): the border only changes colour and an inset
-     ring, which takes no room, thickens it; the filled avatar and the tick mark it without
-     colour. */
+     ring, which takes no room, thickens it; the filled avatar and the check (an x when not
+     selected) mark it without colour. */
   .person[aria-pressed='true'] {
     background: var(--hm-color-accent-subtle);
     border-color: var(--hm-color-accent);
     box-shadow: inset 0 0 0 var(--hm-border-width) var(--hm-color-accent);
   }
-  .tick {
-    display: flex;
-    visibility: hidden;
-  }
-  .person[aria-pressed='true'] .tick {
-    visibility: visible;
-  }
   .person[aria-disabled='true'] {
     color: var(--hm-color-text-disabled);
     cursor: not-allowed;
+  }
+  /* The muted x would look more active than the disabled name. */
+  .person[aria-disabled='true'] :global(.mark) {
+    color: inherit;
   }
   .avatar {
     display: flex;

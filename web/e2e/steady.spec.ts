@@ -147,6 +147,47 @@ async function clickEach(page: Page, controls: Locator, origin: string, what: st
   }
 }
 
+interface Mark {
+  pressed: string | null;
+  mark: string | null;
+  icons: number;
+  width: number;
+  height: number;
+  visible: boolean;
+}
+
+/** marks returns, per control, its state and the mark in its slot: a check or an x. */
+function marks(controls: Locator): Promise<Mark[]> {
+  return controls.evaluateAll((els) =>
+    els.map((el) => {
+      const slot = el.querySelector('.mark');
+      const icon = slot?.querySelector('svg');
+      const r = icon?.getBoundingClientRect();
+      const s = icon ? getComputedStyle(icon) : undefined;
+      return {
+        pressed: el.getAttribute('aria-pressed'),
+        mark: slot?.getAttribute('data-mark') ?? null,
+        icons: slot?.querySelectorAll('svg').length ?? 0,
+        width: r?.width ?? 0,
+        height: r?.height ?? 0,
+        visible: s?.visibility === 'visible' && s.opacity === '1' && s.display !== 'none',
+      };
+    }),
+  );
+}
+
+/** expectMarks checks that every chip shows a check when pressed and an x when not. */
+async function expectMarks(controls: Locator, what: string) {
+  const found = await marks(controls);
+  expect(found.length, what).toBeGreaterThan(1);
+  found.forEach((m, i) => {
+    expect(m.mark, `${what} #${i}: mark`).toBe(m.pressed === 'true' ? 'on' : 'off');
+    expect(m.icons, `${what} #${i}: one icon`).toBe(1);
+    expect(m.visible, `${what} #${i}: visible`).toBe(true);
+    expect([m.width, m.height], `${what} #${i}: size`).toEqual([16, 16]);
+  });
+}
+
 async function openRule(page: Page) {
   await page.goto('./#/mandates/mandate-voice');
   await expect(page.locator('h1')).toBeVisible();
@@ -175,6 +216,7 @@ for (const forcedColors of MODES) {
       const rows = page.locator('main li.editing .chips');
       await clickEach(page, rows.first().locator('button.chip'), '.chips', 'action chips');
       await clickEach(page, rows.last().locator('button.chip'), '.chips', 'weekday chips');
+      await expectMarks(rows.last().locator('button.chip'), 'weekday chips');
     });
 
     test('toggling approvers keeps the people in place', async ({ page }) => {
@@ -182,7 +224,9 @@ for (const forcedColors of MODES) {
       await page.goto('./#/templates/voice-assistant');
       await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
       const people = page.locator('main .people').first().locator('button.person');
+      await expectMarks(people, 'approvers');
       await clickEach(page, people, '.people', 'approvers');
+      await expectMarks(people, 'approvers');
     });
 
     test('regrouping the preview keeps the grouping buttons in place', async ({ page }) => {
@@ -196,7 +240,9 @@ for (const forcedColors of MODES) {
       await page.goto('./#/audit');
       await expect(page.locator('h1')).toBeVisible();
       const chips = page.locator('main fieldset .chips').first().locator('button.chip');
+      await expectMarks(chips, 'decision filter chips');
       await clickEach(page, chips, '.chips', 'decision filter chips');
+      await expectMarks(chips, 'decision filter chips');
     });
   });
 }

@@ -4,6 +4,7 @@
   import type { Snippet } from 'svelte';
   import { m } from '../i18n.ts';
   import Icon from './Icon.svelte';
+  import SelectionMark from './SelectionMark.svelte';
 
   interface Props {
     pressed: boolean;
@@ -21,8 +22,8 @@
 </script>
 
 <button type="button" class="chip" aria-pressed={pressed} onclick={toggle}>
-  <!-- The tick's place is kept while it is hidden, so toggling never changes the chip's width. -->
-  <span class="tick"><Icon name="check" size={16} /></span>
+  <!-- A check or an x of the same size, so toggling never changes the chip's width. -->
+  <SelectionMark on={pressed} />
   <span>{@render children()}</span>
   {#if critical}<span class="critical"><Icon name="critical" size={16} label={m.critical_label()} /></span>{/if}
 </button>
@@ -44,18 +45,12 @@
     cursor: pointer;
   }
   /* Not bold and no thicker border (issue #47): the border only changes colour and an inset
-     ring, which takes no room, thickens it; the tick marks it without colour. */
+     ring, which takes no room, thickens it; the check (an x when not pressed) marks it without
+     colour. */
   .chip[aria-pressed='true'] {
     background: var(--hm-color-accent-subtle);
     border-color: var(--hm-color-accent);
     box-shadow: inset 0 0 0 var(--hm-border-width) var(--hm-color-accent);
-  }
-  .tick {
-    display: flex;
-    visibility: hidden;
-  }
-  .chip[aria-pressed='true'] .tick {
-    visibility: visible;
   }
   .critical {
     display: flex;

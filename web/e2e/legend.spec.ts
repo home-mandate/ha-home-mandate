@@ -10,6 +10,26 @@ import { a11yProblems, overflowProblems } from './sweep.ts';
 
 const HEIGHT = 900;
 const ENTRIES = 3;
+const TOLERANCE = 0.5;
+
+interface Row {
+  centres: number[];
+  column: { x: number; width: number };
+}
+
+/** rows returns, per legend row, the vertical centre of each icon and the box of the icon column. */
+function rows(page: Page): Promise<Row[]> {
+  return page.locator('main .legend .icons').evaluateAll((columns) =>
+    columns.map((column) => {
+      const box = column.getBoundingClientRect();
+      const centres = [...column.querySelectorAll('svg, .dot')].map((icon) => {
+        const r = icon.getBoundingClientRect();
+        return r.top + r.height / 2;
+      });
+      return { centres, column: { x: box.left, width: box.width } };
+    }),
+  );
+}
 
 async function openPreview(page: Page, width: number) {
   await page.setViewportSize({ width, height: HEIGHT });
@@ -41,6 +61,17 @@ for (const width of [1280, 375] as const) {
     // The cell of a critical action shows its decision icon and the shield; both are in the legend.
     await expect(terms.first().locator('svg[aria-hidden="true"]')).toHaveCount(2);
     await expect(legend.locator('[title]')).toHaveCount(0);
+
+    // The icons of a row sit on one centre line, and the icon column has the same place and
+    // width in every row, so all terms start at the same x.
+    const found = await rows(page);
+    expect(found.length).toBe(ENTRIES + 1);
+    found.forEach((row, i) => {
+      const spread = Math.max(...row.centres) - Math.min(...row.centres);
+      expect(spread, `legend row ${i}: vertical centres of the icons`).toBeLessThanOrEqual(TOLERANCE);
+      expect(Math.abs(row.column.x - found[0]!.column.x), `legend row ${i}: icon column x`).toBeLessThanOrEqual(TOLERANCE);
+      expect(Math.abs(row.column.width - found[0]!.column.width), `legend row ${i}: icon column width`).toBeLessThanOrEqual(TOLERANCE);
+    });
 
     expect(await pageScroll(page)).toBe(0);
     expect(await overflowProblems(page)).toEqual([]);

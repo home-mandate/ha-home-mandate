@@ -709,6 +709,12 @@
     min-inline-size: 36px;
     align-self: center;
   }
+  /* Every mark is a flex box of its icon's size: an inline wrapper would put the shield on
+     the text's line box, off the centre line of the decision icon next to it. */
+  .legend .icons > * {
+    display: flex;
+    flex: none;
+  }
   .heading {
     font-weight: var(--hm-font-weight-semibold);
   }
