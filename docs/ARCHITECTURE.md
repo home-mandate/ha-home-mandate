@@ -110,11 +110,16 @@ tells no more than the grant. Its parameters are checked as for any other device
    is denied with `unknown_resource`.
 5. `mcp` derives the parameters of the action in the units of the vocabulary (brightness in
    percent, temperature in hundredths of a degree Celsius, position, volume) and refuses a
-   call that sets the same quantity twice or a value that is no integer in that unit; what
-   is executed is exactly what was evaluated. A value that cannot be expressed in the unit
-   of the vocabulary – a temperature in a household that uses °F, or while the household's
-   unit is not known yet – is not passed: a rule with a limit on it does not match, and the
-   request is denied unless a rule without a limit allows it. Limits on temperatures therefore need a household in °C.
+   call that sets the same quantity twice or a value that is no integer in that unit
+   (0.335 as a volume, 21.555 °C), before the decision and also under a rule without a
+   limit (SPEC-v0 section 4.5): `invalid_params` naming the parameter, but only for a
+   device the agent may read; for any other it is `not_found`, logged as `failed` /
+   `invalid_params` without an evaluation. Binary noise (0.29 is 28.999… percent) is no
+   fraction; what is evaluated and executed is the canonical value of the step (0.29).
+   A temperature in a household that uses °F cannot be expressed in the unit of the
+   vocabulary and is refused the same way until the vocabulary has a °F parameter; while
+   the household's unit is not known yet, a request with a temperature is `unavailable`
+   (`temperature_unit_unknown`), never checked as °C.
 6. `pdp` selects the agent's mandate among its candidates (SPEC-v0 section 4.3) and
    evaluates it. Result: `allow`, `ask` or `deny`.
 7. On `ask`: `approval` sends an actionable notification to all approvers and waits at most

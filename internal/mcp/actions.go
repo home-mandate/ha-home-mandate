@@ -21,6 +21,11 @@ var (
 type param struct {
 	kind     string // "int", "number" or "enum"
 	min, max float64
+	// steps is how many steps of the vocabulary's unit make one unit of the service call
+	// (100 for a volume level in percent); a number must be a whole step (SPEC-v0
+	// section 4.5). An int is a whole step of 1.
+	steps    float64
+	rule     string // what the agent is told about a wrong number; empty: the default
 	values   []string
 	required bool
 }
@@ -44,8 +49,9 @@ var vocabulary = map[string]map[string]actionSpec{
 	},
 	"switch": {"read": {}, "turn_on": {service: "turn_on"}, "turn_off": {service: "turn_off"}},
 	"climate": {
-		"read":            {},
-		"set_temperature": {service: "set_temperature", params: map[string]param{"temperature": {kind: "number", min: -50, max: 100, required: true}}},
+		"read": {},
+		"set_temperature": {service: "set_temperature", params: map[string]param{"temperature": {kind: "number", min: -50, max: 100, steps: 100, required: true,
+			rule: "must be a number between -50 and 100 in steps of 0.01 degrees"}}},
 		"set_mode": {service: "set_hvac_mode", params: map[string]param{"hvac_mode": {kind: "enum", required: true,
 			values: []string{"off", "heat", "cool", "heat_cool", "auto", "dry", "fan_only"}}}},
 	},
@@ -64,7 +70,8 @@ var vocabulary = map[string]map[string]actionSpec{
 	"media": {
 		"read": {}, "turn_on": {service: "turn_on"}, "turn_off": {service: "turn_off"},
 		"play": {service: "media_play"}, "pause": {service: "media_pause"},
-		"set_volume": {service: "volume_set", params: map[string]param{"volume_level": {kind: "number", min: 0, max: 1, required: true}}},
+		"set_volume": {service: "volume_set", params: map[string]param{"volume_level": {kind: "number", min: 0, max: 1, steps: 100, required: true,
+			rule: "must be a whole percent, 0 to 1 in steps of 0.01 (e.g. 0.33)"}}},
 	},
 	"sensor": {"read": {}},
 	"scene":  {"read": {}, "activate": {service: "turn_on"}},
@@ -94,13 +101,9 @@ func buildCall(entityID, category, action string, params map[string]any) (ha.Ser
 	if !ok || action == "read" {
 		return ha.ServiceCall{}, fmt.Errorf("%w: action %q", errInvalidParams, action)
 	}
-	data, err := checkParams(spec.params, params)
+	data, err := callData(category, action, spec, params)
 	if err != nil {
 		return ha.ServiceCall{}, err
-	}
-	if category == "light" && action == "set" && len(data) == 0 {
-		// Without a parameter "set" would be a plain turn_on, which the mandate may not allow.
-		return ha.ServiceCall{}, fmt.Errorf("%w: set needs brightness_pct or color_temp_kelvin", errInvalidParams)
 	}
 	if spec.service == "" {
 		return ha.ServiceCall{}, errNotSupported
@@ -116,6 +119,20 @@ func buildCall(entityID, category, action string, params map[string]any) (ha.Ser
 		data = nil
 	}
 	return ha.ServiceCall{Domain: domain, Service: service, EntityID: entityID, Data: data}, nil
+}
+
+// callData checks the parameters of a vocabulary action and returns the data of its
+// service call, every number as the canonical value of its step.
+func callData(category, action string, spec actionSpec, params map[string]any) (map[string]any, error) {
+	data, err := checkParams(spec.params, params)
+	if err != nil {
+		return nil, err
+	}
+	if category == "light" && action == "set" && len(data) == 0 {
+		// Without a parameter "set" would be a plain turn_on, which the mandate may not allow.
+		return nil, fmt.Errorf("%w: set needs brightness_pct or color_temp_kelvin", errInvalidParams)
+	}
+	return data, nil
 }
 
 // checkParams accepts only the declared parameters, with the declared types and ranges.
@@ -150,12 +167,44 @@ func (p param) check(value any) (any, error) {
 		return s, nil
 	default:
 		f, ok := value.(float64)
-		if !ok || math.IsNaN(f) || f < p.min || f > p.max || p.kind == "int" && f != math.Trunc(f) {
-			return nil, fmt.Errorf("must be a %s between %g and %g", p.kind, p.min, p.max)
+		steps := p.steps
+		if p.kind == "int" || steps == 0 {
+			steps = 1
+		}
+		v, whole := canonical(f, steps)
+		if !ok || !whole || v < p.min || v > p.max {
+			return nil, errors.New(p.message())
 		}
 		if p.kind == "int" {
-			return int(f), nil
+			return int(v), nil
 		}
-		return f, nil
+		return v, nil
 	}
+}
+
+// message tells the agent which numbers the parameter takes.
+func (p param) message() string {
+	if p.rule != "" {
+		return p.rule
+	}
+	article := "a"
+	if p.kind == "int" {
+		article, p.kind = "an", "integer"
+	}
+	return fmt.Sprintf("must be %s %s between %g and %g", article, p.kind, p.min, p.max)
+}
+
+// canonical returns the whole step closest to f, as a value of the service call, and
+// whether f is that step but for binary floating-point noise (such as 0.29 * 100). The
+// canonical value is what is evaluated and what is executed.
+func canonical(f, steps float64) (float64, bool) {
+	scaled := f * steps
+	if math.IsNaN(scaled) || math.IsInf(scaled, 0) {
+		return 0, false
+	}
+	rounded := math.Round(scaled)
+	if math.Abs(scaled-rounded) > exactness || math.Abs(rounded) > maxExactInteger {
+		return 0, false
+	}
+	return rounded / steps, true
 }

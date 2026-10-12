@@ -101,8 +101,12 @@ the household's time zone from Home Assistant, not your browser's.
 
 An allowing rule can carry **Limits**: brightness, temperature, position or volume from
 and to a value. It allows only values within the limits; other values are decided by
-another rule or the default. Temperature limits need a household
-that uses °C in Home Assistant; in °F households such a rule does not match.
+another rule or the default.
+
+Temperatures can be checked only in a household that uses °C in Home Assistant. In a °F
+household every `set_temperature` request is refused for now, also under a rule without
+limits, until a later version supports °F; set temperatures in Home Assistant itself
+meanwhile.
 
 ### Templates
 
