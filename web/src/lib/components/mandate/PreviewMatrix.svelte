@@ -340,11 +340,13 @@
     background: transparent;
     cursor: pointer;
   }
+  /* Not bold (issue #47); the inset bar at the end marks the choice without colour and takes no room. */
   .grouping button[aria-checked='true'] {
-    font-weight: var(--hm-font-weight-semibold);
     color: var(--hm-color-text);
     background: var(--hm-color-surface);
-    box-shadow: var(--hm-shadow-sm);
+    box-shadow:
+      inset 0 calc(-1 * var(--hm-mark-width)) 0 var(--hm-color-accent),
+      var(--hm-shadow-sm);
   }
   .search {
     position: relative;
@@ -679,6 +681,11 @@
     }
   }
   @media (forced-colors: active) {
+    /* An outline inside the button instead of the bar, which forced colours drop. */
+    .grouping button[aria-checked='true']:not(:focus-visible) {
+      outline: 2px solid Highlight;
+      outline-offset: -2px;
+    }
     .circle {
       border: 2px solid CanvasText;
     }

@@ -115,9 +115,12 @@
     border: 2px solid transparent;
     cursor: pointer;
   }
+  /* Not bold (issue #47); the border keeps its width and only changes colour. The inset bar at
+     the end marks the choice without colour and takes no room. */
   button[aria-checked='true'] {
-    font-weight: var(--hm-font-weight-semibold);
-    box-shadow: var(--hm-shadow-sm);
+    box-shadow:
+      inset 0 calc(-1 * var(--hm-mark-width)) 0 currentColor,
+      var(--hm-shadow-sm);
   }
   .allow[aria-checked='true'] {
     color: var(--hm-color-allow-fg);
