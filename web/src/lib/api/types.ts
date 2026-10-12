@@ -751,6 +751,11 @@ export interface ApprovalRequest {
   params: ApprovalParam[];
   /** Names of the approvers the request reached (any channel). */
   recipients: string[];
+  /**
+   * The device's state when the request was made, as the push shows it (SPEC-v0 11.1 item
+   * 10); the action is executed only while it holds. Null or absent when unknown. Untrusted.
+   */
+  state?: string | null;
   created_at: string;
   expires_at: string;
   /**

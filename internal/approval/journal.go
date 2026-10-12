@@ -62,6 +62,8 @@ type Record struct {
 	// AgentRef is the ID the agent knows the request by (issue #27): random, neither the
 	// nonce, the request ID nor the tag; found only together with the agent's client_id.
 	AgentRef string
+	// IdempotencyKey is the optional key the agent gave; empty without.
+	IdempotencyKey string
 }
 
 // Opened is a request as it enters the journal.
@@ -128,9 +130,11 @@ func (j *Journal) Open(ctx context.Context, o Opened) error {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO approval_journal (id, client_id, entity_id, action, params_digest, created_at,
-			expires_at, state, tag, notified, decision, agent_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			expires_at, state, tag, notified, decision, agent_ref, state_before, idempotency_key)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			o.ID, o.Request.ClientID, o.Request.EntityID, o.Request.Action, o.Request.Record.ParamsDigest, format(o.Created),
-			format(o.Expires), stateOpen, o.Tag, string(notified), string(stored), o.Request.Record.AgentRef)
+			format(o.Expires), stateOpen, o.Tag, string(notified), string(stored), o.Request.Record.AgentRef, o.Request.State,
+			o.Request.Record.IdempotencyKey)
 		return err
 	})
 }
@@ -199,11 +203,16 @@ func (j *Journal) end(ctx context.Context, tx *sql.Tx, id string, a *audit.Appro
 
 // Status is what the journal knows of a request for its agent.
 type Status struct {
-	State   string // open, executing or ended
-	Expires time.Time
-	Outcome string       // the approval outcome once known
-	Cause   string       // with cancelled
-	Result  audit.Result // once ended
+	EntityID string
+	Action   string
+	State    string // open, executing or ended
+	Expires  time.Time
+	Outcome  string       // the approval outcome once known
+	Cause    string       // with cancelled
+	Result   audit.Result // once ended
+	// AnsweredAt is when a confirmation came (zero without), EndedAt when it ended.
+	AnsweredAt time.Time
+	EndedAt    time.Time
 }
 
 // Ended tells whether the request has ended.
@@ -217,9 +226,10 @@ func (j *Journal) Lookup(ctx context.Context, ref, clientID string) (Status, boo
 	}
 	var st Status
 	var expires string
-	var result sql.NullString
-	err := j.db.QueryRowContext(ctx, `SELECT state, expires_at, outcome, cause, result FROM approval_journal
-		WHERE agent_ref = ? AND client_id = ?`, ref, clientID).Scan(&st.State, &expires, &st.Outcome, &st.Cause, &result)
+	var result, answered, ended sql.NullString
+	err := j.db.QueryRowContext(ctx, `SELECT entity_id, action, state, expires_at, outcome, cause, result, answered_at, ended_at
+		FROM approval_journal WHERE agent_ref = ? AND client_id = ?`, ref, clientID).
+		Scan(&st.EntityID, &st.Action, &st.State, &expires, &st.Outcome, &st.Cause, &result, &answered, &ended)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Status{}, false, nil
 	}
@@ -234,7 +244,77 @@ func (j *Journal) Lookup(ctx context.Context, ref, clientID string) (Status, boo
 			return Status{}, false, fmt.Errorf("%w: result: %w", ErrJournal, err)
 		}
 	}
+	// Times written by the journal itself; unreadable ones stay zero.
+	if answered.Valid {
+		st.AnsweredAt, _ = time.Parse(time.RFC3339Nano, answered.String)
+	}
+	if ended.Valid {
+		st.EndedAt, _ = time.Parse(time.RFC3339Nano, ended.String)
+	}
 	return st, true, nil
+}
+
+// replayAfter is how long beyond its timeout an executed request is replayed: the same
+// call of the same agent for the device gets its result instead of a new request
+// (issue #27, layer 2; covers clients that give up after about 4 minutes).
+const replayAfter = 5 * time.Minute
+
+// Replayed is an earlier request whose confirmed action was executed.
+type Replayed struct {
+	Ref string    // its approval ID
+	At  time.Time // when it was confirmed
+}
+
+// Replay returns the last request of the agent for the device and call (params_digest)
+// that was executed after a confirmation, if now lies within its timeout plus
+// replayAfter after its end.
+func (j *Journal) Replay(ctx context.Context, clientID, entityID, digest string, now time.Time) (Replayed, bool, error) {
+	var ref, answered, created, expires, ended string
+	err := j.db.QueryRowContext(ctx, `SELECT agent_ref, coalesce(answered_at, ended_at), created_at, expires_at, ended_at
+		FROM approval_journal INDEXED BY approval_journal_call
+		WHERE client_id = ? AND entity_id = ? AND params_digest = ? AND state = ? AND json_extract(result, '$.status') = ?
+		ORDER BY ended_at DESC LIMIT 1`, clientID, entityID, digest, stateEnded, audit.StatusExecuted).
+		Scan(&ref, &answered, &created, &expires, &ended)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Replayed{}, false, nil
+	}
+	if err != nil {
+		return Replayed{}, false, fmt.Errorf("%w: %w", ErrJournal, err)
+	}
+	times := make([]time.Time, 4)
+	for i, s := range []string{answered, created, expires, ended} {
+		if times[i], err = time.Parse(time.RFC3339Nano, s); err != nil {
+			return Replayed{}, false, fmt.Errorf("%w: replay times: %w", ErrJournal, err)
+		}
+	}
+	if now.After(times[3].Add(times[2].Sub(times[1]) + replayAfter)) {
+		return Replayed{}, false, nil
+	}
+	return Replayed{Ref: ref, At: times[0]}, true, nil
+}
+
+// Keyed is the request an agent's idempotency key names.
+type Keyed struct {
+	Ref          string
+	EntityID     string
+	ParamsDigest string
+}
+
+// ByKey returns the request of the agent with the idempotency key, while its row exists.
+func (j *Journal) ByKey(ctx context.Context, clientID, key string) (Keyed, bool, error) {
+	if key == "" {
+		return Keyed{}, false, nil
+	}
+	var k Keyed
+	err := j.db.QueryRowContext(ctx, `SELECT agent_ref, entity_id, params_digest FROM approval_journal
+		WHERE client_id = ? AND idempotency_key = ?`, clientID, key).Scan(&k.Ref, &k.EntityID, &k.ParamsDigest)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Keyed{}, false, nil
+	}
+	if err != nil {
+		return Keyed{}, false, fmt.Errorf("%w: %w", ErrJournal, err)
+	}
+	return k, true, nil
 }
 
 // Recovered counts what Recover ended.

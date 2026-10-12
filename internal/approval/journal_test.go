@@ -763,3 +763,95 @@ func TestEndNowAndUnreadableLookups(t *testing.T) {
 		t.Errorf("closed database: %v", err)
 	}
 }
+
+// endWith ends the request id with an approval and a result, as the gateway does.
+func (je *journalEnv) endWith(t *testing.T, id string, a *audit.Approval, result audit.Result) {
+	t.Helper()
+	if err := je.journal.EndNow(context.Background(), id, a, result); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Replay window (issue #27, layer 2): the last request of the agent for the device and
+// call that was executed after a confirmation, within its timeout plus 5 minutes after
+// the end; nothing for another agent, device or call, nor for one not executed.
+func TestReplayFindsTheLastExecutedRequest(t *testing.T) {
+	je := newJournalEnv(t)
+	ctx := context.Background()
+	o := je.open(t, idOpen) // timeout: one minute
+	digest := o.Request.Record.ParamsDigest
+	if _, ok, err := je.journal.Replay(ctx, "hm-client:voice", "lock.front_door", digest, je.now); ok || err != nil {
+		t.Fatalf("open request replayed: %v", err)
+	}
+	answered := je.now.Add(10 * time.Second)
+	confirmed := &audit.Approval{Outcome: OutcomeApproved, By: u1, Via: ViaPush, At: answered}
+	if err := je.journal.Executing(ctx, idOpen, *confirmed); err != nil {
+		t.Fatal(err)
+	}
+	je.endWith(t, idOpen, confirmed, audit.Result{Status: audit.StatusExecuted})
+	r, ok, err := je.journal.Replay(ctx, "hm-client:voice", "lock.front_door", digest, je.now.Add(time.Minute))
+	if err != nil || !ok || r.Ref != o.Request.Record.AgentRef || !r.At.Equal(answered) {
+		t.Errorf("Replay = %+v, %v, %v", r, ok, err)
+	}
+	for name, args := range map[string][3]string{
+		"other agent": {"hm-client:other", "lock.front_door", digest}, "other device": {"hm-client:voice", "lock.back_door", digest},
+		"other call": {"hm-client:voice", "lock.front_door", "sha256:other"},
+	} {
+		if _, ok, _ := je.journal.Replay(ctx, args[0], args[1], args[2], je.now); ok {
+			t.Errorf("%s replayed", name)
+		}
+	}
+	// The window: the request's timeout (1 minute) plus 5 minutes after the end.
+	if _, ok, _ := je.journal.Replay(ctx, "hm-client:voice", "lock.front_door", digest, je.now.Add(6*time.Minute-time.Second)); !ok {
+		t.Error("not replayed within the window")
+	}
+	if _, ok, _ := je.journal.Replay(ctx, "hm-client:voice", "lock.front_door", digest, je.now.Add(6*time.Minute+time.Second)); ok {
+		t.Error("replayed after the window")
+	}
+	je.open(t, idEnded)
+	je.endWith(t, idEnded, &audit.Approval{Outcome: OutcomeRejected, By: u1, Via: ViaPush, At: answered}, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval})
+	if r, _, _ := je.journal.Replay(ctx, "hm-client:voice", "lock.front_door", digest, je.now); r.Ref != o.Request.Record.AgentRef {
+		t.Errorf("a refusal replayed: %+v", r)
+	}
+}
+
+// The idempotency key ties an agent's calls to its request while the row exists; the
+// state shown is kept with the request.
+func TestByIdempotencyKeyAndStateShown(t *testing.T) {
+	je := newJournalEnv(t)
+	ctx := context.Background()
+	req := journaled()
+	req.State = "locked"
+	req.Record.AgentRef, req.Record.IdempotencyKey = "apr_"+idOpen, "order-4711"
+	o := Opened{ID: idOpen, Tag: tagPrefix + idOpen, Request: req, Created: je.now, Expires: je.now.Add(time.Minute)}
+	if err := je.journal.Open(ctx, o); err != nil {
+		t.Fatal(err)
+	}
+	k, ok, err := je.journal.ByKey(ctx, "hm-client:voice", "order-4711")
+	if err != nil || !ok || k.Ref != "apr_"+idOpen || k.EntityID != "lock.front_door" || k.ParamsDigest != req.Record.ParamsDigest {
+		t.Errorf("ByKey = %+v, %v, %v", k, ok, err)
+	}
+	if _, ok, _ := je.journal.ByKey(ctx, "hm-client:other", "order-4711"); ok {
+		t.Error("another agent's key")
+	}
+	if _, ok, _ := je.journal.ByKey(ctx, "hm-client:voice", ""); ok {
+		t.Error("empty key")
+	}
+	var state string
+	_ = je.db.QueryRow(`SELECT state_before FROM approval_journal WHERE id = ?`, idOpen).Scan(&state)
+	if state != "locked" {
+		t.Errorf("state = %q", state)
+	}
+	// The same key twice cannot be stored.
+	o.ID, o.Request.Record.AgentRef = idExecuting, "apr_"+idExecuting
+	if err := je.journal.Open(ctx, o); !errors.Is(err, ErrJournal) && err == nil {
+		t.Errorf("duplicate key stored: %v", err)
+	}
+	_ = je.db.Close()
+	if _, _, err := je.journal.ByKey(ctx, "hm-client:voice", "order-4711"); !errors.Is(err, ErrJournal) {
+		t.Errorf("closed: %v", err)
+	}
+	if _, _, err := je.journal.Replay(ctx, "hm-client:voice", "lock.front_door", "x", je.now); !errors.Is(err, ErrJournal) {
+		t.Errorf("closed: %v", err)
+	}
+}

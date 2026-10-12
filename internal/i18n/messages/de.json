@@ -1,6 +1,7 @@
 {
   "approval_title": "Freigabe nötig: {agent}",
   "approval_message": "{agent} möchte an „{device}“ ausführen: {action}.",
+  "approval_message_state": "{agent} möchte an „{device}“ ({state}) ausführen: {action}.",
   "approval_reason": "Angabe des Agenten, nicht geprüft: {reason}",
   "approval_no_answer": "Ohne Antwort wird die Anfrage abgelehnt.",
   "approval_approve": "Erlauben",

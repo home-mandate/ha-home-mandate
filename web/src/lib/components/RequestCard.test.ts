@@ -64,6 +64,16 @@ describe('RequestCard', () => {
     expect(within(screen.getByRole('heading')).getByText('Haustür').tagName).toBe('BDI');
   });
 
+  it('shows the device’s state when asked (SPEC-v0 11.1 item 10), cleaned; nothing when unknown', () => {
+    show({ state: 'closed\u202E' });
+    const line = screen.getByText('State when asked').parentElement as HTMLElement;
+    expect(line.textContent?.replace(/\s+/g, ' ').trim()).toBe('State when asked closed');
+    expect(within(line).getByText('closed').tagName).toBe('BDI');
+    cleanup();
+    show({ state: null });
+    expect(screen.queryByText('State when asked')).toBeNull();
+  });
+
   it('names the recipients and counts down on the server clock', () => {
     show({ recipients: ['Anna', 'Jonas'] });
     const card = screen.getByRole('article');

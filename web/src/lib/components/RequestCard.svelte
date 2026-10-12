@@ -70,6 +70,9 @@
     {#if values.length > 0}
       <p class="values"><span>{m.audit_parameters()}</span> {#each values as value, i (i)}{#if i > 0}{LIST_SEPARATOR}{/if}<bdi>{value}</bdi>{/each}</p>
     {/if}
+    {#if request.state}
+      <p class="values"><span>{m.request_state()}</span> <bdi>{cleanUntrusted(request.state)}</bdi></p>
+    {/if}
     {#if request.reason}<ReasonBox reason={request.reason} />{/if}
     {#if request.recipients.length > 0}<span class="sent">{m.request_sent_to({ names: recipients })}</span>{/if}
     {#if children}<div class="actions">{@render children(titleId)}</div>{/if}

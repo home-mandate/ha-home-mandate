@@ -169,12 +169,15 @@ verified", the values it wants to set, and has two buttons: **Allow** and **Deny
 - After an approval Home-Mandate checks the emergency stop, the agent's token and the
   mandate again before it acts.
 - An agent can have at most 2 approval requests waiting.
-- **Cooldown after refusal:** after a refusal, a timeout or an invalid answer, the same
-  agent may not ask again for the same device for 1 minute, then 2, 4 … up to 1 hour for
-  each further one. An approval ends the cooldown, and so does an hour without a new
-  refusal. Nobody is notified during a cooldown; the agent gets `approval_cooldown`.
-- Open approval requests live in memory; a restart of Home-Mandate ends them, and nothing
-  is executed.
+- **Cooldown after refusal:** after a refusal, an invalid answer, a withdrawal by the
+  agent or a second unanswered request in a row, the same agent may not ask again for the
+  same device for 1 minute, then 2, 4 … up to 1 hour for each further one. A single
+  unanswered request starts no cooldown: the agent may ask once more. An approval ends
+  the cooldown, and so does an hour without a new refusal. Nobody is notified during a
+  cooldown; the agent gets `approval_cooldown` with the time it may ask again.
+- A restart of Home-Mandate ends open approval requests: nothing is executed, the audit
+  log records them as ended by the restart, and the notification on your phone is
+  replaced by "Approval request ended".
 
 Optionally, **Also in Home Assistant's notification bell** shows a neutral hint ("A
 request is waiting in Home-Mandate") in Home Assistant, without agent, device or reason,

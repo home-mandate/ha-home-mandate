@@ -51,6 +51,7 @@ type wireApprovalRequest struct {
 	Reason     *string      `json:"reason"`
 	Params     []wireParam  `json:"params"`
 	Recipients []string     `json:"recipients"`
+	State      *string      `json:"state"` // the device's state when asked; null if unknown
 	CreatedAt  string       `json:"created_at"`
 	ExpiresAt  string       `json:"expires_at"`
 	CanAnswer  bool         `json:"can_answer"`
@@ -83,6 +84,7 @@ func (s *Server) presentRequest(ctx context.Context, o approval.Open, user strin
 	out := wireApprovalRequest{ID: o.ID, Agent: wireAgentRef{ClientID: req.ClientID, DisplayName: req.Agent}, EntityID: req.EntityID,
 		DeviceName: approval.ShownText(req.Device, approval.ShownNameMax), Area: optional(req.Area), Action: req.Action,
 		Critical: req.Critical, Reason: optional(approval.ShownText(req.Reason, approval.ShownReasonMax)),
+		State:  optional(approval.ShownText(req.State, approval.ShownNameMax)),
 		Params: []wireParam{}, Recipients: []string{}, CreatedAt: *formatTime(o.CreatedAt), ExpiresAt: *formatTime(o.ExpiresAt)}
 	for _, p := range approval.ShownParams(req.Params) {
 		out.Params = append(out.Params, wireParam{Name: p.Name, Value: p.Value})
@@ -193,7 +195,7 @@ func (s *Server) historyEntry(ctx context.Context, seq int64, recorded time.Time
 var (
 	historyCauses = []string{audit.CauseWithdrawn, audit.CauseRevoked, audit.CauseEmergencyStop, audit.CauseInterrupted}
 	historyErrors = []string{"outcome_unknown", "ha_unavailable", "ha_error", "mandate_unavailable", "clock_behind",
-		"journal_unavailable", "timezone_unknown", "service_user_unknown"}
+		"journal_unavailable", "timezone_unknown", "service_user_unknown", "already_in_state", "state_changed"}
 )
 
 const otherError = "other"
