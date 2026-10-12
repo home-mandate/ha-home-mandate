@@ -78,13 +78,20 @@ func serve(ctx context.Context, e env) int {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel() // also stops what a failed start-up already started
 	uid, gid := os.Getuid(), os.Getgid()
+	// Until the configuration names the log level, errors that stop the start are logged
+	// by a bootstrap logger in the same JSON format as everything after (issue #32).
+	boot := slog.New(slog.NewJSONHandler(e.stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	cfg, err := config.Load(config.Env{Getenv: e.getenv, ReadFile: e.readFile, Stat: e.stat, Unsetenv: e.unsetenv})
 	if err != nil {
-		fmt.Fprintln(e.stderr, "home-mandate:", permissionHint(err, uid, gid))
+		boot.Error("invalid configuration", "error", config.Reason(permissionHint(err, uid, gid)))
 		return exitFailure
 	}
 	if cfg, err = appHomeAssistant(ctx, cfg, coreInfo); err != nil {
-		fmt.Fprintln(e.stderr, "home-mandate:", err)
+		if errors.Is(err, config.ErrInvalid) {
+			boot.Error("invalid configuration", "error", config.Reason(err))
+		} else {
+			boot.Error("cannot ask the Supervisor how Home Assistant is reached", "error", err)
+		}
 		return exitFailure
 	}
 	s, err := openStore(ctx, cfg.DataDir)
@@ -92,13 +99,13 @@ func serve(ctx context.Context, e env) int {
 		return exitOK // stopped during start-up
 	}
 	if err != nil {
-		fmt.Fprintln(e.stderr, "home-mandate:", permissionHint(err, uid, gid))
+		boot.Error("cannot open the data store", "error", permissionHint(err, uid, gid))
 		return exitFailure
 	}
 	defer s.store.Close()
 	s.cfg = cfg
 	if err := attachSigner(ctx, s, cfg.DataDir, e.getenv, true); err != nil {
-		fmt.Fprintln(e.stderr, "home-mandate:", permissionHint(err, uid, gid))
+		boot.Error("cannot open the audit checkpoint key", "error", permissionHint(err, uid, gid))
 		return exitFailure
 	}
 	logger := slog.New(slog.NewJSONHandler(e.stderr, &slog.HandlerOptions{Level: s.cfg.LogLevel}))
@@ -805,6 +812,8 @@ var coreInfo = ha.CoreInfo
 // and with the TLS the household configured, which the Supervisor knows. With TLS the
 // certificate is checked against the name the browser uses. Without a public URL OAuth is
 // off and nothing is asked; container mode takes the configuration as it is.
+// An error of the Supervisor is returned as it is; an unusable ha_browser_url wraps
+// config.ErrInvalid.
 func appHomeAssistant(ctx context.Context, cfg config.Config,
 	info func(context.Context, string, ha.Secret, ha.Plaintext) (int, bool, error)) (config.Config, error) {
 	if cfg.Mode != config.ModeApp || cfg.PublicURL == "" {
@@ -812,14 +821,14 @@ func appHomeAssistant(ctx context.Context, cfg config.Config,
 	}
 	port, tls, err := info(ctx, "http://supervisor", cfg.HAToken, cfg.HAPlaintext)
 	if err != nil {
-		return cfg, fmt.Errorf("cannot ask the Supervisor how Home Assistant is reached: %w", err)
+		return cfg, err
 	}
 	host := net.JoinHostPort("homeassistant", strconv.Itoa(port))
 	cfg.HAHTTPURL, cfg.HAUserURL, cfg.HAServerName = "http://"+host, "ws://"+host+"/api/websocket", ""
 	if tls {
 		browser, err := url.Parse(cfg.HABrowserURL)
 		if err != nil || browser.Hostname() == "" {
-			return cfg, errors.New("home assistant speaks TLS: ha_browser_url must name the host its certificate is for")
+			return cfg, fmt.Errorf("%w: home assistant speaks TLS: ha_browser_url must name the host its certificate is for", config.ErrInvalid)
 		}
 		cfg.HAHTTPURL, cfg.HAUserURL, cfg.HAServerName = "https://"+host, "wss://"+host+"/api/websocket", browser.Hostname()
 	}

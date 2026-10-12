@@ -123,7 +123,7 @@ If a file or directory has the wrong owner, Home-Mandate stops and names the fix
 example:
 
 ```
-home-mandate: store: insecure permissions: /data is owned by uid 0, but Home-Mandate runs as uid 65532; fix: chown -R 65532:65532 /data (in a container: the host directory mounted there)
+{"level":"ERROR","msg":"cannot open the data store","error":"store: insecure permissions: /data is owned by uid 0, but Home-Mandate runs as uid 65532; fix: chown -R 65532:65532 /data (in a container: the host directory mounted there)"}
 ```
 
 Run the `chown` on the host directory that is mounted at `/data` (here `./data`).
@@ -268,9 +268,9 @@ docker compose up -d        # or: podman-compose up -d
 docker compose logs -f home-mandate
 ```
 
-Configuration errors are printed as one line starting with `home-mandate:` and the
-container stops. After that, the log is JSON, one line per event. A good start shows,
-among others:
+The log is JSON, one line per event. An error in the configuration is one line with
+`"level":"ERROR"`, `"msg":"invalid configuration"` and the cause in `error`, and the
+container stops. A good start shows, among others:
 
 ```
 {"level":"INFO","msg":"MCP endpoint listening","addr":"192.0.2.10:8765","tls":true,"path":"/mcp"}

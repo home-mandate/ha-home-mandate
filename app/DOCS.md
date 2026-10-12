@@ -40,7 +40,7 @@ The log should show `connected to home assistant`, `MCP endpoint listening` (wit
 
 | Option | Meaning |
 |---|---|
-| `tls_certfile`, `tls_keyfile` | Certificate chain and key, as file names in `/ssl` (default `fullchain.pem`, `privkey.pem`), for the MCP endpoint (TLS 1.3). Must cover the host of `public_url`, or the app does not start. Without the files, the endpoint answers on localhost only. Renewed files are taken over without a restart. |
+| `tls_certfile`, `tls_keyfile` | Certificate chain and key, as file names in `/ssl` (default `fullchain.pem`, `privkey.pem`), for the MCP endpoint (TLS 1.3). Must cover the host of `public_url`, or the app does not start. Without the files, the endpoint answers on localhost only. Leave both options empty to turn TLS off on purpose (localhost only); setting just one of them stops the start. Renewed files are taken over without a restart. |
 | `public_url` | Where agents and browsers reach Home-Mandate. Connected directly, with the port: `https://hm.example.org:8765`; behind a reverse proxy that passes TLS through, the proxy's address without a port: `https://hm.example.org`. Without it, no agent can be admitted. |
 | `ha_browser_url` | Home Assistant as your browser reaches it, for example `https://ha.example.org:8123`. Required with `public_url`: admitting an agent signs you in through Home Assistant. If Home Assistant serves its own certificate (for example DuckDNS), use the name that certificate is issued for. Home-Mandate asks the Supervisor at start on which port and with which TLS setting Home Assistant serves; nothing else to set. |
 | `approval_timeout_seconds` | How long an action waits for an approval, 30 to 600 seconds (default 120). A mandate may only shorten it. |

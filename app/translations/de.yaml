@@ -4,9 +4,12 @@ configuration:
     description: >-
       Datei in /ssl mit der Zertifikatskette für den MCP-Endpunkt, z. B. fullchain.pem. Sie
       muss den Host der öffentlichen URL abdecken. Ohne sie antwortet der Endpunkt nur auf localhost.
+      Beide TLS-Optionen leer schaltet TLS ab: Der Endpunkt antwortet dann nur auf localhost.
   tls_keyfile:
     name: Privater TLS-Schlüssel
-    description: Datei in /ssl mit dem privaten Schlüssel des Zertifikats, z. B. privkey.pem.
+    description: >-
+      Datei in /ssl mit dem privaten Schlüssel des Zertifikats, z. B. privkey.pem. Beide
+      TLS-Optionen setzen oder beide leer lassen.
   approval_timeout_seconds:
     name: Wartezeit auf Freigaben
     description: >-
