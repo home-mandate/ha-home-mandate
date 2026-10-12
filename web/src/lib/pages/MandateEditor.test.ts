@@ -44,7 +44,12 @@ const card = async (n: number) => within((await cards())[n - 1] as HTMLElement);
 const status = () => document.querySelector('.state')?.textContent?.trim();
 const announcedState = () => screen.getAllByRole('status').find((s) => /saved|unsaved/i.test(s.textContent ?? ''))?.textContent?.trim();
 const live = () => document.querySelector('[aria-live="polite"].hm-visually-hidden')?.textContent ?? '';
-const saveButton = () => screen.getByRole('button', { name: 'Save …' });
+/** The header's save button: the one with the keyboard shortcut. The save bar's button has the same name (issue #37). */
+const saveButton = () => {
+  const found = screen.getAllByRole('button', { name: 'Review and save' }).filter((b) => b.hasAttribute('aria-keyshortcuts'));
+  if (found.length !== 1) throw new Error(`expected one header save button, found ${found.length}`);
+  return found[0] as HTMLElement;
+};
 const toastTexts = () => toasts.list().map((t) => t.text);
 
 async function open(n: number) {
@@ -790,7 +795,7 @@ describe('unsaved changes (issue #20)', () => {
     await waitFor(() => expect(live()).toBe(HINT));
     // The focus stays on the rule; the hint offers the way to saving.
     expect(document.activeElement).toBe((await card(1)).getByRole('button', { name: 'Edit: Rule 1' }));
-    await fireEvent.click((await card(1)).getByRole('button', { name: 'Save now …' }));
+    await fireEvent.click((await card(1)).getByRole('button', { name: 'Review and save now' }));
     expect(await screen.findByRole('dialog', { name: 'Save changes?' })).toBeTruthy();
   });
 
@@ -820,7 +825,7 @@ describe('unsaved changes (issue #20)', () => {
   it('saves from the bar: summary, new version, bar and hint gone', async () => {
     const { api } = await start();
     await fireEvent.click((await askFirst()).getByRole('button', { name: 'Done' }));
-    await fireEvent.click(within(bar() as HTMLElement).getByRole('button', { name: 'Save changes …' }));
+    await fireEvent.click(within(bar() as HTMLElement).getByRole('button', { name: 'Review and save' }));
     const dialog = await screen.findByRole('dialog', { name: 'Save changes?' });
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Save as version 2' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -889,7 +894,7 @@ describe('states', () => {
     await rulesRegion();
     expect(screen.getByText('Revoked')).toBeTruthy();
     expect(screen.getByText(/This mandate is revoked and no longer applies/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Save …' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Review and save' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Edit/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Move rule/ })).toBeNull();

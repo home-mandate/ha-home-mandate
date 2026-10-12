@@ -437,7 +437,8 @@ describe('leaving the app with unsaved changes (issue #20)', () => {
     await fireEvent.input(field, { target: { value: '20' } });
     await tick();
     expect(leave()).toBe(true);
-    await fireEvent.click(screen.getByRole('button', { name: 'Save …' }));
+    // The header's button; the save bar's has the same name (issue #37).
+    await fireEvent.click(screen.getAllByRole('button', { name: 'Review and save' }).find((b) => b.hasAttribute('aria-keyshortcuts')) as HTMLElement);
     const dialog = await screen.findByRole('dialog', { name: 'Save changes?' });
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Save template' }));
     await vi.waitFor(() => expect(leave()).toBe(false));

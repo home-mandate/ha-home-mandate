@@ -15,7 +15,7 @@ const text = {
     allow: 'Erlauben',
     unsaved: '1 ungespeicherte Änderung',
     saved: 'Alles gespeichert',
-    save: 'Speichern …',
+    save: 'Prüfen und speichern',
     summary: 'Änderungen speichern?',
     keep: 'Weiter bearbeiten',
     confirm: 'Als Version 2 speichern',
@@ -48,7 +48,7 @@ const text = {
     allow: 'Allow',
     unsaved: '1 unsaved change',
     saved: 'All saved',
-    save: 'Save …',
+    save: 'Review and save',
     summary: 'Save changes?',
     keep: 'Keep editing',
     confirm: 'Save as version 2',
@@ -99,7 +99,7 @@ test('from the list into the editor: change a rule, read the summary, save a ver
   // The preview follows the draft at once.
   await expect(page.getByRole('gridcell', { name: /Küchenlicht/ }).first()).toContainText(info.project.name === 'de' ? 'Nachfragen' : 'Ask first');
 
-  await page.getByRole('button', { name: t.save, exact: true }).click();
+  await page.locator('main .head').getByRole('button', { name: t.save, exact: true }).click();
   const dialog = page.getByRole('dialog', { name: t.summary });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('button', { name: t.keep })).toBeFocused();
@@ -181,7 +181,7 @@ test('a save attempt with errors lists them instead of saving', async ({ page },
   await page.getByRole('button', { name: t.addRule }).click();
   // The new rule starts with "read"; without any action it is invalid.
   await page.getByRole('button', { name: info.project.name === 'de' ? 'lesen' : 'read', exact: true }).click();
-  await page.getByRole('button', { name: t.save, exact: true }).click();
+  await page.locator('main .head').getByRole('button', { name: t.save, exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   // The list of problems takes the focus; its count is announced once.
   await expect(page.getByRole('group').filter({ hasText: t.errors })).toBeFocused();
@@ -200,8 +200,9 @@ test('mobile: rules and preview behind tabs, cards instead of a grid, no horizon
   expect(await pageScroll(page)).toBe(0);
   await page.getByRole('button', { name: t.edit(3) }).click();
   expect(await pageScroll(page)).toBe(0);
-  for (const name of [t.done, t.save]) {
-    const box = await page.getByRole('button', { name, exact: true }).boundingBox();
+  // The header's save button; the save bar's has the same name (issue #37).
+  for (const button of [page.getByRole('button', { name: t.done, exact: true }), page.locator('main .head').getByRole('button', { name: t.save, exact: true })]) {
+    const box = await button.boundingBox();
     expect(box?.height).toBeGreaterThanOrEqual(44);
   }
   await page.getByRole('button', { name: t.done, exact: true }).click();

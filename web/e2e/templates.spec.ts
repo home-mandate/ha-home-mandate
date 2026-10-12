@@ -26,7 +26,7 @@ const text = {
     name: 'Name der Vorlage',
     create: 'Vorlage anlegen',
     reserved: 'Namen, die mit „hm-“ beginnen, gehören den mitgelieferten Vorlagen.',
-    save: 'Speichern …',
+    save: 'Prüfen und speichern',
     del: 'Löschen',
     deleteTitle: /Vorlage .*meine-vorlage.* löschen\?/,
     cancel: 'Abbrechen',
@@ -72,7 +72,7 @@ const text = {
     name: 'Template name',
     create: 'Create template',
     reserved: 'Names starting with “hm-” belong to the built-in templates.',
-    save: 'Save …',
+    save: 'Review and save',
     del: 'Delete',
     deleteTitle: /Delete template .*meine-vorlage.*\?/,
     cancel: 'Cancel',
@@ -139,7 +139,7 @@ test('a base template in the editor: placeholder kept, saved as a new template, 
   await expect(page.getByRole('button', { name: t.placeholder })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('main')).not.toContainText('$approvers');
   // Base templates are not saved in place.
-  await expect(page.getByRole('button', { name: t.save, exact: true })).toHaveCount(0);
+  await expect(page.locator('main .head').getByRole('button', { name: t.save, exact: true })).toHaveCount(0);
 
   await page.getByLabel(t.rate).fill('30');
   await expect(page.locator('main').getByText(t.unsaved).first()).toBeVisible();
@@ -156,7 +156,7 @@ test('a base template in the editor: placeholder kept, saved as a new template, 
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('meine-vorlage');
   await expect(page.getByLabel(t.rate)).toHaveValue('30');
   await expect(page.getByRole('button', { name: t.placeholder })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByRole('button', { name: t.save, exact: true })).toBeVisible();
+  await expect(page.locator('main .head').getByRole('button', { name: t.save, exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: t.del, exact: true }).click();
   const confirm = page.getByRole('alertdialog', { name: t.deleteTitle });
@@ -206,7 +206,7 @@ test('a hidden base template is marked, offered nowhere, and offered again once 
 /** saveRate changes the rate limit of the open template and saves it in place. */
 async function saveRate(page: Page, t: ReturnType<typeof texts>, value: string) {
   await page.getByLabel(t.rate).fill(value);
-  await page.getByRole('button', { name: t.save, exact: true }).click();
+  await page.locator('main .head').getByRole('button', { name: t.save, exact: true }).click();
   await page.getByRole('dialog', { name: t.saveTitle }).getByRole('button', { name: t.saveTemplate }).click();
 }
 

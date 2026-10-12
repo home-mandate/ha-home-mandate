@@ -90,6 +90,9 @@ protection class, expired, not yet valid) needs its own named test.
   the bar appear without moving the page or the focus; the bar's bottom is the viewport's
   bottom; the focused element and every keyboard stop stay uncovered; at the very end the
   last rule lies above the bar; saving removes it without a jump.
+  At 320 px (mandate, own and base template, both directions) the longer save labels
+  ("Review and save", "Review and save now", issue #37) in the header, the rule's hint and
+  the bar stay inside the viewport, nothing is clipped, and axe finds nothing.
 - **Colour scheme switch** (`web/e2e/theme.spec.ts`, de, en and pseudo): the header switch
   changes the scheme at once and the choice survives a reload; blocked storage or an unknown
   stored value falls back to the system scheme; at 375 px the compact switch sits next to the

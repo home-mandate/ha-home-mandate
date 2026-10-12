@@ -395,8 +395,8 @@ edit:
 - **Rules**: **Add rule** (new rules start with *Ask first*), then decision, category, area
   or **Single device (optional)**, actions, **Conditions (optional)** and limits.
 
-**Save …** shows the changed rules and their effect on permissions before it stores a new
-version. **Versions** lists all versions with author and time; compare two or **Restore as
+**Review and save** shows the changed rules and their effect on permissions before it
+stores a new version. **Versions** lists all versions with author and time; compare two or **Restore as
 new version**.
 
 **Renamed in Home Assistant.** If you rename an entity in Home Assistant, rules on its
