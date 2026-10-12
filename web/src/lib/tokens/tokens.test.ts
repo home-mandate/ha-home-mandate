@@ -88,6 +88,8 @@ const PAIRS: readonly [string, string, number][] = [
   ['focus', 'surface', NON_TEXT],
   ['focus', 'bg', NON_TEXT],
   ['accent', 'surface', NON_TEXT],
+  // The bar of the active settings entry (issue #47).
+  ['accent', 'accent-subtle', NON_TEXT],
   ['danger-fg', 'surface', NON_TEXT],
 ];
 

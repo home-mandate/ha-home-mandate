@@ -252,10 +252,16 @@
   nav a:hover {
     background: var(--hm-color-surface-sunken);
   }
+  /* Not bold: the mark must not change the entry's width, else the column and the content next
+     to it move (issue #47). The inset bar on the inner edge takes no room and keeps the mark
+     recognisable without colour. */
   nav a[aria-current='location'] {
     background: var(--hm-color-accent-subtle);
     color: var(--hm-color-accent-text);
-    font-weight: var(--hm-font-weight-semibold);
+    box-shadow: inset var(--hm-mark-width) 0 0 var(--hm-color-accent);
+  }
+  :global([dir='rtl']) nav a[aria-current='location'] {
+    box-shadow: inset calc(-1 * var(--hm-mark-width)) 0 0 var(--hm-color-accent);
   }
   nav a:focus-visible {
     outline: var(--hm-focus-width) solid var(--hm-color-focus);
@@ -297,8 +303,10 @@
     margin: 0;
   }
   @media (forced-colors: active) {
-    nav a[aria-current='location'] {
-      border: 2px solid Highlight;
+    /* An outline inside the entry: a border would make it wider (issue #47). */
+    nav a[aria-current='location']:not(:focus-visible) {
+      outline: 2px solid Highlight;
+      outline-offset: -2px;
     }
   }
 </style>

@@ -62,9 +62,9 @@
   .done .bar {
     background: var(--hm-color-positive-fg);
   }
+  /* Not bold, so the labels keep their line breaks from step to step (issue #47); the bar marks the step. */
   .current {
     color: var(--hm-color-text);
-    font-weight: var(--hm-font-weight-semibold);
   }
   .current .bar {
     background: var(--hm-color-accent);

@@ -283,10 +283,11 @@
     font: inherit;
     font-weight: var(--hm-font-weight-medium);
   }
+  /* Not bold (issue #47); the inset bar at the end marks the tab without colour and takes no room. */
   .switch button[aria-selected='true'] {
     background: var(--hm-color-surface);
     color: var(--hm-color-text);
-    font-weight: 600;
+    box-shadow: inset 0 calc(-1 * var(--hm-mark-width)) 0 var(--hm-color-accent);
   }
   @media (forced-colors: active) {
     .switch button {
