@@ -40,6 +40,13 @@ async function start({ section = null, prepare, notify = { hidden: () => true } 
 }
 
 const region = (name: string) => screen.getByRole('region', { name });
+/** The accessible description of an element: the texts its aria-describedby points to, in order. */
+const description = (el: Element) =>
+  (el.getAttribute('aria-describedby') ?? '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((id) => document.getElementById(id)?.textContent?.trim() ?? '')
+    .join(' ');
 const card = async (name: string) => within(await screen.findByRole('region', { name: 'Approvers' })).findByRole('article', { name });
 
 describe('Settings: frame', () => {
@@ -122,6 +129,25 @@ describe('Settings: approvers', () => {
     expect(screen.getByText('Normal and critical requests reach someone.')).toBeTruthy();
   });
 
+  it('explains critical requests per device once, under the heading, and describes each device switch with it (issue #39)', async () => {
+    await start();
+    const markus = await card('Markus');
+    const sentence =
+      'Only iPhone and iPad ask for Face ID or the passcode before Allow takes effect. On Android and computers, anyone holding the device can approve – for example unlocking the front door. Leave this off there.';
+    await fireEvent.change(within(markus).getByLabelText('Device'), { target: { value: 'mobile_app_macbook' } });
+    await fireEvent.click(within(markus).getByRole('button', { name: 'Add device' }));
+    const mac = await within(markus).findByRole('group', { name: 'MacBook Pro' });
+    const pixel = within(markus).getByRole('group', { name: 'Pixel 9' });
+    expect(description(within(pixel).getByRole('switch', { name: 'Critical requests too' }))).toBe(sentence);
+    expect(description(within(mac).getByRole('switch', { name: 'Critical requests too' }))).toBe(sentence);
+    // Shown once, before the list of devices; the old note at the end of the section is gone.
+    const shown = within(markus).getByText(sentence);
+    expect(shown.compareDocumentPosition(within(markus).getAllByRole('list')[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(markus).queryByText(/Leave this off for computers and Android/)).toBeNull();
+    // The other switches keep their own description only.
+    expect(description(within(markus).getByRole('switch', { name: 'Answer in Home-Mandate' }))).not.toContain('Face ID');
+  });
+
   it('asks before critical requests would reach nobody, then saves and shows the new reach', async () => {
     const { api } = await start();
     const markus = await card('Markus');
@@ -163,7 +189,7 @@ describe('Settings: approvers', () => {
     // Decision S11: the Mac starts without critical requests.
     expect(within(mac).getByRole('switch').getAttribute('aria-checked')).toBe('false');
     await fireEvent.click(within(mac).getByRole('switch'));
-    expect(within(markus).getByRole('group', { name: /doesn’t ask for unlocking before a button counts/ })).toBeTruthy();
+    expect(within(markus).getByRole('group', { name: /^.?MacBook Pro.? doesn’t ask for unlocking before Allow takes effect\. Whoever holds it can approve critical requests\. Switch on anyway\?$/ })).toBeTruthy();
   });
 
   it('keeps a switch as the server has it when a save fails', async () => {

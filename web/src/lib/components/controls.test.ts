@@ -269,6 +269,19 @@ describe('Switch and ToggleChip', () => {
     expect(onchange).toHaveBeenCalledWith(true);
   });
 
+  it('adds a shared explanation to its own description', () => {
+    const note = document.createElement('p');
+    note.id = 'shared-note';
+    document.body.append(note);
+    render(Switch, { checked: false, label: 'Critical requests too', description: 'Off', describedby: 'shared-note' });
+    const own = screen.getByText('Off');
+    expect(screen.getByRole('switch').getAttribute('aria-describedby')).toBe(`${own.id} shared-note`);
+    cleanup();
+    render(Switch, { checked: false, label: 'Critical requests too', describedby: 'shared-note' });
+    expect(screen.getByRole('switch').getAttribute('aria-describedby')).toBe('shared-note');
+    note.remove();
+  });
+
   it('ignores clicks on a disabled switch but stays focusable', async () => {
     const onchange = vi.fn();
     render(Switch, { checked: false, label: 'Off for now', disabled: true, onchange });

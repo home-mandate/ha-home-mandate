@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!--
   On/off switch (role="switch"); tone "danger" when switching on weakens a protection.
-  Disabled stays focusable (aria-disabled), so its description says why. Controlled: it
+  Disabled stays focusable (aria-disabled), so its description says why. describedby adds
+  the ID of a text shown elsewhere that applies to several switches. Controlled: it
   shows the checked prop and reports a click through onchange; the caller decides (a save
   that fails leaves the switch as the server has it).
 -->
@@ -10,14 +11,17 @@
     checked: boolean;
     label: string;
     description?: string;
+    /** ID of a shared explanation outside the switch, read after its own description. */
+    describedby?: string;
     tone?: 'accent' | 'danger';
     disabled?: boolean;
     onchange?: (checked: boolean) => void;
   }
 
-  let { checked, label, description, tone = 'accent', disabled = false, onchange }: Props = $props();
+  let { checked, label, description, describedby, tone = 'accent', disabled = false, onchange }: Props = $props();
 
   const id = $props.id();
+  const describedBy = $derived([description ? `${id}-desc` : '', describedby ?? ''].filter(Boolean).join(' ') || undefined);
 
   function toggle() {
     if (!disabled) onchange?.(!checked);
@@ -33,7 +37,7 @@
     aria-checked={checked}
     aria-disabled={disabled ? 'true' : undefined}
     aria-labelledby="{id}-label"
-    aria-describedby={description ? `${id}-desc` : undefined}
+    aria-describedby={describedBy}
     onclick={toggle}
   >
     <span class="knob"></span>
