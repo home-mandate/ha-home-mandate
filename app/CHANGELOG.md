@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.1.0-rc.3
+
+Second release candidate. Experimental.
+
+Approval requests
+- An approval request no longer depends on the agent's call: after a short wait (default
+  45 s, `approval_wait_seconds`) the agent gets a "pending" result with an approval ID and
+  asks again with `approval_status`; a confirmation given later is still executed, exactly
+  once. `approval_cancel` withdraws a request. Clients that give up after a minute
+  (Claude Desktop) no longer lose the answer
+- A repeated request of the same agent for the same action is tied to the open one instead
+  of asking again; shortly after a confirmed execution the same call is not executed again;
+  optional `idempotency_key`
+- The device's state when the request was made is shown in the notification and checked
+  before the execution: an action whose target is already reached, or whose device changed
+  meanwhile, is not executed
+- Requests survive a restart only as a visible end: a request that was waiting is recorded
+  as cancelled, never executed afterwards; the notification is replaced
+- Notifications disappear from the phone when a request ends; revocation and emergency stop
+  are recorded with their cause
+- Refusals that protect the approvers say when the agent may ask again; no cooldown after a
+  single unanswered request
+- The hint in Home Assistant's notification bell points to where the UI really is (in
+  container mode: a link to the UI)
+
+Values and units
+- A value the vocabulary's unit cannot express (e.g. volume 0.335, 21.555 °C) is refused
+  with a clear message instead of being silently left out; what is executed is exactly what
+  was checked
+- An unknown temperature unit is never taken for degrees Celsius. In households that use
+  °F, temperatures are refused until °F support comes in the next release candidate
+
+UI
+- Weekdays follow the first day of the week of the household's country; the country, time
+  zone and units are shown under Settings → Home Assistant connection
+- No more shifting layout: active entries, tabs and selected options are marked without bold
+  text or thicker borders; unselected chips show an x
+- "Review and save" instead of "Save …"; the preview legend explains its marks ("Asks
+  because critical", "Time-dependent", "Within limits")
+- The explanation of "critical requests too" sits where the switches are
+
+Start-up
+- Start-up errors are JSON log lines; the TLS file name options name the option that is
+  wrong, and both empty means TLS off (MCP endpoint on localhost only)
+
 ## 0.1.0-rc.2
 
 First published release candidate (0.1.0-rc.1 was tagged, but its release build stopped before publishing). Experimental.
