@@ -8,8 +8,10 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"math/big"
@@ -124,6 +126,72 @@ func TestLoadAppModeRejectsBadOptions(t *testing.T) {
 			_, err := load(env(map[string]string{"SUPERVISOR_TOKEN": "sup-secret"}), files(fsys))
 			if !errors.Is(err, ErrInvalid) {
 				t.Errorf("Load = %v, want ErrInvalid", err)
+			}
+		})
+	}
+}
+
+// Each TLS option is checked on its own; the message names the option and says what to do.
+func TestLoadAppModeExplainsBadTLSOptions(t *testing.T) {
+	tests := []struct {
+		name, cert, key, want string
+	}{
+		{"key empty", "fullchain.pem", "", "tls_keyfile is empty but tls_certfile is set; set both to file names in /ssl " +
+			"(e.g. fullchain.pem, privkey.pem) or leave both empty to serve the MCP endpoint on localhost only"},
+		{"cert empty", "", "privkey.pem", "tls_certfile is empty but tls_keyfile is set; set both to file names in /ssl " +
+			"(e.g. fullchain.pem, privkey.pem) or leave both empty to serve the MCP endpoint on localhost only"},
+		{"cert path", "../etc/shadow", "privkey.pem", `tls_certfile "../etc/shadow" must be a plain file name in /ssl without a path, e.g. fullchain.pem`},
+		{"cert absolute", "/ssl/fullchain.pem", "privkey.pem", `tls_certfile "/ssl/fullchain.pem" must be a plain file name in /ssl without a path, e.g. fullchain.pem`},
+		{"key backslash", "fullchain.pem", `a\privkey.pem`, `tls_keyfile "a\\privkey.pem" must be a plain file name in /ssl without a path, e.g. privkey.pem`},
+		{"hidden key", "fullchain.pem", ".key", `tls_keyfile ".key" must be a plain file name in /ssl without a path, e.g. privkey.pem`},
+		{"key dot", "fullchain.pem", ".", `tls_keyfile "." must be a plain file name in /ssl without a path, e.g. privkey.pem`},
+		{"cert trailing space", "fullchain.pem ", "privkey.pem", `tls_certfile "fullchain.pem " contains a space or control character; ` +
+			`remove it and enter the plain file name in /ssl, e.g. fullchain.pem`},
+		{"key leading tab", "fullchain.pem", "\tprivkey.pem", `tls_keyfile "\tprivkey.pem" contains a space or control character; ` +
+			`remove it and enter the plain file name in /ssl, e.g. privkey.pem`},
+		{"key only spaces", "fullchain.pem", "  ", `tls_keyfile "  " contains a space or control character; ` +
+			`remove it and enter the plain file name in /ssl, e.g. privkey.pem`},
+		{"cert newline", "full\nchain.pem", "privkey.pem", `tls_certfile "full\nchain.pem" contains a space or control character; ` +
+			`remove it and enter the plain file name in /ssl, e.g. fullchain.pem`},
+		{"cert no-break space", "fullchain.pem\u00a0", "privkey.pem", `tls_certfile "fullchain.pem\u00a0" contains a space or control character; ` +
+			`remove it and enter the plain file name in /ssl, e.g. fullchain.pem`},
+		{"key delete character", "fullchain.pem", "privkey.pem\x7f", `tls_keyfile "privkey.pem\x7f" contains a space or control character; ` +
+			`remove it and enter the plain file name in /ssl, e.g. privkey.pem`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, err := json.Marshal(map[string]any{"tls_certfile": tc.cert, "tls_keyfile": tc.key, "approval_timeout_seconds": 120, "log_level": "info"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": string(opts)}))
+			if !errors.Is(err, ErrInvalid) {
+				t.Fatalf("Load = %v, want ErrInvalid", err)
+			}
+			if got := Reason(err); got != tc.want {
+				t.Errorf("Reason = %s\nwant      %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// Reason drops the ErrInvalid prefix for a log line that already says the configuration
+// is invalid; other errors stay as they are.
+func TestReason(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"invalid", fmt.Errorf("%w: HM_DATA_DIR must be absolute", ErrInvalid), "HM_DATA_DIR must be absolute"},
+		{"wrapped further", fmt.Errorf("%w; hint", fmt.Errorf("%w: read x: denied", ErrInvalid)), "read x: denied; hint"},
+		{"other error", errors.New("config: invalid configuration: not wrapped"), "config: invalid configuration: not wrapped"},
+		{"prefix not at the start", fmt.Errorf("start: %w: x", ErrInvalid), "start: config: invalid configuration: x"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Reason(tc.err); got != tc.want {
+				t.Errorf("Reason = %q, want %q", got, tc.want)
 			}
 		})
 	}

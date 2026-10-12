@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
@@ -219,17 +220,51 @@ func loadApp(token ha.Secret, readFile func(string) ([]byte, error)) (Config, er
 	return cfg, nil
 }
 
-// sslPaths accepts plain file names in /ssl only: no separators, no "..", no hidden files.
+// sslPaths accepts plain file names in /ssl only: no separators, no "..", no hidden files,
+// no spaces or control characters. Both empty means no TLS: the MCP endpoint listens on
+// localhost only.
 func sslPaths(cert, key string) (string, string, error) {
-	if cert == "" && key == "" {
+	switch {
+	case cert == "" && key == "":
 		return "", "", nil
-	}
-	for _, name := range []string{cert, key} {
-		if name == "" || strings.ContainsAny(name, `/\`) || strings.HasPrefix(name, ".") || path.Clean(name) != name {
-			return "", "", fmt.Errorf("%w: TLS file names must be plain file names in %s", ErrInvalid, appSSLDir)
+	case cert == "" || key == "":
+		empty, set := "tls_certfile", "tls_keyfile"
+		if key == "" {
+			empty, set = set, empty
 		}
+		return "", "", fmt.Errorf("%w: %s is empty but %s is set; set both to file names in %s (e.g. fullchain.pem, privkey.pem) "+
+			"or leave both empty to serve the MCP endpoint on localhost only", ErrInvalid, empty, set, appSSLDir)
+	}
+	if err := sslName("tls_certfile", cert, "fullchain.pem"); err != nil {
+		return "", "", err
+	}
+	if err := sslName("tls_keyfile", key, "privkey.pem"); err != nil {
+		return "", "", err
 	}
 	return path.Join(appSSLDir, cert), path.Join(appSSLDir, key), nil
+}
+
+// sslName checks the value of one TLS option. Spaces are refused, not trimmed: a name that
+// only looks right would not be found and would leave the endpoint without TLS.
+func sslName(option, name, example string) error {
+	if strings.IndexFunc(name, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return fmt.Errorf("%w: %s %q contains a space or control character; remove it and enter the plain file name in %s, e.g. %s",
+			ErrInvalid, option, name, appSSLDir, example)
+	}
+	if strings.ContainsAny(name, `/\`) || strings.HasPrefix(name, ".") || path.Clean(name) != name {
+		return fmt.Errorf("%w: %s %q must be a plain file name in %s without a path, e.g. %s", ErrInvalid, option, name, appSSLDir, example)
+	}
+	return nil
+}
+
+// Reason is the message of a configuration error without the ErrInvalid prefix, for a log
+// line that already says the configuration is invalid. Other errors keep their message.
+func Reason(err error) string {
+	msg := err.Error()
+	if !errors.Is(err, ErrInvalid) {
+		return msg
+	}
+	return strings.TrimPrefix(msg, ErrInvalid.Error()+": ")
 }
 
 func loadContainer(e Env) (Config, error) {

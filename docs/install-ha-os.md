@@ -62,8 +62,8 @@ app; invalid values stop the start with a message in the log.
 
 | Option | Shown as | Default | When you need it |
 |---|---|---|---|
-| `tls_certfile` | TLS certificate | `fullchain.pem` | File name in `/ssl` of the certificate chain for the MCP endpoint. Must cover the host of `public_url`. Plain file name only, no path. |
-| `tls_keyfile` | TLS private key | `privkey.pem` | File name in `/ssl` of the certificate's private key. |
+| `tls_certfile` | TLS certificate | `fullchain.pem` | File name in `/ssl` of the certificate chain for the MCP endpoint. Must cover the host of `public_url`. Plain file name only, no path. Leave both TLS options empty to turn TLS off: the MCP endpoint then answers on localhost only. |
+| `tls_keyfile` | TLS private key | `privkey.pem` | File name in `/ssl` of the certificate's private key. Set both TLS options or leave both empty. |
 | `public_url` | Public URL | empty | To admit agents. The address agents and browsers reach Home-Mandate at, see below. Without it, OAuth is off and no agent can be admitted. |
 | `ha_browser_url` | Home Assistant URL for your browser | empty | Required together with `public_url`. Home Assistant as your browser reaches it, see below. |
 | `approval_timeout_seconds` | Approval timeout | `120` | How long an action waits for an answer to an approval request, 30 to 600 seconds. A mandate may only shorten it. |
