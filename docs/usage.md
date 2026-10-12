@@ -85,8 +85,8 @@ setting a device of the category Other. In addition, you can **mark devices as c
 Home-Mandate suggests candidates by name and device class (door, gate, garage), but marks
 nothing by itself.
 
-A critical action needs an approval even where a rule allows it ("Downgraded: Becomes an
-approval request because the action is critical"), unless the rule explicitly says **Also
+A critical action needs an approval even where a rule allows it ("Asks because critical:
+Critical action – asks first, although a rule allows it"), unless the rule explicitly says **Also
 allow critical actions without approval**. Switching that on needs a separate
 confirmation, and the audit log records who did it.
 
@@ -100,7 +100,8 @@ overnight, such as 22:00 to 06:00 the next day) and on chosen **Weekdays**. Time
 the household's time zone from Home Assistant, not your browser's.
 
 An allowing rule can carry **Limits**: brightness, temperature, position or volume from
-and to a value. Values outside the limits are denied. Temperature limits need a household
+and to a value. It allows only values within the limits; other values are decided by
+another rule or the default. Temperature limits need a household
 that uses °C in Home Assistant; in °F households such a rule does not match.
 
 ### Templates

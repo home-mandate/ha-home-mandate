@@ -2,7 +2,7 @@
 <!--
   One block of the preview matrix (design README 6.6): devices of one category as rows,
   the category's actions as columns. A cell is icon over word, never the icon alone; the
-  default has a dashed border. Corner marks: shield = downgraded, clock = depends on time,
+  default has a dashed border. Corner marks: shield = asks because critical, clock = depends on time,
   dot = changed since the stored version.
 
   Keyboard (README section 7): one cell is in the tab order (roving tabindex); arrows move
