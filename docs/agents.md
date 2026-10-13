@@ -171,15 +171,26 @@ with `resource` set to the MCP endpoint URL, and show the user code to the human
 
 | Tool | Input | What it does |
 |---|---|---|
-| `list_devices` | – | Lists the devices the agent may read (decision *allow* for `read`), with `entity_id`, name, category, area and state. |
+| `list_devices` | optional `area`, `category`, `search`, `cursor`, `limit` | Lists the devices the agent may read (decision *allow* for `read`), with `entity_id`, name, category, area and state, one page at a time (below). The first page also lists `areas` (`id`, `name`, `count`) and `categories` (`name`, `count`) of all devices the agent may read, so it can filter. |
 | `get_state` | `entity_id` | Returns the state and attributes of one device. Attributes that could carry access tokens (pictures, `token=` URLs) are removed. |
 | `perform_action` | `entity_id`, `action`, optional `params`, optional `reason`, optional `idempotency_key` | Performs an action on one device. On success it returns `{"status": "executed"}`. If a human must confirm, the call waits up to 45 seconds for the answer, then returns `{"status": "pending", …}` (below). `reason` (up to 1000 characters; the human sees the first 200) is shown to the approver as the agent's unverified claim. |
-| `list_my_permissions` | – | Lists, for each device the agent may read, the actions that are `allow` or `ask`. |
+| `list_my_permissions` | optional `area`, `category`, `search`, `cursor`, `limit` | Lists the actions that are `allow` or `ask` on the devices the agent may read, as `groups`: devices of one category with the same permissions share one entry (`category`, `actions`, `entity_ids`). Paged like `list_devices`. |
 | `approval_status` | `approval_id` | The outcome of the agent's own pending request: `{"status": "executed"}`, the refusal as the error `perform_action` would have given, or `{"status": "pending", …}` again. Waits up to 45 seconds for the outcome. |
 | `approval_cancel` | `approval_id` | Withdraws the agent's own pending request; it is then never executed (`{"status": "withdrawn"}`). An answered request cannot be withdrawn (`conflict`). |
 
 Devices the agent may not read do not exist for it: they are not listed, and every refusal
 on them is `not_found`, exactly as for a device that does not exist.
+
+Both lists come in pages of 100 devices in the order of entity IDs (`limit` 1–500; 0 or
+none means 100). Groups are formed per page, so one group can appear again on the next
+page; merge them by `category` and `actions`.
+`total` is the number of devices that match the filters on all pages, and `next_cursor`,
+passed as `cursor`, continues with the next page; the last page has none. `area` takes an
+area ID from `areas`, `category` a category from the table below, and `search` up to 100
+characters that the entity ID or the name contains, ignoring case. Every page counts
+against the mandate's `max_actions_per_hour` (a call with malformed input is refused before
+it is counted, as for the other tools), so an agent in a large home filters instead
+of reading every page.
 
 Actions and their parameters (`params`):
 

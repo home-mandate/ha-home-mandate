@@ -92,7 +92,9 @@ type (
 	}
 	Catalog interface {
 		Lookup(entityID string) (catalog.Device, bool)
+		// All returns the devices sorted by entity ID; the lists page along that order.
 		All() []catalog.Device
+		Areas() []catalog.Area
 		Ready() bool
 	}
 	Executor interface {
@@ -220,7 +222,9 @@ func New(cfg Config) *Gateway {
 		byKey:         map[string]*waiting{},
 		statusLimiter: ratelimit.New(cfg.Now), cooldowns: map[string]cooldown{}, server: sdk.NewServer(&sdk.Implementation{Name: "home-mandate", Version: cfg.Version}, nil)}
 	addTool(g.server, &sdk.Tool{Name: "list_devices",
-		Description: "Lists the devices you may read, with category, area and state."}, g.listDevices)
+		Description: "Lists the devices you may read, with category, area and state, one page at a time (next_cursor). " +
+			"The first page also lists the areas and categories with their number of devices; filter by area, category " +
+			"or search to get what you need without reading every page."}, g.listDevices)
 	addTool(g.server, &sdk.Tool{Name: "get_state",
 		Description: "Returns the state of one device."}, g.getState)
 	addTool(g.server, &sdk.Tool{Name: "perform_action",
@@ -234,7 +238,8 @@ func New(cfg Config) *Gateway {
 		Description: "Withdraws your own request that still waits for a human's approval, by its approval_id; it is then never " +
 			"executed. A request already answered cannot be withdrawn."}, g.approvalCancel)
 	addTool(g.server, &sdk.Tool{Name: "list_my_permissions",
-		Description: "Lists what you may do on the devices you may read: allow (immediately) or ask (a human confirms)."}, g.listPermissions)
+		Description: "Lists what you may do on the devices you may read: allow (immediately) or ask (a human confirms). " +
+			"Devices with the same category and permissions form one group; paged and filtered like list_devices."}, g.listPermissions)
 	return g
 }
 
@@ -385,7 +390,6 @@ func (g *Gateway) clockWrong(ctx context.Context) bool {
 
 // Tool inputs and outputs.
 type (
-	noInput     struct{}
 	entityInput struct {
 		EntityID string `json:"entity_id" jsonschema:"entity ID, e.g. light.kitchen"`
 	}
@@ -396,16 +400,6 @@ type (
 		Reason   string         `json:"reason,omitempty" jsonschema:"why you want this; shown to the human who confirms, marked as your claim"`
 		// IdempotencyKey ties repeated calls to one approval request (issue #27).
 		IdempotencyKey string `json:"idempotency_key,omitempty" jsonschema:"optional key of 8 to 64 letters, digits, _ or -: the same key within 24 hours returns the outcome of the first call instead of asking again"`
-	}
-	deviceOut struct {
-		EntityID string `json:"entity_id"`
-		Name     string `json:"name,omitempty"`
-		Category string `json:"category"`
-		Area     string `json:"area,omitempty"`
-		State    string `json:"state"`
-	}
-	devicesOut struct {
-		Devices []deviceOut `json:"devices"`
 	}
 	stateOut struct {
 		EntityID   string         `json:"entity_id"`
@@ -438,56 +432,7 @@ type (
 	approvalInput struct {
 		ApprovalID string `json:"approval_id" jsonschema:"the approval_id perform_action returned with status pending"`
 	}
-	permissionOut struct {
-		EntityID string            `json:"entity_id"`
-		Category string            `json:"category"`
-		Area     string            `json:"area,omitempty"`
-		Actions  map[string]string `json:"actions"`
-	}
-	permissionsOut struct {
-		Devices []permissionOut `json:"devices"`
-	}
 )
-
-func (g *Gateway) listDevices(ctx context.Context, req *sdk.CallToolRequest, _ noInput) (*sdk.CallToolResult, devicesOut, error) {
-	out := devicesOut{Devices: []deviceOut{}}
-	snap, err := g.listSnapshot(ctx, req)
-	if err != nil {
-		return nil, out, err
-	}
-	for _, dev := range g.cfg.Catalog.All() {
-		// Only devices the agent may read now; ask would need a human first.
-		if snap.Decide(dev.EntityID, "read", nil).Result.Decision != evaluator.Allow {
-			continue
-		}
-		name, _ := dev.Attributes["friendly_name"].(string)
-		out.Devices = append(out.Devices, deviceOut{EntityID: dev.EntityID, Name: name, Category: dev.Category, Area: dev.Area, State: dev.State})
-	}
-	return nil, out, nil
-}
-
-func (g *Gateway) listPermissions(ctx context.Context, req *sdk.CallToolRequest, _ noInput) (*sdk.CallToolResult, permissionsOut, error) {
-	out := permissionsOut{Devices: []permissionOut{}}
-	snap, err := g.listSnapshot(ctx, req)
-	if err != nil {
-		return nil, out, err
-	}
-	for _, dev := range g.cfg.Catalog.All() {
-		if !readable(snap, dev.EntityID) {
-			continue // also when the mandate allows other actions on it
-		}
-		p := permissionOut{EntityID: dev.EntityID, Category: dev.Category, Area: dev.Area, Actions: map[string]string{}}
-		for _, action := range actionsOf(dev.Category) {
-			if d := snap.Decide(dev.EntityID, action, nil); d.Result.Decision != evaluator.Deny {
-				p.Actions[action] = string(d.Result.Decision)
-			}
-		}
-		if len(p.Actions) > 0 {
-			out.Devices = append(out.Devices, p)
-		}
-	}
-	return nil, out, nil
-}
 
 // readable reports whether the agent may learn that entityID exists: its read is not
 // denied. Neither list names a device it may not read, and every refusal on one is

@@ -228,7 +228,7 @@ async function postForm(url: string, form: Record<string, string>): Promise<{ st
   return { status: res.status, body: await res.json() };
 }
 
-type Permissions = { devices: { entity_id: string; actions: Record<string, string> }[] };
+type Permissions = { groups: { category: string; actions: Record<string, string>; entity_ids: string[] }[] };
 
 /** callMCP calls list_my_permissions with the access token, as an agent does. */
 async function callMCP(resource: string, accessToken: string): Promise<Permissions> {
@@ -252,7 +252,7 @@ async function callMCP(resource: string, accessToken: string): Promise<Permissio
  *  cautious voice assistant asks before a lock opens (read only would not list it). */
 async function expectChosenTemplate(resource: string, accessToken: string): Promise<void> {
   await expect
-    .poll(async () => (await callMCP(resource, accessToken)).devices.find((d) => d.entity_id === 'lock.front_door')?.actions.unlock, {
+    .poll(async () => (await callMCP(resource, accessToken)).groups.find((g) => g.entity_ids.includes('lock.front_door'))?.actions.unlock, {
       timeout: 60_000,
     })
     .toBe('ask');

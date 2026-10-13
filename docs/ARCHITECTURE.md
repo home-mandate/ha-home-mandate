@@ -68,10 +68,10 @@ Reason: only this way can every request be mapped unambiguously to a device and 
 
 | Tool | Action in the mandate | Purpose |
 |---|---|---|
-| `list_devices` | `read` | Lists only devices the agent has at least read access to |
+| `list_devices` | `read` | Lists only devices the agent has at least read access to; filters (`area`, `category`, `search`), pages of at most 500 devices, and on the first page the areas and categories with their counts |
 | `get_state` | `read` | State of a device |
 | `perform_action` | depends on the category, e.g. `turn_on`, `unlock` | Performs an action, after the decision; optional `idempotency_key` ties repeated calls to one approval request (section 7) |
-| `list_my_permissions` | – | Shows the agent what it may do (helps models avoid pointless requests). Never shows other agents' rules. |
+| `list_my_permissions` | – | Shows the agent what it may do (helps models avoid pointless requests), grouped by category and identical permissions, filtered and paged like `list_devices`. Never shows other agents' rules. |
 | `approval_status` | – (no action) | Outcome of the agent's own request that waits for a human, by its approval ID: executed, the refusal, or still pending (section 7) |
 | `approval_cancel` | – (no action) | Withdraws the agent's own open request (`cancelled`, `cause: withdrawn`); never an answer (section 7) |
 
@@ -82,7 +82,14 @@ cached schema (MCP: clients SHOULD validate); a closed schema made a result with
 optional field fail in Claude Desktop until it reloaded the tools (acceptance test
 2026-10-10). New output fields are therefore always optional. Input schemas stay strict.
 Error results (`isError`) that carry structured content (`retry_after`, `retry_at`)
-conform to the same schema, and their text says everything on its own.
+conform to the same schema, and their text says everything on its own. The one exception
+before v0.1.0: `list_my_permissions` returns `groups` instead of `devices` (issue #36), so a
+client that cached the old schema has to reload the tools once.
+
+Each page of a list is one request under `max_actions_per_hour` (SPEC-v0 section 11.2).
+The cursor is the last entity ID of a page and only a position in the order of entity IDs:
+a cursor, filter or search that names a device the agent may not read gives the same
+answer as one naming a device that does not exist.
 
 Devices an agent has no read access to do not exist for that agent (no hint of their
 existence in lists or error messages): `list_devices` lists only devices it may read
