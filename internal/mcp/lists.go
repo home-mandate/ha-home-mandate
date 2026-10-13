@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -74,6 +75,9 @@ type (
 		Category  string            `json:"category"`
 		Actions   map[string]string `json:"actions"`
 		EntityIDs []string          `json:"entity_ids"`
+		// Limits are the ranges an allowed action is limited to, per action: one entry per
+		// rule that could allow it, in the agent's units.
+		Limits map[string][]map[string]limitOut `json:"limits,omitempty"`
 	}
 	permissionsOut struct {
 		Groups     []permissionGroup `json:"groups"`
@@ -215,20 +219,40 @@ func (g *Gateway) listPermissions(ctx context.Context, req *sdk.CallToolRequest,
 	// Devices the agent may not read are left out even when the mandate allows other
 	// actions on them. Every other device has a permission: its read, allow or ask.
 	page, total, next := in.page(g.readableDevices(snap, false), size)
+	unit := g.temperatureUnit()
 	index := map[string]int{} // groupKey → position in out.Groups
 	for _, dev := range page {
 		actions := map[string]string{}
+		var limits map[string][]map[string]limitOut
 		for _, action := range actionsOf(dev.Category) {
-			if d := snap.Decide(dev.EntityID, action, nil); d.Result.Decision != evaluator.Deny {
+			d := snap.Decide(dev.EntityID, action, nil)
+			if d.Result.Decision != evaluator.Deny {
 				actions[action] = string(d.Result.Decision)
+				continue
+			}
+			// Evaluated without values, an action allowed only within limits does not
+			// match: it is allowed with the values its limits name.
+			if d.Result.Reason != evaluator.ReasonNoMatch {
+				continue
+			}
+			lims := agentLimits(snap.Limits(dev.EntityID, action), dev.Category, action, unit)
+			if len(lims) == 0 {
+				continue
+			}
+			actions[action] = string(evaluator.Allow)
+			if !unlimited(lims) {
+				if limits == nil {
+					limits = map[string][]map[string]limitOut{}
+				}
+				limits[action] = lims
 			}
 		}
-		key := groupKey(dev.Category, actions)
+		key := groupKey(dev.Category, actions, limits)
 		i, ok := index[key]
 		if !ok {
 			i = len(out.Groups)
 			index[key] = i
-			out.Groups = append(out.Groups, permissionGroup{Category: dev.Category, Actions: actions})
+			out.Groups = append(out.Groups, permissionGroup{Category: dev.Category, Actions: actions, Limits: limits})
 		}
 		out.Groups[i].EntityIDs = append(out.Groups[i].EntityIDs, dev.EntityID)
 	}
@@ -236,13 +260,19 @@ func (g *Gateway) listPermissions(ctx context.Context, req *sdk.CallToolRequest,
 	return nil, out, nil
 }
 
-// groupKey identifies a category with its permissions; categories, actions and
-// decisions consist of [a-z_], so the separators cannot occur in them.
-func groupKey(category string, actions map[string]string) string {
+// groupKey identifies a category with its permissions and limits; categories, actions
+// and decisions consist of [a-z_], so the separators cannot occur in them, and the limits
+// follow as JSON (maps encode in key order).
+func groupKey(category string, actions map[string]string, limits map[string][]map[string]limitOut) string {
 	var b strings.Builder
 	b.WriteString(category)
 	for _, action := range slices.Sorted(maps.Keys(actions)) {
 		b.WriteString(";" + action + "=" + actions[action])
+	}
+	if limits != nil {
+		encoded, _ := json.Marshal(limits)
+		b.WriteString("|")
+		b.Write(encoded)
 	}
 	return b.String()
 }

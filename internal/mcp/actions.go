@@ -5,6 +5,7 @@ package mcp
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -95,9 +96,31 @@ func actionsOf(category string) []string {
 	return actions
 }
 
-// buildCall turns an allowed action into exactly one service call on the entity.
-func buildCall(entityID, category, action string, params map[string]any) (ha.ServiceCall, error) {
+// fahrenheitTemperature is the temperature of set_temperature in a household that uses
+// degrees Fahrenheit: the same range as in degrees Celsius, in its own unit.
+var fahrenheitTemperature = param{kind: "number", min: -58, max: 212, steps: 100, required: true,
+	rule: "must be a number between -58 and 212 in steps of 0.01 degrees"}
+
+// specFor is the vocabulary entry of an action with its parameters in the household's
+// temperature unit (spec #21 part B).
+func specFor(category, action, temperatureUnit string) (actionSpec, bool) {
 	spec, ok := vocabulary[category][action]
+	if !ok || temperatureUnit != fahrenheit {
+		return spec, ok
+	}
+	if _, has := spec.params["temperature"]; !has {
+		return spec, ok
+	}
+	params := maps.Clone(spec.params)
+	params["temperature"] = fahrenheitTemperature
+	spec.params = params
+	return spec, ok
+}
+
+// buildCall turns an allowed action into exactly one service call on the entity; a
+// temperature is in the household's unit (temperatureUnit).
+func buildCall(entityID, category, action string, params map[string]any, temperatureUnit string) (ha.ServiceCall, error) {
+	spec, ok := specFor(category, action, temperatureUnit)
 	if !ok || action == "read" {
 		return ha.ServiceCall{}, fmt.Errorf("%w: action %q", errInvalidParams, action)
 	}

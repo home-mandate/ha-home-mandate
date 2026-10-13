@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"strings"
 	"sync"
@@ -196,9 +197,17 @@ func (g *Gateway) settle(ctx context.Context, a agent.Agent, token string, d pdp
 
 // shownParams is what the human sees of the call besides device and action: its service
 // data, and for arming the alarm the mode, which is part of the service, not of the data.
+// A temperature carries its unit, so that 70 is not taken for degrees Celsius.
 func shownParams(d pdp.Decision, call ha.ServiceCall) map[string]any {
 	if d.Resource.Category == "alarm" && d.Action == "arm" {
 		return map[string]any{"mode": strings.TrimPrefix(call.Service, vocabulary["alarm"]["arm"].service)}
+	}
+	if t, ok := call.Data["temperature"]; ok {
+		if unit := unitOf(d.Parameters); unit != "" {
+			data := maps.Clone(call.Data)
+			data["temperature"] = fmt.Sprintf("%v %s", t, unit)
+			return data
+		}
 	}
 	return call.Data
 }
@@ -301,6 +310,12 @@ func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}, appr)
 		return nil, actionOut{}, errors.New(codeDenied + ": approval_expired")
 	}
+	// A temperature confirmed in one unit is never executed in another: the household's
+	// unit may have changed while the human decided.
+	if unit := unitOf(d.Parameters); unit != "" && unit != g.temperatureUnit() {
+		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: errTemperatureUnitChanged}, appr)
+		return nil, actionOut{}, errors.New(codeUnavailable)
+	}
 	// The state that was shown (SPEC-v0 section 11.1 item 10, state.go); Home Assistant
 	// is connected and the directory current here (checked above).
 	dev, exists := g.cfg.Catalog.Lookup(d.Resource.EntityID)
@@ -326,7 +341,8 @@ func (g *Gateway) readConfirmed(ctx context.Context, a agent.Agent, d pdp.Decisi
 	if err := g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusExecuted}, appr); err != nil {
 		return nil, actionOut{}, errors.New(codeUnavailable)
 	}
-	return nil, actionOut{Status: statusExecuted, Read: &readOut{EntityID: dev.EntityID, State: dev.State, Attributes: sanitize(dev.Attributes)}}, nil
+	return nil, actionOut{Status: statusExecuted, Read: &readOut{EntityID: dev.EntityID, State: dev.State, Attributes: sanitize(dev.Attributes),
+		TemperatureUnit: g.temperatureUnitOf(dev.Category)}}, nil
 }
 
 // approvalValidity is how long a confirmation stays valid: the timeout of the request,

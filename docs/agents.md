@@ -172,9 +172,9 @@ with `resource` set to the MCP endpoint URL, and show the user code to the human
 | Tool | Input | What it does |
 |---|---|---|
 | `list_devices` | optional `area`, `category`, `search`, `cursor`, `limit` | Lists the devices the agent may read (decision *allow* for `read`), with `entity_id`, name, category, area and state, one page at a time (below). The first page also lists `areas` (`id`, `name`, `count`) and `categories` (`name`, `count`) of all devices the agent may read, so it can filter. |
-| `get_state` | `entity_id`, optional `reason` | Returns the state and attributes of one device. Attributes that could carry access tokens (pictures, `token=` URLs) are removed. If reading the device needs a confirmation (decision *ask* for `read`), a human is asked as for an action; `reason` is shown to them. Without an answer within 45 seconds it returns `{"status": "pending", …}` without a state, and `approval_status` later gives the state. |
+| `get_state` | `entity_id`, optional `reason` | Returns the state and attributes of one device. Attributes that could carry access tokens (pictures, `token=` URLs) are removed. For a climate device it also gives `temperature_unit` (`°C` or `°F`), the unit of all its temperature attributes. If reading the device needs a confirmation (decision *ask* for `read`), a human is asked as for an action; `reason` is shown to them. Without an answer within 45 seconds it returns `{"status": "pending", …}` without a state, and `approval_status` later gives the state. |
 | `perform_action` | `entity_id`, `action`, optional `params`, optional `reason`, optional `idempotency_key` | Performs an action on one device. On success it returns `{"status": "executed"}`. If a human must confirm, the call waits up to 45 seconds for the answer, then returns `{"status": "pending", …}` (below). `reason` (up to 1000 characters; the human sees the first 200) is shown to the approver as the agent's unverified claim. |
-| `list_my_permissions` | optional `area`, `category`, `search`, `cursor`, `limit` | Lists the actions that are `allow` or `ask` on the devices the agent may read, as `groups`: devices of one category with the same permissions share one entry (`category`, `actions`, `entity_ids`). Paged like `list_devices`. |
+| `list_my_permissions` | optional `area`, `category`, `search`, `cursor`, `limit` | Lists the actions that are `allow` or `ask` on the devices the agent may read, as `groups`: devices of one category with the same permissions share one entry (`category`, `actions`, `entity_ids`, and `limits` for actions allowed only within limits, e.g. `{"set_temperature": [{"temperature": {"min": 16, "max": 23, "unit": "°C"}}]}`: one entry per rule that could allow it, in the units of `perform_action`). Paged like `list_devices`. |
 | `approval_status` | `approval_id` | The outcome of the agent's own pending request: `{"status": "executed"}` (for a read, with the state read after the confirmation in `read`: `entity_id`, `state`, `attributes`), the refusal as the error `perform_action` or `get_state` would have given, or `{"status": "pending", …}` again. Waits up to 45 seconds for the outcome. |
 | `approval_cancel` | `approval_id` | Withdraws the agent's own pending request; it is then never executed (`{"status": "withdrawn"}`). An answered request cannot be withdrawn (`conflict`). |
 
@@ -198,7 +198,7 @@ Actions and their parameters (`params`):
 |---|---|---|
 | `light` | `turn_on`, `turn_off`, `set` | `set`: `brightness_pct` 0–100 and/or `color_temp_kelvin` 1000–12000 (integers) |
 | `switch` | `turn_on`, `turn_off` | – |
-| `climate` | `set_temperature`, `set_mode` | `temperature` in °C, −50 to 100 in steps of 0.01 (required; refused in a household that uses °F, see below); `hvac_mode`: `off`, `heat`, `cool`, `heat_cool`, `auto`, `dry`, `fan_only` (required) |
+| `climate` | `set_temperature`, `set_mode` | `temperature` in the household's unit: °C, −50 to 100, or °F, −58 to 212, in steps of 0.01 (required); `hvac_mode`: `off`, `heat`, `cool`, `heat_cool`, `auto`, `dry`, `fan_only` (required) |
 | `cover` | `open`, `close`, `stop`, `set_position` | `position` 0–100, an integer (required) |
 | `gate` | `open`, `close` | – |
 | `lock` | `lock`, `unlock`, `open` | – |
@@ -221,9 +221,10 @@ not read the answer stays `not_found`.
 
 **Changed in v0.1.0-rc.3:** an agent that sent a value finer than its step under a rule
 without a limit (`volume_level` 0.335) got it executed until rc.2; it now gets
-`invalid_params`. Temperatures in a household that uses °F are refused with
-`invalid_params: temperature cannot be checked in a household that uses °F yet`, also
-under a rule without a limit, until a later release supports °F.
+`invalid_params`.
+
+**Changed in v0.1.0-rc.4:** temperatures in a household that uses °F are accepted in °F
+and checked against limits in °F; rc.3 refused them.
 
 ## Actions that need a confirmation
 
@@ -292,6 +293,7 @@ Tool errors are short codes without internal details. Every refusal is in the au
 |---|---|---|
 | `not_found` | The device does not exist, or the agent may not read it. | Check the mandate; the agent cannot tell the two apart by design. |
 | `denied: <reason>` | The mandate denies it, for example `denied: no_match` (no rule applies), `denied: rule`, `denied: expired`, `denied: no_mandate`. | Adjust the mandate if the agent should be allowed. |
+| `denied: no_match: allowed only with …` | The value is outside the limits of the agent's mandate, which the text names in the units of `perform_action`, e.g. `allowed only with temperature 16 to 23 °C`. | Use a value within them (the agent can do this itself), or widen the limits in the mandate. |
 | `denied: approval_rejected`, `denied: approval_timeout`, `denied: approval_invalid` | A human declined, nobody answered in time, or someone who may not approve answered. | – |
 | `denied: approval_cooldown: you may ask again for this device at <time> (in <N> s); …` | The agent's request for the device was declined, answered by someone who may not approve, or withdrawn, or timed out twice in a row (a single timeout starts no wait); it must wait (1 minute, doubling up to 1 hour). The error result also carries `retry_after` (seconds) and `retry_at`. | Ask again at that time, not earlier, and tell the user when. |
 | `denied: approval_pending: you may ask again … at <time> …` | Another action on the device waits for a human (its approval ID is in the text), or the agent already has 2 requests waiting (pending results count until they end). `retry_after` / `retry_at` give the time the request ends at the latest. | `approval_status` for the outcome, or `approval_cancel`. |
@@ -311,7 +313,6 @@ Tool errors are short codes without internal details. Every refusal is in the au
 | `rate_limited` | The mandate's requests per hour are used up (60 per hour for an agent without a usable mandate); for `approval_status` and `approval_cancel`, their own limit of 120 per hour. | Wait; raise the rate limit of the mandate. |
 | `unavailable` | Home-Mandate cannot decide right now: Home Assistant disconnected, its configuration (time zone, temperature unit) not read yet, the device directory refreshing, or the host clock behind the audit log. From `approval_status` more than 15 minutes after the end or after a restart, it can also stand for Home Assistant dropping during the execution (the call itself said `failed` then). | Usually passes within seconds; see [troubleshooting.md](troubleshooting.md#agents-get-unavailable). |
 | `invalid_params` (with the parameter) | Malformed entity ID or action, unknown or out-of-range parameter, or a value that is no whole step of its parameter, for example `invalid_params: volume_level must be a whole percent, 0 to 1 in steps of 0.01 (e.g. 0.33)`, `invalid_params: temperature must be a number between -50 and 100 in steps of 0.01 degrees`, `invalid_params: brightness_pct must be an integer between 0 and 100`. | Fix the call. |
-| `invalid_params: temperature cannot be checked in a household that uses °F yet` | The household uses °F in Home Assistant; the vocabulary has temperatures only in °C so far. | Set the temperature in Home Assistant; °F support follows in a later release. |
 | `not_supported` | The action is evaluated but cannot be executed in this version (camera snapshot, `set` on `other`). | – |
 | `failed` | Home Assistant reported an error or did not answer when executing. | Look at the audit entry ("Home Assistant reports: …"). |
 

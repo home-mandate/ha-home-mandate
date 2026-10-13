@@ -767,6 +767,7 @@
   "editor_stale_body": "{count, plural, one {{count, number} Regel nennt ein Gerät oder einen Bereich, den es nicht mehr gibt. Umbenannte Geräte schützt sie nicht mehr.} other {{count, number} Regeln nennen Geräte oder Bereiche, die es nicht mehr gibt. Umbenannte Geräte schützen sie nicht mehr.}}",
   "limits_legend": "Grenzen",
   "limits_note": "Nur für Werte innerhalb der Grenzen erlaubt; andere Werte entscheidet eine andere Regel oder die Voreinstellung. Lass ein Feld leer, wenn es keine Grenze geben soll.",
+  "limits_other_unit": "Diese Grenze ist in {unit}, Home Assistant nutzt in diesem Haushalt aber {household}: Die Regel greift nie. Entferne die Grenze und setze sie in {household} neu.",
   "limits_min": "Von",
   "limits_max": "Bis",
   "limit_brightness": "Helligkeit",

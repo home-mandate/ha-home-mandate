@@ -181,6 +181,38 @@ describe('MandateEditor', () => {
     expect(put.mock.calls[0]?.[1].draft.rules[1]).toMatchObject({ actions: ['set_temperature'], constraints: { temperature: { max: 2250 } } });
   });
 
+  // #42, spec #21 part B: a °F household limits temperatures in °F (temperature_f); a limit
+  // in °C, which can never apply there, is flagged.
+  it('limits temperatures in the unit of the household and flags the other unit', async () => {
+    const { api } = await start({ household: usHouseholdFixture });
+    const climate = await open(2);
+    await fireEvent.click(climate.getByRole('button', { name: 'read' }));
+    const temperature = within((await card(2)).getByRole('group', { name: 'Temperature' }));
+    expect(temperature.queryByLabelText('To (°C)')).toBeNull();
+    await fireEvent.input(temperature.getByLabelText('To (°F)'), { target: { value: '75' } });
+    expect((await cards())[1]?.textContent).toMatch(/Temperature up to 75\s?°F/);
+    const put = vi.spyOn(api, 'putMandate');
+    await fireEvent.click(saveButton());
+    await fireEvent.click(within(await screen.findByRole('dialog', { name: 'Save changes?' })).getByRole('button', { name: 'Save as version 2' }));
+    await waitFor(() => expect(put).toHaveBeenCalled());
+    expect(put.mock.calls[0]?.[1].draft.rules[1]).toMatchObject({ actions: ['set_temperature'], constraints: { temperature_f: { max: 7500 } } });
+    cleanup();
+
+    // A rule limited in °C, e.g. taken from a template written for a metric household.
+    await start({ household: usHouseholdFixture }, async (mock) => {
+      await store(mock, (draft) => ({
+        ...draft,
+        rules: draft.rules.map((r, i) => (i === 1 ? { ...r, actions: ['set_temperature'], constraints: { temperature: { max: 2300 } } } : r)),
+      }));
+    });
+    const limited = await open(2);
+    expect(
+      limited.getByText('This limit is in °C, but Home Assistant uses °F in this household: the rule never applies. Remove the limit and set it again in °F.'),
+    ).toBeTruthy();
+    await fireEvent.click(limited.getByRole('button', { name: 'Remove limits' }));
+    expect((await card(2)).queryByText(/the rule never applies/)).toBeNull();
+  });
+
   it('says that write actions do not include reading and what "all actions" includes', async () => {
     await start();
     const door = await open(3);

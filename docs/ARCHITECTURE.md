@@ -71,7 +71,7 @@ Reason: only this way can every request be mapped unambiguously to a device and 
 | `list_devices` | `read` | Lists only devices the agent has at least read access to; filters (`area`, `category`, `search`), pages of at most 500 devices, and on the first page the areas and categories with their counts |
 | `get_state` | `read` | State of a device; with the decision *ask* after a human's confirmation (section 7) |
 | `perform_action` | depends on the category, e.g. `turn_on`, `unlock` | Performs an action, after the decision; optional `idempotency_key` ties repeated calls to one approval request (section 7) |
-| `list_my_permissions` | – | Shows the agent what it may do (helps models avoid pointless requests), grouped by category and identical permissions, filtered and paged like `list_devices`. Never shows other agents' rules. |
+| `list_my_permissions` | – | Shows the agent what it may do (helps models avoid pointless requests), grouped by category and identical permissions, filtered and paged like `list_devices`; an action allowed only within limits is listed with them (`evaluator.Mandate.Limits`, in the agent's units; a refusal outside them names them too; SPEC-v0 section 11.5). Never shows other agents' rules. |
 | `approval_status` | – (no action) | Outcome of the agent's own request that waits for a human, by its approval ID: executed, the refusal, or still pending (section 7) |
 | `approval_cancel` | – (no action) | Withdraws the agent's own open request (`cancelled`, `cause: withdrawn`); never an answer (section 7) |
 
@@ -123,9 +123,11 @@ tells no more than the grant. Its parameters are checked as for any other device
    device the agent may read; for any other it is `not_found`, logged as `failed` /
    `invalid_params` without an evaluation. Binary noise (0.29 is 28.999… percent) is no
    fraction; what is evaluated and executed is the canonical value of the step (0.29).
-   A temperature in a household that uses °F cannot be expressed in the unit of the
-   vocabulary and is refused the same way until the vocabulary has a °F parameter; while
-   the household's unit is not known yet, a request with a temperature is `unavailable`
+   A temperature is evaluated in the household's unit and as exactly one parameter (spec
+   #21 part B): `temperature` (0.01 °C) in a °C household, `temperature_f` (0.01 °F) in a
+   °F household, never converted; its range is −50 to 100 °C or −58 to 212 °F. A rule
+   limiting the other unit does not match. Any other unit is refused; while the
+   household's unit is not known yet, a request with a temperature is `unavailable`
    (`temperature_unit_unknown`), never checked as °C.
 6. `pdp` selects the agent's mandate among its candidates (SPEC-v0 section 4.3) and
    evaluates it. Result: `allow`, `ask` or `deny`.

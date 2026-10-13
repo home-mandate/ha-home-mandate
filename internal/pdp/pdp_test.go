@@ -508,18 +508,6 @@ func TestRateKeyIsTheMandate(t *testing.T) {
 // A renamed entity whose rename nobody resolved yet: rules on its former ID keep applying,
 // the stricter evaluation wins (fail closed).
 func TestRulesOnAFormerIDKeepApplying(t *testing.T) {
-	doc := func(rules ...map[string]any) []byte {
-		data, _ := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
-		var d map[string]any
-		_ = json.Unmarshal(data, &d)
-		list := make([]any, len(rules))
-		for i, r := range rules {
-			list[i] = r
-		}
-		d["rules"] = list
-		out, _ := json.Marshal(d)
-		return out
-	}
 	rule := func(id string, resource map[string]any, decision string) map[string]any {
 		return map[string]any{"id": id, "resource": resource, "actions": []any{"turn_on"}, "decision": decision}
 	}
@@ -539,7 +527,7 @@ func TestRulesOnAFormerIDKeepApplying(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg, clientID := voice(t)
-			d := doc(tc.rules...)
+			d := voiceWithRules(tc.rules...)
 			c := stored(d, mandate.Info{ID: "m-voice-assistant"})
 			c.Entities = mandate.NamedEntities(d)
 			cfg.Mandates = fakeMandates{candidates: []mandate.Candidate{c}}
@@ -573,4 +561,68 @@ func TestNoDecisionWhileNotReady(t *testing.T) {
 	if rec := post(); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"decision"`) {
 		t.Errorf("ready: %d %s", rec.Code, rec.Body)
 	}
+}
+
+// Limits names what the allow rules of the selected mandate let through for an action,
+// whatever the values; it decides nothing.
+func TestSnapshotLimits(t *testing.T) {
+	cfg, clientID := voice(t)
+	s, err := New(cfg).Snapshot(context.Background(), clientID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Limits("light.kitchen", "set"); len(got) != 1 || len(got[0]) != 0 {
+		t.Errorf("lights, allowed without limits: %v", got)
+	}
+	if got := s.Limits("lock.front", "unlock"); got != nil {
+		t.Errorf("an ask rule sets no limits: %v", got)
+	}
+	if got := s.Limits("light.nowhere", "set"); got != nil {
+		t.Errorf("unknown device: %v", got)
+	}
+}
+
+// A renamed entity whose former ID a mandate still names has no limits: the rules on the
+// former ID can be stricter. Resolved, the limits of the current ID count.
+func TestSnapshotLimitsOfARenamedEntity(t *testing.T) {
+	limited := map[string]any{"id": "r-heat", "resource": map[string]any{"category": "climate"}, "actions": []any{"set_temperature"},
+		"decision": "allow", "constraints": map[string]any{"temperature": map[string]any{"max": 2300}}}
+	former := map[string]any{"id": "r-old", "resource": map[string]any{"entity_id": "climate.old"}, "actions": []any{"set_temperature"}, "decision": "deny"}
+	for name, tc := range map[string]struct {
+		formers []string
+		want    int
+	}{
+		"former ID still named": {[]string{"climate.old"}, 0},
+		"resolved":              {nil, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, clientID := voice(t)
+			d := voiceWithRules(limited, former)
+			c := stored(d, mandate.Info{ID: "m-voice-assistant"})
+			c.Entities = mandate.NamedEntities(d)
+			cfg.Mandates = fakeMandates{candidates: []mandate.Candidate{c}}
+			cfg.Catalog = fakeCatalog{"climate.office": {EntityID: "climate.office", Category: "climate", Formers: tc.formers}}
+			s, err := New(cfg).Snapshot(context.Background(), clientID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := s.Limits("climate.office", "set_temperature"); len(got) != tc.want {
+				t.Errorf("Limits = %v, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// voiceWithRules is the voice assistant example with rules in place of its own.
+func voiceWithRules(rules ...map[string]any) []byte {
+	data, _ := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
+	var d map[string]any
+	_ = json.Unmarshal(data, &d)
+	list := make([]any, len(rules))
+	for i, r := range rules {
+		list[i] = r
+	}
+	d["rules"] = list
+	out, _ := json.Marshal(d)
+	return out
 }

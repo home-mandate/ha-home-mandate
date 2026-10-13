@@ -48,6 +48,8 @@
     agent: string;
     locale: string;
     timeZone: string;
+    /** The household's temperature unit from Home Assistant ("°C", "°F"); null while unknown. */
+    temperatureUnit: string | null;
     /** Problems that may be shown now. */
     visible: readonly FieldProblem[];
     /** The draft has errors: nothing of it would apply. */
@@ -79,6 +81,7 @@
     agent,
     locale,
     timeZone,
+    temperatureUnit,
     visible,
     invalid,
     renamed,
@@ -360,6 +363,7 @@
               {agent}
               {locale}
               {timeZone}
+              {temperatureUnit}
               onchange={(next) => changeRule(index, next)}
               ontouch={() => ontouch(key)}
               onremove={() => void remove(index)}

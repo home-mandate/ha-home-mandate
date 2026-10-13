@@ -274,6 +274,10 @@ func openObjects(s *jsonschema.Schema) {
 		openObjects(p)
 	}
 	openObjects(s.Items)
+	// The values of a map (limits per action) are objects too.
+	if s.AdditionalProperties != nil && len(s.Properties) == 0 {
+		openObjects(s.AdditionalProperties)
+	}
 }
 
 // Handler serves the endpoint at Path, for bearer tokens of active agents only.
@@ -408,6 +412,9 @@ type (
 		EntityID   string         `json:"entity_id"`
 		State      string         `json:"state"` // empty while a confirmation is pending
 		Attributes map[string]any `json:"attributes,omitempty"`
+		// TemperatureUnit is the unit of a climate device's temperatures: the household's
+		// unit, which Home Assistant gives nowhere in the attributes.
+		TemperatureUnit string `json:"temperature_unit,omitempty"`
 		// A read that needs a confirmation (issue #46) is pending like an action: these
 		// fields are those of actionOut; the state comes with approval_status.
 		Status     string `json:"status,omitempty"`
@@ -421,9 +428,10 @@ type (
 	}
 	// readOut is the state read after a confirmation, for approval_status.
 	readOut struct {
-		EntityID   string         `json:"entity_id"`
-		State      string         `json:"state"`
-		Attributes map[string]any `json:"attributes,omitempty"`
+		EntityID        string         `json:"entity_id"`
+		State           string         `json:"state"`
+		Attributes      map[string]any `json:"attributes,omitempty"`
+		TemperatureUnit string         `json:"temperature_unit,omitempty"`
 	}
 	actionOut struct {
 		// Status is executed, pending (NOT executed yet) or withdrawn.
@@ -517,7 +525,7 @@ func (g *Gateway) getState(ctx context.Context, req *sdk.CallToolRequest, in ent
 	if err := g.record(ctx, a, d, true, audit.Result{Status: audit.StatusExecuted}); err != nil {
 		return nil, stateOut{}, errors.New(codeUnavailable)
 	}
-	return nil, stateOut{EntityID: dev.EntityID, State: dev.State, Attributes: sanitize(dev.Attributes)}, nil
+	return nil, stateOut{EntityID: dev.EntityID, State: dev.State, Attributes: sanitize(dev.Attributes), TemperatureUnit: g.temperatureUnitOf(dev.Category)}, nil
 }
 
 // sanitize removes attributes that can carry access tokens, such as entity_picture of
@@ -558,17 +566,20 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 	// for a refusal; the parameters of the evaluation come from what will be executed, the
 	// category from the catalog. An entity the catalog does not know has neither and is
 	// denied.
+	// The unit is read once: the value is evaluated and executed in the same unit, also
+	// if Home Assistant's configuration is read again meanwhile (spec #21 part B).
+	unit := g.temperatureUnit()
 	var parameters map[string]int64
 	var paramErr error
 	if dev, ok := g.cfg.Catalog.Lookup(in.EntityID); ok {
-		parameters, paramErr = requestParameters(dev.Category, in.Action, in.Params, g.temperatureUnit())
+		parameters, paramErr = requestParameters(dev.Category, in.Action, in.Params, unit)
 	}
 	d, err := g.enforce(ctx, a, in.EntityID, in.Action, parameters, paramErr)
 	ask := errors.Is(err, errAsk)
 	if err != nil && !ask {
 		return nil, actionOut{}, err
 	}
-	call, err := buildCall(in.EntityID, d.Resource.Category, in.Action, in.Params)
+	call, err := buildCall(in.EntityID, d.Resource.Category, in.Action, in.Params, unit)
 	if err != nil {
 		code := codeInvalidParams
 		if errors.Is(err, errNotSupported) {
@@ -698,6 +709,12 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 	_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate})
 	if !known {
 		return pdp.Decision{}, errors.New(codeNotFound) // same answer as for an entity that does not exist
+	}
+	// A value outside the agent's limits: it learns them, in its own units.
+	if d.Result.Reason == evaluator.ReasonNoMatch && parameters != nil && d.Former == "" {
+		if text := limitsText(agentLimits(snap.Limits(entityID, action), d.Resource.Category, action, g.temperatureUnit())); text != "" {
+			return pdp.Decision{}, errors.New(codeDenied + ": no_match: allowed only with " + text)
+		}
 	}
 	return pdp.Decision{}, errors.New(codeDenied + ": " + string(d.Result.Reason))
 }
@@ -844,8 +861,17 @@ const readDomain = "home_mandate"
 // the state read after it, or the pending (or retry) fields without a state.
 func stateOf(out actionOut) stateOut {
 	if out.Read != nil {
-		return stateOut{EntityID: out.Read.EntityID, State: out.Read.State, Attributes: out.Read.Attributes}
+		return stateOut{EntityID: out.Read.EntityID, State: out.Read.State, Attributes: out.Read.Attributes, TemperatureUnit: out.Read.TemperatureUnit}
 	}
 	return stateOut{Status: out.Status, Phase: out.Phase, ApprovalID: out.ApprovalID, OpenUntil: out.OpenUntil, Next: out.Next,
 		PollAgain: out.PollAgain, RetryAfter: out.RetryAfter, RetryAt: out.RetryAt}
+}
+
+// temperatureUnitOf is the unit of the temperatures of a device of the category: the
+// household's unit for climate devices, "" for every other category.
+func (g *Gateway) temperatureUnitOf(category string) string {
+	if category != "climate" {
+		return ""
+	}
+	return g.temperatureUnit()
 }

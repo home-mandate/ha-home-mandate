@@ -110,10 +110,10 @@ An allowing rule can carry **Limits**: brightness, temperature, position or volu
 and to a value. It allows only values within the limits; other values are decided by
 another rule or the default.
 
-Temperatures can be checked only in a household that uses °C in Home Assistant. In a °F
-household every `set_temperature` request is refused for now, also under a rule without
-limits, until a later version supports °F; set temperatures in Home Assistant itself
-meanwhile.
+Temperature limits are in the unit Home Assistant uses in your household: in °C in a
+metric household, in °F in a US one. The rule form offers only that unit. A limit in the
+other unit (for example from a template written for another household) never applies; the
+form says so, and you set the limit again in your unit.
 
 ### Templates
 

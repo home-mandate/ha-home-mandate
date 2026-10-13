@@ -1008,8 +1008,11 @@ func TestParameterValuesTheUnitCannotExpress(t *testing.T) {
 		{name: "silence", entity: "media_player.kitchen", params: map[string]any{"volume_level": 0.0}, wantSent: 0.0},
 		{name: "temperature finer than the unit", entity: "climate.living_room", params: map[string]any{"temperature": 21.555},
 			wantErr: "invalid_params: temperature must be a number between -50 and 100 in steps of 0.01 degrees"},
-		{name: "temperature in a Fahrenheit household", entity: "climate.living_room", params: map[string]any{"temperature": 70.0}, unit: "°F",
-			wantErr: "invalid_params: temperature cannot be checked in a household that uses °F yet"},
+		// Spec #21 part B: executed in the household's unit, evaluated as temperature_f.
+		{name: "temperature in a Fahrenheit household", entity: "climate.living_room", params: map[string]any{"temperature": 70.0}, unit: "°F", wantSent: 70.0},
+		{name: "Fahrenheit above the Celsius range", entity: "climate.living_room", params: map[string]any{"temperature": 101.0}, unit: "°F", wantSent: 101.0},
+		{name: "Fahrenheit finer than the unit", entity: "climate.living_room", params: map[string]any{"temperature": 70.005}, unit: "°F",
+			wantErr: "invalid_params: temperature must be a number between -58 and 212 in steps of 0.01 degrees"},
 		{name: "temperature in °C", entity: "climate.living_room", params: map[string]any{"temperature": 21.5}, wantSent: 21.5},
 	}
 	for _, tt := range tests {
