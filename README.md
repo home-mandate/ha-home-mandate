@@ -154,6 +154,27 @@ The threat model and how to report vulnerabilities: [SECURITY.md](SECURITY.md).
 Home-Mandate embeds the reference evaluator of `home-mandate/spec` as a Go module and must
 pass all its conformance cases.
 
+## Conformance
+
+Home-Mandate 0.1.0-rc.4 conforms to the Home-Mandate Specification `v0.1.0-rc.1` (manifest
+`conformance/manifest.json`, SHA-256 `9d2e22efd8af6dd00b068b93b790bc5d740eefb5adb5900b855f844df3d1ce52`)
+in these classes (SPEC-v0 section 8.1), tested with the specification's test tool
+`mandate-conformance` on every pull request and with `make conformance`:
+
+| Class | Cases | Binding |
+|---|---|---|
+| `evaluator` | 306 | process (the evaluation Home-Mandate uses) |
+| `selection` | 19 | process |
+| `audit` | 169 | process |
+| `audit-anchored` | 14 | process |
+| `pdp` | 150 | HTTP (its AuthZEN endpoint) |
+
+It does not claim the class `signatures`. It passes the 12 succession cases of that class
+(SPEC-v0 section 3.5), but it does not accept signed mandates (section 7.1): it issues every
+mandate itself and refuses mandates of another issuer, signed ones included. Its test
+adapter therefore offers no `verify_signed`, and the test tool skips those 18 cases. The
+class follows once signed mandates can be imported.
+
 ## License
 
 AGPL-3.0-or-later, see [LICENSE](LICENSE). The licenses of all included components are in
