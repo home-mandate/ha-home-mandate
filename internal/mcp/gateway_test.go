@@ -1160,3 +1160,17 @@ func TestNothingIsDecidedWhileTheClockIsBehind(t *testing.T) {
 		})
 	}
 }
+
+// Agents learn what a climate device's state means: the mode, not what it does now.
+func TestToolsExplainTheClimateState(t *testing.T) {
+	h := newHarness(t, nil)
+	res, err := h.session().ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		if (tool.Name == "get_state" || tool.Name == "list_devices") && !strings.Contains(tool.Description, "hvac_action") {
+			t.Errorf("%s: %q", tool.Name, tool.Description)
+		}
+	}
+}

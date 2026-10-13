@@ -224,11 +224,11 @@ func New(cfg Config) *Gateway {
 	addTool(g.server, &sdk.Tool{Name: "list_devices",
 		Description: "Lists the devices you may read, with category, area and state, one page at a time (next_cursor). " +
 			"The first page also lists the areas and categories with their number of devices; filter by area, category " +
-			"or search to get what you need without reading every page."}, g.listDevices)
+			"or search to get what you need without reading every page. " + climateStateHint}, g.listDevices)
 	addTool(g.server, &sdk.Tool{Name: "get_state",
 		Description: "Returns the state of one device. Reading some devices needs a human to confirm; give a short reason " +
 			"for them. If nobody has answered after a while, the result has status \"pending\" and no state yet: " +
-			"approval_status with the approval_id gives the state once a human confirmed."}, g.getState)
+			"approval_status with the approval_id gives the state once a human confirmed. " + climateStateHint}, g.getState)
 	addTool(g.server, &sdk.Tool{Name: "perform_action",
 		Description: "Performs an action on one device, e.g. turn_on or unlock. Some actions need a human to confirm; " +
 			"give a short reason for them. The call waits a while for the answer; if nobody has answered by then, the result " +
@@ -244,6 +244,11 @@ func New(cfg Config) *Gateway {
 			"Devices with the same category and permissions form one group; paged and filtered like list_devices."}, g.listPermissions)
 	return g
 }
+
+// climateStateHint explains Home Assistant's state of a climate device, which models take
+// for "heating now" (acceptance test 2026-10-13).
+const climateStateHint = "For climate devices, state is the operating mode (heat, cool, off, ...), not whether the device " +
+	"is heating or cooling right now; the attribute hvac_action tells that (heating, cooling, idle, ...)."
 
 // addTool registers a tool with an output schema that accepts fields added later.
 // Clients cache tools/list across server updates and validate structuredContent against
