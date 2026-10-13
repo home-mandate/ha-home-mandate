@@ -190,12 +190,13 @@ func TestListRejectsBadInput(t *testing.T) {
 	}
 }
 
-// The first page of list_devices tells the areas and categories of readable devices,
-// with counts, so an agent can filter; later pages do not repeat it.
+// The first page of list_devices without filters tells the areas and categories of
+// readable devices, with counts, so an agent can filter; later pages and filtered
+// calls, whose agent knows them already, do not repeat it.
 func TestListDevicesOverview(t *testing.T) {
 	h := newHarness(t, nil)
 	s := h.session()
-	out, errText := h.call(s, "list_devices", map[string]any{"category": "lock", "limit": 1})
+	out, errText := h.call(s, "list_devices", map[string]any{"limit": 1})
 	if errText != "" {
 		t.Fatal(errText)
 	}
@@ -207,9 +208,14 @@ func TestListDevicesOverview(t *testing.T) {
 	if want := `[{"count":1,"name":"alarm"},{"count":1,"name":"climate"},{"count":1,"name":"light"},{"count":3,"name":"lock"},{"count":1,"name":"other"}]`; categories != want {
 		t.Errorf("categories = %s, want %s", categories, want)
 	}
-	next, _ := h.call(s, "list_devices", map[string]any{"category": "lock", "limit": 1, "cursor": out["next_cursor"]})
+	next, _ := h.call(s, "list_devices", map[string]any{"limit": 1, "cursor": out["next_cursor"]})
 	if next["areas"] != nil || next["categories"] != nil {
 		t.Errorf("overview repeated on a later page: %v", next)
+	}
+	for _, filter := range []map[string]any{{"category": "lock"}, {"area": "garden"}, {"search": "kitchen"}} {
+		if filtered, _ := h.call(s, "list_devices", filter); filtered["areas"] != nil || filtered["categories"] != nil {
+			t.Errorf("overview with %v: %v", filter, filtered)
+		}
 	}
 }
 

@@ -68,7 +68,7 @@ Reason: only this way can every request be mapped unambiguously to a device and 
 
 | Tool | Action in the mandate | Purpose |
 |---|---|---|
-| `list_devices` | `read` | Lists only devices the agent has at least read access to; filters (`area`, `category`, `search`), pages of at most 500 devices, and on the first page the areas and categories with their counts |
+| `list_devices` | `read` | Lists only devices the agent has at least read access to; filters (`area`, `category`, `search`), pages of at most 500 devices, and on the first page without filters the areas and categories with their counts |
 | `get_state` | `read` | State of a device; with the decision *ask* after a human's confirmation (section 7) |
 | `perform_action` | depends on the category, e.g. `turn_on`, `unlock` | Performs an action, after the decision; optional `idempotency_key` ties repeated calls to one approval request (section 7) |
 | `list_my_permissions` | – | Shows the agent what it may do (helps models avoid pointless requests), grouped by category and identical permissions, filtered and paged like `list_devices`; an action allowed only within limits is listed with them (`evaluator.Mandate.Limits`, in the agent's units; a refusal outside them names them too; SPEC-v0 section 11.5). Never shows other agents' rules. |

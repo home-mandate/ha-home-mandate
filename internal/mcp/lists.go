@@ -66,7 +66,8 @@ type (
 		Total int `json:"total"`
 		// NextCursor continues with the next page; it is missing on the last one.
 		NextCursor string `json:"next_cursor,omitempty"`
-		// Areas and Categories cover every device the agent may read, on the first page only.
+		// Areas and Categories cover every device the agent may read, on the first page
+		// without filters only: an agent that filters knows them already.
 		Areas      []areaOut     `json:"areas,omitempty"`
 		Categories []categoryOut `json:"categories,omitempty"`
 	}
@@ -175,7 +176,7 @@ func (g *Gateway) listDevices(ctx context.Context, req *sdk.CallToolRequest, in 
 		out.Devices = append(out.Devices, deviceOut{EntityID: dev.EntityID, Name: dev.Name(), Category: dev.Category, Area: dev.Area, State: dev.State})
 	}
 	out.Total, out.NextCursor = total, next
-	if in.Cursor == "" {
+	if in.Cursor == "" && in.Area == "" && in.Category == "" && in.Search == "" {
 		out.Areas, out.Categories = g.overview(readable)
 	}
 	return nil, out, nil

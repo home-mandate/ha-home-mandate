@@ -223,7 +223,7 @@ func New(cfg Config) *Gateway {
 		statusLimiter: ratelimit.New(cfg.Now), cooldowns: map[string]cooldown{}, server: sdk.NewServer(&sdk.Implementation{Name: "home-mandate", Version: cfg.Version}, nil)}
 	addTool(g.server, &sdk.Tool{Name: "list_devices",
 		Description: "Lists the devices you may read, with category, area and state, one page at a time (next_cursor). " +
-			"The first page also lists the areas and categories with their number of devices; filter by area, category " +
+			"The first page without filters also lists the areas and categories with their number of devices; filter by area, category " +
 			"or search to get what you need without reading every page. " + climateStateHint}, g.listDevices)
 	addTool(g.server, &sdk.Tool{Name: "get_state",
 		Description: "Returns the state of one device. Reading some devices needs a human to confirm; give a short reason " +
