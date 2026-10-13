@@ -57,6 +57,12 @@ func (s *Store) ApproversFor(ctx context.Context, template string, by audit.Acto
 	return approversOf(document, people)
 }
 
+// MandateApprovers returns who may approve the requests of a stored mandate: the lists
+// it keeps since its admission or its last edit (issue #35).
+func MandateApprovers(document []byte) (Approvers, error) {
+	return approversOf(document, nil)
+}
+
 type approvalSettings struct {
 	Approvers []string `json:"approvers"`
 }

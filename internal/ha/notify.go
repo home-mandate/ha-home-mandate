@@ -5,12 +5,15 @@ package ha
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"regexp"
+	"strings"
 	"unicode/utf8"
 )
 
 const (
 	maxNotifyText    = 1000
+	maxNotifyURL     = 512
 	maxNotifyActions = 3
 )
 
@@ -41,6 +44,11 @@ type Notification struct {
 	Message string
 	Actions []NotificationAction
 	Tag     string `json:",omitempty"`
+	// URL is what a tap opens: an https address or a path of Home Assistant's frontend
+	// (iOS data.url, Android data.clickAction); empty opens the Companion App.
+	URL string `json:",omitempty"`
+	// Sticky keeps the notification on Android when it is tapped.
+	Sticky bool `json:",omitempty"`
 }
 
 // NotificationAction is a button; pressing it fires mobile_app_notification_action
@@ -73,6 +81,12 @@ func (c *Client) Notify(ctx context.Context, service string, n Notification) err
 	}
 	if n.Tag != "" {
 		extra["tag"] = n.Tag
+	}
+	if n.URL != "" {
+		extra["url"], extra["clickAction"] = n.URL, n.URL
+	}
+	if n.Sticky {
+		extra["sticky"] = "true" // the Companion App reads the string
 	}
 	if len(extra) > 0 {
 		data["data"] = extra
@@ -110,6 +124,8 @@ func checkNotification(service string, n Notification) error {
 		return fmt.Errorf("%w: too many notification actions", ErrCommandNotAllowed)
 	case n.Tag != "" && !notifyTagPattern.MatchString(n.Tag):
 		return fmt.Errorf("%w: notification tag", ErrCommandNotAllowed)
+	case n.URL != "" && !ValidTapTarget(n.URL):
+		return fmt.Errorf("%w: notification target", ErrCommandNotAllowed)
 	}
 	for _, a := range n.Actions {
 		if !notifyActionPattern.MatchString(a.Action) || a.Title == "" || utf8.RuneCountInString(a.Title) > maxNotifyText {
@@ -117,4 +133,18 @@ func checkNotification(service string, n Notification) error {
 		}
 	}
 	return nil
+}
+
+// ValidTapTarget admits an https address without user information or a path of Home
+// Assistant's frontend, both without spaces, backslashes or control characters: a tap
+// must not open another app or a scheme the Companion App would hand to the system.
+func ValidTapTarget(target string) bool {
+	if len(target) > maxNotifyURL || strings.IndexFunc(target, func(r rune) bool { return r <= ' ' || r == 0x7f || r == '\\' }) >= 0 {
+		return false
+	}
+	if strings.HasPrefix(target, "/") {
+		return !strings.HasPrefix(target, "//")
+	}
+	u, err := url.Parse(target)
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil
 }

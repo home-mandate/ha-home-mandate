@@ -96,6 +96,10 @@ describe('AgentPair', () => {
     const agent = (await api.agents()).at(-1);
     expect(screen.getByRole('link', { name: 'Go to agent' }).getAttribute('href')).toBe(`#/agents/id/${encodeURIComponent(agent?.client_id ?? '')}`);
     expect(screen.getByRole('link', { name: 'Adjust mandate' }).getAttribute('href')).toBe(`#/mandates/${agent?.mandate?.id}`);
+    // The next steps of both ways to connect (#35); read only asks nobody.
+    const next = screen.getByRole('list', { name: 'Next steps' });
+    expect(next.textContent).toContain('ask your agent “What are you allowed to do in my home?”');
+    expect(await within(next).findByText('This mandate never asks anyone for approval.')).toBeTruthy();
     expect(screen.queryByRole('list', { name: /Step/ })).toBeNull();
   });
 

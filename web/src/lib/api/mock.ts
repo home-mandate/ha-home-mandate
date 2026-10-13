@@ -154,6 +154,8 @@ export interface MockControls {
   setEmergencyStop(active: boolean): Promise<void>;
   /** As another administrator's edit of a mandate: a new version with this rate limit. */
   editMandate(id: string, maxActionsPerHour: number): void;
+  /** As an agent admitted on the consent page after a browser sign-in (OAuth); returns its client ID. */
+  admitByBrowser(name: string, template: string): string;
 }
 
 export type MockClient = ApiClient & { control: MockControls };
@@ -598,6 +600,30 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     if (needsCriticalConfirmation(null, template(name).draft) && confirm !== true) fail('critical_confirmation_required');
   }
 
+  /** newAgent is an agent the signed-in human admits now, still without its mandate. */
+  function newAgent(clientId: string, name: string, client: string, redirectUris: string[]): Agent {
+    return {
+      client_id: clientId,
+      display_name: name,
+      status: 'active',
+      created_at: now().toISOString(),
+      created_by: user().id,
+      created_by_name: user().name,
+      last_active_at: null,
+      oauth_client: client,
+      client_verified: false,
+      redirect_uris: redirectUris,
+      revoked_at: null,
+      revoked_by_name: null,
+      removed_at: null,
+      removed_by_name: null,
+      connected: true,
+      requests_today: 0,
+      actions_last_hour: 0,
+      mandate: null,
+    };
+  }
+
   function createFromTemplate(clientId: string, name: string, mandateName?: string): string {
     const agent = state.agents.find((a) => a.client_id === clientId) ?? fail('not_found');
     const draft = resolved(name);
@@ -726,6 +752,15 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     async setEmergencyStop(active) {
       await api.setEmergencyStop(active);
     },
+    admitByBrowser(name, template) {
+      const client = 'https://agent.example/oauth/client.json';
+      const clientId = `oauth:${++counter}`;
+      state = { ...state, agents: [...state.agents, newAgent(clientId, name, client, ['https://agent.example/oauth/callback'])] };
+      log('agent.registered', { agent: { client_id: clientId, display_name: name } });
+      createFromTemplate(clientId, template);
+      emit({ type: 'agents.changed' });
+      return clientId;
+    },
     editMandate(id, maxActionsPerHour) {
       const { document: doc, summary } = detail(id);
       storeVersion(id, summary.digest, { ...draftOf(doc), limits: { max_actions_per_hour: maxActionsPerHour } }, true);
@@ -804,26 +839,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       }
       checkCritical(req.template, req.confirm_critical);
       const clientId = `pair:${pairingCandidate.client}-${++counter}`;
-      const agent: Agent = {
-        client_id: clientId,
-        display_name: name,
-        status: 'active',
-        created_at: now().toISOString(),
-        created_by: user().id,
-        created_by_name: user().name,
-        last_active_at: null,
-        oauth_client: pairingCandidate.client,
-        client_verified: false,
-        redirect_uris: [],
-        revoked_at: null,
-        revoked_by_name: null,
-        removed_at: null,
-        removed_by_name: null,
-        connected: true,
-        requests_today: 0,
-        actions_last_hour: 0,
-        mandate: null,
-      };
+      const agent = newAgent(clientId, name, pairingCandidate.client, []);
       state = { ...state, agents: [...state.agents, agent], pairing: { ...state.pairing, codes: { ...state.pairing.codes, [key]: 'expired' } } };
       log('agent.registered', { agent: { client_id: clientId, display_name: name } });
       createFromTemplate(clientId, req.template, req.mandate_name);
@@ -1116,6 +1132,21 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       return previewApprovers({
         draft: t.draft,
         placeholder: [user().id, ...approvers.map((a) => a.user_id)],
+        approvers,
+        names: { ...names, [user().id]: user().name },
+        self: user().id,
+        serviceUser: '',
+        haDown: !state.system.ha.connected,
+      });
+    },
+
+    async mandateApprovers(id) {
+      const { document: doc } = detail(id);
+      const { approvers, candidates } = state.approvers;
+      const names = Object.fromEntries([...candidates.people, ...approvers].map((p) => [p.user_id, p.name]));
+      return previewApprovers({
+        draft: draftOf(doc),
+        placeholder: [],
         approvers,
         names: { ...names, [user().id]: user().name },
         self: user().id,

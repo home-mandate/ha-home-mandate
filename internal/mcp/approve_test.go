@@ -119,7 +119,10 @@ func (f *fakeApprover) requests() []approval.Request {
 
 const approverID = "user-1" // approver of the voice assistant example
 
-var answeredAt = time.Date(2026, 10, 13, 12, 0, 30, 0, time.UTC)
+// answeredAt is when the fake approver answers: now, by the clock the gateway checks a
+// confirmation's validity against. A fixed date made every test after it fail with
+// approval_expired once it was more than the validity in the past.
+var answeredAt = time.Now().UTC().Truncate(time.Second)
 
 func approvalHarness(t *testing.T, f *fakeApprover) *harness {
 	t.Helper()
@@ -264,7 +267,8 @@ func TestFailedCallAfterApprovalIsLogged(t *testing.T) {
 	}
 }
 
-// Without an approval service, ask stays a refusal; reads are never asked for.
+// Without an approval service, ask stays a refusal; with one, a read is asked for too
+// (issue #46).
 func TestAskWithoutApprovals(t *testing.T) {
 	h := newHarness(t, nil)
 	if errText := unlock(h, nil); !strings.HasPrefix(errText, "approval_required") {
@@ -276,9 +280,9 @@ func TestAskWithoutApprovals(t *testing.T) {
 	})
 	h2.approver = &fakeApprover{result: approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: answeredAt}}
 	h2.url = h2.serve(h2.log)
-	_, errText := h2.call(h2.session(), "get_state", map[string]any{"entity_id": "light.kitchen"})
-	if !strings.HasPrefix(errText, "approval_required") {
-		t.Errorf("get_state with read ask = %q", errText)
+	out, errText := h2.call(h2.session(), "get_state", map[string]any{"entity_id": "light.kitchen"})
+	if errText != "" || out["state"] != "off" {
+		t.Errorf("get_state with read ask = %v, %q", out, errText)
 	}
 }
 
@@ -634,7 +638,7 @@ func TestAskingAgainAfterARefusalWaits(t *testing.T) {
 		t.Errorf("a minute after the second refusal = %q", errText)
 	}
 	h.now.advance(cooldownMin)
-	f.answer(approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: answeredAt})
+	f.answer(approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: h.now.Now()})
 	if errText := unlock(h, nil); errText != "" {
 		t.Fatalf("after two minutes = %q", errText)
 	}

@@ -194,6 +194,9 @@ type gateway struct {
 	language atomic.Value  // string; household language from get_config
 	self     atomic.Value  // string; Home-Mandate's own Home Assistant user
 	retryMin time.Duration // first wait before the configuration is read again
+	// slug is the app's slug from the Supervisor, "" in container mode or when it could
+	// not be read; it names the panel a notification's tap opens.
+	slug string
 
 	mu        sync.Mutex
 	haSince   time.Time // when the connection was made or lost
@@ -222,6 +225,9 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	g.timeZone.Store("")
 	g.language.Store("")
 	g.self.Store("")
+	if s.cfg.Mode == config.ModeApp {
+		g.slug = lookUpSlug(ctx, s.cfg, logger)
+	}
 	client, err := ha.New(ha.Config{URL: s.cfg.HAURL, Token: s.cfg.HAToken, RootCAs: s.cfg.HARootCAs, Plaintext: s.cfg.HAPlaintext, Logger: logger,
 		OnConnect: g.onConnect, OnDisconnect: g.onDisconnect})
 	if err != nil {
@@ -272,7 +278,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 			a := uiAPI.Load()
 			return a != nil && a.BellEnabled()
 		},
-		App: s.cfg.Mode == config.ModeApp, UIAddress: g.uiAddress,
+		App: s.cfg.Mode == config.ModeApp, UIAddress: g.uiAddress, TapTarget: g.tapTarget,
 		OnOpened: func(o approval.Open) {
 			if a := uiAPI.Load(); a != nil {
 				a.ApprovalOpened(o)
@@ -282,6 +288,9 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	g.approvals = approvals
 	if _, err := client.SubscribeEvents(ctx, ha.EventMobileAppNotificationAction, approvals.HandleEvent); err != nil {
 		return nil, fmt.Errorf("subscribe %s: %w", ha.EventMobileAppNotificationAction, err)
+	}
+	if _, err := client.SubscribeEvents(ctx, ha.EventMobileAppNotificationCleared, approvals.HandleCleared); err != nil {
+		return nil, fmt.Errorf("subscribe %s: %w", ha.EventMobileAppNotificationCleared, err)
 	}
 
 	decider := pdp.New(pdp.Config{Principal: s.household, Mandates: s.mandates, Catalog: g.catalog, TimeZone: g.householdTimeZone,
@@ -445,6 +454,26 @@ func (g *gateway) uiAddress() string {
 		return ""
 	}
 	return g.state.cfg.PublicURL + api.DirectPrefix + "/"
+}
+
+// requestsRoute is the UI's page of the open requests (web/src/lib/router.ts).
+const requestsRoute = "#/audit/requests"
+
+// ingressPanelPath is where Home Assistant's frontend opens an app's panel by its slug,
+// whether or not it is shown in the sidebar (measured with 2026.9.4 and 2026.10.1;
+// /hassio/ingress/<slug> is a 404 there).
+const ingressPanelPath = "/app/"
+
+// tapTarget is what a tap on a request's notification opens (issue #49): the open
+// requests in the UI in direct mode, the app's panel in Home Assistant, or nothing.
+func (g *gateway) tapTarget() string {
+	if address := g.uiAddress(); address != "" {
+		return address + requestsRoute
+	}
+	if g.slug != "" {
+		return ingressPanelPath + g.slug
+	}
+	return ""
 }
 
 // serveDirect serves direct mode once the API exists; 404 while it is off.
@@ -819,6 +848,25 @@ func (g *gateway) retention(ctx context.Context) {
 
 // coreInfo asks the Supervisor how Home Assistant serves its HTTP API; replaced in tests.
 var coreInfo = ha.CoreInfo
+
+// appSlug asks the Supervisor for the app's slug; replaced in tests.
+var appSlug = ha.AppSlug
+
+// slugTimeout bounds asking the Supervisor for the app's slug at start.
+const slugTimeout = 5 * time.Second
+
+// lookUpSlug returns the app's slug, or "" when the Supervisor does not tell: a tap on a
+// notification then opens the Companion App, as before issue #49; the start goes on.
+func lookUpSlug(ctx context.Context, cfg config.Config, logger *slog.Logger) string {
+	ctx, cancel := context.WithTimeout(ctx, slugTimeout)
+	defer cancel()
+	slug, err := appSlug(ctx, "http://supervisor", cfg.HAToken, cfg.HAPlaintext)
+	if err != nil {
+		logger.Warn("the app's slug is unknown; a tap on an approval notification opens the Companion App", "error", err)
+		return ""
+	}
+	return slug
+}
 
 // appHomeAssistant sets, in app mode with a public URL, where Home-Mandate reaches Home
 // Assistant to sign humans in: on the Supervisor's network as homeassistant, at the port

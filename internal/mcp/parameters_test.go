@@ -7,14 +7,18 @@ import (
 	"maps"
 	"math"
 	"testing"
+
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
 )
 
 // SPEC-v0 section 4.5: a value that cannot be expressed as an integer in the unit of the
 // vocabulary makes the request invalid; it is never dropped or rounded (#44).
 func TestRequestParameters(t *testing.T) {
 	const (
-		volumeRule      = "invalid_params: volume_level must be a whole percent, 0 to 1 in steps of 0.01 (e.g. 0.33)"
-		temperatureRule = "invalid_params: temperature must be a number between -50 and 100 in steps of 0.01 degrees"
+		volumeRule       = "invalid_params: volume_level must be a whole percent, 0 to 1 in steps of 0.01 (e.g. 0.33)"
+		temperatureRule  = "invalid_params: temperature must be a number between -50 and 100 in steps of 0.01 degrees"
+		fahrenheitRule   = "invalid_params: temperature must be a number between -58 and 212 in steps of 0.01 degrees"
+		unexpectedUnitIn = "invalid_params: temperature cannot be checked in a household that uses K"
 	)
 	tests := []struct {
 		name             string
@@ -35,10 +39,12 @@ func TestRequestParameters(t *testing.T) {
 		{name: "float noise is not a fraction", category: "climate", action: "set_temperature", params: map[string]any{"temperature": 19.99}, unit: "°C", want: map[string]int64{"temperature": 1999}},
 		{name: "temperature finer than the unit", category: "climate", action: "set_temperature", params: map[string]any{"temperature": 21.555}, unit: "°C", wantErr: temperatureRule},
 		{name: "temperature out of range", category: "climate", action: "set_temperature", params: map[string]any{"temperature": 150.0}, unit: "°C", wantErr: temperatureRule},
-		{name: "Fahrenheit household: refused", category: "climate", action: "set_temperature", params: map[string]any{"temperature": 70.0}, unit: "°F",
-			wantErr: "invalid_params: temperature cannot be checked in a household that uses °F yet"},
-		{name: "unexpected unit: refused", category: "climate", action: "set_temperature", params: map[string]any{"temperature": 21.0}, unit: "K",
-			wantErr: "invalid_params: temperature cannot be checked in a household that uses K yet"},
+		// Spec #21 part B: a °F household gives temperature_f, never a converted temperature.
+		{name: "Fahrenheit household", category: "climate", action: "set_temperature", params: map[string]any{"temperature": 70.0}, unit: "°F", want: map[string]int64{"temperature_f": 7000}},
+		{name: "Fahrenheit above the Celsius range", category: "climate", action: "set_temperature", params: map[string]any{"temperature": 101.5}, unit: "°F", want: map[string]int64{"temperature_f": 10150}},
+		{name: "Fahrenheit finer than the unit", category: "climate", action: "set_temperature", params: map[string]any{"temperature": 70.005}, unit: "°F", wantErr: fahrenheitRule},
+		{name: "Fahrenheit out of range", category: "climate", action: "set_temperature", params: map[string]any{"temperature": 250.0}, unit: "°F", wantErr: fahrenheitRule},
+		{name: "unexpected unit: refused", category: "climate", action: "set_temperature", params: map[string]any{"temperature": 21.0}, unit: "K", wantErr: unexpectedUnitIn},
 		{name: "unknown unit: not the agent's fault", category: "climate", action: "set_temperature", params: map[string]any{"temperature": 21.0}, unit: "", unitUnknown: true},
 		{name: "unknown unit, temperature missing", category: "climate", action: "set_temperature", params: nil, unit: "", wantErr: "invalid_params: temperature is required"},
 		{name: "position", category: "cover", action: "set_position", params: map[string]any{"position": 30.0}, unit: "°C", want: map[string]int64{"position": 30}},
@@ -95,7 +101,7 @@ func TestCanonicalValueIsSent(t *testing.T) {
 	categories := map[string]string{"set_volume": "media", "set_temperature": "climate"}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			call, err := buildCall(tt.entity, categories[tt.action], tt.action, map[string]any{tt.param: tt.sent})
+			call, err := buildCall(tt.entity, categories[tt.action], tt.action, map[string]any{tt.param: tt.sent}, "°C")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -121,12 +127,78 @@ func TestEvaluationParametersFailClosed(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got, err := evaluationParameters(tt.category, tt.action, tt.data); err == nil {
+			if got, err := evaluationParameters(tt.category, tt.action, tt.data, "°C"); err == nil {
 				t.Errorf("evaluationParameters = %v, want an error", got)
 			}
 		})
 	}
-	if got, err := evaluationParameters("cover", "set_position", map[string]any{"position": 30}); err != nil || got["position"] != 30 {
+	if got, err := evaluationParameters("cover", "set_position", map[string]any{"position": 30}, "°C"); err != nil || got["position"] != 30 {
 		t.Errorf("checked integer: %v, %v", got, err)
+	}
+}
+
+// A temperature is executed in the household's unit, within that unit's range: 101 °F is
+// a valid setting, 101 °C is not (spec #21 part B).
+func TestTemperatureRangePerUnit(t *testing.T) {
+	if _, err := buildCall("climate.living_room", "climate", "set_temperature", map[string]any{"temperature": 101.0}, "°F"); err != nil {
+		t.Errorf("101 °F: %v", err)
+	}
+	if _, err := buildCall("climate.living_room", "climate", "set_temperature", map[string]any{"temperature": 101.0}, "°C"); !errors.Is(err, errInvalidParams) {
+		t.Errorf("101 °C: %v", err)
+	}
+}
+
+// Spec #21 part B end to end: a limit in degrees Fahrenheit applies in a °F household and
+// never in a °C one, where the request carries temperature instead.
+func TestFahrenheitLimit(t *testing.T) {
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+			map[string]any{"id": "r-heating-f", "resource": map[string]any{"category": "climate"}, "actions": []any{"set_temperature"}, "decision": "allow",
+				"constraints": map[string]any{"temperature_f": map[string]any{"min": 6000, "max": 7500}}},
+		}
+	})
+	s := h.session()
+	for _, tc := range []struct {
+		unit    string
+		value   float64
+		wantErr string
+	}{
+		{"°F", 70, ""},
+		{"°F", 75.01, "denied: no_match: allowed only with temperature 60 to 75 °F"},
+		{"°C", 21, "denied: no_match"},
+	} {
+		h.setUnit(tc.unit)
+		_, errText := h.call(s, "perform_action", map[string]any{"entity_id": "climate.living_room", "action": "set_temperature",
+			"params": map[string]any{"temperature": tc.value}})
+		if errText != tc.wantErr {
+			t.Errorf("%v %s: %q, want %q", tc.value, tc.unit, errText, tc.wantErr)
+		}
+	}
+}
+
+// A temperature confirmed in °C is not executed once the household uses °F (and the other
+// way round); the human sees the unit with the value.
+func TestTemperatureUnitChangedWhileTheHumanDecides(t *testing.T) {
+	f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: answeredAt}}
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+			map[string]any{"id": "r-heating", "resource": map[string]any{"category": "climate"}, "actions": []any{"set_temperature"}, "decision": "ask"},
+		}
+	})
+	f.journal, h.approver = h.journal, f
+	h.url = h.serve(h.log)
+	f.during = func() { h.setUnit("°F") }
+	_, errText := h.call(h.session(), "perform_action", map[string]any{"entity_id": "climate.living_room", "action": "set_temperature",
+		"params": map[string]any{"temperature": 21.0}})
+	if errText != "unavailable" || len(h.ha.recorded()) != 0 {
+		t.Errorf("perform_action = %q, %d calls", errText, len(h.ha.recorded()))
+	}
+	if e := h.lastEntry(); path(e, "result", "error") != errTemperatureUnitChanged {
+		t.Errorf("audit entry = %v", e)
+	}
+	if reqs := f.requests(); len(reqs) != 1 || reqs[0].Params["temperature"] != "21 °C" {
+		t.Errorf("shown = %v", reqs[0].Params)
 	}
 }

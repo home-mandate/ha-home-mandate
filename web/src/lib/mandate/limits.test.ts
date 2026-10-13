@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { devicesFixture } from '../api/fixtures.ts';
 import type { Rule } from '../api/types.ts';
 import { setLocale } from '../paraglide/runtime.js';
-import { fromInput, limitableParameters, limitsText, toInput, withConstraint } from './limits.ts';
+import { fromInput, limitableParameters, limitsText, otherUnitLimits, toInput, withConstraint } from './limits.ts';
 
 beforeEach(() => setLocale('en', { reload: false }));
 
@@ -13,20 +13,37 @@ const rule = (patch: Partial<Rule> = {}): Rule => ({ id: 'r', resource: { catego
 
 describe('which values a rule can limit', () => {
   it('offers the parameter every chosen action carries', () => {
-    expect(limitableParameters(rule(), devices)).toEqual(['brightness']);
-    expect(limitableParameters(rule({ resource: { category: 'climate' }, actions: ['set_temperature'] }), devices)).toEqual(['temperature']);
-    expect(limitableParameters(rule({ resource: { entity_id: 'climate.hvac' }, actions: ['set_temperature'] }), devices)).toEqual(['temperature']);
-    expect(limitableParameters(rule({ resource: { category: 'cover' }, actions: ['set_position'] }), devices)).toEqual(['position']);
-    expect(limitableParameters(rule({ resource: { category: 'media' }, actions: ['set_volume'] }), devices)).toEqual(['volume']);
+    expect(limitableParameters(rule(), devices, '°C')).toEqual(['brightness']);
+    expect(limitableParameters(rule({ resource: { category: 'climate' }, actions: ['set_temperature'] }), devices, '°C')).toEqual(['temperature']);
+    expect(limitableParameters(rule({ resource: { entity_id: 'climate.hvac' }, actions: ['set_temperature'] }), devices, '°C')).toEqual(['temperature']);
+    expect(limitableParameters(rule({ resource: { category: 'cover' }, actions: ['set_position'] }), devices, '°C')).toEqual(['position']);
+    expect(limitableParameters(rule({ resource: { category: 'media' }, actions: ['set_volume'] }), devices, '°C')).toEqual(['volume']);
+  });
+
+  // #42, spec #21 part B: a temperature only in the household's unit; none while it is unknown.
+  it('offers the temperature in the unit of the household', () => {
+    const heating = rule({ resource: { category: 'climate' }, actions: ['set_temperature'] });
+    expect(limitableParameters(heating, devices, '°F')).toEqual(['temperature_f']);
+    expect(limitableParameters(heating, devices, '°C')).toEqual(['temperature']);
+    expect(limitableParameters(heating, devices, null)).toEqual([]);
+    expect(limitableParameters(rule(), devices, null)).toEqual(['brightness']);
+  });
+
+  it('names limits in the other unit, which never apply in the household', () => {
+    const limited = rule({ resource: { category: 'climate' }, actions: ['set_temperature'], constraints: { temperature: { max: 2300 } } });
+    expect(otherUnitLimits(limited, '°F')).toEqual(['temperature']);
+    expect(otherUnitLimits(limited, '°C')).toEqual([]);
+    expect(otherUnitLimits(limited, null)).toEqual([]);
+    expect(otherUnitLimits({ ...limited, constraints: { temperature_f: { max: 7500 } } }, '°C')).toEqual(['temperature_f']);
   });
 
   it('offers nothing when an action has no such value, for "all actions", without a category or for deny and ask', () => {
-    expect(limitableParameters(rule({ actions: ['set', 'turn_on'] }), devices)).toEqual([]);
-    expect(limitableParameters(rule({ actions: ['*'] }), devices)).toEqual([]);
-    expect(limitableParameters(rule({ actions: [] }), devices)).toEqual([]);
-    expect(limitableParameters(rule({ resource: { any: true } }), devices)).toEqual([]);
-    expect(limitableParameters(rule({ decision: 'deny' }), devices)).toEqual([]);
-    expect(limitableParameters(rule({ decision: 'ask' }), devices)).toEqual([]);
+    expect(limitableParameters(rule({ actions: ['set', 'turn_on'] }), devices, '°C')).toEqual([]);
+    expect(limitableParameters(rule({ actions: ['*'] }), devices, '°C')).toEqual([]);
+    expect(limitableParameters(rule({ actions: [] }), devices, '°C')).toEqual([]);
+    expect(limitableParameters(rule({ resource: { any: true } }), devices, '°C')).toEqual([]);
+    expect(limitableParameters(rule({ decision: 'deny' }), devices, '°C')).toEqual([]);
+    expect(limitableParameters(rule({ decision: 'ask' }), devices, '°C')).toEqual([]);
   });
 });
 
@@ -37,6 +54,9 @@ describe('units', () => {
     expect(fromInput('temperature', '21,5')).toBe(2150);
     expect(fromInput('temperature', '-3')).toBe(-300);
     expect(fromInput('temperature', '21.555')).toBe('invalid');
+    expect(toInput('temperature_f', 7050)).toBe('70.5');
+    expect(fromInput('temperature_f', '101')).toBe(10100);
+    expect(fromInput('temperature_f', '70.005')).toBe('invalid');
   });
 
   it('keeps percent as it is, within 0 to 100', () => {
@@ -77,6 +97,7 @@ describe('limits as text', () => {
     expect(limitsText(rule(), 'en')).toBe('');
     expect(limitsText(rule({ constraints: { brightness: { min: Number.NaN, max: 80 } } }), 'en')).toMatch(/^Brightness up to 80\s?%$/);
     expect(limitsText(rule({ constraints: { temperature: { min: -500 } } }), 'en')).toMatch(/^Temperature from -5\s?°C$/);
+    expect(limitsText(rule({ constraints: { temperature_f: { min: 6000, max: 7500 } } }), 'en')).toMatch(/^Temperature 60(\s?°F)?\s?–\s?75\s?°F$/);
     setLocale('de', { reload: false });
     expect(limitsText(rule({ constraints: { temperature: { max: 2350 } } }), 'de')).toBe('Temperatur bis 23,5 °C');
   });

@@ -68,10 +68,10 @@ Reason: only this way can every request be mapped unambiguously to a device and 
 
 | Tool | Action in the mandate | Purpose |
 |---|---|---|
-| `list_devices` | `read` | Lists only devices the agent has at least read access to |
-| `get_state` | `read` | State of a device |
+| `list_devices` | `read` | Lists only devices the agent has at least read access to; filters (`area`, `category`, `search`), pages of at most 500 devices, and on the first page without filters the areas and categories with their counts |
+| `get_state` | `read` | State of a device; with the decision *ask* after a human's confirmation (section 7) |
 | `perform_action` | depends on the category, e.g. `turn_on`, `unlock` | Performs an action, after the decision; optional `idempotency_key` ties repeated calls to one approval request (section 7) |
-| `list_my_permissions` | – | Shows the agent what it may do (helps models avoid pointless requests). Never shows other agents' rules. |
+| `list_my_permissions` | – | Shows the agent what it may do (helps models avoid pointless requests), grouped by category and identical permissions, filtered and paged like `list_devices`; an action allowed only within limits is listed with them (`evaluator.Mandate.Limits`, in the agent's units; a refusal outside them names them too; SPEC-v0 section 11.5). Never shows other agents' rules. |
 | `approval_status` | – (no action) | Outcome of the agent's own request that waits for a human, by its approval ID: executed, the refusal, or still pending (section 7) |
 | `approval_cancel` | – (no action) | Withdraws the agent's own open request (`cancelled`, `cause: withdrawn`); never an answer (section 7) |
 
@@ -82,7 +82,14 @@ cached schema (MCP: clients SHOULD validate); a closed schema made a result with
 optional field fail in Claude Desktop until it reloaded the tools (acceptance test
 2026-10-10). New output fields are therefore always optional. Input schemas stay strict.
 Error results (`isError`) that carry structured content (`retry_after`, `retry_at`)
-conform to the same schema, and their text says everything on its own.
+conform to the same schema, and their text says everything on its own. The one exception
+before v0.1.0: `list_my_permissions` returns `groups` instead of `devices` (issue #36), so a
+client that cached the old schema has to reload the tools once.
+
+Each page of a list is one request under `max_actions_per_hour` (SPEC-v0 section 11.2).
+The cursor is the last entity ID of a page and only a position in the order of entity IDs:
+a cursor, filter or search that names a device the agent may not read gives the same
+answer as one naming a device that does not exist.
 
 Devices an agent has no read access to do not exist for that agent (no hint of their
 existence in lists or error messages): `list_devices` lists only devices it may read
@@ -116,9 +123,11 @@ tells no more than the grant. Its parameters are checked as for any other device
    device the agent may read; for any other it is `not_found`, logged as `failed` /
    `invalid_params` without an evaluation. Binary noise (0.29 is 28.999… percent) is no
    fraction; what is evaluated and executed is the canonical value of the step (0.29).
-   A temperature in a household that uses °F cannot be expressed in the unit of the
-   vocabulary and is refused the same way until the vocabulary has a °F parameter; while
-   the household's unit is not known yet, a request with a temperature is `unavailable`
+   A temperature is evaluated in the household's unit and as exactly one parameter (spec
+   #21 part B): `temperature` (0.01 °C) in a °C household, `temperature_f` (0.01 °F) in a
+   °F household, never converted; its range is −50 to 100 °C or −58 to 212 °F. A rule
+   limiting the other unit does not match. Any other unit is refused; while the
+   household's unit is not known yet, a request with a temperature is `unavailable`
    (`temperature_unit_unknown`), never checked as °C.
 6. `pdp` selects the agent's mandate among its candidates (SPEC-v0 section 4.3) and
    evaluates it. Result: `allow`, `ask` or `deny`.
@@ -286,6 +295,14 @@ validity; admission fills them in.
   at that point). Home-Mandate's own Home Assistant user never counts; when Home Assistant
   cannot be asked, reach is shown as unknown, never as reachable. The warning never blocks
   the admission.
+- **Next steps after the admission (#35).** Both ways to connect end with the same view:
+  the agent, its mandate, and the next steps (check the mandate, approvers, a first request
+  such as asking for its permissions). The browser sign-in page watches the agent list
+  (`agents.changed`) and shows an agent admitted through it while the page is open; agents
+  there before and agents paired by code are not shown there. Whether approval requests of
+  the stored mandate reach anyone comes from `GET api/mandates/{id}/approvers`, computed
+  like the preview above from the lists the mandate keeps; unknown is never shown as
+  reachable.
 - Templates of the household are edited in the UI (Mandates → Templates) with the mandate
   editor and its preview; changing one names the version it started from, as for
   mandates.
@@ -307,6 +324,21 @@ checked on every request.
 
 ## 7. Approval requests ("ask")
 
+- Reading with *ask* (issue #46) is asked for like an action: the request says that the
+  agent wants to read the state, never shows the state and keeps none in the journal. One
+  confirmation covers one read; there is no replay window for reads, a repeat while the
+  request is open attaches to it. After the confirmation the same checks as before an
+  execution run (emergency stop, token, mandate, availability, validity), then the state is
+  read from the directory, recorded as executed with the approval, and returned:
+  `get_state` gives it directly within the wait, otherwise `approval_status` gives it in
+  `read`, and only while reading is not denied now (a mandate revoked or changed meanwhile:
+  `denied: mandate_changed`). The state is kept only in memory with the request's result (15 minutes); after
+  that, or after a restart, `approval_status` answers `failed: result_gone` and the agent
+  reads again, which asks again. Devices whose read is *ask* stay out of `list_devices`.
+  A read and an action share what is per agent and device: at most one open request (an
+  open read refuses an action on the device with `approval_pending`, and the other way
+  round), the wait after a refusal, and the agent's two open requests.
+
 - Sent via `notify.mobile_app_<device>` (nothing else: the Home Assistant client, the
   approvers store and `approver add` refuse other notify services, which could reach people
   who are no approvers) to every device (up to 5) of the approvers selected
@@ -324,6 +356,19 @@ checked on every request.
   `context.user_id` must belong to an approver; otherwise the answer is discarded and logged.
   An answer with an open nonce from anyone else (also Home-Mandate's own HA user) ends the
   request as `invalid_response` and warns the approvers (decision W8, 2026-10-02).
+- A tap on the notification (issue #49) opens where the request can be answered:
+  `data.url` (iOS) and `data.clickAction` (Android) are the open requests in the UI in
+  direct mode (`<public URL>/ui/#/audit/requests`), the app's panel in the app
+  (`/app/<slug>`, the slug from the Supervisor's `/addons/self/info`; it opens also when
+  the panel is not in the sidebar, `/hassio/ingress/<slug>` does not), and absent
+  otherwise. The link names no request and never carries the nonce; answering in
+  the UI needs the UI channel as everywhere. On Android the notification is `sticky`, so a
+  tap does not dismiss it. When the Companion App reports it cleared
+  (`mobile_app_notification_cleared`, Android only) while the request is open, the same
+  notification (same tag, same buttons) is sent again after 5 seconds, once per request
+  and person, only to the devices that had it, and only if the request is still open then:
+  pressing a button also clears it, and the answer ends the request first. The
+  notification itself keeps the nonce in memory for that; it is never stored or logged.
 - On iOS, `authenticationRequired: true` is set (unlocking required). Android and the
   Companion App on a Mac have no such step: whoever has the unlocked device can answer.
 - The "reason" supplied by the agent is explicitly marked in the message as the agent's claim,
@@ -792,8 +837,8 @@ Decided by the maintainer on 2026-10-01.
    - `internal/ha` sends only the WebSocket commands from the table above (fixed allowlist in
      the code); any other command is rejected before it is sent. A negative test checks this,
      and the table here is the source of the list.
-   - `subscribe_events` only for `state_changed`, `*_registry_updated` and
-     `mobile_app_notification_action`. Approver candidates come from `person.*`;
+   - `subscribe_events` only for `state_changed`, `*_registry_updated`,
+     `mobile_app_notification_action` and `mobile_app_notification_cleared` (issue #49). Approver candidates come from `person.*`;
      `config/auth/list` is read only for the UI's administrator check and for names
      (decision B1, 2026-10-03). The UI shows the enforced list under "Why admin rights?"
      (`system.ha.commands`, generated from it).

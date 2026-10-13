@@ -145,6 +145,14 @@ type Config struct {
 	// App tells that Home-Mandate runs as an app of Home Assistant: its UI opens in the
 	// sidebar, and the bell says so.
 	App bool
+	// TapTarget returns what a tap on a request's notification opens: the open requests
+	// in the UI or the app's panel (issue #49); "" when there is none. Never about one
+	// request, never with its nonce.
+	TapTarget func() string
+	// ResendDelay is how long a request's notification that was cleared waits before it
+	// is sent again (default resendDelay): answering clears it too, and the answer must
+	// win.
+	ResendDelay time.Duration
 	// UIAddress returns where the UI can be opened in a browser outside Home Assistant,
 	// or "" when it has no address of its own (the app, or a container without direct
 	// mode). The bell links to it; it is never about a request.
@@ -213,10 +221,14 @@ type recipient struct {
 }
 
 type pending struct {
-	id         string
-	bellID     string     // separate from id: every Home Assistant user sees the bell
-	tag        string     // of the notifications; separate from id and nonce
-	delivered  []Notified // devices the request reached
+	id        string
+	bellID    string     // separate from id: every Home Assistant user sees the bell
+	tag       string     // of the notifications; separate from id and nonce
+	delivered []Notified // devices the request reached
+	// notices is the notification each person got, for sending it again once after it
+	// was cleared (resent); in memory only, it carries the nonce.
+	notices    map[string]ha.Notification
+	resent     map[string]bool
 	seq        uint64
 	approvers  map[string]bool
 	recipients []recipient
@@ -257,6 +269,9 @@ func New(cfg Config) *Service {
 	if cfg.MaxTimeout <= 0 {
 		cfg.MaxTimeout = defaultMaxTimeout
 	}
+	if cfg.ResendDelay <= 0 {
+		cfg.ResendDelay = resendDelay
+	}
 	return &Service{cfg: cfg, pending: map[string]*pending{}, byID: map[string]*pending{}}
 }
 
@@ -292,7 +307,8 @@ func (s *Service) Start(ctx context.Context, req Request) (Pending, error) {
 		return Pending{}, ErrNoApprover
 	}
 	p := &pending{id: newNonce(), bellID: bellPrefix + newNonce(), tag: tagPrefix + newNonce(), approvers: map[string]bool{},
-		recipients: recipients, req: req, result: make(chan Result, 1), created: s.cfg.Now()}
+		recipients: recipients, req: req, result: make(chan Result, 1), created: s.cfg.Now(),
+		notices: map[string]ha.Notification{}, resent: map[string]bool{}}
 	p.expires = p.created.Add(s.timeout(req))
 	for _, r := range recipients {
 		p.approvers[r.UserID] = true
@@ -310,6 +326,7 @@ func (s *Service) Start(ctx context.Context, req Request) (Pending, error) {
 	end := func() {
 		s.mu.Lock()
 		p.done = true
+		p.notices = nil // with the nonce; nothing is sent again
 		delete(s.pending, key)
 		delete(s.byID, p.id)
 		s.mu.Unlock()
@@ -421,13 +438,16 @@ func (s *Service) recordDelivered(ctx context.Context, p *pending) {
 // clearPush removes the notifications of an ended request from the devices it reached,
 // in the background so that an execution after a confirmation does not wait for it.
 func (s *Service) clearPush(p *pending) {
-	if s.cfg.Clearer == nil || len(p.delivered) == 0 {
+	s.mu.Lock()
+	delivered := slices.Clone(p.delivered)
+	s.mu.Unlock()
+	if s.cfg.Clearer == nil || len(delivered) == 0 {
 		return
 	}
 	s.background.Go(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), warnTimeout)
 		defer cancel()
-		for _, device := range p.delivered {
+		for _, device := range delivered {
 			if err := s.cfg.Clearer.ClearNotification(ctx, device.Service, p.tag); err != nil {
 				s.cfg.Logger.Warn("notification of an ended approval request not removed", "notify_service", device.Service, "error", err)
 			}
@@ -470,7 +490,10 @@ func (s *Service) deliver(ctx context.Context, p *pending, nonce string) (reache
 		}
 		lang := s.language(r.Approver)
 		n := buildRequest(lang, p.req, nonce)
-		n.Tag = p.tag
+		n.Tag, n.Sticky, n.URL = p.tag, true, s.tapTarget()
+		s.mu.Lock()
+		p.notices[r.UserID] = n
+		s.mu.Unlock()
 		for _, device := range r.channels.Devices {
 			if s.ended(p) {
 				return reached, uiUsers
@@ -489,6 +512,21 @@ func (s *Service) deliver(ctx context.Context, p *pending, nonce string) (reache
 		}
 	}
 	return reached, uiUsers
+}
+
+// tapTarget is what a tap on a notification opens, or "" when there is none or it is not
+// valid: the tap target is a convenience and must never stop a request from reaching
+// anyone (an invalid one would make Home Assistant refuse the whole notification).
+func (s *Service) tapTarget() string {
+	if s.cfg.TapTarget == nil {
+		return ""
+	}
+	target := s.cfg.TapTarget()
+	if target != "" && !ha.ValidTapTarget(target) {
+		s.cfg.Logger.Warn("approval notifications get no tap target: it must be an https address or a path of Home Assistant")
+		return ""
+	}
+	return target
 }
 
 // ended tells whether p was answered or cancelled already.
@@ -798,12 +836,14 @@ func buildRequest(lang i18n.Lang, req Request, nonce string) ha.Notification {
 	agentName, device := sanitize(req.Agent, maxName), sanitize(req.Device, maxName)
 	args := i18n.Args{"agent": agentName, "device": device, "action": i18n.ActionName(lang, req.Action)}
 	message := i18n.ApprovalMessage
-	if state := sanitize(req.State, maxName); state != "" {
+	if req.Action == "read" {
+		message = i18n.ApprovalMessageRead
+	} else if state := sanitize(req.State, maxName); state != "" {
 		// The state the request starts from (SPEC-v0 section 11.1 item 10); executed only
 		// while it holds.
 		message, args["state"] = i18n.ApprovalMessageState, state
 	}
-	lines := []string{i18n.T(lang, message, args)}
+	lines := []string{i18n.T(lang, message, args), i18n.T(lang, i18n.ApprovalExpand, nil)}
 	// What is confirmed (SPEC-v0 section 11.1 item 2): the agent by its identifier next
 	// to the name it claims, and the device by its ID; names can look alike, IDs cannot.
 	lines = append(lines, i18n.T(lang, i18n.ApprovalIdentity, i18n.Args{"client_id": shownID(req.ClientID), "entity_id": shownID(req.EntityID)}))

@@ -41,6 +41,7 @@ func TestAllowlistMatchesArchitecture(t *testing.T) {
 		"floor_registry_updated",
 		"label_registry_updated",
 		"mobile_app_notification_action",
+		"mobile_app_notification_cleared",
 		"state_changed",
 	}
 	if got := sortedKeys(allowedCommands); !slices.Equal(got, wantCommands) {

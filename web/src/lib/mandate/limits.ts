@@ -14,7 +14,7 @@ interface Unit {
   /** Stored value = shown value × scale. */
   scale: number;
   /** Intl unit for display. */
-  unit: 'percent' | 'celsius';
+  unit: 'percent' | 'celsius' | 'fahrenheit';
   /** Range of the shown value; none for temperatures. */
   min?: number;
   max?: number;
@@ -26,11 +26,20 @@ const UNITS: Readonly<Record<string, Unit>> = {
   position: PERCENT,
   volume: PERCENT,
   temperature: { scale: 100, unit: 'celsius' },
+  temperature_f: { scale: 100, unit: 'fahrenheit' },
 };
+
+/**
+ * The temperature parameter per unit of Home Assistant (spec #21 part B): the gateway
+ * evaluates a temperature as exactly one of them, in the household's unit.
+ */
+const TEMPERATURE_OF: Readonly<Record<string, string>> = { '°C': 'temperature', '°F': 'temperature_f' };
+const TEMPERATURES: readonly string[] = Object.values(TEMPERATURE_OF);
 
 const NAMES: Readonly<Record<string, () => string>> = {
   brightness: () => m.limit_brightness(),
   temperature: () => m.limit_temperature(),
+  temperature_f: () => m.limit_temperature(),
   position: () => m.limit_position(),
   volume: () => m.limit_volume(),
 };
@@ -48,14 +57,26 @@ export function parameterLabel(name: string): string {
 
 /**
  * limitableParameters lists the values an allowing rule can be limited by: those that
- * every one of its chosen actions carries (SPEC-v0 section 3.1 item 10).
+ * every one of its chosen actions carries (SPEC-v0 section 3.1 item 10). A temperature
+ * only in the household's unit (temperatureUnit, "°C" or "°F"; none while it is unknown):
+ * a limit in the other unit would never apply (#42).
  */
-export function limitableParameters(rule: Rule, devices: readonly Device[]): string[] {
+export function limitableParameters(rule: Rule, devices: readonly Device[], temperatureUnit: string | null): string[] {
   if (rule.decision !== 'allow' || rule.actions.length === 0 || rule.actions.includes('*')) return [];
   const category = categoryOf(rule, devices);
   if (category === undefined) return [];
+  const own = temperatureUnit === null ? undefined : TEMPERATURE_OF[temperatureUnit];
   const [first, ...rest] = rule.actions.map((a) => parametersOf(category, a));
-  return (first ?? []).filter((name) => rest.every((names) => names.includes(name)) && name in UNITS);
+  return (first ?? []).filter(
+    (name) => rest.every((names) => names.includes(name)) && name in UNITS && (!TEMPERATURES.includes(name) || name === own),
+  );
+}
+
+/** otherUnitLimits names the rule's limits on a temperature in a unit the household does not use: they never apply. */
+export function otherUnitLimits(rule: Rule, temperatureUnit: string | null): string[] {
+  const own = temperatureUnit === null ? undefined : TEMPERATURE_OF[temperatureUnit];
+  if (own === undefined) return [];
+  return Object.keys(rule.constraints ?? {}).filter((name) => TEMPERATURES.includes(name) && name !== own);
 }
 
 /** toInput shows a stored limit in the unit of the form; nothing for an invalid one. */

@@ -254,6 +254,16 @@ device without an agent.
     the Companion App to remove it (`clear_notification`), which needs app version 2021.5
     or later on iOS and may need the app to have been used recently. Pressing its buttons
     has no effect.
+14. **A tap on the notification opens the wrong place or nothing useful:** in the app it
+    opens the Home-Mandate panel; if the log says `the app's slug is unknown`, the
+    Supervisor did not tell the app's slug and the Companion App opens instead. In a
+    container it opens the page of open requests only in direct mode (TLS of its own or
+    `HM_PROXY`, and an https `HM_PUBLIC_URL`); the Companion App may open the address in
+    the browser, where you sign in to Home-Mandate. Answering there needs **Answer in
+    Home-Mandate**; otherwise expand the notification and use its buttons.
+15. **A swiped-away notification comes back once:** on Android the Companion App reports
+    it as cleared; while the request is open, Home-Mandate sends it again after a few
+    seconds, once per request and person.
 
 ## Agents get "unavailable"
 

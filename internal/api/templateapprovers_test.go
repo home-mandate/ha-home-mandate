@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-mandate/ha-home-mandate/internal/admission"
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 )
@@ -147,6 +148,64 @@ func TestTemplateApproversRefuses(t *testing.T) {
 	}
 	_ = h.st.Close()
 	if r := h.do(http.MethodGet, "/api/templates/hm-voice-cautious/approvers", nil); r.errCode() != codeInternal {
+		t.Errorf("database closed = %d %s", r.code, r.body)
+	}
+}
+
+// Issue #35: after an admission the UI tells whether the requests of the agent's mandate
+// reach anyone; the mandate keeps the approvers it was admitted with.
+func TestMandateApproversShowsReach(t *testing.T) {
+	h := newHarness(t)
+	h.withPlaceholder()
+	h.putApproverDirect(approval.Approver{UserID: annaID, Devices: []approval.Device{{Service: "mobile_app_pixel_9", Critical: true}}})
+	// The template's placeholder becomes the admitting human and the approvers set up.
+	a, _, err := h.adm.Admit(context.Background(), admission.Request{DisplayName: "Voice", Template: "hm-voice-cautious",
+		OAuthClient: "n8n-voice", Resource: "https://hm.example.org/mcp", By: audit.Actor{Kind: audit.ActorUser, ID: adminID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/mandates/" + h.mandateOf(a.ClientID).ID + "/approvers"
+	var got wireTemplateApprovers
+	h.ok(http.MethodGet, path, nil, &got)
+	if len(got.People) != 2 || !got.People[0].Self || got.People[0].Critical != approval.ReachNone ||
+		got.People[1].UserID != annaID || got.People[1].Name == nil || *got.People[1].Name != "Anna" || got.People[1].Critical != approval.ReachPush {
+		t.Fatalf("people = %+v", got.People)
+	}
+	if got.Normal != approval.CoverageNotNeeded || got.Critical != approval.CoverageReachable {
+		t.Errorf("coverage = %s %s", got.Normal, got.Critical)
+	}
+	// Anna's phone no longer gets critical requests: nobody does.
+	h.putApproverDirect(approval.Approver{UserID: annaID, Devices: []approval.Device{{Service: "mobile_app_pixel_9"}}})
+	h.ok(http.MethodGet, path, nil, &got)
+	if got.Critical != approval.CoverageNobody {
+		t.Errorf("critical = %s", got.Critical)
+	}
+}
+
+func TestMandateApproversRefuses(t *testing.T) {
+	h := newHarness(t)
+	a := h.admit("Voice")
+	path := "/api/mandates/" + h.mandateOf(a.ClientID).ID + "/approvers"
+	for p, want := range map[string]string{
+		"/api/mandates/m-unknown-0000/approvers": codeNotFound,
+		"/api/mandates/a%20b/approvers":          codeNotFound,
+	} {
+		if r := h.do(http.MethodGet, p, nil); r.errCode() != want {
+			t.Errorf("%s = %d %s", p, r.code, r.body)
+		}
+	}
+	if r := h.do(http.MethodGet, path, nil, as(guestID)); r.code != http.StatusForbidden {
+		t.Errorf("guest = %d", r.code)
+	}
+	// The mandate is there, the approvers cannot be read: an error, never "nobody".
+	if _, err := h.st.DB().Exec(`ALTER TABLE approvers RENAME TO approvers_gone`); err != nil {
+		t.Fatal(err)
+	}
+	if r := h.do(http.MethodGet, path, nil); r.errCode() != codeInternal {
+		t.Errorf("approvers unreadable = %d %s", r.code, r.body)
+	}
+	_ = h.st.Close()
+	if r := h.do(http.MethodGet, path, nil); r.errCode() != codeInternal {
 		t.Errorf("database closed = %d %s", r.code, r.body)
 	}
 }

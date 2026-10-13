@@ -48,6 +48,7 @@ var admin = audit.Actor{Kind: audit.ActorUser, ID: "user-1"}
 type fakeCatalog struct {
 	mu      sync.Mutex
 	devices map[string]catalog.Device
+	areas   []catalog.Area
 	ready   bool
 }
 
@@ -66,13 +67,22 @@ func (f *fakeCatalog) Lookup(id string) (catalog.Device, bool) {
 }
 
 func (f *fakeCatalog) All() []catalog.Device {
+	f.mu.Lock()
+	ids := slices.Sorted(maps.Keys(f.devices))
+	f.mu.Unlock()
 	var out []catalog.Device
-	for _, id := range []string{"alarm_control_panel.home", "camera.porch", "climate.living_room", "light.kitchen", "lock.front_door", "number.wallbox"} {
+	for _, id := range ids {
 		if d, ok := f.Lookup(id); ok {
 			out = append(out, d)
 		}
 	}
 	return out
+}
+
+func (f *fakeCatalog) Areas() []catalog.Area {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.areas)
 }
 
 func (f *fakeCatalog) Ready() bool {
@@ -250,16 +260,17 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 
 	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin", self: "hm-service-user", unit: "°C", clock: &fakeClock{}, now: &fakeNow{t: time.Now()},
 		ha: &fakeHA{connected: true}, journal: approval.NewJournal(st.DB(), nil),
-		catalog: &fakeCatalog{ready: true, devices: map[string]catalog.Device{
-			"light.kitchen":            {EntityID: "light.kitchen", Category: "light", Area: "kitchen", State: "off", Attributes: map[string]any{"friendly_name": "Kitchen"}},
-			"lock.front_door":          {EntityID: "lock.front_door", Category: "lock", Area: "hallway", State: "locked"},
-			"lock.back_door":           {EntityID: "lock.back_door", Category: "lock", Area: "garden", State: "locked"},
-			"lock.garden_gate":         {EntityID: "lock.garden_gate", Category: "lock", Area: "garden", State: "locked"},
-			"camera.porch":             {EntityID: "camera.porch", Category: "camera", Area: "porch", State: "idle", Attributes: map[string]any{"entity_picture": "/api/camera_proxy/camera.porch?token=secret"}},
-			"alarm_control_panel.home": {EntityID: "alarm_control_panel.home", Category: "alarm", State: "armed_away"},
-			"climate.living_room":      {EntityID: "climate.living_room", Category: "climate", State: "heat"},
-			"number.wallbox":           {EntityID: "number.wallbox", Category: "other", State: "16"},
-		}}}
+		catalog: &fakeCatalog{ready: true, areas: []catalog.Area{{ID: "garden", Name: "Garden"}, {ID: "hallway", Name: "Hallway"}, {ID: "kitchen", Name: "Kitchen"}, {ID: "porch", Name: "Porch"}},
+			devices: map[string]catalog.Device{
+				"light.kitchen":            {EntityID: "light.kitchen", Category: "light", Area: "kitchen", State: "off", Attributes: map[string]any{"friendly_name": "Kitchen"}},
+				"lock.front_door":          {EntityID: "lock.front_door", Category: "lock", Area: "hallway", State: "locked"},
+				"lock.back_door":           {EntityID: "lock.back_door", Category: "lock", Area: "garden", State: "locked"},
+				"lock.garden_gate":         {EntityID: "lock.garden_gate", Category: "lock", Area: "garden", State: "locked"},
+				"camera.porch":             {EntityID: "camera.porch", Category: "camera", Area: "porch", State: "idle", Attributes: map[string]any{"entity_picture": "/api/camera_proxy/camera.porch?token=secret"}},
+				"alarm_control_panel.home": {EntityID: "alarm_control_panel.home", Category: "alarm", State: "armed_away"},
+				"climate.living_room":      {EntityID: "climate.living_room", Category: "climate", State: "heat"},
+				"number.wallbox":           {EntityID: "number.wallbox", Category: "other", State: "16"},
+			}}}
 	h.pdp = pdp.New(pdp.Config{Principal: household, Mandates: mandates, Catalog: h.catalog, TimeZone: h.timeZone})
 	h.url = h.serve(log)
 	return h
@@ -484,12 +495,7 @@ func TestListMyPermissions(t *testing.T) {
 	if errText != "" {
 		t.Fatal(errText)
 	}
-	got := map[string]map[string]any{}
-	devices, _ := out["devices"].([]any)
-	for _, d := range devices {
-		m := d.(map[string]any)
-		got[m["entity_id"].(string)] = m["actions"].(map[string]any)
-	}
+	got := permissionsByDevice(out)
 	if got["light.kitchen"]["turn_on"] != "allow" || got["lock.front_door"]["unlock"] != "ask" || got["lock.front_door"]["read"] != "allow" {
 		t.Errorf("permissions = %v", got)
 	}
@@ -858,6 +864,7 @@ func TestAskReadIsNotListedAndAskOnUnreadableIsNotFound(t *testing.T) {
 	if listed := mustJSON(out); strings.Contains(listed, "lock.front_door") || strings.Contains(listed, "camera.porch") || !strings.Contains(listed, "light.kitchen") {
 		t.Errorf("list_devices = %s", listed)
 	}
+	// No approval service in this harness: refused, nobody asked (issue #46 asks a human).
 	if _, errText := h.call(s, "get_state", map[string]any{"entity_id": "lock.front_door"}); !strings.HasPrefix(errText, "approval_required") {
 		t.Errorf("get_state on ask-read lock: %q", errText)
 	}
@@ -1001,8 +1008,11 @@ func TestParameterValuesTheUnitCannotExpress(t *testing.T) {
 		{name: "silence", entity: "media_player.kitchen", params: map[string]any{"volume_level": 0.0}, wantSent: 0.0},
 		{name: "temperature finer than the unit", entity: "climate.living_room", params: map[string]any{"temperature": 21.555},
 			wantErr: "invalid_params: temperature must be a number between -50 and 100 in steps of 0.01 degrees"},
-		{name: "temperature in a Fahrenheit household", entity: "climate.living_room", params: map[string]any{"temperature": 70.0}, unit: "°F",
-			wantErr: "invalid_params: temperature cannot be checked in a household that uses °F yet"},
+		// Spec #21 part B: executed in the household's unit, evaluated as temperature_f.
+		{name: "temperature in a Fahrenheit household", entity: "climate.living_room", params: map[string]any{"temperature": 70.0}, unit: "°F", wantSent: 70.0},
+		{name: "Fahrenheit above the Celsius range", entity: "climate.living_room", params: map[string]any{"temperature": 101.0}, unit: "°F", wantSent: 101.0},
+		{name: "Fahrenheit finer than the unit", entity: "climate.living_room", params: map[string]any{"temperature": 70.005}, unit: "°F",
+			wantErr: "invalid_params: temperature must be a number between -58 and 212 in steps of 0.01 degrees"},
 		{name: "temperature in °C", entity: "climate.living_room", params: map[string]any{"temperature": 21.5}, wantSent: 21.5},
 	}
 	for _, tt := range tests {
@@ -1148,5 +1158,19 @@ func TestNothingIsDecidedWhileTheClockIsBehind(t *testing.T) {
 				t.Errorf("list_devices = %q", errText)
 			}
 		})
+	}
+}
+
+// Agents learn what a climate device's state means: the mode, not what it does now.
+func TestToolsExplainTheClimateState(t *testing.T) {
+	h := newHarness(t, nil)
+	res, err := h.session().ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		if (tool.Name == "get_state" || tool.Name == "list_devices") && !strings.Contains(tool.Description, "hvac_action") {
+			t.Errorf("%s: %q", tool.Name, tool.Description)
+		}
 	}
 }

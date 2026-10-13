@@ -9,6 +9,7 @@ import (
 	"github.com/home-mandate/ha-home-mandate/internal/admission"
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 )
 
 // wireApproverReach is one person who may approve requests of a mandate made from a
@@ -41,6 +42,12 @@ func (s *Server) ApproversPreview(ctx context.Context, template string, by audit
 	if err != nil {
 		return approval.ReachPreview{}, err
 	}
+	return s.reachOf(ctx, expected)
+}
+
+// reachOf tells how the requests of expected reach the people, with their names from
+// Home Assistant.
+func (s *Server) reachOf(ctx context.Context, expected admission.Approvers) (approval.ReachPreview, error) {
 	preview, err := s.cfg.Approvers.ReachOf(ctx, approval.Expected{People: expected.People, Normal: expected.Normal,
 		Critical: expected.Critical}, s.cfg.Status().ServiceUser, s.users.IsAdmin)
 	if err != nil {
@@ -69,11 +76,40 @@ func (s *Server) getTemplateApprovers(r *request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	return wireApproversOf(preview, r.user), nil
+}
+
+// getMandateApprovers tells whether the requests of a stored mandate reach anyone, for
+// the next steps after an admission (issue #35).
+func (s *Server) getMandateApprovers(r *request) (any, error) {
+	id, err := mandateID(r)
+	if err != nil {
+		return nil, err
+	}
+	_, doc, err := s.cfg.Mandates.Current(r.Context(), id)
+	if errors.Is(err, mandate.ErrNotFound) {
+		return nil, fail(codeNotFound)
+	}
+	if err != nil {
+		return nil, err
+	}
+	expected, err := admission.MandateApprovers(doc)
+	if err != nil {
+		return nil, err
+	}
+	preview, err := s.reachOf(r.Context(), expected)
+	if err != nil {
+		return nil, err
+	}
+	return wireApproversOf(preview, r.user), nil
+}
+
+func wireApproversOf(preview approval.ReachPreview, user string) wireTemplateApprovers {
 	out := wireTemplateApprovers{People: make([]wireApproverReach, 0, len(preview.People)), Normal: preview.Normal,
 		Critical: preview.Critical}
 	for _, p := range preview.People {
 		out.People = append(out.People, wireApproverReach{UserID: p.UserID, Name: optional(p.Name), Normal: p.Normal,
-			Critical: p.Critical, Self: p.UserID == r.user, Service: p.Service})
+			Critical: p.Critical, Self: p.UserID == user, Service: p.Service})
 	}
-	return out, nil
+	return out
 }

@@ -8,12 +8,30 @@ import (
 	"math"
 )
 
-// celsius is the unit Home Assistant reports for metric households.
-const celsius = "°C"
+// The units Home Assistant reports for temperatures: metric and US customary households.
+const (
+	celsius    = "°C"
+	fahrenheit = "°F"
+)
 
 // errTemperatureUnitUnknown: the household's temperature unit is not known yet (#42), so
 // a temperature cannot be checked. Not the agent's fault: the request is unavailable.
 var errTemperatureUnitUnknown = errors.New("temperature_unit_unknown")
+
+// errTemperatureUnitChanged: a temperature was confirmed in one unit, and the household
+// uses another one when it would be executed. Nothing is executed.
+const errTemperatureUnitChanged = "temperature_unit_changed"
+
+// unitOf is the unit a temperature among the parameters of an evaluation is in: "" if
+// there is none.
+func unitOf(parameters map[string]int64) string {
+	for unit, name := range evaluationParameterOf["climate"]["set_temperature"]["temperature"].perUnit {
+		if _, ok := parameters[name]; ok {
+			return unit
+		}
+	}
+	return ""
+}
 
 // evaluationParameter maps a parameter of a Home Assistant service call to the
 // parameter of the vocabulary and its unit (SPEC-v0 section 4.5): the value times scale
@@ -21,16 +39,17 @@ var errTemperatureUnitUnknown = errors.New("temperature_unit_unknown")
 type evaluationParameter struct {
 	name  string
 	scale float64
-	// celsiusOnly: the value is a temperature in the unit of the household. Only degrees
-	// Celsius can be expressed in the unit of the vocabulary; a temperature in any other
-	// unit is refused, in an unknown unit it is unavailable (#42, #44).
-	celsiusOnly bool
+	// perUnit: the value is a temperature in the unit of the household, and the parameter
+	// of the vocabulary depends on that unit (spec #21 part B): exactly one of them, never
+	// a conversion. A temperature in any other unit is refused, in an unknown unit it is
+	// unavailable (#42, #44).
+	perUnit map[string]string
 }
 
 // evaluationParameterOf: category → action → parameter of the service call.
 var evaluationParameterOf = map[string]map[string]map[string]evaluationParameter{
 	"light":   {"set": {"brightness_pct": {name: "brightness", scale: 1}}},
-	"climate": {"set_temperature": {"temperature": {name: "temperature", scale: 100, celsiusOnly: true}}},
+	"climate": {"set_temperature": {"temperature": {scale: 100, perUnit: map[string]string{celsius: "temperature", fahrenheit: "temperature_f"}}}},
 	"cover":   {"set_position": {"position": {name: "position", scale: 1}}},
 	"media":   {"set_volume": {"volume_level": {name: "volume", scale: 100}}},
 }
@@ -50,7 +69,7 @@ const (
 // temperature while the household's unit is unknown gives errTemperatureUnitUnknown. An
 // action outside the vocabulary has no parameters to check; the decision refuses it.
 func requestParameters(category, action string, params map[string]any, temperatureUnit string) (map[string]int64, error) {
-	spec, ok := vocabulary[category][action]
+	spec, ok := specFor(category, action, temperatureUnit)
 	if !ok || action == "read" {
 		return nil, nil
 	}
@@ -61,20 +80,20 @@ func requestParameters(category, action string, params map[string]any, temperatu
 	if err != nil {
 		return nil, err
 	}
-	return evaluationParameters(category, action, data)
+	return evaluationParameters(category, action, data, temperatureUnit)
 }
 
-// checkTemperatureUnit refuses a temperature the vocabulary cannot express: one in a
-// household that does not use degrees Celsius, and one while the unit is unknown.
+// checkTemperatureUnit refuses a temperature the vocabulary cannot express: one in a unit
+// it has no parameter for, and one while the unit is unknown.
 func checkTemperatureUnit(category, action string, params map[string]any, unit string) error {
 	for callName, p := range evaluationParameterOf[category][action] {
-		if _, present := params[callName]; !present || !p.celsiusOnly || unit == celsius {
+		if _, present := params[callName]; !present || p.perUnit == nil || p.perUnit[unit] != "" {
 			continue
 		}
 		if unit == "" {
 			return errTemperatureUnitUnknown
 		}
-		return fmt.Errorf("%w: %s cannot be checked in a household that uses %s yet", errInvalidParams, callName, unit)
+		return fmt.Errorf("%w: %s cannot be checked in a household that uses %s", errInvalidParams, callName, unit)
 	}
 	return nil
 }
@@ -82,7 +101,7 @@ func checkTemperatureUnit(category, action string, params map[string]any, unit s
 // evaluationParameters derives the parameters of the evaluation from the checked data of
 // the service call. Every value has been checked to be a whole step of its unit; one that
 // is not anyway fails closed with an error, it is never dropped.
-func evaluationParameters(category, action string, data map[string]any) (map[string]int64, error) {
+func evaluationParameters(category, action string, data map[string]any, temperatureUnit string) (map[string]int64, error) {
 	var out map[string]int64
 	for callName, p := range evaluationParameterOf[category][action] {
 		value, present := data[callName]
@@ -103,10 +122,16 @@ func evaluationParameters(category, action string, data map[string]any) (map[str
 		if math.IsNaN(scaled) || math.IsInf(scaled, 0) || math.Abs(scaled-rounded) > exactness || math.Abs(rounded) > maxExactInteger {
 			return nil, fmt.Errorf("parameter %s is no integer in the unit of the vocabulary: %v", callName, f)
 		}
+		name := p.name
+		if p.perUnit != nil {
+			if name = p.perUnit[temperatureUnit]; name == "" {
+				return nil, fmt.Errorf("parameter %s has no unit of the vocabulary in %q", callName, temperatureUnit)
+			}
+		}
 		if out == nil {
 			out = map[string]int64{}
 		}
-		out[p.name] = int64(rounded)
+		out[name] = int64(rounded)
 	}
 	return out, nil
 }

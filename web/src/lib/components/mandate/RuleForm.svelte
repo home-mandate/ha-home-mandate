@@ -23,7 +23,16 @@
   } from '../../mandate/edit.ts';
   import { actionLabel, categoryLabel, WEEKDAYS, weekdayNames } from '../../mandate/labels.ts';
   import { householdWeek } from '../../mandate/week.svelte.ts';
-  import { fromInput, limitableParameters, parameterLabel, toInput, unitOf, withConstraint, withoutConstraints } from '../../mandate/limits.ts';
+  import {
+    fromInput,
+    limitableParameters,
+    otherUnitLimits,
+    parameterLabel,
+    toInput,
+    unitOf,
+    withConstraint,
+    withoutConstraints,
+  } from '../../mandate/limits.ts';
   import { criticalDevices, demotedNames, includedNames } from '../../mandate/notes.ts';
   import type { FieldProblem, Part } from '../../mandate/problems.ts';
   import { categoryOf, deviceOptions, scopeOf, vocabularyOf, type ScopeCategory } from '../../mandate/scope.ts';
@@ -55,13 +64,15 @@
     agent: string;
     locale: string;
     timeZone: string;
+    /** The household's temperature unit ("°C", "°F"); null while unknown. */
+    temperatureUnit: string | null;
     onchange: (rule: Rule) => void;
     ontouch: () => void;
     onremove: () => void;
     ondone: () => void;
   }
 
-  let { rule, catalog, problems, matches, defaults, people, maxTimeout, agent, locale, timeZone, onchange, ontouch, onremove, ondone }: Props = $props();
+  let { rule, catalog, problems, matches, defaults, people, maxTimeout, agent, locale, timeZone, temperatureUnit, onchange, ontouch, onremove, ondone }: Props = $props();
 
   const id = $props.id();
   const DEFAULT_WINDOW = '22:00-06:00';
@@ -90,7 +101,9 @@
   const limitsError = $derived(problem('limits'));
 
   /** Values the rule can be limited by, and those it is limited by already (perhaps no longer fitting). */
-  const limitable = $derived(limitableParameters(rule, devices));
+  const limitable = $derived(limitableParameters(rule, devices, temperatureUnit));
+  /** Limits on a temperature in the unit the household does not use: they never apply (#42). */
+  const otherUnit = $derived(otherUnitLimits(rule, temperatureUnit));
   const limited = $derived([...new Set([...limitable, ...Object.keys(rule.constraints ?? {})])]);
   /**
    * The text of a limit field while it is edited, so that "20." or "20.0" on the way to
@@ -106,7 +119,7 @@
       if (!limited.includes(key.split('.')[0] ?? '')) delete typed[key];
     }
   });
-  const UNIT_SIGNS = { percent: '%', celsius: '°C' } as const;
+  const UNIT_SIGNS = { percent: '%', celsius: '°C', fahrenheit: '°F' } as const;
   const BOUNDS = ['min', 'max'] as const;
   const BOUND_LABELS = { min: () => m.limits_min(), max: () => m.limits_max() };
 
@@ -274,11 +287,13 @@
           {/each}
         </div>
       {/each}
-      <span id="{id}-limits" class="note" class:danger={limitsError || invalidTyped} aria-live="polite">
+      <span id="{id}-limits" class="note" class:danger={limitsError || invalidTyped} class:warning={!limitsError && !invalidTyped && otherUnit.length > 0} aria-live="polite">
         {#if invalidTyped}
           <Icon name="warning" size={16} /><span>{m.validation_limits_format()}</span>
         {:else if limitsError}
           <Icon name="warning" size={16} /><span>{limitsError}</span>
+        {:else if otherUnit.length > 0 && temperatureUnit}
+          <Icon name="warning" size={16} /><span>{m.limits_other_unit({ unit: UNIT_SIGNS[unitOf(otherUnit[0] ?? '').unit], household: temperatureUnit })}</span>
         {:else}
           <Icon name="info" size={16} /><span>{m.limits_note()}</span>
         {/if}
@@ -436,6 +451,9 @@
   }
   .note.danger {
     color: var(--hm-color-danger-fg);
+  }
+  .note.warning {
+    color: var(--hm-color-warning-fg);
   }
   .note.critical {
     color: var(--hm-color-critical-fg);

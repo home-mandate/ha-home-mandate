@@ -390,6 +390,43 @@ func TestUIAddressOnlyInDirectMode(t *testing.T) {
 	}
 }
 
+// Issue #49: a tap on a request's notification opens the open requests in the UI in
+// direct mode, the app's panel in Home Assistant, or nothing.
+func TestTapTarget(t *testing.T) {
+	direct := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	for _, tc := range []struct {
+		name   string
+		cfg    config.Config
+		direct http.Handler
+		slug   string
+		want   string
+	}{
+		{"app", config.Config{Mode: config.ModeApp}, nil, "a0d7b954_home_mandate", "/app/a0d7b954_home_mandate"},
+		{"app, slug unknown", config.Config{Mode: config.ModeApp}, nil, "", ""},
+		{"container, direct mode", config.Config{Mode: config.ModeContainer, PublicURL: "https://hm.example.org"}, direct, "",
+			"https://hm.example.org/ui/#/audit/requests"},
+		{"container without direct mode", config.Config{Mode: config.ModeContainer, PublicURL: "https://hm.example.org"}, nil, "", ""},
+	} {
+		g := &gateway{state: &state{cfg: tc.cfg}, direct: tc.direct, slug: tc.slug}
+		if got := g.tapTarget(); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestLookUpSlug(t *testing.T) {
+	saved := appSlug
+	t.Cleanup(func() { appSlug = saved })
+	appSlug = func(context.Context, string, ha.Secret, ha.Plaintext) (string, error) { return "local_home_mandate", nil }
+	if got := lookUpSlug(t.Context(), config.Config{}, slog.New(slog.DiscardHandler)); got != "local_home_mandate" {
+		t.Errorf("slug = %q", got)
+	}
+	appSlug = func(context.Context, string, ha.Secret, ha.Plaintext) (string, error) { return "", errors.New("refused") }
+	if got := lookUpSlug(t.Context(), config.Config{}, slog.New(slog.DiscardHandler)); got != "" {
+		t.Errorf("slug after a refusal = %q", got)
+	}
+}
+
 // A tool call waits at most the agent's wait for an approval, plus the grace for an
 // execution after an answer within it (issue #27); the write timeout covers that and a
 // margin, whatever the approval timeout.

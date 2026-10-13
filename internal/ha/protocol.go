@@ -31,6 +31,9 @@ const (
 const (
 	EventStateChanged                = "state_changed"
 	EventMobileAppNotificationAction = "mobile_app_notification_action"
+	// EventMobileAppNotificationCleared: the Companion App (Android) reports a notification
+	// that was swiped away or dismissed by a tap.
+	EventMobileAppNotificationCleared = "mobile_app_notification_cleared"
 )
 
 // allowedCommands is the fixed allowlist of WebSocket commands from docs/ARCHITECTURE.md
@@ -57,13 +60,14 @@ var allowedCommands = map[string]bool{
 
 // allowedEvents limits subscribe_events (ARCHITECTURE section 11.2).
 var allowedEvents = map[string]bool{
-	EventStateChanged:                true,
-	"entity_registry_updated":        true,
-	"device_registry_updated":        true,
-	"area_registry_updated":          true,
-	"floor_registry_updated":         true,
-	"label_registry_updated":         true,
-	EventMobileAppNotificationAction: true,
+	EventStateChanged:                 true,
+	"entity_registry_updated":         true,
+	"device_registry_updated":         true,
+	"area_registry_updated":           true,
+	"floor_registry_updated":          true,
+	"label_registry_updated":          true,
+	EventMobileAppNotificationAction:  true,
+	EventMobileAppNotificationCleared: true,
 }
 
 // command is a request to Home Assistant; the client adds the id.

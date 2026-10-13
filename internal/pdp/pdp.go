@@ -158,6 +158,28 @@ func (s *Snapshot) Decide(entityID, action string, parameters map[string]int64) 
 	return d
 }
 
+// Limits tells what values the action on the entity could be allowed with now: the
+// constraints of the allow rules of the selected mandate that match apart from them
+// (evaluator.Mandate.Limits). It decides nothing; Decide does. A renamed entity whose
+// former IDs are still named has none: rules on them can be stricter, and the limits of
+// the current ID would promise more than Decide allows.
+func (s *Snapshot) Limits(entityID, action string) []map[string]evaluator.Limit {
+	req := evaluator.Request{Resource: evaluator.Resource{EntityID: entityID}, Action: action, Time: s.now, TimeZone: s.timeZone}
+	dev, ok := s.p.cfg.Catalog.Lookup(entityID)
+	if !ok {
+		return nil
+	}
+	for _, former := range dev.Formers {
+		if s.names(former) {
+			return nil
+		}
+	}
+	req.Resource.Category, req.Resource.Area, req.Resource.Critical = dev.Category, dev.Area, dev.Critical
+	m, _ := evaluator.SelectAndEvaluate(s.stored, s.clientID, s.p.cfg.Principal, req)
+	req.Status = evaluator.StatusActive // a selected mandate is never revoked
+	return m.Limits(req)
+}
+
 // RateKey is what the rate limit counts for (SPEC-v0 section 11.2): the mandate, so that a
 // new version does not reset the count; the agent while it has none.
 func RateKey(clientID, mandateID string) string {

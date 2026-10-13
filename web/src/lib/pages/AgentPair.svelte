@@ -18,8 +18,8 @@
   import { codeError, type CodeState } from '../agents/pairing.ts';
   import BackLink from '../components/BackLink.svelte';
   import ErrorState from '../components/ErrorState.svelte';
-  import Icon from '../components/Icon.svelte';
   import PageHeader from '../components/PageHeader.svelte';
+  import AgentConnected from '../components/agents/AgentConnected.svelte';
   import PairCode from '../components/agents/PairCode.svelte';
   import PairMandate from '../components/agents/PairMandate.svelte';
   import PairReconnect from '../components/agents/PairReconnect.svelte';
@@ -31,9 +31,8 @@
   import { cautiousChoice, offeredTemplates, titleOf } from '../mandate/template.ts';
   import { getLocale } from '../paraglide/runtime.js';
   import { href } from '../router.ts';
-  import { MARK, around } from '../ui/sentence.ts';
   import { toasts } from '../ui/toasts.ts';
-  import { cleanUntrusted, isolate } from '../untrusted.ts';
+  import { cleanUntrusted } from '../untrusted.ts';
 
   interface Props {
     app: AppState;
@@ -252,7 +251,6 @@
     await go('done');
   }
 
-  const doneTitle = $derived(around(m.pair_done_title({ agent: MARK })));
 </script>
 
 <BackLink href={href({ name: 'agents' })} label={m.agents_title()} />
@@ -335,15 +333,7 @@
       <p role="status">{m.common_loading()}</p>
     {/if}
   {:else if step === 'done' && admitted}
-    <section class="done" aria-labelledby={headingId}>
-      <span class="icon"><Icon name="check" size={32} /></span>
-      <h2 id={headingId} tabindex="-1">{doneTitle[0]}<bdi>{cleanUntrusted(admitted.display_name)}</bdi>{doneTitle[1]}</h2>
-      <p>{reconnected ? m.pair_reconnected_body({ mandate: isolate(mandateName) }) : m.pair_done_body({ mandate: isolate(mandateName) })}</p>
-      <div class="links">
-        <a class="primary" href={href({ name: 'agent', id: admitted.client_id })}>{m.pair_done_open()}</a>
-        {#if admitted.mandate}<a href={href({ name: 'mandate', id: admitted.mandate.id })}>{m.pair_done_edit()}</a>{/if}
-      </div>
-    </section>
+    <AgentConnected agent={admitted} {mandateName} {reconnected} {headingId} approvers={(mandateId) => app.api.mandateApprovers(mandateId)} />
   {/if}
 </div>
 
@@ -354,61 +344,5 @@
     gap: var(--hm-space-5);
     inline-size: 100%;
     max-inline-size: 680px;
-  }
-  .done {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--hm-space-3);
-    padding: var(--hm-space-6);
-    border-radius: var(--hm-radius-lg);
-    background: var(--hm-color-surface);
-    border: var(--hm-border-width) solid var(--hm-color-border-subtle);
-  }
-  .icon {
-    display: flex;
-    padding: 12px;
-    border-radius: var(--hm-radius-pill);
-    background: var(--hm-color-positive-bg);
-    color: var(--hm-color-positive-fg);
-  }
-  h2 {
-    margin: 0;
-    font-size: var(--hm-font-size-xl);
-    font-weight: var(--hm-font-weight-semibold);
-    overflow-wrap: anywhere;
-  }
-  h2:focus {
-    outline: none;
-  }
-  p {
-    margin: 0;
-    color: var(--hm-color-text-muted);
-    text-wrap: pretty;
-  }
-  .links {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--hm-space-3);
-  }
-  .links a {
-    display: inline-flex;
-    align-items: center;
-    min-block-size: var(--hm-size-touch);
-    padding-inline: var(--hm-space-4);
-    border-radius: var(--hm-radius-md);
-    border: var(--hm-border-width) solid var(--hm-color-border-strong);
-    color: var(--hm-color-text);
-    font-weight: var(--hm-font-weight-semibold);
-    text-decoration: none;
-  }
-  .links a.primary {
-    background: var(--hm-color-accent);
-    border-color: var(--hm-color-accent);
-    color: var(--hm-color-text-on-accent);
-  }
-  .links a:focus-visible {
-    outline: var(--hm-focus-width) solid var(--hm-color-focus);
-    outline-offset: 2px;
   }
 </style>

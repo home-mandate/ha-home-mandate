@@ -92,7 +92,9 @@ type (
 	}
 	Catalog interface {
 		Lookup(entityID string) (catalog.Device, bool)
+		// All returns the devices sorted by entity ID; the lists page along that order.
 		All() []catalog.Device
+		Areas() []catalog.Area
 		Ready() bool
 	}
 	Executor interface {
@@ -220,9 +222,13 @@ func New(cfg Config) *Gateway {
 		byKey:         map[string]*waiting{},
 		statusLimiter: ratelimit.New(cfg.Now), cooldowns: map[string]cooldown{}, server: sdk.NewServer(&sdk.Implementation{Name: "home-mandate", Version: cfg.Version}, nil)}
 	addTool(g.server, &sdk.Tool{Name: "list_devices",
-		Description: "Lists the devices you may read, with category, area and state."}, g.listDevices)
+		Description: "Lists the devices you may read, with category, area and state, one page at a time (next_cursor). " +
+			"The first page without filters also lists the areas and categories with their number of devices; filter by area, category " +
+			"or search to get what you need without reading every page. " + climateStateHint}, g.listDevices)
 	addTool(g.server, &sdk.Tool{Name: "get_state",
-		Description: "Returns the state of one device."}, g.getState)
+		Description: "Returns the state of one device. Reading some devices needs a human to confirm; give a short reason " +
+			"for them. If nobody has answered after a while, the result has status \"pending\" and no state yet: " +
+			"approval_status with the approval_id gives the state once a human confirmed. " + climateStateHint}, g.getState)
 	addTool(g.server, &sdk.Tool{Name: "perform_action",
 		Description: "Performs an action on one device, e.g. turn_on or unlock. Some actions need a human to confirm; " +
 			"give a short reason for them. The call waits a while for the answer; if nobody has answered by then, the result " +
@@ -234,9 +240,15 @@ func New(cfg Config) *Gateway {
 		Description: "Withdraws your own request that still waits for a human's approval, by its approval_id; it is then never " +
 			"executed. A request already answered cannot be withdrawn."}, g.approvalCancel)
 	addTool(g.server, &sdk.Tool{Name: "list_my_permissions",
-		Description: "Lists what you may do on the devices you may read: allow (immediately) or ask (a human confirms)."}, g.listPermissions)
+		Description: "Lists what you may do on the devices you may read: allow (immediately) or ask (a human confirms). " +
+			"Devices with the same category and permissions form one group; paged and filtered like list_devices."}, g.listPermissions)
 	return g
 }
+
+// climateStateHint explains Home Assistant's state of a climate device, which models take
+// for "heating now" (acceptance test 2026-10-13).
+const climateStateHint = "For climate devices, state is the operating mode (heat, cool, off, ...), not whether the device " +
+	"is heating or cooling right now; the attribute hvac_action tells that (heating, cooling, idle, ...)."
 
 // addTool registers a tool with an output schema that accepts fields added later.
 // Clients cache tools/list across server updates and validate structuredContent against
@@ -267,6 +279,10 @@ func openObjects(s *jsonschema.Schema) {
 		openObjects(p)
 	}
 	openObjects(s.Items)
+	// The values of a map (limits per action) are objects too.
+	if s.AdditionalProperties != nil && len(s.Properties) == 0 {
+		openObjects(s.AdditionalProperties)
+	}
 }
 
 // Handler serves the endpoint at Path, for bearer tokens of active agents only.
@@ -385,9 +401,9 @@ func (g *Gateway) clockWrong(ctx context.Context) bool {
 
 // Tool inputs and outputs.
 type (
-	noInput     struct{}
 	entityInput struct {
 		EntityID string `json:"entity_id" jsonschema:"entity ID, e.g. light.kitchen"`
+		Reason   string `json:"reason,omitempty" jsonschema:"why you want to read it; shown to the human if reading needs a confirmation, marked as your claim"`
 	}
 	actionInput struct {
 		EntityID string         `json:"entity_id" jsonschema:"entity ID, e.g. lock.front_door"`
@@ -397,20 +413,30 @@ type (
 		// IdempotencyKey ties repeated calls to one approval request (issue #27).
 		IdempotencyKey string `json:"idempotency_key,omitempty" jsonschema:"optional key of 8 to 64 letters, digits, _ or -: the same key within 24 hours returns the outcome of the first call instead of asking again"`
 	}
-	deviceOut struct {
-		EntityID string `json:"entity_id"`
-		Name     string `json:"name,omitempty"`
-		Category string `json:"category"`
-		Area     string `json:"area,omitempty"`
-		State    string `json:"state"`
-	}
-	devicesOut struct {
-		Devices []deviceOut `json:"devices"`
-	}
 	stateOut struct {
 		EntityID   string         `json:"entity_id"`
-		State      string         `json:"state"`
+		State      string         `json:"state"` // empty while a confirmation is pending
 		Attributes map[string]any `json:"attributes,omitempty"`
+		// TemperatureUnit is the unit of a climate device's temperatures: the household's
+		// unit, which Home Assistant gives nowhere in the attributes.
+		TemperatureUnit string `json:"temperature_unit,omitempty"`
+		// A read that needs a confirmation (issue #46) is pending like an action: these
+		// fields are those of actionOut; the state comes with approval_status.
+		Status     string `json:"status,omitempty"`
+		Phase      string `json:"phase,omitempty"`
+		ApprovalID string `json:"approval_id,omitempty"`
+		OpenUntil  string `json:"open_until,omitempty"`
+		Next       string `json:"next,omitempty"`
+		PollAgain  bool   `json:"poll_again,omitempty"`
+		RetryAfter int    `json:"retry_after,omitempty"`
+		RetryAt    string `json:"retry_at,omitempty"`
+	}
+	// readOut is the state read after a confirmation, for approval_status.
+	readOut struct {
+		EntityID        string         `json:"entity_id"`
+		State           string         `json:"state"`
+		Attributes      map[string]any `json:"attributes,omitempty"`
+		TemperatureUnit string         `json:"temperature_unit,omitempty"`
 	}
 	actionOut struct {
 		// Status is executed, pending (NOT executed yet) or withdrawn.
@@ -434,60 +460,13 @@ type (
 		// again (approval_cooldown, approval_pending).
 		RetryAfter int    `json:"retry_after,omitempty"`
 		RetryAt    string `json:"retry_at,omitempty"`
+		// Read is the state read after a confirmation of a read (issue #46).
+		Read *readOut `json:"read,omitempty"`
 	}
 	approvalInput struct {
 		ApprovalID string `json:"approval_id" jsonschema:"the approval_id perform_action returned with status pending"`
 	}
-	permissionOut struct {
-		EntityID string            `json:"entity_id"`
-		Category string            `json:"category"`
-		Area     string            `json:"area,omitempty"`
-		Actions  map[string]string `json:"actions"`
-	}
-	permissionsOut struct {
-		Devices []permissionOut `json:"devices"`
-	}
 )
-
-func (g *Gateway) listDevices(ctx context.Context, req *sdk.CallToolRequest, _ noInput) (*sdk.CallToolResult, devicesOut, error) {
-	out := devicesOut{Devices: []deviceOut{}}
-	snap, err := g.listSnapshot(ctx, req)
-	if err != nil {
-		return nil, out, err
-	}
-	for _, dev := range g.cfg.Catalog.All() {
-		// Only devices the agent may read now; ask would need a human first.
-		if snap.Decide(dev.EntityID, "read", nil).Result.Decision != evaluator.Allow {
-			continue
-		}
-		name, _ := dev.Attributes["friendly_name"].(string)
-		out.Devices = append(out.Devices, deviceOut{EntityID: dev.EntityID, Name: name, Category: dev.Category, Area: dev.Area, State: dev.State})
-	}
-	return nil, out, nil
-}
-
-func (g *Gateway) listPermissions(ctx context.Context, req *sdk.CallToolRequest, _ noInput) (*sdk.CallToolResult, permissionsOut, error) {
-	out := permissionsOut{Devices: []permissionOut{}}
-	snap, err := g.listSnapshot(ctx, req)
-	if err != nil {
-		return nil, out, err
-	}
-	for _, dev := range g.cfg.Catalog.All() {
-		if !readable(snap, dev.EntityID) {
-			continue // also when the mandate allows other actions on it
-		}
-		p := permissionOut{EntityID: dev.EntityID, Category: dev.Category, Area: dev.Area, Actions: map[string]string{}}
-		for _, action := range actionsOf(dev.Category) {
-			if d := snap.Decide(dev.EntityID, action, nil); d.Result.Decision != evaluator.Deny {
-				p.Actions[action] = string(d.Result.Decision)
-			}
-		}
-		if len(p.Actions) > 0 {
-			out.Devices = append(out.Devices, p)
-		}
-	}
-	return nil, out, nil
-}
 
 // readable reports whether the agent may learn that entityID exists: its read is not
 // denied. Neither list names a device it may not read, and every refusal on one is
@@ -531,10 +510,14 @@ func (g *Gateway) getState(ctx context.Context, req *sdk.CallToolRequest, in ent
 	if err != nil {
 		return nil, stateOut{}, err
 	}
-	if !entityIDPattern.MatchString(in.EntityID) {
+	if !entityIDPattern.MatchString(in.EntityID) || utf8.RuneCountInString(in.Reason) > maxReasonRunes {
 		return nil, stateOut{}, errors.New(codeInvalidParams)
 	}
 	d, err := g.enforce(ctx, a, in.EntityID, "read", nil, nil)
+	if errors.Is(err, errAsk) {
+		res, out, err := g.askHuman(ctx, a, tokenOf(req), d, readCall(in.EntityID), in.Reason, "")
+		return res, stateOf(out), err
+	}
 	if err != nil {
 		return nil, stateOut{}, err
 	}
@@ -547,7 +530,7 @@ func (g *Gateway) getState(ctx context.Context, req *sdk.CallToolRequest, in ent
 	if err := g.record(ctx, a, d, true, audit.Result{Status: audit.StatusExecuted}); err != nil {
 		return nil, stateOut{}, errors.New(codeUnavailable)
 	}
-	return nil, stateOut{EntityID: dev.EntityID, State: dev.State, Attributes: sanitize(dev.Attributes)}, nil
+	return nil, stateOut{EntityID: dev.EntityID, State: dev.State, Attributes: sanitize(dev.Attributes), TemperatureUnit: g.temperatureUnitOf(dev.Category)}, nil
 }
 
 // sanitize removes attributes that can carry access tokens, such as entity_picture of
@@ -588,17 +571,20 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 	// for a refusal; the parameters of the evaluation come from what will be executed, the
 	// category from the catalog. An entity the catalog does not know has neither and is
 	// denied.
+	// The unit is read once: the value is evaluated and executed in the same unit, also
+	// if Home Assistant's configuration is read again meanwhile (spec #21 part B).
+	unit := g.temperatureUnit()
 	var parameters map[string]int64
 	var paramErr error
 	if dev, ok := g.cfg.Catalog.Lookup(in.EntityID); ok {
-		parameters, paramErr = requestParameters(dev.Category, in.Action, in.Params, g.temperatureUnit())
+		parameters, paramErr = requestParameters(dev.Category, in.Action, in.Params, unit)
 	}
 	d, err := g.enforce(ctx, a, in.EntityID, in.Action, parameters, paramErr)
 	ask := errors.Is(err, errAsk)
 	if err != nil && !ask {
 		return nil, actionOut{}, err
 	}
-	call, err := buildCall(in.EntityID, d.Resource.Category, in.Action, in.Params)
+	call, err := buildCall(in.EntityID, d.Resource.Category, in.Action, in.Params, unit)
 	if err != nil {
 		code := codeInvalidParams
 		if errors.Is(err, errNotSupported) {
@@ -716,18 +702,24 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 		known = readable(snap, entityID)
 	}
 	if d.Result.Decision == evaluator.Ask {
-		if known && action != "read" && g.cfg.Approvals != nil {
+		if known && g.cfg.Approvals != nil {
 			return d, errAsk // the caller asks a human after checking the parameters
 		}
 		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval})
 		if !known {
 			return pdp.Decision{}, errors.New(codeNotFound)
 		}
-		return pdp.Decision{}, errors.New(codeApprovalRequired + ": reading this device needs a confirmation, which v0.1 does not ask for")
+		return pdp.Decision{}, errors.New(codeApprovalRequired + ": this needs a confirmation, and nobody can be asked")
 	}
 	_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate})
 	if !known {
 		return pdp.Decision{}, errors.New(codeNotFound) // same answer as for an entity that does not exist
+	}
+	// A value outside the agent's limits: it learns them, in its own units.
+	if d.Result.Reason == evaluator.ReasonNoMatch && parameters != nil && d.Former == "" {
+		if text := limitsText(agentLimits(snap.Limits(entityID, action), d.Resource.Category, action, g.temperatureUnit())); text != "" {
+			return pdp.Decision{}, errors.New(codeDenied + ": no_match: allowed only with " + text)
+		}
 	}
 	return pdp.Decision{}, errors.New(codeDenied + ": " + string(d.Result.Reason))
 }
@@ -858,4 +850,33 @@ func (g *Gateway) entry(a agent.Agent, d pdp.Decision, withEvaluation bool, resu
 		}
 	}
 	return e
+}
+
+// readCall stands for a read in the approval request: there is no service to call, but
+// repeats are told apart by the same fingerprint as actions (callDigest).
+func readCall(entityID string) ha.ServiceCall {
+	return ha.ServiceCall{Domain: readDomain, Service: "read", EntityID: entityID}
+}
+
+// readDomain marks readCall; no domain of Home Assistant has this name, and a read is
+// never sent to it.
+const readDomain = "home_mandate"
+
+// stateOf is get_state's answer for the outcome of a read that needed a confirmation:
+// the state read after it, or the pending (or retry) fields without a state.
+func stateOf(out actionOut) stateOut {
+	if out.Read != nil {
+		return stateOut{EntityID: out.Read.EntityID, State: out.Read.State, Attributes: out.Read.Attributes, TemperatureUnit: out.Read.TemperatureUnit}
+	}
+	return stateOut{Status: out.Status, Phase: out.Phase, ApprovalID: out.ApprovalID, OpenUntil: out.OpenUntil, Next: out.Next,
+		PollAgain: out.PollAgain, RetryAfter: out.RetryAfter, RetryAt: out.RetryAt}
+}
+
+// temperatureUnitOf is the unit of the temperatures of a device of the category: the
+// household's unit for climate devices, "" for every other category.
+func (g *Gateway) temperatureUnitOf(category string) string {
+	if category != "climate" {
+		return ""
+	}
+	return g.temperatureUnit()
 }

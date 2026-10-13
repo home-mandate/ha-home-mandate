@@ -432,6 +432,7 @@
     {agent}
     locale={ctx.locale}
     timeZone={ctx.timeZone}
+    temperatureUnit={app.session?.household.unit_system.temperature ?? null}
     {visible}
     invalid={problems.some((p) => p.part !== NAME_PART)}
     {renamed}
