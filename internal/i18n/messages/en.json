@@ -4,6 +4,7 @@
   "approval_message_state": "{agent} wants to perform on “{device}” ({state}): {action}.",
   "approval_reason": "Agent's claim, not verified: {reason}",
   "approval_no_answer": "Without an answer the request is denied.",
+  "approval_expand": "Expand the notification to answer.",
   "approval_approve": "Allow",
   "approval_deny": "Deny",
   "approval_invalid_title": "Warning: unauthorised answer",

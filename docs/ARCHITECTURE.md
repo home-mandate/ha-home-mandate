@@ -339,6 +339,19 @@ checked on every request.
   `context.user_id` must belong to an approver; otherwise the answer is discarded and logged.
   An answer with an open nonce from anyone else (also Home-Mandate's own HA user) ends the
   request as `invalid_response` and warns the approvers (decision W8, 2026-10-02).
+- A tap on the notification (issue #49) opens where the request can be answered:
+  `data.url` (iOS) and `data.clickAction` (Android) are the open requests in the UI in
+  direct mode (`<public URL>/ui/#/audit/requests`), the app's panel in the app
+  (`/app/<slug>`, the slug from the Supervisor's `/addons/self/info`; it opens also when
+  the panel is not in the sidebar, `/hassio/ingress/<slug>` does not), and absent
+  otherwise. The link names no request and never carries the nonce; answering in
+  the UI needs the UI channel as everywhere. On Android the notification is `sticky`, so a
+  tap does not dismiss it. When the Companion App reports it cleared
+  (`mobile_app_notification_cleared`, Android only) while the request is open, the same
+  notification (same tag, same buttons) is sent again after 5 seconds, once per request
+  and person, only to the devices that had it, and only if the request is still open then:
+  pressing a button also clears it, and the answer ends the request first. The
+  notification itself keeps the nonce in memory for that; it is never stored or logged.
 - On iOS, `authenticationRequired: true` is set (unlocking required). Android and the
   Companion App on a Mac have no such step: whoever has the unlocked device can answer.
 - The "reason" supplied by the agent is explicitly marked in the message as the agent's claim,
@@ -807,8 +820,8 @@ Decided by the maintainer on 2026-10-01.
    - `internal/ha` sends only the WebSocket commands from the table above (fixed allowlist in
      the code); any other command is rejected before it is sent. A negative test checks this,
      and the table here is the source of the list.
-   - `subscribe_events` only for `state_changed`, `*_registry_updated` and
-     `mobile_app_notification_action`. Approver candidates come from `person.*`;
+   - `subscribe_events` only for `state_changed`, `*_registry_updated`,
+     `mobile_app_notification_action` and `mobile_app_notification_cleared` (issue #49). Approver candidates come from `person.*`;
      `config/auth/list` is read only for the UI's administrator check and for names
      (decision B1, 2026-10-03). The UI shows the enforced list under "Why admin rights?"
      (`system.ha.commands`, generated from it).

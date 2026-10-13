@@ -82,6 +82,13 @@ func TestNotifyRejects(t *testing.T) {
 		"long title":         {"mobile_app_x", Notification{Title: strings.Repeat("t", maxNotifyText+1), Message: "m"}},
 		"bad action":         {"mobile_app_x", Notification{Title: "t", Message: "m", Actions: []NotificationAction{{Action: "x y", Title: "a"}}}},
 		"too many actions":   {"mobile_app_x", Notification{Title: "t", Message: "m", Actions: make([]NotificationAction, 4)}},
+		"http target":        {"mobile_app_x", Notification{Title: "t", Message: "m", URL: "http://hm.example.org/ui/"}},
+		"other scheme":       {"mobile_app_x", Notification{Title: "t", Message: "m", URL: "intent://x"}},
+		"protocol relative":  {"mobile_app_x", Notification{Title: "t", Message: "m", URL: "//evil.example/ui"}},
+		"user info":          {"mobile_app_x", Notification{Title: "t", Message: "m", URL: "https://user@hm.example.org/ui/"}},
+		"space in target":    {"mobile_app_x", Notification{Title: "t", Message: "m", URL: "/a b"}},
+		"backslash":          {"mobile_app_x", Notification{Title: "t", Message: "m", URL: "/\\evil.example/ui"}},
+		"long target":        {"mobile_app_x", Notification{Title: "t", Message: "m", URL: "/" + strings.Repeat("a", maxNotifyURL)}},
 	} {
 		if err := c.Notify(context.Background(), tc.service, tc.n); !errors.Is(err, ErrCommandNotAllowed) {
 			t.Errorf("%s: %v", name, err)
@@ -130,5 +137,28 @@ func TestNotifyWithTagAndClear(t *testing.T) {
 	}
 	if err := c.Notify(context.Background(), "mobile_app_pixel_9", Notification{Title: "t", Message: "m", Tag: "x/y"}); !errors.Is(err, ErrCommandNotAllowed) {
 		t.Errorf("bad tag in notification: %v", err)
+	}
+}
+
+// Issue #49: the tap target for both platforms (iOS url, Android clickAction) and sticky
+// for Android, so that a tap does not dismiss the notification with its buttons.
+func TestNotifyTapTargetAndSticky(t *testing.T) {
+	f := newFakeHA(t)
+	got := make(chan fakeMsg, 2)
+	f.handle("call_service", func(m fakeMsg) (any, *CommandError) {
+		got <- m
+		return map[string]any{}, nil
+	})
+	c, _ := startClient(t, testConfig(f.url()))
+	waitReady(t, c)
+	for _, target := range []string{"https://hm.example.org/ui/#/audit/requests", "/app/local_home_mandate"} {
+		if err := c.Notify(context.Background(), "mobile_app_pixel_9", Notification{Title: "t", Message: "m", URL: target, Sticky: true}); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := (<-got)["service_data"].(map[string]any)
+		inner, _ := data["data"].(map[string]any)
+		if inner["url"] != target || inner["clickAction"] != target || inner["sticky"] != "true" {
+			t.Errorf("data = %v", inner)
+		}
 	}
 }

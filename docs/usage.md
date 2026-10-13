@@ -323,8 +323,16 @@ stores a new version.
 
 When the agent asks for something with *Ask first* (for example unlocking with the
 cautious voice assistant template), your phone shows the notification. Long-press or
-expand it (depending on the phone) to see **Allow** and **Deny**. On an iPhone, the phone
-asks you to unlock it first for a critical action.
+expand it (depending on the phone) to see **Allow** and **Deny**; the notification says so
+in its second line. On an iPhone, the phone asks you to unlock it first for a critical
+action.
+
+A tap on the notification itself opens the place to answer: the Home-Mandate panel in the
+app, or the page of open requests in the Home-Mandate UI in a container with its own
+address (direct mode); without either, the Companion App opens. Answering there needs
+**Answer in Home-Mandate** to be on for you. On Android, a tap does not remove the
+notification; if you swipe it away while the request is still open, it comes back once
+after a few seconds. iPhones do not report a swipe, so there it does not come back.
 
 If you answer within 45 seconds, the agent's call gets the result directly. Later, the
 agent has been told the action is not executed yet and asks again; your **Allow** still

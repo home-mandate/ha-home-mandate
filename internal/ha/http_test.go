@@ -139,3 +139,34 @@ func TestCoreInfo(t *testing.T) {
 		})
 	}
 }
+
+// Issue #49: the app's own slug names its panel, the target of a tap on a notification.
+func TestAppSlug(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, slug string
+		status           int
+		ok               bool
+	}{
+		{"from a repository", `{"result":"ok","data":{"slug":"a0d7b954_home_mandate","ingress_entry":"/api/hassio_ingress/x"}}`, "a0d7b954_home_mandate", 200, true},
+		{"local", `{"result":"ok","data":{"slug":"local_home_mandate"}}`, "local_home_mandate", 200, true},
+		{"no slug", `{"result":"ok","data":{}}`, "", 200, false},
+		{"path in the slug", `{"result":"ok","data":{"slug":"../core"}}`, "", 200, false},
+		{"error result", `{"result":"error"}`, "", 200, false},
+		{"refused", `{"result":"error"}`, "", 403, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/addons/self/info" || r.Header.Get("Authorization") != "Bearer sup-token" {
+					t.Errorf("request %s %v", r.URL.Path, r.Header)
+				}
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			slug, err := AppSlug(t.Context(), srv.URL, "sup-token", Plaintext{})
+			if (err == nil) != tc.ok || slug != tc.slug {
+				t.Errorf("AppSlug = %q, %v", slug, err)
+			}
+		})
+	}
+}

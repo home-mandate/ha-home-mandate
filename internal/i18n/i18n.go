@@ -34,13 +34,16 @@ type Key string
 
 // Messages. Every key is in Keys and in every catalog (checked by the tests).
 const (
-	ApprovalTitle          Key = "approval_title"
-	ApprovalMessage        Key = "approval_message"
-	ApprovalMessageState   Key = "approval_message_state"
-	ApprovalReason         Key = "approval_reason"
-	ApprovalParams         Key = "approval_params"
-	ApprovalIdentity       Key = "approval_identity"
-	ApprovalNoAnswer       Key = "approval_no_answer"
+	ApprovalTitle        Key = "approval_title"
+	ApprovalMessage      Key = "approval_message"
+	ApprovalMessageState Key = "approval_message_state"
+	ApprovalReason       Key = "approval_reason"
+	ApprovalParams       Key = "approval_params"
+	ApprovalIdentity     Key = "approval_identity"
+	ApprovalNoAnswer     Key = "approval_no_answer"
+	// How to answer, right after the first line so that the collapsed notification shows
+	// it (issue #49).
+	ApprovalExpand         Key = "approval_expand"
 	ApprovalApprove        Key = "approval_approve"
 	ApprovalDeny           Key = "approval_deny"
 	ApprovalInvalidTitle   Key = "approval_invalid_title"
@@ -148,7 +151,7 @@ var actions = []string{"read", "turn_on", "turn_off", "set", "set_temperature", 
 
 // Keys lists every message key.
 var Keys = append([]Key{
-	ApprovalTitle, ApprovalMessage, ApprovalMessageState, ApprovalReason, ApprovalParams, ApprovalIdentity, ApprovalNoAnswer, ApprovalApprove, ApprovalDeny,
+	ApprovalTitle, ApprovalMessage, ApprovalMessageState, ApprovalReason, ApprovalParams, ApprovalIdentity, ApprovalNoAnswer, ApprovalExpand, ApprovalApprove, ApprovalDeny,
 	ApprovalInvalidTitle, ApprovalInvalidMessage, ApprovalBellTitle, ApprovalBellMessage, ApprovalBellMessageLink, ApprovalBellMessageUI, ApprovalTestTitle, ApprovalTestMessage,
 	ApprovalInterruptedTitle, ApprovalInterruptedMessage, ApprovalUnknownTitle, ApprovalUnknownMessage,
 	CheckpointTitle, CheckpointMessage, RenameFloodTitle, RenameFloodMessage,

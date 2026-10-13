@@ -4,6 +4,7 @@
   "approval_message_state": "{agent} möchte an „{device}“ ({state}) ausführen: {action}.",
   "approval_reason": "Angabe des Agenten, nicht geprüft: {reason}",
   "approval_no_answer": "Ohne Antwort wird die Anfrage abgelehnt.",
+  "approval_expand": "Benachrichtigung aufziehen, um zu antworten.",
   "approval_approve": "Erlauben",
   "approval_deny": "Ablehnen",
   "approval_invalid_title": "Warnung: unberechtigte Antwort",
