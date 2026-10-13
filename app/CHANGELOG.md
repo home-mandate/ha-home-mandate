@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.1.0-rc.4
+
+Third release candidate. Experimental. Implements the Home-Mandate Specification
+v0.1.0-rc.1.
+
+Agents
+- `list_devices` and `list_my_permissions` filter by area, category and a search text and
+  come in pages of 100 (up to 500) with `total` and `next_cursor`; the first unfiltered page
+  of `list_devices` lists areas and categories with their counts. `list_my_permissions`
+  groups devices with the same permissions (`groups` instead of `devices`): clients that
+  cached the old tool schema reload the tools once
+- An agent learns its own limits: `list_my_permissions` lists an action allowed only within
+  limits (it used to be missing) with them, and a refusal outside them names them
+- `get_state` gives a climate device's `temperature_unit`; the tools explain that its state
+  is the operating mode and `hvac_action` what it does right now
+- Reading a device with "ask" sends an approval request like an action (it was refused);
+  one confirmation covers one read, the state is returned by `get_state` or later by
+  `approval_status`
+
+Temperatures in °F
+- Households that use °F in Home Assistant can set temperatures and limit them in °F; the
+  editor offers limits in the household's unit and flags a limit in the other one
+
+Approvals
+- A tap on the notification opens where the request can be answered (the open requests in
+  the UI in direct mode, the Home-Mandate panel in the app); on Android the notification
+  stays when tapped and comes back once after it was swiped away while the request is open;
+  its second line says how to answer
+- The approval request shows a temperature with its unit
+
+UI
+- Connecting an agent ends with the next steps, also on the browser sign-in page, which
+  now shows the agent once it is admitted: check the mandate, whether approval requests
+  reach anyone, and a first request
+
 ## 0.1.0-rc.3
 
 Second release candidate. Experimental.
