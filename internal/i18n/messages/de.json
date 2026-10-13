@@ -58,7 +58,7 @@
   "page_consent_no_templates": "Es gibt noch keine Mandatsvorlage. Lege zuerst eine an.",
   "page_consent_invalid": "Bitte gib einen Namen ohne Steuerzeichen (höchstens 80 Zeichen) an und wähle ein Mandat.",
   "page_denied": "Der Agent wurde nicht aufgenommen.",
-  "page_admitted": "Der Agent ist aufgenommen. Du kannst dieses Fenster schließen.",
+  "page_admitted": "Der Agent ist aufgenommen. Die nächsten Schritte zeigt Home-Mandate auf der Seite, von der aus du ihn verbunden hast. Du kannst dieses Fenster schließen.",
   "page_pair_title": "Kopplungscode eingeben",
   "page_pair_intro": "Gib den Code ein, den dein Agent anzeigt.",
   "page_pair_code": "Code",

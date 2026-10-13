@@ -293,6 +293,14 @@ validity; admission fills them in.
   at that point). Home-Mandate's own Home Assistant user never counts; when Home Assistant
   cannot be asked, reach is shown as unknown, never as reachable. The warning never blocks
   the admission.
+- **Next steps after the admission (#35).** Both ways to connect end with the same view:
+  the agent, its mandate, and the next steps (check the mandate, approvers, a first request
+  such as asking for its permissions). The browser sign-in page watches the agent list
+  (`agents.changed`) and shows an agent admitted through it while the page is open; agents
+  there before and agents paired by code are not shown there. Whether approval requests of
+  the stored mandate reach anyone comes from `GET api/mandates/{id}/approvers`, computed
+  like the preview above from the lists the mandate keeps; unknown is never shown as
+  reachable.
 - Templates of the household are edited in the UI (Mandates → Templates) with the mandate
   editor and its preview; changing one names the version it started from, as for
   mandates.
