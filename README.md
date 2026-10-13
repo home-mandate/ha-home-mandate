@@ -111,8 +111,6 @@ The threat model and how to report vulnerabilities: [SECURITY.md](SECURITY.md).
   tests against a real Home Assistant.
 - Camera snapshots and `set` on devices of the category `other` are evaluated and logged but
   not executed: Home Assistant offers no safe way to perform them for one entity.
-- Reading a device with the decision *ask* is refused; only actions are confirmed by a
-  human.
 - An approval waits at most 10 minutes (the approval timeout setting, 30 to 600 seconds),
   although a mandate may name up to an hour. The agent's call waits up to 45 seconds and
   then gets a pending result; it learns the outcome with `approval_status`.

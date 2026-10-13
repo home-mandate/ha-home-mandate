@@ -126,7 +126,8 @@ func (g *Gateway) findRepeat(ctx context.Context, clientID, entityID, action str
 		}
 		return &repeated{w: w, auditAs: errDuplicate}, nil
 	}
-	if g.cfg.Journal == nil {
+	// One confirmation covers one read (issue #46): a read is never replayed.
+	if g.cfg.Journal == nil || action == "read" {
 		return nil, nil
 	}
 	r, ok, err := g.cfg.Journal.Replay(ctx, clientID, entityID, digest, g.cfg.Now())

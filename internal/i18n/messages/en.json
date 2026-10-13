@@ -2,6 +2,7 @@
   "approval_title": "Approval needed: {agent}",
   "approval_message": "{agent} wants to perform on “{device}”: {action}.",
   "approval_message_state": "{agent} wants to perform on “{device}” ({state}): {action}.",
+  "approval_message_read": "{agent} wants to read the state of “{device}”.",
   "approval_reason": "Agent's claim, not verified: {reason}",
   "approval_no_answer": "Without an answer the request is denied.",
   "approval_expand": "Expand the notification to answer.",

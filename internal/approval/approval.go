@@ -836,7 +836,9 @@ func buildRequest(lang i18n.Lang, req Request, nonce string) ha.Notification {
 	agentName, device := sanitize(req.Agent, maxName), sanitize(req.Device, maxName)
 	args := i18n.Args{"agent": agentName, "device": device, "action": i18n.ActionName(lang, req.Action)}
 	message := i18n.ApprovalMessage
-	if state := sanitize(req.State, maxName); state != "" {
+	if req.Action == "read" {
+		message = i18n.ApprovalMessageRead
+	} else if state := sanitize(req.State, maxName); state != "" {
 		// The state the request starts from (SPEC-v0 section 11.1 item 10); executed only
 		// while it holds.
 		message, args["state"] = i18n.ApprovalMessageState, state

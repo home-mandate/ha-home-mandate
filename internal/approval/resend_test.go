@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
 
 const tapURL = "https://hm.example.org/ui/#/audit/requests"
@@ -186,5 +187,19 @@ func waitFor(t *testing.T, cond func() bool) {
 			t.Fatal("condition not met")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// Issue #46: a read is asked for in words of its own, without the state.
+func TestReadRequestText(t *testing.T) {
+	req := request()
+	req.Action, req.State = "read", "locked"
+	for lang, want := range map[i18n.Lang]string{
+		i18n.EN: "Voice assistant wants to read the state of “Front door”.",
+		i18n.DE: "Voice assistant möchte den Zustand von „Front door“ lesen.",
+	} {
+		if n := buildRequest(lang, req, "00112233445566778899aabbccddeeff"); !strings.HasPrefix(n.Message, want+"\n") || strings.Contains(n.Message, "locked") {
+			t.Errorf("%s: %q", lang, n.Message)
+		}
 	}
 }

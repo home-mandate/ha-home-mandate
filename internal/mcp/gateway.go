@@ -226,7 +226,9 @@ func New(cfg Config) *Gateway {
 			"The first page also lists the areas and categories with their number of devices; filter by area, category " +
 			"or search to get what you need without reading every page."}, g.listDevices)
 	addTool(g.server, &sdk.Tool{Name: "get_state",
-		Description: "Returns the state of one device."}, g.getState)
+		Description: "Returns the state of one device. Reading some devices needs a human to confirm; give a short reason " +
+			"for them. If nobody has answered after a while, the result has status \"pending\" and no state yet: " +
+			"approval_status with the approval_id gives the state once a human confirmed."}, g.getState)
 	addTool(g.server, &sdk.Tool{Name: "perform_action",
 		Description: "Performs an action on one device, e.g. turn_on or unlock. Some actions need a human to confirm; " +
 			"give a short reason for them. The call waits a while for the answer; if nobody has answered by then, the result " +
@@ -392,6 +394,7 @@ func (g *Gateway) clockWrong(ctx context.Context) bool {
 type (
 	entityInput struct {
 		EntityID string `json:"entity_id" jsonschema:"entity ID, e.g. light.kitchen"`
+		Reason   string `json:"reason,omitempty" jsonschema:"why you want to read it; shown to the human if reading needs a confirmation, marked as your claim"`
 	}
 	actionInput struct {
 		EntityID string         `json:"entity_id" jsonschema:"entity ID, e.g. lock.front_door"`
@@ -402,6 +405,22 @@ type (
 		IdempotencyKey string `json:"idempotency_key,omitempty" jsonschema:"optional key of 8 to 64 letters, digits, _ or -: the same key within 24 hours returns the outcome of the first call instead of asking again"`
 	}
 	stateOut struct {
+		EntityID   string         `json:"entity_id"`
+		State      string         `json:"state"` // empty while a confirmation is pending
+		Attributes map[string]any `json:"attributes,omitempty"`
+		// A read that needs a confirmation (issue #46) is pending like an action: these
+		// fields are those of actionOut; the state comes with approval_status.
+		Status     string `json:"status,omitempty"`
+		Phase      string `json:"phase,omitempty"`
+		ApprovalID string `json:"approval_id,omitempty"`
+		OpenUntil  string `json:"open_until,omitempty"`
+		Next       string `json:"next,omitempty"`
+		PollAgain  bool   `json:"poll_again,omitempty"`
+		RetryAfter int    `json:"retry_after,omitempty"`
+		RetryAt    string `json:"retry_at,omitempty"`
+	}
+	// readOut is the state read after a confirmation, for approval_status.
+	readOut struct {
 		EntityID   string         `json:"entity_id"`
 		State      string         `json:"state"`
 		Attributes map[string]any `json:"attributes,omitempty"`
@@ -428,6 +447,8 @@ type (
 		// again (approval_cooldown, approval_pending).
 		RetryAfter int    `json:"retry_after,omitempty"`
 		RetryAt    string `json:"retry_at,omitempty"`
+		// Read is the state read after a confirmation of a read (issue #46).
+		Read *readOut `json:"read,omitempty"`
 	}
 	approvalInput struct {
 		ApprovalID string `json:"approval_id" jsonschema:"the approval_id perform_action returned with status pending"`
@@ -476,10 +497,14 @@ func (g *Gateway) getState(ctx context.Context, req *sdk.CallToolRequest, in ent
 	if err != nil {
 		return nil, stateOut{}, err
 	}
-	if !entityIDPattern.MatchString(in.EntityID) {
+	if !entityIDPattern.MatchString(in.EntityID) || utf8.RuneCountInString(in.Reason) > maxReasonRunes {
 		return nil, stateOut{}, errors.New(codeInvalidParams)
 	}
 	d, err := g.enforce(ctx, a, in.EntityID, "read", nil, nil)
+	if errors.Is(err, errAsk) {
+		res, out, err := g.askHuman(ctx, a, tokenOf(req), d, readCall(in.EntityID), in.Reason, "")
+		return res, stateOf(out), err
+	}
 	if err != nil {
 		return nil, stateOut{}, err
 	}
@@ -661,14 +686,14 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 		known = readable(snap, entityID)
 	}
 	if d.Result.Decision == evaluator.Ask {
-		if known && action != "read" && g.cfg.Approvals != nil {
+		if known && g.cfg.Approvals != nil {
 			return d, errAsk // the caller asks a human after checking the parameters
 		}
 		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval})
 		if !known {
 			return pdp.Decision{}, errors.New(codeNotFound)
 		}
-		return pdp.Decision{}, errors.New(codeApprovalRequired + ": reading this device needs a confirmation, which v0.1 does not ask for")
+		return pdp.Decision{}, errors.New(codeApprovalRequired + ": this needs a confirmation, and nobody can be asked")
 	}
 	_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate})
 	if !known {
@@ -803,4 +828,24 @@ func (g *Gateway) entry(a agent.Agent, d pdp.Decision, withEvaluation bool, resu
 		}
 	}
 	return e
+}
+
+// readCall stands for a read in the approval request: there is no service to call, but
+// repeats are told apart by the same fingerprint as actions (callDigest).
+func readCall(entityID string) ha.ServiceCall {
+	return ha.ServiceCall{Domain: readDomain, Service: "read", EntityID: entityID}
+}
+
+// readDomain marks readCall; no domain of Home Assistant has this name, and a read is
+// never sent to it.
+const readDomain = "home_mandate"
+
+// stateOf is get_state's answer for the outcome of a read that needed a confirmation:
+// the state read after it, or the pending (or retry) fields without a state.
+func stateOf(out actionOut) stateOut {
+	if out.Read != nil {
+		return stateOut{EntityID: out.Read.EntityID, State: out.Read.State, Attributes: out.Read.Attributes}
+	}
+	return stateOut{Status: out.Status, Phase: out.Phase, ApprovalID: out.ApprovalID, OpenUntil: out.OpenUntil, Next: out.Next,
+		PollAgain: out.PollAgain, RetryAfter: out.RetryAfter, RetryAt: out.RetryAt}
 }

@@ -864,6 +864,7 @@ func TestAskReadIsNotListedAndAskOnUnreadableIsNotFound(t *testing.T) {
 	if listed := mustJSON(out); strings.Contains(listed, "lock.front_door") || strings.Contains(listed, "camera.porch") || !strings.Contains(listed, "light.kitchen") {
 		t.Errorf("list_devices = %s", listed)
 	}
+	// No approval service in this harness: refused, nobody asked (issue #46 asks a human).
 	if _, errText := h.call(s, "get_state", map[string]any{"entity_id": "lock.front_door"}); !strings.HasPrefix(errText, "approval_required") {
 		t.Errorf("get_state on ask-read lock: %q", errText)
 	}

@@ -69,7 +69,7 @@ Reason: only this way can every request be mapped unambiguously to a device and 
 | Tool | Action in the mandate | Purpose |
 |---|---|---|
 | `list_devices` | `read` | Lists only devices the agent has at least read access to; filters (`area`, `category`, `search`), pages of at most 500 devices, and on the first page the areas and categories with their counts |
-| `get_state` | `read` | State of a device |
+| `get_state` | `read` | State of a device; with the decision *ask* after a human's confirmation (section 7) |
 | `perform_action` | depends on the category, e.g. `turn_on`, `unlock` | Performs an action, after the decision; optional `idempotency_key` ties repeated calls to one approval request (section 7) |
 | `list_my_permissions` | – | Shows the agent what it may do (helps models avoid pointless requests), grouped by category and identical permissions, filtered and paged like `list_devices`. Never shows other agents' rules. |
 | `approval_status` | – (no action) | Outcome of the agent's own request that waits for a human, by its approval ID: executed, the refusal, or still pending (section 7) |
@@ -321,6 +321,21 @@ Revoking an agent or the emergency stop takes effect immediately, because every 
 checked on every request.
 
 ## 7. Approval requests ("ask")
+
+- Reading with *ask* (issue #46) is asked for like an action: the request says that the
+  agent wants to read the state, never shows the state and keeps none in the journal. One
+  confirmation covers one read; there is no replay window for reads, a repeat while the
+  request is open attaches to it. After the confirmation the same checks as before an
+  execution run (emergency stop, token, mandate, availability, validity), then the state is
+  read from the directory, recorded as executed with the approval, and returned:
+  `get_state` gives it directly within the wait, otherwise `approval_status` gives it in
+  `read`, and only while reading is not denied now (a mandate revoked or changed meanwhile:
+  `denied: mandate_changed`). The state is kept only in memory with the request's result (15 minutes); after
+  that, or after a restart, `approval_status` answers `failed: result_gone` and the agent
+  reads again, which asks again. Devices whose read is *ask* stay out of `list_devices`.
+  A read and an action share what is per agent and device: at most one open request (an
+  open read refuses an action on the device with `approval_pending`, and the other way
+  round), the wait after a refusal, and the agent's two open requests.
 
 - Sent via `notify.mobile_app_<device>` (nothing else: the Home Assistant client, the
   approvers store and `approver add` refuse other notify services, which could reach people

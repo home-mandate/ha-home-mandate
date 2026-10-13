@@ -116,7 +116,11 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 		if name, _ := dev.Attributes["friendly_name"].(string); name != "" {
 			req.Device = name
 		}
-		req.State = shownState(dev.Category, dev.State)
+		// A read neither shows the state nor keeps it in the journal: it is what the
+		// human is asked to give away (issue #46).
+		if d.Action != "read" {
+			req.State = shownState(dev.Category, dev.State)
+		}
 	}
 	if ap := d.Result.Approval; ap != nil {
 		req.Approvers, req.Timeout = ap.Approvers, ap.Duration()
@@ -304,7 +308,25 @@ func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: code}, appr)
 		return nil, actionOut{}, errors.New(codeFailed + ": " + agentCode(code, canRead))
 	}
+	if d.Action == "read" {
+		return g.readConfirmed(ctx, a, d, appr)
+	}
 	return g.execute(ctx, a, d, call, appr, expires)
+}
+
+// readConfirmed reads the device after a confirmation (issue #46): the state goes to the
+// agent only if the read is in the audit log, and it is never stored elsewhere (the
+// journal keeps only that it was read).
+func (g *Gateway) readConfirmed(ctx context.Context, a agent.Agent, d pdp.Decision, appr approvalRef) (*sdk.CallToolResult, actionOut, error) {
+	dev, ok := g.cfg.Catalog.Lookup(d.Resource.EntityID)
+	if !ok {
+		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: codeNotFound}, appr)
+		return nil, actionOut{}, errors.New(codeNotFound)
+	}
+	if err := g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusExecuted}, appr); err != nil {
+		return nil, actionOut{}, errors.New(codeUnavailable)
+	}
+	return nil, actionOut{Status: statusExecuted, Read: &readOut{EntityID: dev.EntityID, State: dev.State, Attributes: sanitize(dev.Attributes)}}, nil
 }
 
 // approvalValidity is how long a confirmation stays valid: the timeout of the request,

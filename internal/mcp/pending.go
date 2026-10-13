@@ -304,15 +304,24 @@ func (g *Gateway) pollResult(action, entityID, ref string, expires time.Time, an
 	until := expires.UTC().Format(time.RFC3339)
 	left := max(expires.Sub(g.cfg.Now()).Round(time.Second), 0)
 	lead := fmt.Sprintf("NOT EXECUTED YET. %s on %s is waiting for a human to approve it; nothing has happened so far.", action, entityID)
+	done, tool := "it was done", "perform_action"
+	if action == "read" {
+		lead = fmt.Sprintf("NOT READ YET. Reading %s is waiting for a human to approve it; its state is not known to you.", entityID)
+		done, tool = "anything about its state", "get_state"
+	}
 	phase := phaseWaiting
 	if answered {
 		lead = fmt.Sprintf("NOT FINISHED YET. The request for %s on %s was confirmed by a human or ended otherwise, and its "+
 			"outcome is being settled.", action, entityID)
+		if action == "read" {
+			lead = fmt.Sprintf("NOT READ YET. The request to read %s was answered by a human or ended otherwise, and its "+
+				"outcome is being settled.", entityID)
+		}
 		phase = phaseAnswered
 	}
-	text := fmt.Sprintf("%s Do not tell the user it was done. Keep calling approval_status with approval_id %s until the "+
-		"status is no longer pending or %s (%s from now) has passed; each call waits up to %s. Do not call perform_action "+
-		"again for this. approval_cancel withdraws the request.", lead, ref, until, left, g.cfg.ApprovalWait)
+	text := fmt.Sprintf("%s Do not tell the user %s. Keep calling approval_status with approval_id %s until the "+
+		"status is no longer pending or %s (%s from now) has passed; each call waits up to %s. Do not call %s "+
+		"again for this. approval_cancel withdraws the request.", lead, done, ref, until, left, g.cfg.ApprovalWait, tool)
 	out := actionOut{Status: statusPending, Phase: phase, ApprovalID: ref, OpenUntil: until, Next: "approval_status", PollAgain: true}
 	return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: text}}}, out, nil
 }
@@ -353,9 +362,22 @@ func (g *Gateway) approvalStatus(ctx context.Context, req *sdk.CallToolRequest, 
 		return nil, actionOut{}, err
 	}
 	if w := g.lookup(in.ApprovalID, a.ClientID); w != nil {
-		return g.await(ctx, w)
+		res, out, err := g.await(ctx, w)
+		if out.Read != nil && g.readDenied(ctx, a.ClientID, out.Read.EntityID) {
+			// The state was read after a confirmation, but reading is denied now (the
+			// mandate was revoked or changed): it is not handed out any more.
+			return nil, actionOut{}, errors.New(codeDenied + ": mandate_changed")
+		}
+		return res, out, err
 	}
 	return g.fromJournal(ctx, in.ApprovalID, a.ClientID)
+}
+
+// readDenied tells whether reading the device is denied for the agent now; every
+// failure counts as denied.
+func (g *Gateway) readDenied(ctx context.Context, clientID, entityID string) bool {
+	snap, err := g.cfg.PDP.Snapshot(ctx, clientID)
+	return err != nil || snap.Decide(entityID, "read", nil).Result.Decision == evaluator.Deny
 }
 
 // fromJournal answers for a request the gateway no longer follows: one that ended more
@@ -407,6 +429,11 @@ func journalResult(st approval.Status, canRead bool) (*sdk.CallToolResult, actio
 	r := st.Result
 	switch r.Status {
 	case audit.StatusExecuted:
+		if st.Action == "read" {
+			// The state read is kept only in memory (issue #46), never in the journal.
+			return nil, actionOut{}, errors.New(codeFailed + ": result_gone: the read was confirmed, but its result is no longer " +
+				"kept; call get_state again, which asks again")
+		}
 		return nil, actionOut{Status: statusExecuted}, nil
 	case audit.StatusFailed:
 		switch r.Error {
