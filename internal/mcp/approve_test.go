@@ -119,7 +119,10 @@ func (f *fakeApprover) requests() []approval.Request {
 
 const approverID = "user-1" // approver of the voice assistant example
 
-var answeredAt = time.Date(2026, 10, 13, 12, 0, 30, 0, time.UTC)
+// answeredAt is when the fake approver answers: now, by the clock the gateway checks a
+// confirmation's validity against. A fixed date made every test after it fail with
+// approval_expired once it was more than the validity in the past.
+var answeredAt = time.Now().UTC().Truncate(time.Second)
 
 func approvalHarness(t *testing.T, f *fakeApprover) *harness {
 	t.Helper()
@@ -635,7 +638,7 @@ func TestAskingAgainAfterARefusalWaits(t *testing.T) {
 		t.Errorf("a minute after the second refusal = %q", errText)
 	}
 	h.now.advance(cooldownMin)
-	f.answer(approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: answeredAt})
+	f.answer(approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: h.now.Now()})
 	if errText := unlock(h, nil); errText != "" {
 		t.Fatalf("after two minutes = %q", errText)
 	}
