@@ -30,6 +30,34 @@ model, so no agent can talk itself into more.
 5. Every decision, approval and change is written to a hash-chained audit log with signed
    checkpoints.
 
+An agent asks to unlock the front door, and its mandate says *ask*:
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant A as Agent<br/>(e.g. Claude)
+  participant HM as Home-Mandate
+  participant HA as Home Assistant
+  participant P as Approver's phone<br/>(Companion app)
+
+  A->>HM: MCP over HTTPS: tools/call perform_action<br/>lock.front_door, unlock (OAuth 2.1 token)
+  HM->>HM: look up the device in its directory (category, area)<br/>and evaluate the mandate: ask
+  HM->>HA: WebSocket API: notify.mobile_app_… with Allow / Deny
+  HA->>P: push notification
+  P->>HA: Allow
+  HA->>HM: event mobile_app_notification_action
+  HM->>HA: WebSocket API: call_service lock.unlock
+  HM->>HM: audit log: decision, approval, result
+  HM-->>A: MCP result: executed
+```
+
+The agent only ever speaks MCP with Home-Mandate; it never sees Home Assistant's
+credentials. If nobody answers within 45 seconds, the agent gets `pending` and asks for the
+outcome with `approval_status` ([docs/agents.md](docs/agents.md#actions-that-need-a-confirmation)).
+The [overview in the specification](https://github.com/home-mandate/spec/blob/main/SPEC-v0.md#11-overview-informative)
+shows which of these interfaces the Home-Mandate Specification defines and which are
+choices of this implementation.
+
 ## Features
 
 - Mandates with **allow, ask, deny** per device, area, category and action, with time
