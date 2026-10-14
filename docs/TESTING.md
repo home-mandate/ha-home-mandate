@@ -8,7 +8,7 @@ a negative test, no release without green end-to-end tests.**
 | Level | Tool | Runs | Purpose |
 |---|---|---|---|
 | Unit | `go test`, table-driven | every push to a branch | Every function, every branch |
-| Conformance | Cases from `home-mandate/spec` (embedded in the Go module) against our own PDP; `mandate-conformance` against `tools/conformance` (process binding: classes evaluator, selection, audit, audit-anchored; HTTP binding: class pdp), `make conformance` | every pull request (Go cases: every push) | Evaluation and selection exactly per specification, through Home-Mandate's own decision path |
+| Conformance | Cases from `home-mandate/spec` (embedded in the Go module) against our own PDP; `mandate-conformance` against `tools/conformance` (process binding: classes evaluator, selection, audit, audit-anchored; HTTP binding: class pdp), `make conformance` | every pull request (Go cases: every push); every release attaches both reports with build provenance (`conformance-report.yml`) | Evaluation and selection exactly per specification, through Home-Mandate's own decision path |
 | Negative | Own test cases per package, catalog in section 4 | every push to a branch | Attacks and invalid input are rejected |
 | Fuzzing | `go test -fuzz`, `make fuzz` | every pull request 60 s per target; 1st and 15th of every month 60 min | No panic, unknown input becomes `deny` |
 | Integration | Real HA instance in a container | every pull request | HA client, catalog, service calls |

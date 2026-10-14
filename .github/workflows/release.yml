@@ -5,7 +5,7 @@ name: Release
 # for linux/amd64 and linux/arm64: signed with cosign (keyless, Sigstore), with build
 # provenance (SLSA, from BuildKit) and SBOMs (the image's, and one of the sources with the
 # Go modules and the UI's npm packages, which a scan of the static binary cannot see), and a
-# GitHub release.
+# GitHub release with the conformance reports (conformance-report.yml).
 #
 # Guards: only admins may create tags and tags are immutable (repository rulesets). Before
 # anything is built, the tag must point to a commit on main that came from a pull request
@@ -253,3 +253,14 @@ jobs:
           # GitHub's list of merged pull requests follows the notes above.
           gh release create "$TAG" sbom-source.spdx.json --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "Home-Mandate $VERSION" --notes-file release-notes.md --generate-notes "${flags[@]}"
+
+  conformance-report:
+    name: Conformance report
+    needs: release
+    permissions:
+      contents: write # the release assets
+      id-token: write # the attestation's signing certificate
+      attestations: write
+    uses: ./.github/workflows/conformance-report.yml
+    with:
+      tag: ${{ github.ref_name }}
