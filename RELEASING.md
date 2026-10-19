@@ -33,20 +33,68 @@ The board [Roadmap](https://github.com/orgs/home-mandate/projects) shows their s
    test, publish the version (`v0.1.0`) from the same commit as that release candidate,
    and close the milestone.
 
-## Patch releases
+## Bug fixes
 
-Fixes for a published version are released as `vX.Y.Z+1`:
+### Which milestone
 
-- While `main` contains only fixes since the release, the patch is tagged on `main`.
-- Once `main` contains functions of the next minor version, a branch `release/X.Y` is
-  created from the tag of the published version, the fixes are cherry-picked onto it from
-  `main` (fix on `main` first), and the patch is tagged on that branch. The release
-  workflow accepts tags on `main` and on `release/*` only after this is implemented; until
-  then, patches are tagged on `main`.
+Every bug gets the label `bug` and exactly one milestone:
+
+| The bug is in | Milestone | Released |
+|---|---|---|
+| a published version, and it is a security issue (reported as described in `SECURITY.md`, or a row of its threat table no longer holds) | patch milestone of that version (`v0.1.1`) | as soon as the fix has passed its test |
+| a published version, otherwise | patch milestone of that version | when the fixes collected in the milestone have passed their test, or earlier if a household loses data, cannot install or cannot update |
+| code that is only on `main`, not yet published | the minor milestone `main` is working towards (`v0.2`) | with that version |
+
+Before 1.0, only the newest published minor version gets patches. Once `0.2.0` is out, a
+bug in `0.1.x` is fixed by updating to `0.2.x`.
+
+### Branches
+
+- When a version `vX.Y.0` is published, a branch `release/X.Y` is created from its tag.
+  From then on, every patch `vX.Y.Z` comes from that branch, no matter whether `main`
+  already contains functions of the next minor version.
+- A fix goes to `main` first, through a pull request labelled `bug` that closes the issue.
+  It is then brought to `release/X.Y` by a second pull request into that branch that
+  cherry-picks the commit. That pull request is titled `fix(X.Y): …` and links the first
+  one. It runs the same checks, and before the merge it runs on a test installation built
+  from it.
+- If the bug no longer exists on `main` (the code was replaced), the fix goes straight to
+  `release/X.Y` through a pull request that says why it is not on `main`.
+- `release/X.Y` takes fixes only, plus the version and changelog of the patch. Functions
+  never go there, not even small ones.
+- A security fix is prepared in a private
+  [security advisory](https://docs.github.com/en/code-security/security-advisories) of this
+  repository and becomes public together with the patch.
+
+### Patch releases
+
+1. On `release/X.Y`, a pull request sets `version` in `app/config.yaml` and adds the entry
+   to `app/CHANGELOG.md`.
+2. Publish a release candidate from `release/X.Y` (`v0.1.1-rc.1`) and test it as a user
+   would: a fresh installation, and an update from the previous version of `X.Y`. A
+   security fix may shorten this test, never skip it.
+3. Findings become issues in the patch milestone; continue with the branches above.
+4. When the patch milestone has no open issue left and the last release candidate passed
+   its test, publish the patch (`v0.1.1`) from the same commit and close the milestone.
+5. A pull request to `main` adds the patch's entry to `app/CHANGELOG.md` there too, so the
+   changelog on `main` is complete.
+
+### Until the workflow supports it
+
+`release.yml` accepts only tags on `main` today. Before tags on `release/X.Y` work, it must
+check that:
+
+- the tag points to a commit on `release/X.Y`, where `X.Y` matches the tag,
+- the commit came from a pull request into that branch whose checks all passed,
+- `release/*` is protected by the same rulesets as `main`.
+
+Until then, no function of the next minor version is merged into `main`. Fixes that are
+due in the meantime are released from `main` as before.
 
 ## Publishing
 
-A tag `vX.Y.Z` or `vX.Y.Z-rc.N` on `main` runs `.github/workflows/release.yml`. It checks
+A tag `vX.Y.Z` or `vX.Y.Z-rc.N` on `main` (and, once the workflow supports it, on
+`release/X.Y` for patches) runs `.github/workflows/release.yml`. It checks
 that the tag points to a commit on `main` that came from a pull request whose checks all
 passed, and that it matches `version` in `app/config.yaml` (the Supervisor uses that
 version as the image tag). It then builds `ghcr.io/home-mandate/ha-home-mandate:<version>`
