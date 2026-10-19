@@ -169,7 +169,7 @@ The threat model and how to report vulnerabilities: [SECURITY.md](SECURITY.md).
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architecture and design decisions (for developers and reviewers) |
 | [docs/TESTING.md](docs/TESTING.md) | Test strategy (for developers and reviewers) |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Repository layout, development setup, checks, building the image |
-| [RELEASING.md](RELEASING.md) | Milestones, release candidates, patch releases, publishing |
+| [RELEASING.md](RELEASING.md) | Milestones, release candidates, bug fixes and patch releases, publishing |
 | [app/CHANGELOG.md](app/CHANGELOG.md) | Changes per version |
 
 ## Related repositories
