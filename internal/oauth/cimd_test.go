@@ -76,6 +76,22 @@ func TestResolveFetchesTheMetadataDocument(t *testing.T) {
 	}
 }
 
+// ChatGPT's document declares private_key_jwt but also lists none among the methods it
+// supports; it then redeems the code without client authentication (#70). Such a client
+// is admitted as a public client like every other.
+func TestResolveAcceptsAClientThatAlsoSupportsNone(t *testing.T) {
+	c, r := newCIMDServer(t)
+	id := c.json("/chatgpt.json", strings.Replace(goodDoc, `"token_endpoint_auth_method":"none"`,
+		`"token_endpoint_auth_method":"private_key_jwt","token_endpoint_auth_methods_supported":["none","private_key_jwt"],"jwks_uri":"https://app.example.org/jwks.json"`, 1))
+	got, err := r.Resolve(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != id || !got.Verified {
+		t.Errorf("client = %+v", got)
+	}
+}
+
 // Negative catalog: client metadata unreachable, wrong format, client ID ≠ URL → rejected.
 func TestResolveRejectsBadDocuments(t *testing.T) {
 	c, r := newCIMDServer(t)
@@ -85,6 +101,9 @@ func TestResolveRejectsBadDocuments(t *testing.T) {
 		"not json":              c.json("/c", `<html>`),
 		"array":                 c.json("/d", `[]`),
 		"secret auth":           c.json("/e", strings.Replace(goodDoc, `"none"`, `"client_secret_basic"`, 1)),
+		"key auth only":         c.json("/n", strings.Replace(goodDoc, `"none"`, `"private_key_jwt"`, 1)),
+		"key auth, no none":     c.json("/o", strings.Replace(goodDoc, `"none"`, `"private_key_jwt","token_endpoint_auth_methods_supported":["private_key_jwt"]`, 1)),
+		"methods not a list":    c.json("/p", strings.Replace(goodDoc, `"none"`, `"private_key_jwt","token_endpoint_auth_methods_supported":"none"`, 1)),
 		"redirect not a string": c.json("/f", strings.Replace(goodDoc, `"https://app.example.org/cb"`, `42`, 1)),
 		"plaintext redirect":    c.json("/g", strings.Replace(goodDoc, `"https://app.example.org/cb"`, `"http://app.example.org/cb"`, 1)),
 		"redirect fragment":     c.json("/h", strings.Replace(goodDoc, `"https://app.example.org/cb"`, `"https://app.example.org/cb#x"`, 1)),

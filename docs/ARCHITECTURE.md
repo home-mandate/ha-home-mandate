@@ -317,7 +317,9 @@ validity; admission fills them in.
 
 **Tokens:** opaque random values (256 bits), stored in the database only as a hash.
 Access tokens 10 minutes, refresh tokens 30 days with rotation and reuse detection (reusing an
-old refresh token revokes the whole chain). Tokens are bound to the Home-Mandate resource
+old refresh token revokes the whole chain, unless it comes within 10 seconds of its rotation:
+then it yields another pair in the chain, for clients that retry or refresh concurrently).
+Tokens are bound to the Home-Mandate resource
 (Resource Indicators, RFC 8707).
 Revoking an agent or the emergency stop takes effect immediately, because every token is
 checked on every request.

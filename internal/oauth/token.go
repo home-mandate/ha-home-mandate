@@ -30,6 +30,19 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
+	// Home-Mandate admits public clients only. Client authentication is refused rather
+	// than ignored, so that no client takes it for checked; before the grant is looked
+	// at, so that a code survives the refusal.
+	if r.Header.Get("Authorization") != "" {
+		// RFC 6749 section 5.2: authentication in the header is answered with 401.
+		w.Header().Set("WWW-Authenticate", `Basic realm="Home-Mandate"`)
+		oauthError(w, http.StatusUnauthorized, "invalid_client")
+		return
+	}
+	if form["client_assertion"] != "" || form["client_assertion_type"] != "" || form["client_secret"] != "" {
+		oauthError(w, http.StatusBadRequest, "invalid_client")
+		return
+	}
 	switch form["grant_type"] {
 	case "authorization_code":
 		s.exchangeCode(w, r, form)
@@ -96,6 +109,9 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request, form map[string
 	tokens, err := s.cfg.Tokens.Refresh(r.Context(), form["refresh_token"], form["resource"], form["client_id"])
 	switch {
 	case err == nil:
+		if tokens.Repeated {
+			s.warn("refresh token presented again within the grace period", "oauth_client", form["client_id"])
+		}
 		writeTokens(w, tokens)
 	case errors.Is(err, agent.ErrInvalidGrant):
 		switch {

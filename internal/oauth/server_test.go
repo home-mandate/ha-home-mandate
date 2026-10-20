@@ -350,6 +350,8 @@ func TestAuthorizationCodeFlow(t *testing.T) {
 	if status != http.StatusOK || next["refresh_token"] == tokens["refresh_token"] {
 		t.Fatalf("refresh = %d %v", status, next)
 	}
+	// Presented again after the grace period, it is reuse (#71).
+	h.agents.SetClock(func() time.Time { return time.Now().Add(agent.RefreshGracePeriod + time.Second) })
 	if status, out, _ := h.tokenRequest(refresh); status != http.StatusBadRequest || out["error"] != "invalid_grant" {
 		t.Errorf("reused refresh token = %d %v", status, out)
 	}
@@ -474,6 +476,66 @@ func TestTokenExchangeRejects(t *testing.T) {
 	}
 }
 
+// Client authentication is refused, not ignored: nobody may believe it was checked (#70).
+// The refusal comes before the code is looked at, so the code stays usable.
+func TestTokenRequestRefusesClientAuthentication(t *testing.T) {
+	h := newHarness(t)
+	for _, param := range []string{"client_assertion", "client_assertion_type", "client_secret"} {
+		b := h.browser()
+		verifier, challenge := pkce()
+		code := b.approve(b.consentAs(challenge, "admin-code"))
+		form := exchangeForm(code, verifier)
+		form.Set(param, "x")
+		if status, out, _ := h.tokenRequest(form); status != http.StatusBadRequest || out["error"] != "invalid_client" {
+			t.Errorf("%s: %d %v", param, status, out)
+		}
+		if status, out, _ := h.tokenRequest(exchangeForm(code, verifier)); status != http.StatusOK {
+			t.Errorf("%s: code consumed by the refused request: %d %v", param, status, out)
+		}
+	}
+}
+
+// A client that presents the same refresh token twice in a row, as after a retry, gets
+// two working pairs instead of losing access (#71).
+// Basic authentication in the header (client_secret_basic) is refused the same way, with
+// 401 as RFC 6749 section 5.2 asks for (#70).
+func TestTokenRequestRefusesBasicAuthentication(t *testing.T) {
+	h := newHarness(t)
+	b := h.browser()
+	verifier, challenge := pkce()
+	code := b.approve(b.consentAs(challenge, "admin-code"))
+	req, err := http.NewRequest(http.MethodPost, h.srv.URL+TokenPath, strings.NewReader(exchangeForm(code, verifier).Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(testClient, "secret")
+	resp, err := h.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get("WWW-Authenticate") == "" {
+		t.Errorf("basic auth: %d %q", resp.StatusCode, resp.Header.Get("WWW-Authenticate"))
+	}
+	if status, out, _ := h.tokenRequest(exchangeForm(code, verifier)); status != http.StatusOK {
+		t.Errorf("code consumed by the refused request: %d %v", status, out)
+	}
+}
+
+func TestRefreshTwiceWithinTheGracePeriod(t *testing.T) {
+	h := newHarness(t)
+	b := h.browser()
+	verifier, challenge := pkce()
+	_, tokens, _ := h.tokenRequest(exchangeForm(b.approve(b.consentAs(challenge, "admin-code")), verifier))
+	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {tokens["refresh_token"].(string)}, "client_id": {testClient}, "resource": {testResource}}
+	for i := range 2 {
+		if status, out, _ := h.tokenRequest(form); status != http.StatusOK || out["access_token"] == nil {
+			t.Errorf("refresh %d: %d %v", i+1, status, out)
+		}
+	}
+}
+
 func TestRefreshRejects(t *testing.T) {
 	h := newHarness(t)
 	b := h.browser()
@@ -488,6 +550,7 @@ func TestRefreshRejects(t *testing.T) {
 		"no client":      {url.Values{"grant_type": {"refresh_token"}, "refresh_token": {rt}}, "invalid_request"},
 		"other resource": {url.Values{"grant_type": {"refresh_token"}, "refresh_token": {rt}, "client_id": {testClient}, "resource": {"https://x.example.org/mcp"}}, "invalid_target"},
 		"access token":   {url.Values{"grant_type": {"refresh_token"}, "refresh_token": {tokens["access_token"].(string)}, "client_id": {testClient}}, "invalid_grant"},
+		"assertion":      {url.Values{"grant_type": {"refresh_token"}, "refresh_token": {rt}, "client_id": {testClient}, "client_assertion": {"x"}}, "invalid_client"},
 	} {
 		if status, out, _ := h.tokenRequest(tc.form); status != http.StatusBadRequest || out["error"] != tc.want {
 			t.Errorf("%s: %d %v", name, status, out)

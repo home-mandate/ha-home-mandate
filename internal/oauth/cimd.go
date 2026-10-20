@@ -245,6 +245,15 @@ type metadata struct {
 	ClientName   string   `json:"client_name"`
 	RedirectURIs []string `json:"redirect_uris"`
 	AuthMethod   *string  `json:"token_endpoint_auth_method"`
+	// AuthMethods is not part of RFC 7591, but clients such as ChatGPT list in it the
+	// methods they can use besides the one they declare.
+	AuthMethods []string `json:"token_endpoint_auth_methods_supported"`
+}
+
+// public reports whether the client can authenticate as a public client (none): it
+// declares none, declares nothing, or lists none among the methods it supports.
+func (md metadata) public() bool {
+	return md.AuthMethod == nil || *md.AuthMethod == "none" || slices.Contains(md.AuthMethods, "none")
 }
 
 func (r *CIMDResolver) fetch(ctx context.Context, clientID string, u *url.URL) (Client, error) {
@@ -275,7 +284,7 @@ func (r *CIMDResolver) fetch(ctx context.Context, clientID string, u *url.URL) (
 	if err := json.Unmarshal(body, &md); err != nil {
 		return Client{}, fmt.Errorf("%w: metadata is not a JSON object", ErrInvalidClient)
 	}
-	if md.ClientID != clientID || md.AuthMethod != nil && *md.AuthMethod != "none" || len(md.RedirectURIs) > maxRedirectURIs {
+	if md.ClientID != clientID || !md.public() || len(md.RedirectURIs) > maxRedirectURIs {
 		return Client{}, fmt.Errorf("%w: metadata does not match", ErrInvalidClient)
 	}
 	for _, uri := range md.RedirectURIs {
