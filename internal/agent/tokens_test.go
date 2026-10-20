@@ -400,6 +400,33 @@ func TestRefreshGracePeriodExceptions(t *testing.T) {
 			t.Errorf("got %v", err)
 		}
 	})
+	t.Run("revoked family", func(t *testing.T) {
+		s, _, p := used(t)
+		clk := withClock(s)
+		clk.Set(t0.Add(agent.RefreshGracePeriod + time.Second))
+		if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrRefreshReused) {
+			t.Fatalf("reuse: %v", err)
+		}
+		clk.Set(t0) // back inside the grace period: the revoked family stays revoked
+		if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
+			t.Errorf("got %v", err)
+		}
+	})
+	t.Run("expired token", func(t *testing.T) {
+		s, _, _ := newStore(t)
+		clk := withClock(s)
+		a := register(t, s, "A")
+		clk.Set(t0.Add(-agent.RefreshTokenTTL))
+		p := issue(t, s, a.ClientID)
+		clk.Set(t0.Add(-time.Second)) // used one second before it expires
+		if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); err != nil {
+			t.Fatal(err)
+		}
+		clk.Set(t0.Add(time.Second)) // within the grace period, but expired
+		if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) || errors.Is(err, agent.ErrRefreshReused) {
+			t.Errorf("got %v", err)
+		}
+	})
 	t.Run("other resource", func(t *testing.T) {
 		s, _, p := used(t)
 		if _, err := s.Refresh(ctx, p.RefreshToken, "https://other.example.org/mcp", ""); !errors.Is(err, agent.ErrInvalidGrant) || errors.Is(err, agent.ErrRefreshReused) {

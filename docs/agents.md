@@ -46,7 +46,7 @@ points to the resource metadata, and from there it finds the authorization serve
   the client. The document declares `"token_endpoint_auth_method": "none"`, or declares
   another method and lists `none` in `token_endpoint_auth_methods_supported` (as ChatGPT
   does). A token request that carries client authentication anyway (`client_assertion`,
-  `client_secret`) is refused with `invalid_client`.
+  `client_secret`, an `Authorization` header) is refused with `invalid_client`.
 - **No dynamic client registration.** Home-Mandate has no open registration endpoint; a
   client that can only register itself dynamically cannot connect directly. Use
   `mcp-remote` with a metadata document (below) or a pairing code.

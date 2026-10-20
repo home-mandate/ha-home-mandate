@@ -33,6 +33,12 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 	// Home-Mandate admits public clients only. Client authentication is refused rather
 	// than ignored, so that no client takes it for checked; before the grant is looked
 	// at, so that a code survives the refusal.
+	if r.Header.Get("Authorization") != "" {
+		// RFC 6749 section 5.2: authentication in the header is answered with 401.
+		w.Header().Set("WWW-Authenticate", `Basic realm="Home-Mandate"`)
+		oauthError(w, http.StatusUnauthorized, "invalid_client")
+		return
+	}
 	if form["client_assertion"] != "" || form["client_assertion_type"] != "" || form["client_secret"] != "" {
 		oauthError(w, http.StatusBadRequest, "invalid_client")
 		return

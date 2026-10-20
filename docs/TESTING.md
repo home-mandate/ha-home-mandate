@@ -175,7 +175,7 @@ Every line is at least one test. New attack ideas are added here before they are
 - PKCE missing or wrong verifier → rejected
 - Redirect URI differs (even just in case or by an appended path) → rejected
 - Client metadata unreachable, wrong format, client ID ≠ URL → rejected
-- Client metadata with another `token_endpoint_auth_method` than `none` → rejected, unless it lists `none` in `token_endpoint_auth_methods_supported` (ChatGPT); a token request with `client_assertion`, `client_assertion_type` or `client_secret` → `invalid_client`, the code stays usable
+- Client metadata with another `token_endpoint_auth_method` than `none` → rejected, unless it lists `none` in `token_endpoint_auth_methods_supported` (ChatGPT); a token request with `client_assertion`, `client_assertion_type` or `client_secret` → `invalid_client` (400), with an `Authorization` header → `invalid_client` (401); the code stays usable
 - Pairing code wrong, expired, used more than once, brute force → locked after n attempts
 - Pairing in the UI: approve or deny with a `pairing_id` that is not the request behind the code (code reissued or request replaced since the check) → `conflict`, nobody admitted; two approvals at once → exactly one wins
 - Pairing lock: a locked session or a global lock also refuses a correct code (no oracle); `Retry-After` is the real remaining time; wrong code and unknown request look alike; the code itself is never logged; parallel wrong codes of one session are counted one after the other (no burst past the limit); the global lock is shared by `/pair` and the UI

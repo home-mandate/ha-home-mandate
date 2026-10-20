@@ -497,6 +497,32 @@ func TestTokenRequestRefusesClientAuthentication(t *testing.T) {
 
 // A client that presents the same refresh token twice in a row, as after a retry, gets
 // two working pairs instead of losing access (#71).
+// Basic authentication in the header (client_secret_basic) is refused the same way, with
+// 401 as RFC 6749 section 5.2 asks for (#70).
+func TestTokenRequestRefusesBasicAuthentication(t *testing.T) {
+	h := newHarness(t)
+	b := h.browser()
+	verifier, challenge := pkce()
+	code := b.approve(b.consentAs(challenge, "admin-code"))
+	req, err := http.NewRequest(http.MethodPost, h.srv.URL+TokenPath, strings.NewReader(exchangeForm(code, verifier).Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(testClient, "secret")
+	resp, err := h.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get("WWW-Authenticate") == "" {
+		t.Errorf("basic auth: %d %q", resp.StatusCode, resp.Header.Get("WWW-Authenticate"))
+	}
+	if status, out, _ := h.tokenRequest(exchangeForm(code, verifier)); status != http.StatusOK {
+		t.Errorf("code consumed by the refused request: %d %v", status, out)
+	}
+}
+
 func TestRefreshTwiceWithinTheGracePeriod(t *testing.T) {
 	h := newHarness(t)
 	b := h.browser()
