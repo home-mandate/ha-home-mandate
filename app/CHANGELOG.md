@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.0-rc.5
+
+Fourth release candidate. Experimental. Implements the Home-Mandate Specification
+v0.1.0-rc.1.
+
+Agents
+- ChatGPT can connect: its client metadata declares `private_key_jwt` and lists `none`
+  among the methods it supports, and such a client is now admitted as a public client
+  like every other (#70). A token request that carries client authentication anyway is
+  refused with `invalid_client`
+- A client that presents the same refresh token twice within 10 seconds, after a retry or
+  from several workers at once, gets another pair instead of having all its tokens revoked
+  (#71); later reuse still revokes them
+
 ## 0.1.0-rc.4
 
 Third release candidate. Experimental. Implements the Home-Mandate Specification
