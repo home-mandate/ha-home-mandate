@@ -1,7 +1,7 @@
 # Connecting agents
 
 How AI agents connect to Home-Mandate, how a human admits them, examples for Claude
-Desktop, Claude Code and claude.ai, the tools agents see and the errors they get.
+Desktop, Claude Code, claude.ai and ChatGPT, the tools agents see and the errors they get.
 
 `hm.example.org` stands for your Home-Mandate host. "Public URL" means the option
 `public_url` (Home Assistant OS app) or `HM_PUBLIC_URL` (container mode).
@@ -42,6 +42,11 @@ points to the resource metadata, and from there it finds the authorization serve
   and its redirect URIs. Home-Mandate fetches it to show the human who the agent is and to
   check where the sign-in returns to. Redirect URIs must be `https://`, or `http://` on a
   loopback address (any port).
+- **A public client.** Home-Mandate does not authenticate clients; PKCE binds the code to
+  the client. The document declares `"token_endpoint_auth_method": "none"`, or declares
+  another method and lists `none` in `token_endpoint_auth_methods_supported` (as ChatGPT
+  does). A token request that carries client authentication anyway (`client_assertion`,
+  `client_secret`) is refused with `invalid_client`.
 - **No dynamic client registration.** Home-Mandate has no open registration endpoint; a
   client that can only register itself dynamically cannot connect directly. Use
   `mcp-remote` with a metadata document (below) or a pairing code.
@@ -158,6 +163,16 @@ admit it in the browser as above. This needs:
 Approvals: the tool call waits up to 45 seconds for the answer, then returns a pending
 result (see [Actions that need a confirmation](#actions-that-need-a-confirmation)). The
 request stays open if the client gives up; a confirmation still executes it once.
+
+## ChatGPT
+
+ChatGPT connects to custom connectors (developer mode) from OpenAI's servers, with the
+same needs as claude.ai above: a public address that the internet reaches over IPv4, a
+certificate for its name, and `ha_browser_url` / `HM_HA_BROWSER_URL` working in your
+browser. Add a connector with your MCP endpoint address, choose OAuth and admit it in the
+browser. ChatGPT identifies itself with the metadata document
+`https://chatgpt.com/oauth/client.json`. It refreshes its token before most tool calls,
+which is expected and needs nothing from you.
 
 ## Other MCP clients
 

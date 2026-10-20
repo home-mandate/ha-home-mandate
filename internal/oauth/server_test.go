@@ -474,6 +474,25 @@ func TestTokenExchangeRejects(t *testing.T) {
 	}
 }
 
+// Client authentication is refused, not ignored: nobody may believe it was checked (#70).
+// The refusal comes before the code is looked at, so the code stays usable.
+func TestTokenRequestRefusesClientAuthentication(t *testing.T) {
+	h := newHarness(t)
+	for _, param := range []string{"client_assertion", "client_assertion_type", "client_secret"} {
+		b := h.browser()
+		verifier, challenge := pkce()
+		code := b.approve(b.consentAs(challenge, "admin-code"))
+		form := exchangeForm(code, verifier)
+		form.Set(param, "x")
+		if status, out, _ := h.tokenRequest(form); status != http.StatusBadRequest || out["error"] != "invalid_client" {
+			t.Errorf("%s: %d %v", param, status, out)
+		}
+		if status, out, _ := h.tokenRequest(exchangeForm(code, verifier)); status != http.StatusOK {
+			t.Errorf("%s: code consumed by the refused request: %d %v", param, status, out)
+		}
+	}
+}
+
 func TestRefreshRejects(t *testing.T) {
 	h := newHarness(t)
 	b := h.browser()
@@ -488,6 +507,7 @@ func TestRefreshRejects(t *testing.T) {
 		"no client":      {url.Values{"grant_type": {"refresh_token"}, "refresh_token": {rt}}, "invalid_request"},
 		"other resource": {url.Values{"grant_type": {"refresh_token"}, "refresh_token": {rt}, "client_id": {testClient}, "resource": {"https://x.example.org/mcp"}}, "invalid_target"},
 		"access token":   {url.Values{"grant_type": {"refresh_token"}, "refresh_token": {tokens["access_token"].(string)}, "client_id": {testClient}}, "invalid_grant"},
+		"assertion":      {url.Values{"grant_type": {"refresh_token"}, "refresh_token": {rt}, "client_id": {testClient}, "client_assertion": {"x"}}, "invalid_client"},
 	} {
 		if status, out, _ := h.tokenRequest(tc.form); status != http.StatusBadRequest || out["error"] != tc.want {
 			t.Errorf("%s: %d %v", name, status, out)

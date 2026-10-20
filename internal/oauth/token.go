@@ -30,6 +30,13 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
+	// Home-Mandate admits public clients only. Client authentication is refused rather
+	// than ignored, so that no client takes it for checked; before the grant is looked
+	// at, so that a code survives the refusal.
+	if form["client_assertion"] != "" || form["client_assertion_type"] != "" || form["client_secret"] != "" {
+		oauthError(w, http.StatusBadRequest, "invalid_client")
+		return
+	}
 	switch form["grant_type"] {
 	case "authorization_code":
 		s.exchangeCode(w, r, form)
