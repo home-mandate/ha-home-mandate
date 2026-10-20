@@ -6,7 +6,7 @@ human has to approve first, and what it may never do. Approval requests go to yo
 through the Home Assistant Companion app, an emergency stop blocks every agent at once,
 and every request is recorded in a tamper-evident audit log.
 
-**Status: experimental.** 0.1.0-rc.4 is the third published release candidate. Expect rough edges,
+**Status: experimental.** 0.1.0-rc.5 is the fourth published release candidate. Expect rough edges,
 read the [limits of this version](#limits-of-this-version) and keep backups.
 
 ## Why
@@ -184,7 +184,7 @@ pass all its conformance cases.
 
 ## Conformance
 
-Home-Mandate 0.1.0-rc.4 conforms to the Home-Mandate Specification `v0.1.0-rc.1` (manifest
+Home-Mandate 0.1.0-rc.5 conforms to the Home-Mandate Specification `v0.1.0-rc.1` (manifest
 `conformance/manifest.json`, SHA-256 `9d2e22efd8af6dd00b068b93b790bc5d740eefb5adb5900b855f844df3d1ce52`)
 in these classes (SPEC-v0 section 8.1), tested with the specification's test tool
 `mandate-conformance` on every pull request and with `make conformance`:
