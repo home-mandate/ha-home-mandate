@@ -253,6 +253,7 @@ func TestRefreshTokenExpiresAfterThirtyDays(t *testing.T) {
 // Negative catalog: refresh token used twice → whole chain revoked.
 func TestRefreshTokenReuseRevokesTheWholeChain(t *testing.T) {
 	s, log, _ := newStore(t)
+	clk := withClock(s)
 	ctx := context.Background()
 	a := register(t, s, "A")
 	first := issue(t, s, a.ClientID)
@@ -266,7 +267,8 @@ func TestRefreshTokenReuseRevokesTheWholeChain(t *testing.T) {
 	}
 	unrelated := issue(t, s, a.ClientID) // another family of the same agent
 
-	// An attacker replays the first refresh token.
+	// An attacker replays the first refresh token after the grace period.
+	clk.Set(t0.Add(agent.RefreshGracePeriod + time.Second))
 	if _, err := s.Refresh(ctx, first.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) || !errors.Is(err, agent.ErrRefreshReused) {
 		t.Fatalf("reuse = %v", err)
 	}
@@ -291,28 +293,119 @@ func TestRefreshTokenReuseRevokesTheWholeChain(t *testing.T) {
 	}
 }
 
-// Two concurrent refreshes with the same token: exactly one wins, the other is reuse.
-func TestConcurrentRefreshHasOneWinner(t *testing.T) {
-	s, _, _ := newStore(t)
+// Concurrent refreshes with the same token, as from a client that retries or runs several
+// workers (#71): all fall within the grace period, all get a working pair in the family,
+// and exactly one of them is the rotation proper.
+func TestConcurrentRefreshesWithinTheGracePeriodAllSucceed(t *testing.T) {
+	s, log, _ := newStore(t)
+	withClock(s)
 	a := register(t, s, "A")
 	p := issue(t, s, a.ClientID)
 	var wg sync.WaitGroup
-	errs := make([]error, 8)
+	pairs := make([]agent.TokenPair, 8)
+	errs := make([]error, len(pairs))
 	for i := range errs {
-		wg.Go(func() { _, errs[i] = s.Refresh(context.Background(), p.RefreshToken, resource, "") })
+		wg.Go(func() { pairs[i], errs[i] = s.Refresh(context.Background(), p.RefreshToken, resource, "") })
 	}
 	wg.Wait()
-	ok := 0
-	for _, err := range errs {
-		if err == nil {
-			ok++
-		} else if !errors.Is(err, agent.ErrInvalidGrant) {
-			t.Errorf("unexpected error %v", err)
+	repeated := 0
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("refresh %d: %v", i, err)
+		}
+		if pairs[i].Repeated {
+			repeated++
+		}
+		if _, err := s.Authenticate(context.Background(), pairs[i].AccessToken, resource); err != nil {
+			t.Errorf("access token %d: %v", i, err)
 		}
 	}
-	if ok != 1 {
-		t.Errorf("%d refreshes succeeded, want 1", ok)
+	if repeated != len(pairs)-1 {
+		t.Errorf("%d repeated, want %d", repeated, len(pairs)-1)
 	}
+	if strings.Contains(exported(t, log), `"event":"auth.rejected"`) {
+		t.Error("a refresh within the grace period was logged as rejected")
+	}
+}
+
+// A refresh token presented again within the grace period yields another pair in the
+// same family and revokes nothing; after it, reuse revokes the family as before (#71).
+func TestRefreshAgainWithinTheGracePeriod(t *testing.T) {
+	s, _, _ := newStore(t)
+	clk := withClock(s)
+	ctx := context.Background()
+	a := register(t, s, "A")
+	first := issue(t, s, a.ClientID)
+	second, err := s.Refresh(ctx, first.RefreshToken, resource, "")
+	if err != nil || second.Repeated {
+		t.Fatalf("rotation: %+v %v", second, err)
+	}
+	clk.Set(t0.Add(agent.RefreshGracePeriod))
+	again, err := s.Refresh(ctx, first.RefreshToken, resource, "")
+	if err != nil || !again.Repeated {
+		t.Fatalf("within the grace period: %+v %v", again, err)
+	}
+	for name, p := range map[string]agent.TokenPair{"second": second, "again": again} {
+		if _, err := s.Authenticate(ctx, p.AccessToken, resource); err != nil {
+			t.Errorf("%s access token: %v", name, err)
+		}
+	}
+	if _, err := s.Refresh(ctx, again.RefreshToken, resource, ""); err != nil {
+		t.Errorf("refresh token of the repeated pair: %v", err)
+	}
+	clk.Set(t0.Add(agent.RefreshGracePeriod + time.Second))
+	if _, err := s.Refresh(ctx, first.RefreshToken, resource, ""); !errors.Is(err, agent.ErrRefreshReused) {
+		t.Fatalf("after the grace period: %v", err)
+	}
+	if _, err := s.Authenticate(ctx, second.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
+		t.Errorf("family not revoked: %v", err)
+	}
+}
+
+// The grace period never helps where the token may not be rotated at all: another
+// client, a revoked agent, an emergency stop, a revoked family (#71).
+func TestRefreshGracePeriodExceptions(t *testing.T) {
+	ctx := context.Background()
+	used := func(t *testing.T) (*agent.Store, agent.Agent, agent.TokenPair) {
+		s, _, _ := newStore(t)
+		withClock(s)
+		a := register(t, s, "A")
+		p := issue(t, s, a.ClientID)
+		if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); err != nil {
+			t.Fatal(err)
+		}
+		return s, a, p
+	}
+	t.Run("another client", func(t *testing.T) {
+		s, _, p := used(t)
+		if _, err := s.Refresh(ctx, p.RefreshToken, resource, "https://evil.example.org/c.json"); !errors.Is(err, agent.ErrRefreshWrongClient) {
+			t.Errorf("got %v", err)
+		}
+	})
+	t.Run("revoked agent", func(t *testing.T) {
+		s, a, p := used(t)
+		if err := s.Revoke(ctx, a.ClientID, admin); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
+			t.Errorf("got %v", err)
+		}
+	})
+	t.Run("emergency stop", func(t *testing.T) {
+		s, _, p := used(t)
+		if _, err := s.SetEmergencyStop(ctx, true, admin); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
+			t.Errorf("got %v", err)
+		}
+	})
+	t.Run("other resource", func(t *testing.T) {
+		s, _, p := used(t)
+		if _, err := s.Refresh(ctx, p.RefreshToken, "https://other.example.org/mcp", ""); !errors.Is(err, agent.ErrInvalidGrant) || errors.Is(err, agent.ErrRefreshReused) {
+			t.Errorf("got %v", err)
+		}
+	})
 }
 
 func TestRefreshRejects(t *testing.T) {

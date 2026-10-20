@@ -350,6 +350,8 @@ func TestAuthorizationCodeFlow(t *testing.T) {
 	if status != http.StatusOK || next["refresh_token"] == tokens["refresh_token"] {
 		t.Fatalf("refresh = %d %v", status, next)
 	}
+	// Presented again after the grace period, it is reuse (#71).
+	h.agents.SetClock(func() time.Time { return time.Now().Add(agent.RefreshGracePeriod + time.Second) })
 	if status, out, _ := h.tokenRequest(refresh); status != http.StatusBadRequest || out["error"] != "invalid_grant" {
 		t.Errorf("reused refresh token = %d %v", status, out)
 	}
@@ -489,6 +491,21 @@ func TestTokenRequestRefusesClientAuthentication(t *testing.T) {
 		}
 		if status, out, _ := h.tokenRequest(exchangeForm(code, verifier)); status != http.StatusOK {
 			t.Errorf("%s: code consumed by the refused request: %d %v", param, status, out)
+		}
+	}
+}
+
+// A client that presents the same refresh token twice in a row, as after a retry, gets
+// two working pairs instead of losing access (#71).
+func TestRefreshTwiceWithinTheGracePeriod(t *testing.T) {
+	h := newHarness(t)
+	b := h.browser()
+	verifier, challenge := pkce()
+	_, tokens, _ := h.tokenRequest(exchangeForm(b.approve(b.consentAs(challenge, "admin-code")), verifier))
+	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {tokens["refresh_token"].(string)}, "client_id": {testClient}, "resource": {testResource}}
+	for i := range 2 {
+		if status, out, _ := h.tokenRequest(form); status != http.StatusOK || out["access_token"] == nil {
+			t.Errorf("refresh %d: %d %v", i+1, status, out)
 		}
 	}
 }

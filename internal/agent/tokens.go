@@ -21,6 +21,10 @@ import (
 const (
 	AccessTokenTTL  = 10 * time.Minute
 	RefreshTokenTTL = 30 * 24 * time.Hour
+	// RefreshGracePeriod is how long after its rotation a refresh token may be presented
+	// again without counting as reuse: a client that retries or refreshes from several
+	// workers at once gets another pair instead of losing the family (#71).
+	RefreshGracePeriod = 10 * time.Second
 )
 
 var (
@@ -64,6 +68,9 @@ type TokenPair struct {
 	AccessToken  string
 	RefreshToken string
 	ExpiresAt    time.Time
+	// Repeated marks a pair issued for a refresh token presented again within
+	// RefreshGracePeriod.
+	Repeated bool
 }
 
 // IssueTokens starts a new token family for an active agent, bound to resource.
@@ -174,7 +181,8 @@ type refreshRow struct {
 // same family. It must be presented by the OAuth client the agent was admitted with;
 // resource, if not empty, must be the one the family is bound to. Presenting a used
 // refresh token revokes the whole family and is logged as auth.rejected
-// (ErrRefreshReused). The client is checked first: a token presented by another client
+// (ErrRefreshReused), unless it comes within RefreshGracePeriod after the rotation: then
+// it yields another pair in the family, marked Repeated. The client is checked first: a token presented by another client
 // is logged as auth.rejected but revokes nothing (ErrRefreshWrongClient), so that a
 // replay by someone else cannot cut the agent off.
 func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string) (TokenPair, error) {
@@ -203,8 +211,16 @@ func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string
 			return s.rejectRefresh(ctx, tx, r, errRefreshWrongClient)
 		}
 		if r.usedAt.Valid {
-			rejected = ErrRefreshReused
-			return s.revokeFamily(ctx, tx, r)
+			if !s.withinGrace(r.usedAt.String) {
+				rejected = ErrRefreshReused
+				return s.revokeFamily(ctx, tx, r)
+			}
+			if err := s.checkRefresh(ctx, tx, r, resource); err != nil {
+				return err
+			}
+			p, err = s.insertPair(ctx, tx, r.clientID, r.family, r.resource)
+			p.Repeated = true
+			return err
 		}
 		if err := s.checkRefresh(ctx, tx, r, resource); err != nil {
 			return err
@@ -226,7 +242,14 @@ func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string
 	return p, err
 }
 
-// checkRefresh rejects an unused refresh token that may still not be rotated.
+// withinGrace reports whether a refresh token used at usedAt is still within
+// RefreshGracePeriod. An unreadable time counts as outside.
+func (s *Store) withinGrace(usedAt string) bool {
+	used, err := time.Parse(timeFormat, usedAt)
+	return err == nil && !s.clock().After(used.Add(RefreshGracePeriod))
+}
+
+// checkRefresh rejects a refresh token that may not be rotated.
 func (s *Store) checkRefresh(ctx context.Context, tx *sql.Tx, r refreshRow, resource string) error {
 	expires, err := time.Parse(timeFormat, r.expiresAt)
 	if err != nil || r.revokedAt.Valid || r.status != StatusActive || !s.clock().Before(expires) ||

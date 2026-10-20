@@ -103,6 +103,9 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request, form map[string
 	tokens, err := s.cfg.Tokens.Refresh(r.Context(), form["refresh_token"], form["resource"], form["client_id"])
 	switch {
 	case err == nil:
+		if tokens.Repeated {
+			s.warn("refresh token presented again within the grace period", "oauth_client", form["client_id"])
+		}
 		writeTokens(w, tokens)
 	case errors.Is(err, agent.ErrInvalidGrant):
 		switch {

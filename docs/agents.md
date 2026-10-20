@@ -52,7 +52,9 @@ points to the resource metadata, and from there it finds the authorization serve
   `mcp-remote` with a metadata document (below) or a pairing code.
 
 Tokens: access tokens are valid for 10 minutes, refresh tokens for 30 days. Every refresh
-token can be used once; presenting a used one again revokes all tokens of that admission.
+token can be used once; presenting a used one again more than 10 seconds after its first
+use revokes all tokens of that admission. Within those 10 seconds, as when a client retries
+or refreshes from several workers at once, it gets another pair instead.
 Revoking the agent or the emergency stop takes effect with its next request. After an
 emergency stop the agent signs in again as at its first admission; the administrator then
 reconnects it to its existing entry (same client ID inside Home-Mandate, same mandate and

@@ -171,7 +171,7 @@ Every line is at least one test. New attack ideas are added here before they are
 
 **Tokens and sign-in**
 - No token, wrong scheme, expired, revoked, issued for another resource → 401
-- Refresh token used twice → whole chain revoked
+- Refresh token used twice → whole chain revoked; within 10 seconds of its first use (grace period) another pair in the same chain instead, but never for another client, another resource, a revoked agent or chain, or during the emergency stop
 - PKCE missing or wrong verifier → rejected
 - Redirect URI differs (even just in case or by an appended path) → rejected
 - Client metadata unreachable, wrong format, client ID ≠ URL → rejected
