@@ -776,6 +776,8 @@
   "limit_position": "Position",
   "limit_volume": "Lautstärke",
   "limit_mode": "Modus",
+  "audit_field_values": "Werte",
+  "limits_mixed_actions": "Grenzen (z. B. für Modus oder Temperatur) gibt es nur für eine Regel, deren Aktionen alle diesen Wert haben. Lege dafür eine eigene erlaubende Regel nur mit dieser Aktion an.",
   "limits_one_of": "{name}: {values}",
   "limits_modes_note": "Nur die angehakten Modi sind erlaubt; andere entscheidet eine andere Regel oder die Voreinstellung. „Automatisch“ steht in Home Assistant für „Heizen/Kühlen“ (heat_cool) und „Auto“ (auto).",
   "mode_off": "Aus",

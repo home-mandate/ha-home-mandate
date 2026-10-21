@@ -132,6 +132,17 @@ export function limitableParameters(rule: Rule, devices: readonly Device[], temp
   );
 }
 
+/**
+ * limitsNeedOwnRule tells whether an allowing rule has an action with a value that could
+ * be limited, but cannot be limited because another of its actions lacks that value
+ * (SPEC-v0 section 3.1 item 10): the editor then says to use a rule of its own.
+ */
+export function limitsNeedOwnRule(rule: Rule, devices: readonly Device[], temperatureUnit: string | null): boolean {
+  if (rule.decision !== 'allow' || rule.actions.length < 2 || rule.actions.includes('*')) return false;
+  if (limitableParameters(rule, devices, temperatureUnit).length > 0) return false;
+  return rule.actions.some((a) => limitableParameters({ ...rule, actions: [a] }, devices, temperatureUnit).length > 0);
+}
+
 /** otherUnitLimits names the rule's limits on a temperature in a unit the household does not use: they never apply. */
 export function otherUnitLimits(rule: Rule, temperatureUnit: string | null): string[] {
   const own = temperatureUnit === null ? undefined : TEMPERATURE_OF[temperatureUnit];
@@ -178,6 +189,23 @@ export function withoutConstraints(rule: Rule): Rule {
   void _limits;
   void _confirmed;
   return rest;
+}
+
+/**
+ * valuesText describes the parameters of an evaluated request (audit log), e.g. "Mode:
+ * Cool" or "Temperature: 21.5 °C", in the units of the form; empty without parameters.
+ */
+export function valuesText(parameters: Readonly<Record<string, number | string>> | undefined, locale: string): string {
+  return Object.entries(parameters ?? {})
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([name, value]) => {
+      if (typeof value === 'string') return m.limits_one_of({ name: parameterLabel(name), values: choiceLabel(value) });
+      if (!Object.hasOwn(UNITS, name)) return m.limits_one_of({ name: parameterLabel(name), values: String(value) });
+      const unit = unitOf(name);
+      const shown = new Intl.NumberFormat(locale, { style: 'unit', unit: unit.unit, maximumFractionDigits: 2 }).format(value / unit.scale);
+      return m.limits_one_of({ name: parameterLabel(name), values: shown });
+    })
+    .join(', ');
 }
 
 /** limitsText describes the limits of a rule, e.g. "Brightness 10–80%"; empty without. */

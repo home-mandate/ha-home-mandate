@@ -26,6 +26,7 @@
   import {
     fromInput,
     limitableParameters,
+    limitsNeedOwnRule,
     otherUnitLimits,
     chosen,
     CHOICES,
@@ -271,6 +272,9 @@
     />
   {/if}
 
+  {#if limited.length === 0 && limitsNeedOwnRule(rule, devices, temperatureUnit)}
+    <p class="note"><Icon name="info" size={16} /><span>{m.limits_mixed_actions()}</span></p>
+  {/if}
   {#if limited.length > 0}
     <fieldset class="limits" aria-describedby="{id}-limits">
       <legend>{m.limits_legend()}</legend>

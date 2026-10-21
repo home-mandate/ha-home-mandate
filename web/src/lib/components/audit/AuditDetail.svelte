@@ -11,6 +11,7 @@
   import { formatDateTime, formatNumber, type FormatContext } from '../../format.ts';
   import { m } from '../../i18n.ts';
   import { actionLabel } from '../../mandate/labels.ts';
+  import { valuesText } from '../../mandate/limits.ts';
   import { href } from '../../router.ts';
   import { cleanUntrusted } from '../../untrusted.ts';
   import AgentName from '../AgentName.svelte';
@@ -95,6 +96,10 @@
     <dd><bdi>{deviceName(entry.request.resource.entity_id, catalog)}</bdi><code>{cleanUntrusted(entry.request.resource.entity_id)}</code></dd>
     <dt>{m.audit_field_action()}</dt>
     <dd>{actionLabel(entry.request.resource.category, entry.request.action)}</dd>
+    {#if valuesText(entry.request.parameters, ctx.locale)}
+      <dt>{m.audit_field_values()}</dt>
+      <dd>{valuesText(entry.request.parameters, ctx.locale)}</dd>
+    {/if}
   {/if}
   {#if entry.evaluation}
     <dt>{m.audit_reason_label()}</dt>
