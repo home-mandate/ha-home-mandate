@@ -49,7 +49,7 @@ export function includedNames(rule: Rule, devices: readonly Device[], locale: st
 export function criticalDevices(rule: Rule, devices: readonly Device[]): Device[] {
   return devices.filter(
     (d) =>
-      resourceMatches(rule, { entity_id: d.entity_id, category: d.category, area: d.area ?? undefined }) &&
+      resourceMatches(rule, { entity_id: d.entity_id, category: d.category, areas: d.areas }) &&
       d.actions.some((a) => coversAction(rule, a) && criticalOn(d, a)),
   );
 }

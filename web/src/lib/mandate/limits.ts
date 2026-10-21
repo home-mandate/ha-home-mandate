@@ -47,6 +47,13 @@ const NAMES: Readonly<Record<string, () => string>> = {
 /** A number as people type it: digits, at most one decimal separator (dot or comma). */
 const NUMBER = /^-?\d+(?:[.,]\d+)?$/;
 
+type Constraint = NonNullable<Rule['constraints']>[string];
+
+/** rangeOf returns the limits of a constraint on an integer; an empty range for a list of values. */
+export function rangeOf(c: Constraint | undefined): { min?: number; max?: number } {
+  return c === undefined || 'one_of' in c ? {} : c;
+}
+
 export function unitOf(name: string): Unit {
   return UNITS[name] ?? { scale: 1, unit: 'percent' };
 }
@@ -123,7 +130,8 @@ export function withoutConstraints(rule: Rule): Rule {
 /** limitsText describes the limits of a rule, e.g. "Brightness 10–80%"; empty without. */
 export function limitsText(rule: Rule, locale: string): string {
   return Object.entries(rule.constraints ?? {})
-    .map(([name, limit]) => {
+    .map(([name, c]) => {
+      const limit = rangeOf(c);
       // An invalid limit (typed, not yet a number) is reported by the form, not described.
       const min = Number.isFinite(limit.min) ? limit.min : undefined;
       const max = Number.isFinite(limit.max) ? limit.max : undefined;

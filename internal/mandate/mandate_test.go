@@ -156,6 +156,17 @@ func TestPutRejectsMandatesForOtherPrincipalsOrAgents(t *testing.T) {
 	}
 }
 
+// Until audit mode is offered, a mandate in audit mode is refused, never stored and
+// enforced (SPEC-v0 section 11.6).
+func TestPutRefusesAuditMode(t *testing.T) {
+	e := newEnv(t)
+	a := e.agent(t, "Voice assistant")
+	doc := voiceAssistant(t, a.ClientID, func(d map[string]any) { d["enforce"] = false })
+	if _, err := e.mandates.Put(context.Background(), doc, admin); !errors.Is(err, mandate.ErrInvalid) {
+		t.Errorf("Put = %v, want ErrInvalid", err)
+	}
+}
+
 func TestVersionsAndAuditTrail(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()

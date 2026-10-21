@@ -180,7 +180,7 @@ describe('PreviewMatrix on desktop', () => {
   });
 
   it('shows five rows of a block and the rest on request', async () => {
-    const lights = Array.from({ length: 8 }, (_, i): Device => ({ entity_id: `light.l${i}`, name: `Light ${i}`, category: 'light', area: null, actions: ['read'], critical: false, suggest_critical: false }));
+    const lights = Array.from({ length: 8 }, (_, i): Device => ({ entity_id: `light.l${i}`, name: `Light ${i}`, category: 'light', area: null, areas: [], actions: ['read'], critical: false, suggest_critical: false }));
     show(base, { catalog: { areas: [], devices: lights } });
     const grid = () => screen.getByRole('grid', { name: 'Lights' });
     expect(within(grid()).getAllByRole('rowheader')).toHaveLength(5);
@@ -191,8 +191,8 @@ describe('PreviewMatrix on desktop', () => {
 
   it('leaves a hole where a device lacks an action of its block', () => {
     const devices: Device[] = [
-      { entity_id: 'light.a', name: 'A', category: 'light', area: null, actions: ['read', 'turn_on'], critical: false, suggest_critical: false },
-      { entity_id: 'light.b', name: 'B', category: 'light', area: null, actions: ['read'], critical: false, suggest_critical: false },
+      { entity_id: 'light.a', name: 'A', category: 'light', area: null, areas: [], actions: ['read', 'turn_on'], critical: false, suggest_critical: false },
+      { entity_id: 'light.b', name: 'B', category: 'light', area: null, areas: [], actions: ['read'], critical: false, suggest_critical: false },
     ];
     show(base, { catalog: { areas: [], devices } });
     const cells = within(screen.getByRole('grid', { name: 'Lights' })).getAllByRole('gridcell');
@@ -206,8 +206,8 @@ describe('PreviewMatrix on desktop', () => {
   });
 
   it('steps over a hole with the arrows and stops before it with End', () => {
-    const devices: Device[] = [{ entity_id: 'light.a', name: 'A', category: 'light', area: null, actions: ['read', 'turn_off', 'set'], critical: false, suggest_critical: false }];
-    const full: Device = { entity_id: 'light.b', name: 'B', category: 'light', area: null, actions: ['read', 'turn_on', 'turn_off'], critical: false, suggest_critical: false };
+    const devices: Device[] = [{ entity_id: 'light.a', name: 'A', category: 'light', area: null, areas: [], actions: ['read', 'turn_off', 'set'], critical: false, suggest_critical: false }];
+    const full: Device = { entity_id: 'light.b', name: 'B', category: 'light', area: null, areas: [], actions: ['read', 'turn_on', 'turn_off'], critical: false, suggest_critical: false };
     show(base, { catalog: { areas: [], devices: [...devices, full] } });
     const row = (n: number) => within(screen.getAllByRole('row')[n] as HTMLElement).getAllByRole('gridcell');
     const a = row(1);

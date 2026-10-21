@@ -23,6 +23,7 @@ import (
 	"time"
 
 	specaudit "github.com/home-mandate/spec/audit"
+	"github.com/home-mandate/spec/evaluator"
 	"github.com/home-mandate/spec/jcs"
 	"github.com/home-mandate/spec/jws"
 
@@ -156,7 +157,8 @@ type Agent struct {
 type Resource struct {
 	EntityID string `json:"entity_id"`
 	Category string `json:"category,omitempty"`
-	Area     string `json:"area,omitempty"`
+	// Areas is the set of areas of the resource (SPEC-v0 section 3.4).
+	Areas []string `json:"areas,omitempty"`
 	// Critical: the household had marked the entity as critical (SPEC-v0 section 4).
 	Critical bool `json:"critical,omitempty"`
 }
@@ -168,8 +170,9 @@ type Request struct {
 	Revoked  bool
 	Resource Resource
 	Action   string
-	// Parameters of the action that were input to the evaluation (SPEC-v0 section 4.5).
-	Parameters map[string]int64
+	// Parameters of the action that were input to the evaluation (SPEC-v0 section 4.5):
+	// integers or strings.
+	Parameters map[string]evaluator.Value
 }
 
 // MarshalJSON writes the time in RFC 3339 with milliseconds.
@@ -193,12 +196,12 @@ func (r *Request) UnmarshalJSON(data []byte) error {
 }
 
 type requestWire struct {
-	Time       string           `json:"time"`
-	Timezone   string           `json:"timezone,omitempty"`
-	Revoked    bool             `json:"revoked,omitempty"`
-	Resource   Resource         `json:"resource"`
-	Action     string           `json:"action"`
-	Parameters map[string]int64 `json:"parameters,omitempty"`
+	Time       string                     `json:"time"`
+	Timezone   string                     `json:"timezone,omitempty"`
+	Revoked    bool                       `json:"revoked,omitempty"`
+	Resource   Resource                   `json:"resource"`
+	Action     string                     `json:"action"`
+	Parameters map[string]evaluator.Value `json:"parameters,omitempty"`
 }
 
 // Mandate refers to a mandate version by digest, never by content.
@@ -214,6 +217,38 @@ type Evaluation struct {
 	Reason          string  `json:"reason"`
 	RuleID          *string `json:"rule_id"` // null when no rule decided
 	ApprovalTimeout string  `json:"approval_timeout,omitempty"`
+	// NotEnforced: a deny by the rules of a mandate in audit mode that was executed
+	// (SPEC-v0 section 4.6); written as enforced: false.
+	NotEnforced bool `json:"-"`
+}
+
+// MarshalJSON writes enforced: false for a deny that was not enforced and nothing for
+// every other result.
+func (e Evaluation) MarshalJSON() ([]byte, error) {
+	type plain Evaluation
+	w := struct {
+		plain
+		Enforced *bool `json:"enforced,omitempty"`
+	}{plain: plain(e)}
+	if e.NotEnforced {
+		w.Enforced = new(bool)
+	}
+	return json.Marshal(w)
+}
+
+// UnmarshalJSON reads what MarshalJSON wrote.
+func (e *Evaluation) UnmarshalJSON(data []byte) error {
+	type plain Evaluation
+	var w struct {
+		plain
+		Enforced *bool `json:"enforced"`
+	}
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	*e = Evaluation(w.plain)
+	e.NotEnforced = w.Enforced != nil && !*w.Enforced
+	return nil
 }
 
 // Approval is the outcome of an approval request; Via is the channel the answer came
@@ -505,13 +540,14 @@ func (l *Log) AppendTx(ctx context.Context, tx *sql.Tx, e Entry) (int64, error) 
 }
 
 // searchText is what the search of the UI matches in an entry (decision B2): its
-// entity_id, area, agent name as the UI shows it and client ID, folded, one per line (a
+// entity_id, areas, agent name as the UI shows it and client ID, folded, one per line (a
 // search text never has a line break, so it cannot match across fields). Device and
 // area names come from the current catalog at search time, not from here.
 func searchText(a *Agent, r *Request) string {
 	var parts []string
 	if r != nil {
-		parts = append(parts, r.Resource.EntityID, r.Resource.Area)
+		parts = append(parts, r.Resource.EntityID)
+		parts = append(parts, r.Resource.Areas...)
 	}
 	if a != nil {
 		parts = append(parts, untrusted.Clean(a.DisplayName, untrusted.Max), a.ClientID)

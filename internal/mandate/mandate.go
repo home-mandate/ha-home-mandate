@@ -169,6 +169,11 @@ func (s *Store) check(document []byte) (Info, error) {
 	if err := placeholderApprover(document); err != nil {
 		return Info{}, err
 	}
+	// Audit mode is not offered: such a mandate is refused rather than stored and
+	// enforced (SPEC-v0 section 11.6).
+	if !m.Enforce() {
+		return Info{}, fmt.Errorf("%w: audit mode (enforce: false) is not offered", ErrInvalid)
+	}
 	// Mandates issued elsewhere (signed ones, SPEC-v0 section 7) cannot be imported yet.
 	if m.Issuer() != "" && m.Issuer() != s.issuer {
 		return Info{}, fmt.Errorf("%w: issued by %q, not by this installation", ErrInvalid, m.Issuer())

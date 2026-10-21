@@ -26,7 +26,7 @@ import (
 
 func decisionAt(clientID, name string, withEvaluation bool) audit.Entry {
 	e := audit.Entry{Event: audit.EventDecision, Agent: &audit.Agent{ClientID: clientID, DisplayName: name},
-		Request: &audit.Request{Time: testStart, Resource: audit.Resource{EntityID: "light.kitchen", Area: "kitchen"}, Action: "turn_on"},
+		Request: &audit.Request{Time: testStart, Resource: audit.Resource{EntityID: "light.kitchen", Areas: []string{"kitchen"}}, Action: "turn_on"},
 		Result:  &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByRateLimit}}
 	if withEvaluation {
 		e.Evaluation = &audit.Evaluation{Decision: "deny", Reason: "no_match"}

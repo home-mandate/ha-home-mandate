@@ -10,7 +10,6 @@ import type {
   AgentRemove,
   ApiErrorBody,
   ApiErrorCode,
-  Rename,
   ApplyTemplate,
   ApplyTemplateResult,
   ApprovalAnswer,
@@ -18,6 +17,7 @@ import type {
   Approvals,
   ApproverList,
   ApproverUpdate,
+  AreaMove,
   AuditPage,
   AuditQuery,
   AuditVerification,
@@ -35,14 +35,15 @@ import type {
   PairingDecision,
   PairingReconnect,
   RemovedCount,
+  Rename,
   ServerEvent,
   Session,
   SystemStatus,
   Template,
   TemplateApprovers,
-  TemplateSummary,
   TemplateRollout,
   TemplateRolloutRequest,
+  TemplateSummary,
   TemplateUpdate,
   TemplateUsage,
 } from './types.ts';
@@ -82,6 +83,10 @@ export interface ApiClient {
   applyRename(entityId: string, formers: readonly string[], confirmCritical?: boolean): Promise<void>;
   /** Resolves a rename without changing a mandate (the human confirmed it). */
   dismissRename(entityId: string, formers: readonly string[]): Promise<void>;
+  /** Devices that left or entered an area rules of active mandates name. */
+  areaMoves(): Promise<AreaMove[]>;
+  /** Ends a move after a human saw it with these areas; conflict if it moved again. */
+  dismissAreaMove(entityId: string, current: readonly string[]): Promise<void>;
 
   mandates(): Promise<MandateSummary[]>;
   createMandate(create: MandateCreate): Promise<MandateDetail>;
@@ -372,6 +377,8 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
     applyRename: (entityId, formers, confirmCritical) =>
       request('POST', 'renames/apply', { entity_id: entityId, formers, ...(confirmCritical ? { confirm_critical: true } : {}) }),
     dismissRename: (entityId, formers) => request('POST', 'renames/dismiss', { entity_id: entityId, formers, confirm: true }),
+    areaMoves: () => request('GET', 'area-moves'),
+    dismissAreaMove: (entityId, current) => request('POST', 'area-moves/dismiss', { entity_id: entityId, current }),
 
     mandates: () => get('mandates'),
     createMandate: (create) => request('POST', 'mandates', create),

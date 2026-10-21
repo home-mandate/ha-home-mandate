@@ -308,12 +308,13 @@ func TestUIMigrationKeepsMandates(t *testing.T) {
 		VALUES ('m-b', 'hm-client:nobody', 'active', 'x', 1, 't', 't')`); err == nil {
 		t.Error("mandate of an unknown agent accepted")
 	}
-	var client, entity, area, decision string
-	if err := db.QueryRow(`SELECT client_id, entity_id, area, decision FROM audit_log WHERE seq = 1`).Scan(&client, &entity, &area, &decision); err != nil {
+	// The column of the single area is gone with migration 19 (sets of areas).
+	var client, entity, decision string
+	if err := db.QueryRow(`SELECT client_id, entity_id, decision FROM audit_log WHERE seq = 1`).Scan(&client, &entity, &decision); err != nil {
 		t.Fatal(err)
 	}
-	if client != "hm-client:a" || entity != "light.x" || area != "k" || decision != "default" {
-		t.Errorf("audit columns: %s %s %s %s", client, entity, area, decision)
+	if client != "hm-client:a" || entity != "light.x" || decision != "default" {
+		t.Errorf("audit columns: %s %s %s", client, entity, decision)
 	}
 	if _, err := db.Exec(`INSERT INTO audit_search (seq, text) VALUES (1, 'x')`); err != nil {
 		t.Errorf("search row: %v", err)
@@ -465,6 +466,9 @@ var releasedMigrations = map[string]string{
 	"0013_audit_directory.sql":        "f2dbbab4ba6ac677b45b72b5aaaf6239162ef8c2cab41700959278547c5d06d2",
 	"0014_mandate_version_origin.sql": "74ef985cbb3a5f900c04ecdc8cac36c822d5069044055ebc8250fd0132b8d7b7",
 	"0015_removal.sql":                "9244ae0d94900ef483696837d304167ce0b989024e112cc86a7a996b9a495b44",
+	"0016_approval_journal.sql":       "7ea14b40c83a5ef5d7024ecf52f773be6ca5c4d12360af83b8d50f0849f1eeda",
+	"0017_approval_agent_ref.sql":     "ef535ca0ef741595ffe3d8106ec82a5283ede1c9911b4330ebacc0c7c0bb1954",
+	"0018_approval_dedup.sql":         "7a011b6d3563d79826b61128a20eacb198978ecae041d1539c604e784e941d19",
 }
 
 func TestReleasedMigrationsAreFrozen(t *testing.T) {

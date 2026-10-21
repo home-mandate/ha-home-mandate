@@ -8,15 +8,28 @@ import type { Category, ExtensionCategory, MandateDraft, Rule } from '../api/typ
 // Only the categories: the file's $schema and id are URLs that must not end up in the bundle.
 import { categories } from './conformance/vocabulary/v0.json';
 
+/** A parameter of an action (SPEC-v0 sections 4.5 and 5): its type, range or permitted values. */
+export interface ParameterSpec {
+  type: 'integer' | 'string';
+  unit?: string;
+  minimum?: number;
+  maximum?: number;
+  /** The permitted values of a string parameter; absent: any string. */
+  values?: readonly string[];
+}
+
+/** The value of a parameter: an integer in the unit of the vocabulary, or a string. */
+export type ParameterValue = number | string;
+
 interface CategorySpec {
   actions: readonly string[];
   critical: readonly string[];
-  /** action → names of its integer parameters (SPEC-v0 section 4.5). */
-  parameters: Readonly<Record<string, readonly string[]>>;
+  /** action → its parameters (SPEC-v0 section 4.5). */
+  parameters: Readonly<Record<string, Readonly<Record<string, ParameterSpec>>>>;
 }
 
 interface VocabularyFile {
-  categories: Record<string, { actions: Record<string, { critical?: boolean; parameters?: Record<string, unknown> }> }>;
+  categories: Record<string, { actions: Record<string, { critical?: boolean; parameters?: Record<string, ParameterSpec> }> }>;
 }
 
 // The normative vocabulary of the pinned version of the specification, copied by
@@ -27,7 +40,7 @@ const VOCABULARY = Object.fromEntries(
     {
       actions: Object.keys(actions),
       critical: Object.keys(actions).filter((a) => actions[a]?.critical === true),
-      parameters: Object.fromEntries(Object.entries(actions).map(([a, spec]) => [a, Object.keys(spec.parameters ?? {})])),
+      parameters: Object.fromEntries(Object.entries(actions).map(([a, spec]) => [a, spec.parameters ?? {}])),
     },
   ]),
 ) as unknown as Readonly<Record<Category, CategorySpec>>;
@@ -39,9 +52,56 @@ export function actionsOf(category: Category): readonly string[] {
   return VOCABULARY[category].actions;
 }
 
-/** parametersOf returns the names of an action's integer parameters (SPEC-v0 section 4.5). */
+/** parametersOf returns the names of an action's parameters (SPEC-v0 section 4.5). */
 export function parametersOf(category: Category, action: string): readonly string[] {
-  return VOCABULARY[category]?.parameters[action] ?? [];
+  return Object.keys(VOCABULARY[category]?.parameters[action] ?? {});
+}
+
+/** parameterSpec returns a parameter of an action in a category of the vocabulary. */
+export function parameterSpec(category: string | undefined, action: string, parameter: string): ParameterSpec | undefined {
+  if (category === undefined || !isKnown(category)) return undefined;
+  const parameters = VOCABULARY[category].parameters[action];
+  return parameters && Object.hasOwn(parameters, parameter) ? parameters[parameter] : undefined;
+}
+
+const MAX_TEXT = 64;
+
+/** An identifier of 1 to limit printable ASCII characters without space (SPEC-v0 section 3.4). */
+export function opaque(s: unknown, limit: number): s is string {
+  return typeof s === 'string' && s.length >= 1 && s.length <= limit && /^[!-~]+$/.test(s);
+}
+
+/** validValue: an integer of magnitude at most 2^53 − 1, or a string like an area (SPEC-v0 section 4.5). */
+export function validValue(v: unknown): v is ParameterValue {
+  return (typeof v === 'number' && Number.isInteger(v) && Math.abs(v) <= Number.MAX_SAFE_INTEGER) || opaque(v, MAX_TEXT);
+}
+
+/**
+ * declares: the value has the type of the parameter and, for a string with permitted
+ * values, is one of them. The range of an integer is not part of it: a mandate may name a
+ * value outside it, which no valid request carries.
+ */
+export function declares(p: ParameterSpec, v: ParameterValue): boolean {
+  if (p.type === 'integer') return typeof v === 'number';
+  return typeof v === 'string' && (p.values === undefined || p.values.includes(v));
+}
+
+/** admits: a request may carry the value for the parameter (SPEC-v0 section 4, step 0). */
+function admits(p: ParameterSpec, v: ParameterValue): boolean {
+  if (!declares(p, v)) return false;
+  if (typeof v === 'string') return true;
+  return (p.minimum === undefined || v >= p.minimum) && (p.maximum === undefined || v <= p.maximum);
+}
+
+/**
+ * parametersAdmitted: every parameter of a request that the action declares has its type
+ * and lies within its range or is one of its permitted values. Others are not checked here.
+ */
+export function parametersAdmitted(category: string | undefined, action: string, parameters: Readonly<Record<string, ParameterValue>>): boolean {
+  return Object.entries(parameters).every(([name, value]) => {
+    const p = parameterSpec(category, action, name);
+    return p === undefined || admits(p, value);
+  });
 }
 
 export function criticalActionsOf(category: Category): readonly string[] {
@@ -70,12 +130,22 @@ export function knownAction(action: string): boolean {
   return CATEGORIES.some((c) => VOCABULARY[c].actions.includes(action));
 }
 
+/** A constraint as the editor and the evaluation see it: limits or a list of values. */
+export type ConstraintSpec = { min?: number; max?: number } | { one_of: readonly ParameterValue[] };
+
 /**
- * hasParameter tells whether the action has the parameter: in the given category, or
- * without one in any category of the vocabulary.
+ * parameterFits tells whether the constraint fits a parameter of the action (SPEC-v0
+ * section 3.1 item 10): limits only an integer parameter, a list only values the
+ * parameter declares; in the given category, or without one in any category of the
+ * vocabulary.
  */
-export function hasParameter(category: string | undefined, action: string, parameter: string): boolean {
-  return CATEGORIES.some((c) => (category === undefined || c === category) && (VOCABULARY[c].parameters[action] ?? []).includes(parameter));
+export function parameterFits(category: string | undefined, action: string, parameter: string, c: ConstraintSpec): boolean {
+  return CATEGORIES.some((name) => {
+    if (category !== undefined && name !== category) return false;
+    const p = parameterSpec(name, action, parameter);
+    if (!p) return false;
+    return 'one_of' in c ? c.one_of.every((v) => declares(p, v)) : p.type === 'integer';
+  });
 }
 
 /**

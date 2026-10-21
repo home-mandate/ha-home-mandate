@@ -8,7 +8,7 @@ import type { DeviceCatalog, Rule, Weekday } from '../api/types.ts';
 import { windowMinutes } from '../engine/check.ts';
 import { m } from '../i18n.ts';
 import { cleanUntrusted, isolate } from '../untrusted.ts';
-import { actionLabel, categoryLabel, WEEKDAYS, weekdayNames } from './labels.ts';
+import { actionLabel, areaLabel, categoryLabel, WEEKDAYS, weekdayNames } from './labels.ts';
 import { limitsText } from './limits.ts';
 import { categoryOf } from './scope.ts';
 import { householdWeek } from './week.svelte.ts';
@@ -92,8 +92,8 @@ export function ruleText(rule: Rule, catalog: DeviceCatalog, locale: string): Ru
   const entity = r.entity_id;
   const device = catalog.devices.find((d) => d.entity_id === entity);
   const subject = entity !== undefined ? cleanUntrusted(device?.name) || cleanUntrusted(entity) : categoryLabel(r.category ?? 'all');
-  const areaName = catalog.areas.find((a) => a.id === r.area)?.name;
-  const area = entity === undefined && r.area !== undefined ? cleanUntrusted(areaName) || cleanUntrusted(r.area) : '';
+  const known = catalog.areas.find((a) => a.id === r.area);
+  const area = entity === undefined && r.area !== undefined ? (known ? areaLabel(known) : cleanUntrusted(r.area)) : '';
   return { subject, area, actions: actionsText(rule, catalog, locale), conditions: conditionsText(rule, locale) };
 }
 

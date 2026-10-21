@@ -8,6 +8,8 @@ import (
 	"math"
 	"testing"
 
+	"github.com/home-mandate/spec/evaluator"
+
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
 )
 
@@ -76,7 +78,7 @@ func TestRequestParameters(t *testing.T) {
 			case err != nil:
 				t.Fatalf("error = %v", err)
 			}
-			if !maps.Equal(got, tt.want) {
+			if !maps.Equal(got, integers(tt.want)) {
 				t.Errorf("parameters = %v, want %v", got, tt.want)
 			}
 		})
@@ -132,7 +134,7 @@ func TestEvaluationParametersFailClosed(t *testing.T) {
 			}
 		})
 	}
-	if got, err := evaluationParameters("cover", "set_position", map[string]any{"position": 30}, "°C"); err != nil || got["position"] != 30 {
+	if got, err := evaluationParameters("cover", "set_position", map[string]any{"position": 30}, "°C"); err != nil || got["position"] != evaluator.IntegerValue(30) {
 		t.Errorf("checked integer: %v, %v", got, err)
 	}
 }
@@ -201,4 +203,16 @@ func TestTemperatureUnitChangedWhileTheHumanDecides(t *testing.T) {
 	if reqs := f.requests(); len(reqs) != 1 || reqs[0].Params["temperature"] != "21 °C" {
 		t.Errorf("shown = %v", reqs[0].Params)
 	}
+}
+
+// integers are the parameters of an evaluation that are all integers; nil for none.
+func integers(in map[string]int64) map[string]evaluator.Value {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]evaluator.Value, len(in))
+	for name, n := range in {
+		out[name] = evaluator.IntegerValue(n)
+	}
+	return out
 }

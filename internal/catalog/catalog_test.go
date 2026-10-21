@@ -23,6 +23,7 @@ type fakeSource struct {
 	entities []ha.EntityEntry
 	devices  []ha.Device
 	areas    []ha.Area
+	floors   []ha.Floor
 	err      error
 	areaErr  error
 	calls    int
@@ -35,6 +36,12 @@ func (f *fakeSource) ListAreas(context.Context) ([]ha.Area, error) {
 		return nil, f.err
 	}
 	return f.areas, f.areaErr
+}
+
+func (f *fakeSource) ListFloors(context.Context) ([]ha.Floor, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.floors, f.err
 }
 
 func (f *fakeSource) GetStates(context.Context) ([]ha.State, error) {
@@ -173,14 +180,76 @@ func TestCoversThatMayBeAnEntranceAreGates(t *testing.T) {
 
 func TestAreaComesFromEntityThenDevice(t *testing.T) {
 	c := loaded(t, house())
-	for id, area := range map[string]string{
-		"light.kitchen":    "kitchen", // entity area
-		"lock.front_door":  "hallway", // device area
-		"camera.porch":     "porch",   // entity area wins over device area
-		"switch.pool_pump": "",        // none
+	for id, areas := range map[string][]string{
+		"light.kitchen":    {"kitchen"}, // entity area
+		"lock.front_door":  {"hallway"}, // device area
+		"camera.porch":     {"porch"},   // entity area wins over device area
+		"switch.pool_pump": nil,         // none
 	} {
-		if d, _ := c.Lookup(id); d.Area != area {
-			t.Errorf("%s: area %q, want %q", id, d.Area, area)
+		if d, _ := c.Lookup(id); !slices.Equal(d.Areas, areas) {
+			t.Errorf("%s: areas %q, want %q", id, d.Areas, areas)
+		}
+	}
+}
+
+// The Home Assistant profile: the set holds the area and, if it has a floor, floor:<id>,
+// always prefixed, also where an area of the same name exists.
+func TestAreasIncludeTheFloorOfTheArea(t *testing.T) {
+	src := house()
+	src.areas = []ha.Area{{AreaID: "kitchen", Name: "Küche", FloorID: "ground_floor"}, {AreaID: "hallway", Name: "Flur"},
+		{AreaID: "porch", Name: "Veranda", FloorID: "porch"}}
+	src.floors = []ha.Floor{{FloorID: "ground_floor", Name: "Erdgeschoss"}, {FloorID: "porch", Name: "Außen"}}
+	c := loaded(t, src)
+	for id, areas := range map[string][]string{
+		"light.kitchen":   {"kitchen", "floor:ground_floor"},
+		"lock.front_door": {"hallway"},
+		"camera.porch":    {"porch", "floor:porch"},
+	} {
+		if d, _ := c.Lookup(id); !slices.Equal(d.Areas, areas) {
+			t.Errorf("%s: areas %q, want %q", id, d.Areas, areas)
+		}
+	}
+	want := []Area{{ID: "floor:ground_floor", Name: "Erdgeschoss", Floor: true}, {ID: "floor:porch", Name: "Außen", Floor: true},
+		{ID: "hallway", Name: "Flur"}, {ID: "kitchen", Name: "Küche", FloorID: "floor:ground_floor"}, {ID: "porch", Name: "Veranda", FloorID: "floor:porch"}}
+	if got := c.Areas(); !slices.Equal(got, want) {
+		t.Errorf("Areas = %+v\nwant %+v", got, want)
+	}
+}
+
+// A floor of an area that the floor registry does not list is still a floor of the area:
+// its ID decides, the name only labels it.
+func TestFloorWithoutRegistryEntryStillCounts(t *testing.T) {
+	src := house()
+	src.areas = []ha.Area{{AreaID: "kitchen", FloorID: "attic"}}
+	c := loaded(t, src)
+	if d, _ := c.Lookup("light.kitchen"); !slices.Equal(d.Areas, []string{"kitchen", "floor:attic"}) {
+		t.Errorf("areas %q", d.Areas)
+	}
+	if got := c.Areas(); len(got) != 2 || got[0] != (Area{ID: "floor:attic", Name: "attic", Floor: true}) {
+		t.Errorf("Areas = %+v", got)
+	}
+}
+
+func TestLongFloorIDsAreShortenedStably(t *testing.T) {
+	fits := strings.Repeat("f", 58)
+	if got := FloorArea(fits); got != "floor:"+fits {
+		t.Errorf("58 characters: %q", got)
+	}
+	long := strings.Repeat("f", 59)
+	got := FloorArea(long)
+	if len(got) != 64 || !strings.HasPrefix(got, "floor:") || got != FloorArea(long) {
+		t.Errorf("59 characters: %q (%d)", got, len(got))
+	}
+	other := strings.Repeat("f", 58) + "g"
+	if FloorArea(other) == got {
+		t.Error("two long floor IDs share an area")
+	}
+	if FloorArea(fits) == got {
+		t.Error("a long floor ID collides with its prefix")
+	}
+	for _, r := range got {
+		if r < 0x21 || r > 0x7e {
+			t.Fatalf("shortened ID %q has character %q", got, r)
 		}
 	}
 }
@@ -239,7 +308,7 @@ func TestStateChangedUpdatesStateOnly(t *testing.T) {
 		"new_state": map[string]any{"entity_id": "light.kitchen", "state": "on", "attributes": map[string]any{"brightness": 200}},
 	}))
 	d, _ := c.Lookup("light.kitchen")
-	if d.State != "on" || d.Attributes["brightness"] != 200.0 || d.Area != "kitchen" || d.Category != "light" {
+	if d.State != "on" || d.Attributes["brightness"] != 200.0 || !slices.Equal(d.Areas, []string{"kitchen"}) || d.Category != "light" {
 		t.Errorf("after state_changed: %+v", d)
 	}
 	// A removed entity (new_state null) disappears.
@@ -291,7 +360,7 @@ func TestRegistryUpdatesTriggerARefresh(t *testing.T) {
 	}
 	waitFor(t, "refresh after registry update", func() bool {
 		d, _ := c.Lookup("switch.pool_pump")
-		return d.Area == "garden"
+		return slices.Equal(d.Areas, []string{"garden"})
 	})
 	if n := src.refreshes() - before; n > 2 {
 		t.Errorf("%d refreshes for one burst, want at most 2", n)

@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-mandate/spec/evaluator"
+
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 )
 
@@ -69,8 +71,8 @@ func TestApprovalJSONHasTheCause(t *testing.T) {
 // The approval journal keeps the request of a decision entry and reads it back.
 func TestRequestRoundTrip(t *testing.T) {
 	in := audit.Request{Time: time.Date(2026, 10, 6, 19, 0, 0, 123e6, time.UTC), Timezone: "Europe/Berlin", Revoked: true,
-		Resource: audit.Resource{EntityID: "light.kitchen", Category: "light", Area: "kitchen", Critical: true},
-		Action:   "turn_on", Parameters: map[string]int64{"brightness_pct": 50}}
+		Resource: audit.Resource{EntityID: "light.kitchen", Category: "light", Areas: []string{"kitchen"}, Critical: true},
+		Action:   "turn_on", Parameters: map[string]evaluator.Value{"brightness_pct": evaluator.IntegerValue(50)}}
 	data, err := json.Marshal(in)
 	if err != nil {
 		t.Fatal(err)

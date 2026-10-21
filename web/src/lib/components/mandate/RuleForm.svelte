@@ -21,13 +21,14 @@
     withDevice,
     withWindow,
   } from '../../mandate/edit.ts';
-  import { actionLabel, categoryLabel, WEEKDAYS, weekdayNames } from '../../mandate/labels.ts';
+  import { actionLabel, areaLabel, categoryLabel, WEEKDAYS, weekdayNames } from '../../mandate/labels.ts';
   import { householdWeek } from '../../mandate/week.svelte.ts';
   import {
     fromInput,
     limitableParameters,
     otherUnitLimits,
     parameterLabel,
+    rangeOf,
     toInput,
     unitOf,
     withConstraint,
@@ -126,7 +127,7 @@
   function setLimit(name: string, bound: 'min' | 'max', text: string) {
     typed[`${name}.${bound}`] = text;
     const value = fromInput(name, text);
-    const current = rule.constraints?.[name] ?? {};
+    const current = rangeOf(rule.constraints?.[name]);
     const next = { ...current, [bound]: value === 'invalid' ? Number.NaN : (value ?? undefined) };
     change(withConstraint(rule, name, next.min, next.max), false);
   }
@@ -147,7 +148,7 @@
     ...CATEGORIES.map((c) => ({ value: c as string, label: categoryLabel(c) })),
   ]);
   const areaOptions = $derived.by(() => {
-    const options = catalog.areas.map((a) => ({ value: a.id, label: cleanUntrusted(a.name) || cleanUntrusted(a.id) }));
+    const options = catalog.areas.map((a) => ({ value: a.id, label: areaLabel(a) }));
     const missing = scope.area !== null && !catalog.areas.some((a) => a.id === scope.area);
     return [{ value: '', label: m.rule_any() }, ...options, ...(missing && scope.area !== null ? [{ value: scope.area, label: cleanUntrusted(scope.area) }] : [])];
   });
@@ -275,7 +276,7 @@
                   type="text"
                   inputmode="decimal"
                   autocomplete="off"
-                  value={typed[key] ?? toInput(name, rule.constraints?.[name]?.[bound])}
+                  value={typed[key] ?? toInput(name, rangeOf(rule.constraints?.[name])[bound])}
                   aria-invalid={(typed[key] !== undefined && fromInput(name, typed[key]) === 'invalid') || limitsError ? 'true' : undefined}
                   aria-describedby="{id}-limits"
                   oninput={(e) => setLimit(name, bound, e.currentTarget.value)}

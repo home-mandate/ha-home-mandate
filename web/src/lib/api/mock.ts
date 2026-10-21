@@ -43,25 +43,26 @@ import type {
   Approver,
   ApproverList,
   ApproverUpdate,
-  ReachChannel,
-  Rename,
-  Rule,
-  StaleReference,
+  AreaMove,
   AuditEntry,
   AuditEvent,
   AuditQuery,
-  DeviceCatalog,
   Defaults,
+  DeviceCatalog,
   Household,
   MandateDetail,
   MandateDocument,
   MandateDraft,
   MandateVersion,
-  RulesFrom,
   PairingCandidate,
+  ReachChannel,
   ReconnectCandidate,
+  Rename,
+  Rule,
+  RulesFrom,
   ServerEvent,
   Session,
+  StaleReference,
   SystemStatus,
   Template,
   TemplateRollout,
@@ -126,6 +127,8 @@ interface State {
   devices: DeviceCatalog;
   /** Renames nobody resolved: current entity ID → former IDs, nearest first. */
   renames: Record<string, string[]>;
+  /** Devices whose areas changed and nobody looked yet. */
+  moves: Omit<AreaMove, 'name' | 'mandates'>[];
   agents: Agent[];
   mandates: Record<string, StoredMandate>;
   templates: Template[];
@@ -150,6 +153,8 @@ export interface MockControls {
   setRenamesLastHour(count: number): void;
   /** As a rename in Home Assistant: the device gets another entity ID, rules keep the old one. */
   renameDevice(from: string, to: string): void;
+  /** As a device moved in Home Assistant: it gets these areas (room and floor). */
+  moveDevice(entityId: string, areas: string[]): void;
   breakChain(seq: number): void;
   setEmergencyStop(active: boolean): Promise<void>;
   /** As another administrator's edit of a mandate: a new version with this rate limit. */
@@ -370,9 +375,8 @@ function searchMatcher(text: string | undefined, catalog: DeviceCatalog): ((e: A
     const res = e.request?.resource;
     return (
       has(res?.entity_id) ||
-      has(res?.area) ||
+      (res?.areas ?? []).some((a) => has(a) || areas.has(a)) ||
       (res !== undefined && devices.has(res.entity_id)) ||
-      (res?.area !== undefined && areas.has(res.area)) ||
       has(cleanUntrusted(e.agent?.display_name)) ||
       has(e.agent?.client_id)
     );
@@ -388,7 +392,7 @@ function matchesQuery(e: AuditEntry, q: AuditQuery): boolean {
     (q.since === undefined || at >= Date.parse(q.since)) &&
     (q.until === undefined || at < Date.parse(q.until)) &&
     (q.agent === undefined || e.agent?.client_id === q.agent) &&
-    (q.device === undefined || res?.entity_id === q.device || res?.area === q.device) &&
+    (q.device === undefined || res?.entity_id === q.device || (res?.areas ?? []).includes(q.device)) &&
     (q.group === undefined || (q.group === 'decision') === (e.event === 'decision')) &&
     (q.event === undefined || e.event === q.event) &&
     (q.decisions === undefined || q.decisions.length === 0 || (decision !== undefined && q.decisions.includes(decision)))
@@ -405,6 +409,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     defaults: defaultsFixture,
     devices: devicesFixture,
     renames: {},
+    moves: [],
     agents: options.empty ? [] : startAgents,
     mandates: options.empty ? {} : initialMandates(templatesFixture.map(storedTemplate), startAgents),
     templates: templatesFixture.map(storedTemplate),
@@ -734,6 +739,18 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       log('directory.changed', { actor: { kind: 'system', id: 'directory' }, directory: { change: 'renamed', entity_id: to, previous_entity_id: from } });
       emit({ type: 'devices.changed' });
     },
+    moveDevice(entityId, areas) {
+      const device = state.devices.devices.find((d) => d.entity_id === entityId) ?? fail('not_found');
+      const sorted = [...areas].sort();
+      const earlier = state.moves.find((mv) => mv.entity_id === entityId);
+      const previous = earlier?.previous ?? [...device.areas].sort();
+      const others = state.moves.filter((mv) => mv.entity_id !== entityId);
+      const room = areas.find((a) => !a.startsWith('floor:')) ?? null;
+      const devices = state.devices.devices.map((d) => (d.entity_id === entityId ? { ...d, area: room, areas: [...areas] } : d));
+      const moved = sameIds(previous, sorted) ? others : [...others, { entity_id: entityId, previous, current: sorted, moved_at: new Date().toISOString() }];
+      state = { ...state, devices: { ...state.devices, devices }, moves: moved };
+      emit({ type: 'devices.changed' });
+    },
     setDirectoryStore(since, overflow) {
       setSystem({ ...state.system, directory: { ...state.system.directory, store_failing_since: since, overflow } });
     },
@@ -955,6 +972,28 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       if (!sameIds(formers, seen)) fail('conflict');
       for (const former of formers) log('directory.changed', { directory: { change: 'rename_dismissed', entity_id: entityId, previous_entity_id: former } });
       resolveRename(entityId);
+    },
+
+    async areaMoves() {
+      const out: AreaMove[] = [];
+      for (const mv of state.moves) {
+        const changed = [...mv.previous.filter((a) => !mv.current.includes(a)), ...mv.current.filter((a) => !mv.previous.includes(a))];
+        const mandates = Object.keys(state.mandates).flatMap((id) => {
+          if (state.mandates[id]?.status !== 'active') return [];
+          const rules = detail(id).document.rules.filter((r) => r.resource.area !== undefined && changed.includes(r.resource.area));
+          return rules.length > 0 ? [{ id, name: state.mandates[id]?.name ?? id, rules: rules.map((r) => r.id) }] : [];
+        });
+        if (mandates.length === 0) continue;
+        const name = state.devices.devices.find((d) => d.entity_id === mv.entity_id)?.name ?? mv.entity_id;
+        out.push({ ...mv, name, mandates });
+      }
+      return copy(out.sort((a, b) => a.entity_id.localeCompare(b.entity_id)));
+    },
+    async dismissAreaMove(entityId, current) {
+      const mv = state.moves.find((x) => x.entity_id === entityId);
+      if (!mv || !sameIds(mv.current, current)) fail('conflict');
+      state = { ...state, moves: state.moves.filter((x) => x.entity_id !== entityId) };
+      emit({ type: 'devices.changed' });
     },
 
     async mandates() {

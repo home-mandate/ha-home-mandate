@@ -78,6 +78,12 @@ describe('scope', () => {
     expect(names({ category: 'light', area: 'kitchen', device: null })).toEqual(['light.kitchen']);
     expect(names({ category: 'all', area: 'garage', device: null })).toEqual(['cover.garage_door', 'camera.demo_camera']);
   });
+
+  it('lists the devices of every room on a floor', () => {
+    const names = (s: Parameters<typeof deviceOptions>[0]) => deviceOptions(s, devices).map((d) => d.entity_id);
+    expect(names({ category: 'light', area: 'floor:ground_floor', device: null })).toEqual(['light.kitchen', 'light.living_room']);
+    expect(names({ category: 'gate', area: 'floor:ground_floor', device: null })).toEqual([]);
+  });
 });
 
 describe('rules of a draft', () => {

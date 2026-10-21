@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+
+	"github.com/home-mandate/spec/evaluator"
 )
 
 // The units Home Assistant reports for temperatures: metric and US customary households.
@@ -24,7 +26,7 @@ const errTemperatureUnitChanged = "temperature_unit_changed"
 
 // unitOf is the unit a temperature among the parameters of an evaluation is in: "" if
 // there is none.
-func unitOf(parameters map[string]int64) string {
+func unitOf(parameters map[string]evaluator.Value) string {
 	for unit, name := range evaluationParameterOf["climate"]["set_temperature"]["temperature"].perUnit {
 		if _, ok := parameters[name]; ok {
 			return unit
@@ -68,7 +70,7 @@ const (
 // section 4.5): an error wrapping errInvalidParams that names the parameter. A
 // temperature while the household's unit is unknown gives errTemperatureUnitUnknown. An
 // action outside the vocabulary has no parameters to check; the decision refuses it.
-func requestParameters(category, action string, params map[string]any, temperatureUnit string) (map[string]int64, error) {
+func requestParameters(category, action string, params map[string]any, temperatureUnit string) (map[string]evaluator.Value, error) {
 	spec, ok := specFor(category, action, temperatureUnit)
 	if !ok || action == "read" {
 		return nil, nil
@@ -101,8 +103,8 @@ func checkTemperatureUnit(category, action string, params map[string]any, unit s
 // evaluationParameters derives the parameters of the evaluation from the checked data of
 // the service call. Every value has been checked to be a whole step of its unit; one that
 // is not anyway fails closed with an error, it is never dropped.
-func evaluationParameters(category, action string, data map[string]any, temperatureUnit string) (map[string]int64, error) {
-	var out map[string]int64
+func evaluationParameters(category, action string, data map[string]any, temperatureUnit string) (map[string]evaluator.Value, error) {
+	var out map[string]evaluator.Value
 	for callName, p := range evaluationParameterOf[category][action] {
 		value, present := data[callName]
 		if !present {
@@ -129,9 +131,9 @@ func evaluationParameters(category, action string, data map[string]any, temperat
 			}
 		}
 		if out == nil {
-			out = map[string]int64{}
+			out = map[string]evaluator.Value{}
 		}
-		out[name] = int64(rounded)
+		out[name] = evaluator.IntegerValue(int64(rounded))
 	}
 	return out, nil
 }

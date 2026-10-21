@@ -32,9 +32,17 @@ func clocked(t *testing.T, start time.Time) (*audit.Log, func() time.Time) {
 	return l, func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
 }
 
+// areasOf is the set of areas of a resource in one area; nil for none.
+func areasOf(area string) []string {
+	if area == "" {
+		return nil
+	}
+	return []string{area}
+}
+
 func decision(client, name, entity, area, decision, reason string) audit.Entry {
 	return audit.Entry{Event: audit.EventDecision, Agent: &audit.Agent{ClientID: client, DisplayName: name},
-		Request:    &audit.Request{Time: time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC), Resource: audit.Resource{EntityID: entity, Area: area}, Action: "turn_on"},
+		Request:    &audit.Request{Time: time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC), Resource: audit.Resource{EntityID: entity, Areas: areasOf(area)}, Action: "turn_on"},
 		Evaluation: &audit.Evaluation{Decision: decision, Reason: reason},
 		Result:     &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate}}
 }
@@ -478,7 +486,7 @@ func TestUnreadableRowsAreErrors(t *testing.T) {
 	for _, stmt := range []string{
 		`DELETE FROM audit_search`,
 		`ALTER TABLE audit_log RENAME TO audit_log_real`,
-		`CREATE VIEW audit_log AS SELECT seq, NULL AS recorded_at, event, NULL AS entry, digest, client_id, entity_id, area, decision FROM audit_log_real`,
+		`CREATE VIEW audit_log AS SELECT seq, NULL AS recorded_at, event, NULL AS entry, digest, client_id, entity_id, decision FROM audit_log_real`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			t.Fatalf("%s: %v", stmt, err)

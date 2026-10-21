@@ -9,7 +9,7 @@
   import { onMount, tick } from 'svelte';
   import { Loader } from '../app/loader.svelte.ts';
   import type { AppState } from '../app/state.svelte.ts';
-  import type { Agent, DeviceCatalog, MandateSummary, Rename, Template } from '../api/types.ts';
+  import type { Agent, AreaMove, DeviceCatalog, MandateSummary, Rename, Template } from '../api/types.ts';
   import AgentName from '../components/AgentName.svelte';
   import Button from '../components/Button.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -19,6 +19,7 @@
   import NewMandateDialog from '../components/mandate/NewMandateDialog.svelte';
   import RemoveRevoked from '../components/RemoveRevoked.svelte';
   import Switch from '../components/Switch.svelte';
+  import AreaMovesNotice from '../components/mandate/AreaMovesNotice.svelte';
   import RenamesNotice from '../components/mandate/RenamesNotice.svelte';
   import TemplateCard from '../components/mandate/TemplateCard.svelte';
   import { formatDate } from '../format.ts';
@@ -45,6 +46,7 @@
     agents: Agent[];
     catalog: DeviceCatalog;
     renames: Rename[];
+    moves: AreaMove[];
   }
 
   let { app, now }: Props = $props();
@@ -59,14 +61,15 @@
     // Only the mandates are essential. Without templates or agents the list still shows
     // (a new mandate cannot be created then); without Home Assistant the template cards
     // show ids instead of names. Hidden base templates are not offered.
-    const [mandates, templates, agents, catalog, renames] = await Promise.all([
+    const [mandates, templates, agents, catalog, renames, moves] = await Promise.all([
       api.mandates(),
       offeredTemplates(api).catch((): Template[] => []),
       api.agents().catch((): Agent[] => []),
       api.devices().catch(() => NO_CATALOG),
       api.renames().catch((): Rename[] => []),
+      api.areaMoves().catch((): AreaMove[] => []),
     ]);
-    return { mandates, templates, agents, catalog, renames };
+    return { mandates, templates, agents, catalog, renames, moves };
   });
 
   let dialog = $state(false);
@@ -140,6 +143,9 @@
 {:else}
   {#if data.renames.length > 0}
     <RenamesNotice renames={data.renames} api={app.api} locale={ctx.locale} onresolved={resolved} />
+  {/if}
+  {#if data.moves.length > 0}
+    <AreaMovesNotice moves={data.moves} catalog={data.catalog} api={app.api} locale={ctx.locale} onresolved={resolved} />
   {/if}
 
   {#if data.mandates.length === 0}

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Package catalog maps Home Assistant entities to the vocabulary of SPEC-v0 section 5:
-// category and area of every device. The PEP takes both from here, never from the agent.
+// category and areas of every device. The PEP takes both from here, never from the agent.
 // Until the first successful refresh the catalog is empty, so every request is denied.
 package catalog
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -25,19 +27,61 @@ type Source interface {
 	ListEntities(ctx context.Context) ([]ha.EntityEntry, error)
 	ListDevices(ctx context.Context) ([]ha.Device, error)
 	ListAreas(ctx context.Context) ([]ha.Area, error)
+	ListFloors(ctx context.Context) ([]ha.Floor, error)
 }
 
-// Area is an area with its name, for the UI.
+// Area is an area with its name, for the UI: an area of Home Assistant or a floor, whose
+// ID is FloorArea of the floor ID.
 type Area struct {
 	ID   string
 	Name string
+	// Floor is true for a floor.
+	Floor bool
+	// FloorID is the area ID of the floor an area of Home Assistant is on; empty if none.
+	FloorID string
+}
+
+// floorPrefix marks the floors of Home Assistant among the areas (Home Assistant profile):
+// area and floor IDs come from separate registries and can be equal.
+const floorPrefix = "floor:"
+
+// maxAreaLength is the length limit of an area identifier (SPEC-v0 section 3.4).
+const maxAreaLength = 64
+
+// floorHashLength is the number of hex digits of the hash suffix of a shortened floor ID.
+const floorHashLength = 16
+
+// Room is the area of Home Assistant in a set of areas, the one that is no floor; empty
+// if there is none.
+func Room(areas []string) string {
+	for _, a := range areas {
+		if !strings.HasPrefix(a, floorPrefix) {
+			return a
+		}
+	}
+	return ""
+}
+
+// FloorArea is the area identifier of a floor: floor: followed by its ID. A floor ID too
+// long for the 64 characters of an area keeps its beginning and ends in a hash of the
+// whole ID, so that it is the same in every refresh and differs from every other floor.
+func FloorArea(floorID string) string {
+	id := floorPrefix + floorID
+	if len(id) <= maxAreaLength {
+		return id
+	}
+	sum := sha256.Sum256([]byte(floorID))
+	keep := maxAreaLength - len(floorPrefix) - 1 - floorHashLength
+	return floorPrefix + floorID[:keep] + "~" + hex.EncodeToString(sum[:])[:floorHashLength]
 }
 
 // Device is an entity as the PEP sees it.
 type Device struct {
 	EntityID string
 	Category string
-	Area     string
+	// Areas is the set of areas (SPEC-v0 section 3.4): the area of the entity, otherwise of
+	// its device, and then its floor; nil if it has none.
+	Areas []string
 	// Critical is true if the household marked the entity as critical: every action on
 	// it except read then needs a confirmation or allow_critical (SPEC-v0 section 4).
 	Critical bool
@@ -93,8 +137,8 @@ type Catalog struct {
 	mu         sync.RWMutex
 	ready      bool
 	devices    map[string]Device
-	entityArea map[string]string // entity → area from the registries
-	areas      []Area            // sorted by ID
+	entityArea map[string][]string // entity → areas from the registries
+	areas      []Area              // sorted by ID
 	disabled   map[string]bool
 	// marks are the entities the household marked as critical; nil: none.
 	marks interface{ Critical(entityID string) bool }
@@ -240,6 +284,7 @@ func (d Device) Name() string {
 
 func clone(d Device) Device {
 	d.Attributes = maps.Clone(d.Attributes)
+	d.Areas = slices.Clone(d.Areas)
 	return d
 }
 
@@ -287,19 +332,17 @@ func (c *Catalog) Refresh(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("catalog: area registry: %w", err)
 	}
-	areas := make([]Area, 0, len(areaList))
-	for _, a := range areaList {
-		if a.AreaID != "" {
-			areas = append(areas, Area{ID: a.AreaID, Name: a.Name})
-		}
+	floorList, err := c.src.ListFloors(ctx)
+	if err != nil {
+		return fmt.Errorf("catalog: floor registry: %w", err)
 	}
-	slices.SortFunc(areas, func(a, b Area) int { return strings.Compare(a.ID, b.ID) })
+	areas, floorOf := areaDirectory(areaList, floorList)
 
 	deviceArea := make(map[string]string, len(devices))
 	for _, d := range devices {
 		deviceArea[d.ID] = d.AreaID
 	}
-	entityArea := make(map[string]string, len(entities))
+	entityArea := make(map[string][]string, len(entities))
 	disabled := map[string]bool{}
 	for _, e := range entities {
 		if e.DisabledBy != "" {
@@ -309,7 +352,13 @@ func (c *Catalog) Refresh(ctx context.Context) error {
 		if area == "" {
 			area = deviceArea[e.DeviceID]
 		}
-		entityArea[e.EntityID] = area
+		if area == "" {
+			continue
+		}
+		entityArea[e.EntityID] = []string{area}
+		if floor := floorOf[area]; floor != "" {
+			entityArea[e.EntityID] = append(entityArea[e.EntityID], floor)
+		}
 	}
 	snapshot := make(map[string]Device, len(states))
 	for _, s := range states {
@@ -340,9 +389,45 @@ func (c *Catalog) Refresh(ctx context.Context) error {
 	return nil
 }
 
-func device(s ha.State, area string) Device {
+// areaDirectory returns the areas and floors for the UI, sorted by ID, and the floor area
+// of every area that has a floor. A floor the floor registry does not list still counts:
+// its ID decides, and it is named by it.
+func areaDirectory(areaList []ha.Area, floorList []ha.Floor) ([]Area, map[string]string) {
+	floorName := make(map[string]string, len(floorList))
+	for _, f := range floorList {
+		if f.FloorID != "" {
+			floorName[f.FloorID] = f.Name
+		}
+	}
+	floors := map[string]Area{}
+	floorOf := map[string]string{}
+	areas := make([]Area, 0, len(areaList))
+	for _, a := range areaList {
+		if a.AreaID == "" {
+			continue
+		}
+		area := Area{ID: a.AreaID, Name: a.Name}
+		if a.FloorID != "" {
+			area.FloorID = FloorArea(a.FloorID)
+			floorOf[a.AreaID] = area.FloorID
+			name, ok := floorName[a.FloorID]
+			if !ok {
+				name = a.FloorID
+			}
+			floors[area.FloorID] = Area{ID: area.FloorID, Name: name, Floor: true}
+		}
+		areas = append(areas, area)
+	}
+	for _, f := range floors {
+		areas = append(areas, f)
+	}
+	slices.SortFunc(areas, func(a, b Area) int { return strings.Compare(a.ID, b.ID) })
+	return areas, floorOf
+}
+
+func device(s ha.State, areas []string) Device {
 	deviceClass, _ := s.Attributes["device_class"].(string)
-	return Device{EntityID: s.EntityID, Category: Category(s.EntityID, deviceClass), Area: area,
+	return Device{EntityID: s.EntityID, Category: Category(s.EntityID, deviceClass), Areas: slices.Clone(areas),
 		State: s.State, Attributes: maps.Clone(s.Attributes)}
 }
 

@@ -303,9 +303,13 @@ export type Category =
 export type ExtensionCategory = `${string}:${string}`;
 
 export interface Area {
-  /** Home Assistant area_id, as used in mandate rules. */
+  /** Home Assistant area_id, or floor: and a floor_id for a floor, as used in mandate rules. */
   id: string;
   name: string;
+  /** A floor of Home Assistant: a rule on it covers every area on the floor. */
+  floor: boolean;
+  /** The ID of the floor an area is on; null for a floor and an area without one. */
+  floor_id: string | null;
 }
 
 export interface Device {
@@ -313,7 +317,10 @@ export interface Device {
   /** friendly_name from Home Assistant; untrusted text. */
   name: string;
   category: Category;
+  /** The room (area of Home Assistant) of the device. */
   area: string | null;
+  /** Its set of areas (SPEC-v0 section 3.4): the room and its floor; empty for none. */
+  areas: string[];
   /** Actions of the category's vocabulary, sorted. */
   actions: string[];
   /** The household marked the device: every action except read is critical (SPEC-v0 section 4, step 5). */
@@ -365,8 +372,11 @@ export interface Rule {
   actions: string[];
   decision: Decision;
   conditions?: Conditions;
-  /** Only with decision "allow" and listed actions: limits for integer parameters of the action. */
-  constraints?: Record<string, { min?: number; max?: number }>;
+  /**
+   * Only with decision "allow" and listed actions: per parameter of the action, limits
+   * of an integer or the permitted values (one_of, SPEC-v0 section 4.5).
+   */
+  constraints?: Record<string, { min?: number; max?: number } | { one_of: (number | string)[] }>;
   /** Only with decision "ask". */
   approval?: Approval;
   /** Only with decision "allow"; needs the separate confirmation (confirm_critical). */
@@ -383,6 +393,8 @@ export interface MandateDraft {
   limits: { max_actions_per_hour: number };
   valid_from: string;
   expires?: string;
+  /** Only false: audit mode, the mandate does not enforce the denials of its rules (SPEC-v0 section 4.6). */
+  enforce?: false;
 }
 
 /** A stored mandate version, as in the schema. */
@@ -479,6 +491,23 @@ export interface Rename {
   /** Former IDs another device has now: the rename cannot be taken over, only dismissed or edited by hand. */
   formers_in_use: string[];
   mandates: { id: string; name: string; rules: string[]; critical: boolean }[];
+}
+
+/**
+ * GET api/area-moves: a device that left or entered an area that rules of active mandates
+ * name (SPEC-v0 section 3.4). Those rules stopped or started applying to it. A human
+ * dismisses it after looking (POST api/area-moves/dismiss {entity_id, current}).
+ */
+export interface AreaMove {
+  entity_id: string;
+  /** Name from Home Assistant, untrusted. */
+  name: string;
+  /** Areas when the move was found, and now; sent back when dismissing. */
+  previous: string[];
+  current: string[];
+  moved_at: string;
+  /** Active mandates with rules on an area the device left or entered. */
+  mandates: { id: string; name: string; rules: string[] }[];
 }
 
 export interface MandateVersion {
@@ -852,15 +881,19 @@ export interface AuditEntry {
     time: string;
     timezone?: string;
     /** critical: the household marked the device (SPEC-v0 section 4, step 5). */
-    resource: { entity_id: string; category?: string; area?: string; critical?: boolean };
+    /** areas: the set of areas of the device (SPEC-v0 section 3.4). */
+    resource: { entity_id: string; category?: string; areas?: string[]; critical?: boolean };
     action: string;
+    /** Parameters of the action that were evaluated: integers in the units of the vocabulary, or strings. */
+    parameters?: Record<string, number | string>;
   };
   /**
    * version: number of the mandate version with this digest; name: the mandate's display
    * name, also of a removed one (both added by the API, not part of the chain; F4).
    */
   mandate?: { id: string; digest: string; previous_digest?: string; version?: number; name?: string };
-  evaluation?: { decision: Decision; reason: Reason; rule_id: string | null; approval_timeout?: string };
+  /** enforced: false only for a deny of a mandate in audit mode that was executed (SPEC-v0 section 4.6). */
+  evaluation?: { decision: Decision; reason: Reason; rule_id: string | null; approval_timeout?: string; enforced?: false };
   /** via: the channel the answer came through, push or ui (decision F2). */
   approval?: { outcome: ApprovalOutcome; cause?: ApprovalCause; by?: string; by_name?: string; via?: 'push' | 'ui'; at: string };
   result?: { status: ResultStatus; denied_by?: DeniedBy; error?: string; duration_ms?: number };

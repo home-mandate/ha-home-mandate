@@ -3,10 +3,34 @@
 import { describe, expect, it } from 'vitest';
 import type { MandateDraft } from '../api/types.ts';
 import { evaluate, type EvalRequest } from './evaluate.ts';
+import casesText from './conformance/conformance/cases-v0.json?raw';
 
 // The cases of the pinned version of the specification, copied by tools/webconformance (a Go test
 // fails if the copy differs).
 const files = import.meta.glob<unknown>('./conformance/**/*.json', { eager: true, import: 'default' });
+
+const JSON_NUMBER = /^-?(0|[1-9][0-9]*)(?:\.([0-9]+))?(?:[eE]([+-]?[0-9]+))?$/;
+
+/**
+ * exactNumber reads the text of a JSON number by its exact value, as the specification
+ * demands of a PEP (SPEC-v0 section 4.5): a fraction that floating point would round to an
+ * integer (50.00000000000000000001) yields NaN, which no evaluation takes for an integer.
+ */
+function exactNumber(text: string): number {
+  const value = Number(text);
+  const m = JSON_NUMBER.exec(text);
+  if (!Number.isInteger(value) || !m) return value;
+  const fraction = m[2] ?? '';
+  const digits = (m[1]! + fraction).replace(/^0+/, '');
+  if (digits === '') return value;
+  const trailingZeros = digits.length - digits.replace(/0+$/, '').length;
+  return Number(m[3] ?? 0) + trailingZeros - fraction.length >= 0 ? value : NaN;
+}
+
+// The cases with their numbers as written: JSON.parse alone would round them.
+const exactCases = JSON.parse(casesText, (_key, value: unknown, context?: { source?: string }) =>
+  typeof value === 'number' && context?.source !== undefined ? exactNumber(context.source) : value,
+) as { cases: ConformanceCase[] };
 
 interface ConformanceCase {
   id: string;
@@ -14,7 +38,7 @@ interface ConformanceCase {
   mandate_inline?: MandateDraft;
   resource: EvalRequest['resource'];
   action: string;
-  parameters?: Record<string, number>;
+  parameters?: Record<string, number | string>;
   time: string;
   timezone?: string;
   revoked?: boolean;
@@ -22,9 +46,10 @@ interface ConformanceCase {
   reason: string;
   rule_id?: string | null;
   approval_timeout?: string;
+  enforced?: boolean;
 }
 
-const casesFile = files['./conformance/conformance/cases-v0.json'] as { cases: ConformanceCase[] };
+const casesFile = exactCases;
 
 function mandateOf(c: ConformanceCase): MandateDraft {
   if (c.mandate_inline) return c.mandate_inline;
@@ -51,6 +76,7 @@ describe('evaluate: conformance cases of the specification', () => {
     expect(result.reason).toBe(c.reason);
     if (c.rule_id !== undefined) expect(result.rule_id).toBe(c.rule_id);
     if (c.approval_timeout !== undefined) expect(result.approval?.timeout).toBe(c.approval_timeout);
+    expect(result.enforced).toBe(c.enforced === false ? false : undefined);
   });
 });
 
@@ -72,7 +98,7 @@ const base: MandateDraft = {
 };
 
 const light = (time: string, timezone?: string): EvalRequest => ({
-  resource: { entity_id: 'light.flur', category: 'light', area: 'flur' },
+  resource: { entity_id: 'light.flur', category: 'light', areas: ['flur'] },
   action: 'turn_on',
   time,
   ...(timezone === undefined ? {} : { timezone }),

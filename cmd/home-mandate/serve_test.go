@@ -600,3 +600,25 @@ func TestTokenPurgeKeepsTokensOfOpenRequests(t *testing.T) {
 		t.Errorf("margin %v", tokenKeepMargin)
 	}
 }
+
+func TestArchiveIsPrivateAndNeverOverwritten(t *testing.T) {
+	dir := t.TempDir()
+	at := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	w, name, err := newArchive(dir, at)
+	if err != nil || filepath.Base(name) != "audit-archive-20261021T120000Z.jsonl" {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(w, "{}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(dir, "audit-archive-20261021T120000Z.jsonl"))
+	if err != nil || info.Mode().Perm() != 0o600 || info.Size() != 3 {
+		t.Fatalf("archive: %v, %v", info, err)
+	}
+	if _, _, err := newArchive(dir, at); err == nil {
+		t.Error("an archive was overwritten")
+	}
+}

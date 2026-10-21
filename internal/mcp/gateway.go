@@ -574,7 +574,7 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 	// The unit is read once: the value is evaluated and executed in the same unit, also
 	// if Home Assistant's configuration is read again meanwhile (spec #21 part B).
 	unit := g.temperatureUnit()
-	var parameters map[string]int64
+	var parameters map[string]evaluator.Value
 	var paramErr error
 	if dev, ok := g.cfg.Catalog.Lookup(in.EntityID); ok {
 		parameters, paramErr = requestParameters(dev.Category, in.Action, in.Params, unit)
@@ -662,7 +662,7 @@ func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, ca
 // every refusal. It returns the decision only if the action is allowed. paramErr, the
 // result of checking the parameters, refuses the request before the decision. An agent
 // that may not read the entity gets not_found for every refusal, as for a missing entity.
-func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action string, parameters map[string]int64, paramErr error) (pdp.Decision, error) {
+func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action string, parameters map[string]evaluator.Value, paramErr error) (pdp.Decision, error) {
 	if g.stopped(ctx) {
 		d := pdp.Decision{Time: g.cfg.Now(), Resource: evaluator.Resource{EntityID: entityID}, Action: action}
 		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop})
@@ -829,7 +829,7 @@ func (g *Gateway) entry(a agent.Agent, d pdp.Decision, withEvaluation bool, resu
 		Event: audit.EventDecision,
 		Agent: &audit.Agent{ClientID: a.ClientID, DisplayName: a.DisplayName},
 		Request: &audit.Request{Time: d.Time, Timezone: d.TimeZone, Revoked: d.Status == evaluator.StatusRevoked,
-			Resource: audit.Resource{EntityID: d.Resource.EntityID, Category: d.Resource.Category, Area: d.Resource.Area, Critical: d.Resource.Critical},
+			Resource: audit.Resource{EntityID: d.Resource.EntityID, Category: d.Resource.Category, Areas: d.Resource.Areas, Critical: d.Resource.Critical},
 			Action:   d.Action, Parameters: d.Parameters},
 		Result: &result,
 	}

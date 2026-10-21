@@ -93,7 +93,7 @@ export function cell(draft: MandateDraft, device: Device, action: string): Cell 
     cache = new Map();
     cells.set(draft, cache);
   }
-  const key = `${device.entity_id}\u0000${device.category}\u0000${device.area ?? ''}\u0000${device.critical}\u0000${action}`;
+  const key = `${device.entity_id}\u0000${device.category}\u0000${device.areas.join('\u0001')}\u0000${device.critical}\u0000${action}`;
   const cached = cache.get(key);
   if (cached) return cached;
   const result = computeCell(draft, device, action);
@@ -113,7 +113,7 @@ function computeCell(draft: MandateDraft, device: Device, action: string): Cell 
   const critical = criticalOn(device, action);
   const base = { critical, matching: 0, invalid: false, timed: null, limited: false };
   if (!isValid(draft)) return { ...base, decision: 'default', rule: null, demoted: false, invalid: true };
-  const resource = { entity_id: device.entity_id, category: device.category, area: device.area ?? undefined };
+  const resource = { entity_id: device.entity_id, category: device.category, areas: device.areas };
   const matched = draft.rules.filter((r) => resourceMatches(r, resource) && coversAction(r, action));
   const always = outcome(draft, matched.filter((r) => !conditional(r)), critical);
   const atTimes = outcome(draft, matched, critical);
@@ -168,7 +168,7 @@ export function diff(prev: MandateDraft, next: MandateDraft, devices: readonly D
 export function ruleMatches(draft: MandateDraft, devices: readonly Device[]): number[] {
   return draft.rules.map(
     (rule) =>
-      devices.filter((d) => resourceMatches(rule, { entity_id: d.entity_id, category: d.category, area: d.area ?? undefined }) && d.actions.some((a) => coversAction(rule, a))).length,
+      devices.filter((d) => resourceMatches(rule, { entity_id: d.entity_id, category: d.category, areas: d.areas }) && d.actions.some((a) => coversAction(rule, a))).length,
   );
 }
 
@@ -176,7 +176,7 @@ export function ruleMatches(draft: MandateDraft, devices: readonly Device[]): nu
 export function overrides(draft: MandateDraft, devices: readonly Device[]): (Override | null)[] {
   return draft.rules.map((rule, i) => {
     for (const device of devices) {
-      const resource = { entity_id: device.entity_id, category: device.category, area: device.area ?? undefined };
+      const resource = { entity_id: device.entity_id, category: device.category, areas: device.areas };
       if (!resourceMatches(rule, resource)) continue;
       for (const action of device.actions) {
         if (!coversAction(rule, action)) continue;

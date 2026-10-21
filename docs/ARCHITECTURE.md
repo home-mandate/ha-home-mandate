@@ -45,13 +45,13 @@ without restructuring.
 | `cmd/home-mandate` | Entry point, configuration, starting the services |
 | `internal/config` | Reads `/data/options.json` (app mode) or environment variables (container mode) |
 | `internal/ha` | Client for the HA WebSocket API: states, entity/device/area registry, service calls, notifications, event subscriptions |
-| `internal/catalog` | The resource directory: maps HA entities to the mandate vocabulary (category, area, permitted actions), keeps the household's critical marks, reports renamed entities |
+| `internal/catalog` | The resource directory: maps HA entities to the mandate vocabulary (category, set of areas with the floor, permitted actions), keeps the household's critical marks, reports renamed entities and devices that changed their areas |
 | `internal/mandate` | Storing, versioning and validating mandates; issues every version with issuer and version (SPEC-v0 section 3.5); returns the candidates for the selection. The **evaluation** comes from the reference library `home-mandate/spec/evaluator` (Go module, pinned version) |
 | `internal/pdp` | Selects the mandate (SPEC-v0 section 4.3) and evaluates; AuthZEN endpoint `POST /access/v1/evaluation`, bound to loopback only |
 | `internal/mcp` | MCP server (Streamable HTTP), own tools, calls the PDP before every action |
 | `internal/oauth` | Authorization server for agents: Authorization Code + PKCE, Device Authorization Grant (pairing code), token management |
 | `internal/approval` | Approval requests via actionable notifications, waiting for the answer, timeout |
-| `internal/audit` | Audit log, hash-chained, 30 days retention |
+| `internal/audit` | Audit log, hash-chained, 30 days retention; archives a log of an earlier format at start-up |
 | `home-mandate/spec/ratelimit` | At most N requests of an agent in every 3600 s, counted per mandate; restored from the audit log on start |
 | `internal/store` | SQLite (pure Go, no CGO), migrations |
 | `internal/removal` | Removing revoked agents and mandates for a human and for the retention, deleting their data once no audit entry refers to them (tombstones) |
@@ -112,8 +112,8 @@ tells no more than the grant. Its parameters are checked as for any other device
    2, 4 … seconds (at most every minute) until it does or the connection ends.
    The clock is checked against the audit log, then the rate limit, counted per mandate
    (SPEC-v0 section 11.2). Exceeded → refusal, logged.
-4. `catalog` resolves the entity exactly as Home Assistant spells it: category `lock`, area
-   `hallway`, and whether the household marked it as critical. An entity it does not know
+4. `catalog` resolves the entity exactly as Home Assistant spells it: category `lock`, areas
+   `hallway` and `floor:ground_floor`, and whether the household marked it as critical. An entity it does not know
    is denied with `unknown_resource`.
 5. `mcp` derives the parameters of the action in the units of the vocabulary (brightness in
    percent, temperature in hundredths of a degree Celsius, position, volume) and refuses a
@@ -188,9 +188,17 @@ was missed.
   the catalog is not ready and every request is denied. When storing has failed for two
   minutes, the UI says so. More than 50 renames in an hour hint at a broken integration:
   the UI shows a notice and the approvers get a notification, at most once an hour.
-- **Areas.** A rule on an area covers the devices that are in it now. A removed area is
-  reported like a renamed device; a device moved out of an area leaves the area's rules,
-  which the editor points out at every `deny` or `ask` rule that names only an area.
+- **Areas.** A device has a set of areas (SPEC-v0 section 3.4, Home Assistant profile): the
+  area of the entity, otherwise of its device, and `floor:` with the floor ID if that area
+  is on a floor, always prefixed, as area and floor IDs come from separate registries. A
+  floor ID too long for an area keeps its beginning and ends in a hash of the whole ID. A
+  rule names one area or one floor and covers the devices that are in it now. A removed area
+  is reported like a renamed device; a device moved out of an area leaves the area's rules,
+  which the editor points out at every `deny` or `ask` rule that names only an area. Every
+  refresh compares the sets with those last seen (`directory_areas`); a device that left or
+  entered an area that a rule of an active mandate names is shown in the mandate list with
+  the affected mandates (`area_moves`) until a human marks it as seen. A new device enters its
+  areas; the first refresh of a household only records them.
 - **Saving.** A rule that names a device together with a category the device does not have
   is refused (it could never apply); a device the directory does not know is stored and
   reported.
@@ -747,6 +755,14 @@ verify them.
   prints `first_seq` and `truncation`, the UI shows the chain broken at the first remaining
   entry, and the gateway logs an error at start; if the log has checkpoints but none
   covers the truncation, it is tampering and the gateway does not start.
+  A log that an earlier version wrote and that no longer verifies only because the audit
+  format changed (decision entries with the single `area` of a resource, before a resource
+  had a set of areas) is archived at start-up: every entry, unchanged, goes to
+  `audit-archive-<time>.jsonl` in the data directory (readable only by the gateway and
+  verifiable with the version that wrote it), and the log is truncated after a checkpoint,
+  with `log.truncated` and another checkpoint (actor `system`, ID `upgrade`). This happens
+  only if the chain of the old entries is intact; otherwise nothing is archived and the
+  gateway does not start, as for any broken log.
 - **The clock.** Validity periods, time windows and the audit log follow the host clock.
   While it lies more than a minute behind the latest time in the audit log, nothing is
   decided (SPEC-v0 section 11.4): requests fail with `clock_behind`, the UI shows a banner.

@@ -73,7 +73,7 @@ describe('deviceName', () => {
   });
 
   it('never shows hidden characters or line breaks of a device name', () => {
-    const hostile: DeviceCatalog = { areas: [], devices: [{ entity_id: 'light.x', name: 'Lamp\u202E\nkcab', category: 'light', area: null, actions: [], critical: false, suggest_critical: false }] };
+    const hostile: DeviceCatalog = { areas: [], devices: [{ entity_id: 'light.x', name: 'Lamp\u202E\nkcab', category: 'light', area: null, areas: [], actions: [], critical: false, suggest_critical: false }] };
     expect(deviceName('light.x', hostile)).toBe('Lamp kcab');
   });
 });

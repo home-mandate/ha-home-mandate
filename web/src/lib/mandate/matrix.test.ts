@@ -27,7 +27,7 @@ describe('buildRows', () => {
   });
 
   it('leaves out actions the device does not have or the vocabulary does not know', () => {
-    const odd: Device = { entity_id: 'light.odd', name: 'Odd', category: 'light', area: null, actions: ['read', 'dance'], critical: false, suggest_critical: false };
+    const odd: Device = { entity_id: 'light.odd', name: 'Odd', category: 'light', area: null, areas: [], actions: ['read', 'dance'], critical: false, suggest_critical: false };
     expect(buildRows(base, base, [odd])[0]?.cells.map((c) => c.action)).toEqual(['read']);
   });
 
@@ -97,7 +97,7 @@ describe('groupRows', () => {
   });
 
   it('puts devices of an area the catalog does not list with those without an area', () => {
-    const stray: Device = { entity_id: 'light.attic', name: 'Attic', category: 'light', area: 'attic', actions: ['read'], critical: false, suggest_critical: false };
+    const stray: Device = { entity_id: 'light.attic', name: 'Attic', category: 'light', area: 'attic', areas: ['attic'], actions: ['read'], critical: false, suggest_critical: false };
     const groups = groupRows(buildRows(base, base, [stray]), 'area', catalog);
     expect(groups.map((g) => g.key)).toEqual(['']);
     expect(groups[0]?.blocks[0]?.actions).toEqual(['read']);
