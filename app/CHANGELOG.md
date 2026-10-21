@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-rc.6
+
+Fifth release candidate. Experimental. Implements the Home-Mandate Specification
+v0.1.0-rc.1.
+
+Security
+- Built with Go 1.27.3, which fixes GO-2026-6809: the certificate check of Go 1.27.2 still
+  trusted some compromised intermediate certificates. Home-Mandate reaches it through its
+  HTTPS server
+
+Maintenance
+- The UI is built with vite 8.3.3 (advisories in launch-editor, which only the
+  development server uses; the published UI is not affected)
+- An end-to-end test that failed now and then is fixed
+
 ## 0.1.0-rc.5
 
 Fourth release candidate. Experimental. Implements the Home-Mandate Specification
