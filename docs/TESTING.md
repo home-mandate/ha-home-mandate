@@ -275,6 +275,9 @@ Every line is at least one test. New attack ideas are added here before they are
 - Audit log not writable → nothing executed, nothing read
 - Household time zone or Home-Mandate's own Home Assistant user not known (Home Assistant did not answer `get_config` or `auth/current_user`, connection lost) → every tool `unavailable`, `list_devices` and `list_my_permissions` included, no approver asked; both read again at growing intervals until Home Assistant answers, the attempts end with the connection and a stop does not wait for them
 - Service parameters outside the declared list, type or range; parameters that widen the target (`entity_id`, `area_id`, …) → rejected before Home Assistant
+- Numbers that floating point rounds to a whole step (`50.00000000000000000001` %, `19.990000001` °C), exponents of three digits (`1e400`), text that is no JSON number → `invalid_params`; `2e1` and `20.000` are 20; read from the raw arguments, not the SDK's floating point (`mcp.TestNumbersAreReadExactly`, `mcp.TestParametersAreChecked`)
+- HVAC mode not in the Home Assistant profile (`eco`, `Heat`, a number) → `invalid_params`; `heat_cool` evaluated and logged as `auto`, executed as `heat_cool`; a refused mode names the allowed ones in Home Assistant's terms (`mcp.TestClimateModes`, `mcp.TestAgentLearnsItsModes`)
+- Editor: no mode checked → reported and not saved, never "every mode" (`MandateEditor` test "limits the modes")
 - Attributes carrying access tokens (`entity_picture`, `…token…`, `token=` in values) → never returned
 - Agent above its rate limit or without a mandate → refused; refusals logged at most once a minute
 

@@ -386,6 +386,20 @@ func (h *harness) lastEntry() map[string]any {
 	return e
 }
 
+// entries are all entries of the audit log, decoded.
+func (h *harness) entries() []map[string]any {
+	h.t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(h.auditLog()), "\n") {
+		var e map[string]any
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			h.t.Fatal(err)
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
 func path(m map[string]any, keys ...string) any {
 	var v any = m
 	for _, k := range keys {
@@ -619,11 +633,15 @@ func TestParametersAreChecked(t *testing.T) {
 		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": 40}}, ""},
 		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": 150}}, "invalid_params: brightness_pct must be an integer between 0 and 100"},
 		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": 40.5}}, "invalid_params: brightness_pct must be an integer between 0 and 100"},
+		// Read by the exact value the agent sent, not as floating point (SPEC-v0 section 4.5).
+		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": json.Number("50.00000000000000000001")}}, "invalid_params: brightness_pct must be an integer between 0 and 100"},
+		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": json.Number("2e1")}}, ""},
 		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"entity_id": "lock.front_door"}}, "invalid_params"},
 		{map[string]any{"entity_id": "light.kitchen", "action": "set"}, "invalid_params"},
 		{map[string]any{"entity_id": "climate.living_room", "action": "set_temperature"}, "invalid_params"},
 		{map[string]any{"entity_id": "climate.living_room", "action": "set_mode", "params": map[string]any{"hvac_mode": "sauna"}}, "invalid_params"},
 		{map[string]any{"entity_id": "climate.living_room", "action": "set_temperature", "params": map[string]any{"temperature": 21.5}}, ""},
+		{map[string]any{"entity_id": "climate.living_room", "action": "set_mode", "params": map[string]any{"hvac_mode": "heat_cool"}}, ""},
 		{map[string]any{"entity_id": "alarm_control_panel.home", "action": "arm", "params": map[string]any{"mode": "night"}}, ""},
 		{map[string]any{"entity_id": "camera.porch", "action": "snapshot"}, "not_supported"},
 		{map[string]any{"entity_id": "number.wallbox", "action": "set"}, "not_supported"},
@@ -635,8 +653,20 @@ func TestParametersAreChecked(t *testing.T) {
 		}
 	}
 	calls := h.ha.recorded()
-	if len(calls) != 3 || calls[0].Data["brightness_pct"] != 40 || calls[2].Service != "alarm_arm_night" {
+	if len(calls) != 5 || calls[0].Data["brightness_pct"] != 40 || calls[1].Data["brightness_pct"] != 20 ||
+		calls[3].Data["hvac_mode"] != "heat_cool" || calls[4].Service != "alarm_arm_night" {
 		t.Errorf("HA calls = %+v", calls)
+	}
+	// The mode is evaluated and logged as the vocabulary has it; Home Assistant got its own.
+	entries := h.entries()
+	var logged []any
+	for _, e := range entries {
+		if path(e, "request", "action") == "set_mode" && path(e, "result", "status") == "executed" {
+			logged = append(logged, path(e, "request", "parameters", "mode"))
+		}
+	}
+	if len(logged) != 1 || logged[0] != "auto" {
+		t.Errorf("logged modes = %v", logged)
 	}
 }
 

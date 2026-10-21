@@ -27,10 +27,15 @@
     fromInput,
     limitableParameters,
     otherUnitLimits,
+    chosen,
+    CHOICES,
+    choiceLabel,
+    isChoice,
     parameterLabel,
     rangeOf,
     toInput,
     unitOf,
+    withChoices,
     withConstraint,
     withoutConstraints,
   } from '../../mandate/limits.ts';
@@ -136,6 +141,13 @@
   function leaveLimit(name: string, bound: 'min' | 'max') {
     const key = `${name}.${bound}`;
     if (typed[key] !== undefined && fromInput(name, typed[key]) !== 'invalid') delete typed[key];
+  }
+
+  /** Checks or unchecks one permitted value of a choice parameter. */
+  function toggleChoice(name: string, value: string, on: boolean) {
+    const current = chosen(rule, name);
+    const next = on ? [...current, value] : current.filter((v) => v !== value);
+    change(withChoices(rule, name, next), false);
   }
 
   function removeLimits() {
@@ -264,6 +276,22 @@
       <legend>{m.limits_legend()}</legend>
       {#each limited as name (name)}
         {@const unit = unitOf(name)}
+        {#if isChoice(name)}
+          <div class="limit choices" role="group" aria-label={parameterLabel(name)}>
+            <span class="limit-name">{parameterLabel(name)}</span>
+            {#each CHOICES[name] ?? [] as value (value)}
+              <label class="choice">
+                <input
+                  type="checkbox"
+                  checked={chosen(rule, name).includes(value)}
+                  aria-describedby="{id}-limits"
+                  onchange={(e) => toggleChoice(name, value, e.currentTarget.checked)}
+                />
+                <span>{choiceLabel(value)}</span>
+              </label>
+            {/each}
+          </div>
+        {:else}
         <div class="limit" role="group" aria-label={parameterLabel(name)}>
           <span class="limit-name">{parameterLabel(name)}</span>
           {#each BOUNDS as bound (bound)}
@@ -287,6 +315,7 @@
             </span>
           {/each}
         </div>
+        {/if}
       {/each}
       <span id="{id}-limits" class="note" class:danger={limitsError || invalidTyped} class:warning={!limitsError && !invalidTyped && otherUnit.length > 0} aria-live="polite">
         {#if invalidTyped}
@@ -295,6 +324,8 @@
           <Icon name="warning" size={16} /><span>{limitsError}</span>
         {:else if otherUnit.length > 0 && temperatureUnit}
           <Icon name="warning" size={16} /><span>{m.limits_other_unit({ unit: UNIT_SIGNS[unitOf(otherUnit[0] ?? '').unit], household: temperatureUnit })}</span>
+        {:else if limited.some(isChoice) && limited.every(isChoice)}
+          <Icon name="info" size={16} /><span>{m.limits_modes_note()}</span>
         {:else}
           <Icon name="info" size={16} /><span>{m.limits_note()}</span>
         {/if}
@@ -583,5 +614,14 @@
   }
   .foot :global(.remove:hover) {
     background: var(--hm-color-danger-bg);
+  }
+  .choices {
+    align-items: center;
+  }
+  .choice {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hm-space-1);
+    min-block-size: 44px;
   }
 </style>

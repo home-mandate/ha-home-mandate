@@ -62,6 +62,8 @@ function limitsProblem(code: Problem['code']): string {
       return m.validation_limits_unknown();
     case 'order':
       return m.validation_limits_order();
+    case 'required':
+      return m.validation_limits_none_chosen();
     default:
       return m.validation_limits_format();
   }

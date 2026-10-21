@@ -181,6 +181,31 @@ describe('MandateEditor', () => {
     expect(put.mock.calls[0]?.[1].draft.rules[1]).toMatchObject({ actions: ['set_temperature'], constraints: { temperature: { max: 2250 } } });
   });
 
+  it('limits the modes a rule lets through, never reading "none checked" as "all" (SPEC-v0 section 4.5)', async () => {
+    const { api } = await start();
+    const climate = await open(2);
+    for (const action of ['read', 'set temperature']) {
+      const button = climate.getByRole('button', { name: action });
+      if (button.getAttribute('aria-pressed') === 'true') await fireEvent.click(button);
+    }
+    await fireEvent.click(climate.getByRole('button', { name: 'set mode' }));
+    const mode = within((await card(2)).getByRole('group', { name: 'Mode' }));
+    expect(mode.getAllByRole('checkbox').every((c) => (c as HTMLInputElement).checked)).toBe(true);
+    expect((await card(2)).getByText(/“Automatic” stands for “Heat\/Cool” \(heat_cool\)/)).toBeTruthy();
+    for (const name of ['Off', 'Cool', 'Dry', 'Fan only']) await fireEvent.click(mode.getByRole('checkbox', { name }));
+    expect((await cards())[1]?.textContent).toContain('Mode: Heat or Automatic');
+    for (const name of ['Heat', 'Automatic']) await fireEvent.click(mode.getByRole('checkbox', { name }));
+    expect((await card(2)).getByText('Choose at least one mode or remove the limits.')).toBeTruthy();
+    await fireEvent.click(saveButton());
+    expect(screen.queryByRole('dialog', { name: 'Save changes?' })).toBeNull();
+    await fireEvent.click(mode.getByRole('checkbox', { name: 'Heat' }));
+    const put = vi.spyOn(api, 'putMandate');
+    await fireEvent.click(saveButton());
+    await fireEvent.click(within(await screen.findByRole('dialog', { name: 'Save changes?' })).getByRole('button', { name: 'Save as version 2' }));
+    await waitFor(() => expect(put).toHaveBeenCalled());
+    expect(put.mock.calls[0]?.[1].draft.rules[1]).toMatchObject({ actions: ['set_mode'], constraints: { mode: { one_of: ['heat'] } } });
+  });
+
   // #42, spec #21 part B: a °F household limits temperatures in °F (temperature_f); a limit
   // in °C, which can never apply there, is flagged.
   it('limits temperatures in the unit of the household and flags the other unit', async () => {

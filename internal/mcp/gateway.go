@@ -8,8 +8,10 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -574,6 +576,11 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 	// The unit is read once: the value is evaluated and executed in the same unit, also
 	// if Home Assistant's configuration is read again meanwhile (spec #21 part B).
 	unit := g.temperatureUnit()
+	params, err := exactParams(req)
+	if err != nil {
+		return nil, actionOut{}, errors.New(codeInvalidParams)
+	}
+	in.Params = params
 	var parameters map[string]evaluator.Value
 	var paramErr error
 	if dev, ok := g.cfg.Catalog.Lookup(in.EntityID); ok {
@@ -600,6 +607,32 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 		return g.askHuman(ctx, a, tokenOf(req), d, call, in.Reason, in.IdempotencyKey)
 	}
 	return g.execute(ctx, a, d, call, approvalRef{}, time.Time{})
+}
+
+// exactParams reads the params of perform_action from the arguments as the agent sent
+// them, numbers as json.Number: the SDK has decoded the arguments through floating point
+// already, which rounds 50.00000000000000000001 to 50 (SPEC-v0 section 4.5). The SDK
+// checked the arguments against the input schema before.
+func exactParams(req *sdk.CallToolRequest) (map[string]any, error) {
+	if req == nil || req.Params == nil || len(req.Params.Arguments) == 0 {
+		return nil, nil
+	}
+	// Exactly the key "params", the last of duplicates, as the SDK validated it.
+	var args map[string]json.RawMessage
+	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+		return nil, fmt.Errorf("arguments: %w", err)
+	}
+	raw, ok := args["params"]
+	if !ok {
+		return nil, nil
+	}
+	var params map[string]any
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&params); err != nil {
+		return nil, fmt.Errorf("arguments: params: %w", err)
+	}
+	return params, nil
 }
 
 // execute calls Home Assistant only while its "executed" entry is being written in the
