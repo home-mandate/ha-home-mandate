@@ -19,7 +19,7 @@ For people who work on Home-Mandate itself. Users start with the [README](../REA
 
 ## Requirements
 
-- Go 1.27.2
+- Go 1.27.3
 - Node 24 LTS with corepack (`corepack enable pnpm`)
 - Podman, or Docker with `E2E_RUNTIME=docker`, for the image and the E2E tests
 

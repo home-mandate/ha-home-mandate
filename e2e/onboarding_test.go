@@ -143,7 +143,7 @@ func TestScenario04AnswerFromANonApprover(t *testing.T) {
 		t.Errorf("perform_action = %q", r.errText)
 	}
 	other := env.users[adminOther].id
-	warning := nextNotification(t, notes)
+	warning := nextShown(t, notes)
 	if warning.Title != "Warning: unauthorised answer" || !strings.Contains(warning.Message, other) || len(warning.Actions) != 0 {
 		t.Errorf("warning = %+v", warning)
 	}
@@ -232,6 +232,17 @@ func TestScenario10PlainUserCannotAdmit(t *testing.T) {
 	}
 	if !hasLine(auditLog(t), `"event":"auth.rejected"`, `"error":"not_admin"`, `"id":"`+env.users[userPlain].id+`"`) {
 		t.Error("refused admission not in the audit log")
+	}
+}
+
+// nextShown is the next notification that is shown to a person: the removal of the ended
+// request (clear_notification) can arrive before or after the warning.
+func nextShown(t *testing.T, ch <-chan notification) notification {
+	t.Helper()
+	for {
+		if n := nextNotification(t, ch); n.Message != "clear_notification" {
+			return n
+		}
 	}
 }
 
