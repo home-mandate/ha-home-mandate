@@ -55,6 +55,7 @@ import type {
   MandateDraft,
   MandateVersion,
   PairingCandidate,
+  PendingAuditMode,
   ReachChannel,
   ReconnectCandidate,
   Rename,
@@ -118,6 +119,8 @@ interface StoredMandate {
   removed_at: string | null;
   /** Newest first. */
   versions: { meta: MandateVersion; document: MandateDocument }[];
+  /** A version that switches audit mode on and waits for a confirmation. */
+  pending?: { meta: Omit<PendingAuditMode, 'document'>; document: MandateDocument };
 }
 
 interface State {
@@ -254,6 +257,7 @@ const draftOf = (d: MandateDocument): MandateDraft => ({
   limits: d.limits,
   valid_from: d.valid_from,
   ...(d.expires === undefined ? {} : { expires: d.expires }),
+  ...(d.enforce === false ? { enforce: false as const } : {}),
 });
 
 /** rulesFrom is the template a mandate's rules were last taken from (versions newest first). */
@@ -395,7 +399,10 @@ function matchesQuery(e: AuditEntry, q: AuditQuery): boolean {
     (q.device === undefined || res?.entity_id === q.device || (res?.areas ?? []).includes(q.device)) &&
     (q.group === undefined || (q.group === 'decision') === (e.event === 'decision')) &&
     (q.event === undefined || e.event === q.event) &&
-    (q.decisions === undefined || q.decisions.length === 0 || (decision !== undefined && q.decisions.includes(decision)))
+    (q.decisions === undefined ||
+      q.decisions.length === 0 ||
+      (decision !== undefined && q.decisions.includes(decision)) ||
+      (q.decisions.includes('not_enforced') && e.evaluation?.enforced === false))
   );
 }
 
@@ -472,9 +479,12 @@ export function createMockClient(options: MockOptions = {}): MockClient {
         stale_references: m.status === 'active' ? staleReferences(doc.rules, state.devices, state.renames) : [],
         rules_from: rulesFrom(m),
         removed_at: m.removed_at,
+        audit_mode: doc.enforce === false,
+        audit_mode_pending: m.pending !== undefined,
       },
       document: doc,
       versions: m.versions.map((v) => v.meta),
+      pending: m.pending ? { ...m.pending.meta, document: m.pending.document } : null,
     });
   }
 
@@ -502,6 +512,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     confirm: boolean | undefined,
     name?: string,
     origin: Pick<MandateVersion, 'origin' | 'template' | 'template_digest'> = EDITED,
+    confirmedDigest?: string,
   ) {
     const m = stored(id);
     const [current] = m.versions;
@@ -516,7 +527,15 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       return detail(id);
     }
     const createdAt = now().toISOString();
-    const document: MandateDocument = { ...current.document, ...draft, created_by: user().id, created_at: createdAt };
+    const { enforce: _was, ...kept } = current.document;
+    void _was;
+    const document: MandateDocument = { ...kept, ...draft, created_by: user().id, created_at: createdAt };
+    // As the server: switching audit mode on waits for a human's confirmation of exactly this version.
+    if (current.document.enforce !== false && document.enforce === false && confirmedDigest === undefined) {
+      const pending = { digest: `sha256:mock-${++counter}`, proposed_by: user().id, proposed_by_name: user().name, proposed_at: createdAt };
+      putStored(id, { ...m, name: name ?? m.name, pending: { meta: pending, document } });
+      return detail(id);
+    }
     const meta = {
       number: m.versions.length + 1,
       digest: `sha256:mock-${++counter}`,
@@ -525,7 +544,10 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       created_by_name: user().name,
       ...origin,
     };
-    putStored(id, { ...m, name: name ?? m.name, versions: [{ meta, document }, ...m.versions] });
+    if (confirmedDigest !== undefined) meta.digest = confirmedDigest;
+    const { pending: _ended, ...rest } = m;
+    void _ended;
+    putStored(id, { ...rest, name: name ?? m.name, versions: [{ meta, document }, ...m.versions] });
     log('mandate.updated', { agent: document.agent, mandate: { id, digest: meta.digest, previous_digest: current.meta.digest } });
     return detail(id);
   }
@@ -1028,7 +1050,23 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       const after = storeVersion(id, apply.base_digest, draft, apply.confirm_critical, name, origin);
       return { ...after, result: after.summary.digest === apply.base_digest ? ('unchanged' as const) : ('updated' as const) };
     },
+    async confirmAuditMode(id, digest) {
+      const m = stored(id);
+      if (!m.pending) return fail('not_found');
+      if (m.pending.meta.digest !== digest) return fail('conflict');
+      const [current] = m.versions;
+      return storeVersion(id, current?.meta.digest ?? '', draftOf(m.pending.document), true, undefined, EDITED, digest);
+    },
+    async discardAuditMode(id) {
+      const { pending, ...rest } = stored(id);
+      if (!pending) return fail('not_found');
+      putStored(id, rest);
+      return detail(id);
+    },
     async revokeMandate(id) {
+      const { pending: _dropped, ...rest } = stored(id);
+      void _dropped;
+      putStored(id, rest);
       setMandateStatus(id, 'revoked');
       log('mandate.revoked', { mandate: { id, digest: detail(id).summary.digest } });
       return detail(id).summary;

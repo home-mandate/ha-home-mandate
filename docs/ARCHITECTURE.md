@@ -207,6 +207,23 @@ was missed.
 - **Saving.** A rule that names a device together with a category the device does not have
   is refused (it could never apply); a device the directory does not know is stored and
   reported.
+- **Audit mode** (SPEC-v0 sections 4.6 and 11.6). A mandate with `"enforce": false` is
+  tried: a deny by its rules (`no_match` or a deny rule) of an action that is not critical
+  is executed as an allow and recorded with `enforced: false` (and `request.resource.critical`
+  stated); critical actions, `ask`, the rate limit and the emergency stop stay enforced. The
+  agent learns nothing: answers, `list_devices`, `list_my_permissions` and `approval_status`
+  treat such a deny as an allow. A confirmed `ask` that is a deny when evaluated again is not
+  executed, enforced or not. Switching audit mode on (`evaluator.EntersAuditMode`) is
+  possible only in the editor of an existing mandate: the new version waits in
+  `mandate_pending` and the version in force stays until a human of the household confirms
+  it with its digest (`POST api/mandates/{id}/audit-mode/confirm`); every other version
+  that takes effect, a revocation or `…/discard` ends the proposal. A new mandate, a
+  template (which never carries `enforce`) or any other path that would switch it on is
+  refused. Every approver the mandate names gets a notification when it is proposed and
+  when it takes effect. Switching it off takes effect at once. The mandate list marks
+  mandates in audit mode and waiting proposals, the editor says what audit mode does and
+  that reading is never protected by it, and the log filters the requests that were not
+  enforced (`decision=not_enforced`).
 
 ### Selection and versions of the mandate
 

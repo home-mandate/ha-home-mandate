@@ -461,6 +461,10 @@ export interface MandateSummary {
    * api/mandates/{id}/remove). The UI hides it unless asked; it stays readable.
    */
   removed_at: string | null;
+  /** The version in force does not enforce the denials of its rules (audit mode, SPEC-v0 section 4.6). */
+  audit_mode: boolean;
+  /** A version that switches audit mode on waits for a human's confirmation. */
+  audit_mode_pending: boolean;
 }
 
 export interface StaleReference {
@@ -532,6 +536,21 @@ export interface MandateDetail {
   summary: MandateSummary;
   document: MandateDocument;
   versions: MandateVersion[];
+  /** The version that switches audit mode on and waits for a confirmation; null if none. */
+  pending: PendingAuditMode | null;
+}
+
+/**
+ * A version of a mandate that switches audit mode on (SPEC-v0 section 11.6 item 4). It takes
+ * effect only after a human confirmed exactly it: POST api/mandates/{id}/audit-mode/confirm
+ * {digest}; POST api/mandates/{id}/audit-mode/discard drops it.
+ */
+export interface PendingAuditMode {
+  digest: string;
+  document: MandateDocument;
+  proposed_by: string;
+  proposed_by_name: string | null;
+  proposed_at: string;
 }
 
 /**
@@ -910,7 +929,8 @@ export interface AuditEntry {
 }
 
 /** Filter "decision" values: the three decisions, plus "default" for reason no_match. */
-export type DecisionFilter = Decision | 'default';
+/** not_enforced: the denies a mandate in audit mode did not enforce (SPEC-v0 section 4.6). */
+export type DecisionFilter = Decision | 'default' | 'not_enforced';
 
 export interface AuditQuery {
   /** Entries with seq below this value; omitted for the newest. */

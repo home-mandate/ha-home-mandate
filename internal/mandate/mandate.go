@@ -146,7 +146,7 @@ func (s *Store) PutOriginTx(ctx context.Context, tx *sql.Tx, document []byte, or
 	if err != nil {
 		return Info{}, err
 	}
-	if err := s.put(ctx, tx, info, document, origin, by); err != nil {
+	if err := s.put(ctx, tx, info, document, origin, by, ""); err != nil {
 		return Info{}, err
 	}
 	return info, nil
@@ -168,11 +168,6 @@ func (s *Store) check(document []byte) (Info, error) {
 	}
 	if err := placeholderApprover(document); err != nil {
 		return Info{}, err
-	}
-	// Audit mode is not offered: such a mandate is refused rather than stored and
-	// enforced (SPEC-v0 section 11.6).
-	if !m.Enforce() {
-		return Info{}, fmt.Errorf("%w: audit mode (enforce: false) is not offered", ErrInvalid)
 	}
 	// Mandates issued elsewhere (signed ones, SPEC-v0 section 7) cannot be imported yet.
 	if m.Issuer() != "" && m.Issuer() != s.issuer {
@@ -254,7 +249,11 @@ func withVersion(document []byte, issuer string, version int64) ([]byte, error) 
 	return out, nil
 }
 
-func (s *Store) put(ctx context.Context, tx *sql.Tx, info Info, document []byte, origin Origin, by audit.Actor) error {
+// put stores document as a new mandate or a new version. A version that switches audit
+// mode on (evaluator.EntersAuditMode) is stored only if confirmed is its digest, the
+// version a human confirmed; otherwise it is refused with a *proposal, and a new mandate
+// in audit mode always. Every version that takes effect ends a proposal that waited.
+func (s *Store) put(ctx context.Context, tx *sql.Tx, info Info, document []byte, origin Origin, by audit.Actor, confirmed string) error {
 	if err := origin.check(); err != nil {
 		return err
 	}
@@ -292,6 +291,9 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, info Info, document []byte,
 		if err != nil {
 			return err
 		}
+		if m, err := evaluator.Parse(document); err != nil || !m.Enforce() {
+			return fmt.Errorf("%w: create the mandate first, then switch audit mode on", ErrAuditModeNeedsConfirmation)
+		}
 		return s.create(ctx, tx, info, document, origin, by)
 	case err != nil:
 		return fmt.Errorf("mandate: read: %w", err)
@@ -308,6 +310,16 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, info Info, document []byte,
 	}
 	document, info, err = s.issue(document, current, existing.digest, existing.highest)
 	if err != nil || info.Digest == existing.digest {
+		return err
+	}
+	next, err := evaluator.Parse(document)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalid, err)
+	}
+	if evaluator.EntersAuditMode(current, evaluator.StatusActive, time.Now(), next) && confirmed != info.Digest {
+		return &proposal{document: document, info: info, base: existing.digest}
+	}
+	if _, err := dropPendingTx(ctx, tx, info.ID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE mandates SET current_digest = ?, max_actions_per_hour = ?, updated_at = ?,
@@ -371,6 +383,9 @@ func (s *Store) revokeTx(ctx context.Context, tx *sql.Tx, where, key string, by 
 	}
 	if status == StatusRevoked {
 		return nil
+	}
+	if _, err := dropPendingTx(ctx, tx, id); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE mandates SET status = ?, updated_at = ? WHERE id = ?`,
 		StatusRevoked, time.Now().UTC().Format(timeFormat), id); err != nil {

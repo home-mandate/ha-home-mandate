@@ -19,6 +19,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import ErrorState from '../components/ErrorState.svelte';
   import BackLink from '../components/BackLink.svelte';
+  import AuditModeNotice from '../components/mandate/AuditModeNotice.svelte';
   import ConflictNotice from '../components/mandate/ConflictNotice.svelte';
   import EditorHeader from '../components/mandate/EditorHeader.svelte';
   import Skeleton from '../components/Skeleton.svelte';
@@ -31,7 +32,8 @@
   import { MARK } from '../ui/sentence.ts';
   import { needsCriticalConfirmation } from '../engine/vocabulary.ts';
   import { m } from '../i18n.ts';
-  import { countChanges, type Edited } from '../mandate/changes.ts';
+  import { countChanges, ruleChanges, type Edited } from '../mandate/changes.ts';
+  import { settingLines } from '../mandate/summary.ts';
   import { effectiveStatus, type EffectiveStatus } from '../mandate/dates.ts';
   import { withoutRevokedConfirmations } from '../mandate/edit.ts';
   import { isStale } from '../mandate/notes.ts';
@@ -90,6 +92,8 @@
   const touched = new SvelteSet<string>();
   let saveOpen = $state(false);
   let saving = $state(false);
+  /** A confirmation or discard of audit mode is under way. */
+  let auditBusy = $state(false);
   let saveError = $state('');
   /** A reload asked for while a save was running; it runs afterwards. */
   let reloadPending = false;
@@ -160,6 +164,17 @@
     return ids.map((user) => ({ id: user, name: names.get(user) ?? user }));
   });
   const peopleNames = $derived(new Map(people.map((p) => [p.id, p.name])));
+  /** What the version waiting for audit mode changes besides it: the human confirms exactly that (SPEC-v0 section 11.6). */
+  const pendingChanges = $derived.by(() => {
+    if (!stored?.pending) return [];
+    const before = { name: stored.summary.name, draft: draftOf(stored.document) };
+    const after = { name: stored.summary.name, draft: draftOf(stored.pending.document) };
+    const settings = settingLines(before, after, ctx, peopleNames)
+      .filter((l) => l.setting !== 'audit_mode')
+      .map((l) => (l.from || l.to ? `${l.label}: ${l.from} → ${l.to}` : l.label));
+    const rules = ruleChanges(before.draft, after.draft).length;
+    return rules > 0 ? [m.audit_pending_rules({ count: rules }), ...settings] : settings;
+  });
 
   // An unsaved edit survives leaving the page (versions, audit log) while the app is open.
   $effect(() => {
@@ -200,7 +215,8 @@
       const same =
         detail.summary.name === current.summary.name &&
         detail.summary.status === current.summary.status &&
-        detail.summary.removed_at === current.summary.removed_at;
+        detail.summary.removed_at === current.summary.removed_at &&
+        (detail.pending?.digest ?? null) === (current.pending?.digest ?? null);
       const untouched = name === current.summary.name;
       if (!same) stored = detail;
       if (untouched) name = detail.summary.name;
@@ -213,6 +229,25 @@
     }
     adopt(detail);
     toasts.show({ kind: 'success', text: m.editor_updated_toast({ version: currentNumber(detail.versions) }) });
+  }
+
+  /** answerAudit confirms (with the digest shown) or discards the version that switches audit mode on. */
+  async function answerAudit(digest: string | null) {
+    if (auditBusy) return;
+    auditBusy = true;
+    try {
+      const detail = digest === null ? await app.api.discardAuditMode(id) : await app.api.confirmAuditMode(id, digest);
+      if (changes === 0) adopt(detail);
+      else stored = detail;
+      if (page.data) page.set({ ...page.data, detail });
+      toasts.show({ kind: 'success', text: digest === null ? m.audit_pending_discarded() : m.audit_pending_confirmed() });
+    } catch (err) {
+      const changed = err instanceof ApiError && (err.code === 'conflict' || err.code === 'not_found');
+      toasts.show({ kind: 'error', text: changed ? m.audit_pending_changed() : m.audit_pending_failed() });
+      if (changed) await reload();
+    } finally {
+      auditBusy = false;
+    }
   }
 
   async function reload() {
@@ -284,10 +319,11 @@
         base_digest: stored.summary.digest,
         ...(needsCriticalConfirmation(base.draft, draft) ? { confirm_critical: true } : {}),
       });
+      const proposed = draft.enforce === false && detail.document.enforce !== false && detail.pending !== null;
       adopt(detail);
       page.set({ detail, catalog, approvers: page.data?.approvers ?? NO_APPROVERS, renames: page.data?.renames ?? [] });
       saveOpen = false;
-      toasts.show({ kind: 'success', text: m.toast_saved({ version: currentNumber(detail.versions) }) });
+      toasts.show({ kind: 'success', text: proposed ? m.audit_pending_saved() : m.toast_saved({ version: currentNumber(detail.versions) }) });
     } catch (err) {
       const code = err instanceof ApiError ? err.code : 'internal';
       conflict = code === 'conflict';
@@ -417,6 +453,20 @@
   {/if}
   {#if newer}
     <ConflictNotice version={currentNumber(newer.versions)} onkeep={rebase} ondiscard={() => newer && adopt(newer)} />
+  {/if}
+
+  <AuditModeNotice
+    active={stored.summary.audit_mode}
+    pending={stored.pending}
+    {ctx}
+    busy={auditBusy}
+    onconfirm={readonly ? undefined : (digest) => void answerAudit(digest)}
+    ondiscard={readonly ? undefined : () => void answerAudit(null)}
+    logHref={href({ name: 'audit', query: { agent: [stored.summary.client_id], decision: ['not_enforced'] } })}
+    changes={pendingChanges}
+  />
+  {#if !readonly && draft.enforce === false && base.draft.enforce !== false}
+    <Banner kind="info" body={m.audit_switch_on_note()} />
   {/if}
 
   <DraftWorkspace

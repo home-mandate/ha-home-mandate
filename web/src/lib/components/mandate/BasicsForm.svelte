@@ -10,10 +10,11 @@
   import type { MandateDraft } from '../../api/types.ts';
   import { m } from '../../i18n.ts';
   import { dateInZone, expiresAfter, startOfDay, validUntilDate } from '../../mandate/dates.ts';
-  import { withExpires, withLimit, withValidFrom } from '../../mandate/edit.ts';
+  import { withAuditMode, withExpires, withLimit, withValidFrom } from '../../mandate/edit.ts';
   import { NAME_MAX, type FieldProblem, type Part } from '../../mandate/problems.ts';
   import AgentName from '../AgentName.svelte';
   import Icon from '../Icon.svelte';
+  import Switch from '../Switch.svelte';
   import TextField from '../TextField.svelte';
 
   interface Props {
@@ -112,6 +113,18 @@
       {#if limitError}<Icon name="warning" size={16} />{limitError}{:else if !agent}{m.template_basics_note()}{/if}
     </span>
   </div>
+  {#if agent}
+    <div class="audit">
+      <Switch
+        checked={draft.enforce === false}
+        label={m.audit_switch_label()}
+        description={m.audit_switch_description()}
+        tone="danger"
+        {disabled}
+        onchange={(on) => onchange(withAuditMode(draft, on))}
+      />
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -179,5 +192,8 @@
   }
   .error {
     color: var(--hm-color-danger-fg);
+  }
+  .audit {
+    grid-column: 1 / -1;
   }
 </style>

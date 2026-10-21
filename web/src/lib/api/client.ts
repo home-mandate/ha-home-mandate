@@ -96,6 +96,10 @@ export interface ApiClient {
   putMandate(id: string, update: MandateUpdate): Promise<MandateDetail>;
   applyTemplate(id: string, apply: ApplyTemplate): Promise<ApplyTemplateResult>;
   revokeMandate(id: string): Promise<MandateSummary>;
+  /** Lets the waiting version that switches audit mode on take effect; digest names exactly it. */
+  confirmAuditMode(id: string, digest: string): Promise<MandateDetail>;
+  /** Drops the waiting version; the version in force stays. */
+  discardAuditMode(id: string): Promise<MandateDetail>;
   /** Removes a revoked mandate from the lists (#21). */
   removeMandate(id: string): Promise<MandateSummary>;
 
@@ -387,6 +391,8 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
     putMandate: async (id, update) => request('PUT', `mandates/${segment(id)}`, update),
     applyTemplate: async (id, apply) => request('POST', `mandates/${segment(id)}/apply-template`, apply),
     revokeMandate: async (id) => request('POST', `mandates/${segment(id)}/revoke`),
+    confirmAuditMode: async (id, digest) => request('POST', `mandates/${segment(id)}/audit-mode/confirm`, { digest }),
+    discardAuditMode: async (id) => request('POST', `mandates/${segment(id)}/audit-mode/discard`),
     removeMandate: async (id) => request('POST', `mandates/${segment(id)}/remove`),
 
     templates: () => get('templates'),

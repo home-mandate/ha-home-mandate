@@ -152,7 +152,7 @@ func (in listInput) page(devices []catalog.Device, size int) (page []catalog.Dev
 func (g *Gateway) readableDevices(snap *pdp.Snapshot, allowedOnly bool) []catalog.Device {
 	var out []catalog.Device
 	for _, dev := range g.cfg.Catalog.All() {
-		d := snap.Decide(dev.EntityID, "read", nil).Result.Decision
+		d := effective(snap.Decide(dev.EntityID, "read", nil).Result)
 		if d == evaluator.Allow || (!allowedOnly && d != evaluator.Deny) {
 			out = append(out, dev)
 		}
@@ -230,8 +230,8 @@ func (g *Gateway) listPermissions(ctx context.Context, req *sdk.CallToolRequest,
 		var limits map[string][]map[string]limitOut
 		for _, action := range actionsOf(dev.Category) {
 			d := snap.Decide(dev.EntityID, action, nil)
-			if d.Result.Decision != evaluator.Deny {
-				actions[action] = string(d.Result.Decision)
+			if decision := effective(d.Result); decision != evaluator.Deny {
+				actions[action] = string(decision)
 				continue
 			}
 			// Evaluated without values, an action allowed only within limits does not

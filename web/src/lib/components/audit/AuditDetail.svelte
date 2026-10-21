@@ -60,7 +60,7 @@
 {#if broken}<p class="broken"><Icon name="warning" size={16} />{m.audit_entry_broken()}</p>{/if}
 
 <div class="summary">
-  {#if decision}<DecisionBadge kind={decision} />{:else}<span class="event"><Icon name="history" />{eventLabel(entry.event)}</span>{/if}
+  {#if decision}<DecisionBadge kind={decision} />{#if entry.evaluation?.enforced === false}<span class="not-enforced">{m.audit_not_enforced()}</span>{/if}{:else}<span class="event"><Icon name="history" />{eventLabel(entry.event)}</span>{/if}
   {#if outcome}<span class="outcome {outcome.tone}">{outcome.text}{#if outcome.why}{SEPARATOR}{outcome.why}{/if}</span>{/if}
 </div>
 
@@ -229,5 +229,10 @@
   }
   details dl {
     margin-block-start: var(--hm-space-2);
+  }
+  .not-enforced {
+    font-size: var(--hm-font-size-sm);
+    font-weight: var(--hm-font-weight-medium);
+    color: var(--hm-color-warning-fg);
   }
 </style>

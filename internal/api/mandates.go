@@ -26,7 +26,7 @@ var (
 	versionPattern   = regexp.MustCompile(`^[1-9][0-9]{0,8}$`)
 	digestPattern    = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	// draftKeys are the fields of a mandate a human edits (types.ts MandateDraft).
-	draftKeys = []string{"rules", "approval", "limits", "valid_from", "expires"}
+	draftKeys = []string{"rules", "approval", "limits", "valid_from", "expires", "enforce"}
 )
 
 type wireMandateSummary struct {
@@ -47,6 +47,10 @@ type wireMandateSummary struct {
 	RulesFrom *wireRulesFrom `json:"rules_from"`
 	// RemovedAt is set once the revoked mandate was removed from the lists.
 	RemovedAt *string `json:"removed_at"`
+	// AuditMode: the version in force does not enforce its denials (SPEC-v0 section 4.6).
+	AuditMode bool `json:"audit_mode"`
+	// AuditModePending: a version that switches audit mode on waits for a confirmation.
+	AuditModePending bool `json:"audit_mode_pending"`
 }
 
 // wireRulesFrom says from which template the rules of a mandate were last taken.
@@ -83,6 +87,8 @@ type wireMandateDetail struct {
 	Summary  wireMandateSummary `json:"summary"`
 	Document json.RawMessage    `json:"document"`
 	Versions []wireVersion      `json:"versions"`
+	// Pending is the version that waits for the confirmation of audit mode; nil if none.
+	Pending *wirePending `json:"pending"`
 }
 
 // docFields are the fields of a stored document the summary shows.
@@ -116,7 +122,8 @@ func (s *Server) summary(info mandate.Info, doc []byte, uses map[string]mandate.
 	return wireMandateSummary{ID: info.ID, Name: nameOf(info), ClientID: info.ClientID, AgentDisplayName: f.AgentName.DisplayName,
 		Status: info.Status, Digest: info.Digest, RuleCount: len(f.Rules), ValidFrom: f.ValidFrom, Expires: optional(f.Expires),
 		MaxActionsPerHour: info.MaxActionsPerHour, UpdatedAt: *formatTime(info.UpdatedAt),
-		StaleReferences: s.staleReferences(info, doc), RulesFrom: rulesFrom(uses, info.ID), RemovedAt: formatTime(info.RemovedAt)}, nil
+		StaleReferences: s.staleReferences(info, doc), RulesFrom: rulesFrom(uses, info.ID), RemovedAt: formatTime(info.RemovedAt),
+		AuditMode: !enforced(doc)}, nil
 }
 
 func (s *Server) getMandates(r *request) (any, error) {
@@ -125,6 +132,10 @@ func (s *Server) getMandates(r *request) (any, error) {
 		return nil, err
 	}
 	uses, err := s.cfg.Mandates.TemplateUses(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	pending, err := s.cfg.Mandates.PendingAll(r.Context())
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +149,7 @@ func (s *Server) getMandates(r *request) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		_, sum.AuditModePending = pending[m.ID]
 		out = append(out, sum)
 	}
 	return out, nil
@@ -172,7 +184,12 @@ func (s *Server) detail(ctx context.Context, id string) (wireMandateDetail, erro
 	if err != nil {
 		return wireMandateDetail{}, err
 	}
-	out := wireMandateDetail{Summary: sum, Document: doc, Versions: make([]wireVersion, 0, len(versions))}
+	pending, err := s.pendingOf(ctx, id)
+	if err != nil {
+		return wireMandateDetail{}, err
+	}
+	sum.AuditModePending = pending != nil
+	out := wireMandateDetail{Summary: sum, Document: doc, Versions: make([]wireVersion, 0, len(versions)), Pending: pending}
 	for _, v := range slices.Backward(versions) {
 		w := wireVersion{Number: v.Number, Digest: v.Digest, CreatedAt: *formatTime(v.CreatedAt),
 			CreatedBy: v.CreatedBy, CreatedByName: s.users.name(ctx, v.CreatedBy), Origin: v.Origin.Kind}
@@ -250,6 +267,8 @@ func mandateError(err error, prefix string, draft json.RawMessage) error {
 		return fail(codeCriticalConfirm)
 	case errors.Is(err, mandate.ErrNoApprovers):
 		return fail(codeNoApprovers)
+	case errors.Is(err, mandate.ErrAuditModeNeedsConfirmation):
+		return failField(codeAuditModeNotHere, prefix+"/enforce")
 	case errors.Is(err, mandate.ErrInvalid):
 		return failField(codeInvalidMandate, invalidField(err, prefix, draft))
 	}
@@ -347,8 +366,14 @@ func (s *Server) putMandate(r *request) (any, error) {
 		if err := s.checkResources(doc, "/draft"); err != nil {
 			return nil, err
 		}
-		if _, err := s.cfg.Mandates.Update(r.Context(), id, doc, mandate.Change{BaseDigest: in.BaseDigest,
-			ConfirmCritical: in.ConfirmCritical, Name: name}, s.actor(r)); err != nil {
+		_, err = s.cfg.Mandates.Update(r.Context(), id, doc, mandate.Change{BaseDigest: in.BaseDigest,
+			ConfirmCritical: in.ConfirmCritical, Name: name, MayPropose: true}, s.actor(r))
+		switch {
+		case errors.Is(err, mandate.ErrAuditModeProposed):
+			// Kept waiting for a human's confirmation of exactly this version; the
+			// detail shows it, the approvers are told.
+			s.proposed(r.Context(), id, r.user)
+		case err != nil:
 			return nil, mandateError(err, "/draft", in.Draft)
 		}
 	}

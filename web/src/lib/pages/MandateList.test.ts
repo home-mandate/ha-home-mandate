@@ -246,6 +246,21 @@ describe('MandateList', () => {
     expect(await api.areaMoves()).toEqual([]);
   });
 
+  it('marks a mandate in audit mode and one whose audit mode waits for a confirmation', async () => {
+    const { api } = await start({}, async (api) => {
+      const { document: doc, summary } = await api.mandate('mandate-voice');
+      const draft = { rules: doc.rules, approval: doc.approval, limits: doc.limits, valid_from: doc.valid_from, enforce: false as const };
+      await api.putMandate('mandate-voice', { name: 'Sprachassistent Küche', draft, base_digest: summary.digest });
+    });
+    const table = await screen.findByRole('table');
+    const row = within(within(table).getByRole('link', { name: 'Sprachassistent Küche' }).closest('tr') as HTMLElement);
+    expect(row.getByText('Audit mode waiting')).toBeTruthy();
+    const pending = (await api.mandate('mandate-voice')).pending;
+    await api.confirmAuditMode('mandate-voice', pending?.digest ?? '');
+    expect(await row.findByText('Audit mode')).toBeTruthy();
+    expect(row.queryByText('Audit mode waiting')).toBeNull();
+  });
+
   it('asks before a rename is dismissed', async () => {
     const { api } = await start();
     await screen.findByRole('table');

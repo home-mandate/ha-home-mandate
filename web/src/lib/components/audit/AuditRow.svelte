@@ -60,7 +60,10 @@
     {#if what}<span class="what"><bdi>{what}</bdi></span>{/if}
   </span>
   {#if entry.event === 'decision'}
-    <span class="decision">{#if decision}<DecisionBadge kind={decision} size="sm" />{/if}</span>
+    <span class="decision">
+      {#if decision}<DecisionBadge kind={decision} size="sm" />{/if}
+      {#if entry.evaluation?.enforced === false}<span class="not-enforced">{m.audit_not_enforced()}</span>{/if}
+    </span>
     <span class="result {outcome?.tone}">
       {#if outcome}<span>{outcome.text}</span>{#if outcome.why}<span class="why">{outcome.why}</span>{/if}{/if}
     </span>
@@ -156,5 +159,10 @@
   }
   .result.ask {
     color: var(--hm-color-ask-fg);
+  }
+  .not-enforced {
+    font-size: var(--hm-font-size-sm);
+    font-weight: var(--hm-font-weight-medium);
+    color: var(--hm-color-warning-fg);
   }
 </style>

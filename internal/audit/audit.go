@@ -161,6 +161,21 @@ type Resource struct {
 	Areas []string `json:"areas,omitempty"`
 	// Critical: the household had marked the entity as critical (SPEC-v0 section 4).
 	Critical bool `json:"critical,omitempty"`
+	// CriticalStated writes critical also when it is false, as an entry with a deny that
+	// was not enforced must (SPEC-v0 section 9.1).
+	CriticalStated bool `json:"-"`
+}
+
+// MarshalJSON writes critical: false only where it must be stated.
+func (r Resource) MarshalJSON() ([]byte, error) {
+	type plain Resource
+	if !r.CriticalStated {
+		return json.Marshal(plain(r))
+	}
+	return json.Marshal(struct {
+		plain
+		Critical bool `json:"critical"`
+	}{plain(r), r.Critical})
 }
 
 // Request is the input of an evaluation.

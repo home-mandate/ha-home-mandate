@@ -201,6 +201,8 @@
               <td>
                 <MandateStatus status={effectiveStatus(mandate, serverNow)} />
                 {#if mandate.removed_at !== null}<span class="removed">{m.status_removed()}</span>{/if}
+                {#if mandate.audit_mode}<span class="audit">{m.mandate_badge_audit()}</span>{/if}
+                {#if mandate.audit_mode_pending}<span class="audit">{m.mandate_badge_audit_pending()}</span>{/if}
                 {#if mandate.stale_references.length > 0}
                   <span class="stale"><Icon name="warning" /><span>{m.mandates_stale({ count: mandate.stale_references.length })}</span></span>
                 {/if}
@@ -221,6 +223,8 @@
             <span class="facts">
               <MandateStatus status={effectiveStatus(mandate, serverNow)} compact />
               {#if mandate.removed_at !== null}<span>{m.status_removed()}</span>{/if}
+              {#if mandate.audit_mode}<span class="audit">{m.mandate_badge_audit()}</span>{/if}
+              {#if mandate.audit_mode_pending}<span class="audit">{m.mandate_badge_audit_pending()}</span>{/if}
               <span>{m.mandates_rules_count({ count: mandate.rule_count })} · {m.mandates_valid_until_date({ date: until(mandate) })}</span>
             </span>
             {#if mandate.stale_references.length > 0}
@@ -249,6 +253,13 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--hm-space-3) var(--hm-space-4);
+  }
+  .audit {
+    display: block;
+    margin-block-start: var(--hm-space-1);
+    font-size: var(--hm-font-size-sm);
+    font-weight: var(--hm-font-weight-medium);
+    color: var(--hm-color-warning-fg);
   }
   .removed {
     display: block;

@@ -474,7 +474,17 @@ type (
 // denied. Neither list names a device it may not read, and every refusal on one is
 // not_found, the answer for a device that does not exist.
 func readable(snap *pdp.Snapshot, entityID string) bool {
-	return snap.Decide(entityID, "read", nil).Result.Decision != evaluator.Deny
+	return effective(snap.Decide(entityID, "read", nil).Result) != evaluator.Deny
+}
+
+// effective is the decision the PEP enforces: allow for a deny that a mandate in audit
+// mode does not enforce (SPEC-v0 section 4.6). The agent learns nothing else, in no
+// answer and no list (section 11.6 item 2); only the audit log records the deny.
+func effective(r evaluator.Result) evaluator.Decision {
+	if r.NotEnforced {
+		return evaluator.Allow
+	}
+	return r.Decision
 }
 
 // listSnapshot checks availability and the rate limit for a list request (one token per
@@ -727,8 +737,8 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 	if paramErr != nil {
 		return pdp.Decision{}, g.refuseParameters(ctx, a, snap, d, paramErr)
 	}
-	if d.Result.Decision == evaluator.Allow {
-		return d, nil
+	if effective(d.Result) == evaluator.Allow {
+		return d, nil // executed as an allow, also when audit mode does not enforce a deny
 	}
 	known := d.Result.Decision != evaluator.Deny
 	if action != "read" {
@@ -862,13 +872,14 @@ func (g *Gateway) entry(a agent.Agent, d pdp.Decision, withEvaluation bool, resu
 		Event: audit.EventDecision,
 		Agent: &audit.Agent{ClientID: a.ClientID, DisplayName: a.DisplayName},
 		Request: &audit.Request{Time: d.Time, Timezone: d.TimeZone, Revoked: d.Status == evaluator.StatusRevoked,
-			Resource: audit.Resource{EntityID: d.Resource.EntityID, Category: d.Resource.Category, Areas: d.Resource.Areas, Critical: d.Resource.Critical},
+			Resource: audit.Resource{EntityID: d.Resource.EntityID, Category: d.Resource.Category, Areas: d.Resource.Areas, Critical: d.Resource.Critical,
+				CriticalStated: withEvaluation && d.Result.NotEnforced},
 			Action:   d.Action, Parameters: d.Parameters},
 		Result: &result,
 	}
 	if withEvaluation {
 		r := d.Result
-		e.Evaluation = &audit.Evaluation{Decision: string(r.Decision), Reason: string(r.Reason)}
+		e.Evaluation = &audit.Evaluation{Decision: string(r.Decision), Reason: string(r.Reason), NotEnforced: r.NotEnforced}
 		if r.RuleID != "" {
 			e.Evaluation.RuleID = &r.RuleID
 		}

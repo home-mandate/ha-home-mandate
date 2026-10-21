@@ -32,6 +32,7 @@ export function draftOf(document: MandateDocument): MandateDraft {
     limits: document.limits,
     valid_from: document.valid_from,
     ...(document.expires === undefined ? {} : { expires: document.expires }),
+    ...(document.enforce === false ? { enforce: false as const } : {}),
   };
 }
 

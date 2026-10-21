@@ -55,7 +55,7 @@ func (o Origin) check() error {
 
 // editableKeys are the parts of a mandate a human edits; a version that keeps them all
 // is no change.
-var editableKeys = []string{"rules", "approval", "limits", "valid_from", "expires"}
+var editableKeys = []string{"rules", "approval", "limits", "valid_from", "expires", "enforce"}
 
 // SameEditable tells whether two documents have the same rules, approval settings,
 // limits and validity. Lists of texts (actions, weekdays, approvers) compare regardless

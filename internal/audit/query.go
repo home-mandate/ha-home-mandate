@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -58,6 +59,9 @@ type Page struct {
 	NextBefore int64
 	Total      int
 }
+
+// DecisionNotEnforced is the filter of the denies a mandate in audit mode did not enforce.
+const DecisionNotEnforced = "not_enforced"
 
 // Query returns a page of entries matching f.
 func (l *Log) Query(ctx context.Context, f Filter) (Page, error) {
@@ -131,7 +135,11 @@ func (f Filter) where() (string, []any, error) {
 		add(`a.event = ?`, f.Event)
 	}
 	if len(f.Decisions) > 0 {
-		add(`a.decision IN (SELECT value FROM json_each(?))`, jsonList(f.Decisions))
+		// not_enforced selects the denies a mandate in audit mode did not enforce, also
+		// next to decisions: the entries match either.
+		add(`(a.decision IN (SELECT value FROM json_each(?))
+			OR (? AND a.event = 'decision' AND json_extract(a.entry, '$.evaluation.enforced') = 0))`,
+			jsonList(f.Decisions), slices.Contains(f.Decisions, DecisionNotEnforced))
 	}
 	if f.Search != "" {
 		// json_each instead of one placeholder per name: no limit on SQL variables.

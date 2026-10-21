@@ -70,6 +70,11 @@ const (
 	RenameFloodTitle   Key = "rename_flood_title"
 	RenameFloodMessage Key = "rename_flood_message"
 
+	AuditModeProposedTitle   Key = "audit_mode_proposed_title"
+	AuditModeProposedMessage Key = "audit_mode_proposed_message"
+	AuditModeActiveTitle     Key = "audit_mode_active_title"
+	AuditModeActiveMessage   Key = "audit_mode_active_message"
+
 	PageErrorTitle         Key = "page_error_title"
 	PageInvalidRequest     Key = "page_invalid_request"
 	PageInvalidClient      Key = "page_invalid_client"
@@ -157,6 +162,7 @@ var Keys = append([]Key{
 	ApprovalInvalidTitle, ApprovalInvalidMessage, ApprovalBellTitle, ApprovalBellMessage, ApprovalBellMessageLink, ApprovalBellMessageUI, ApprovalTestTitle, ApprovalTestMessage,
 	ApprovalInterruptedTitle, ApprovalInterruptedMessage, ApprovalUnknownTitle, ApprovalUnknownMessage,
 	CheckpointTitle, CheckpointMessage, RenameFloodTitle, RenameFloodMessage,
+	AuditModeProposedTitle, AuditModeProposedMessage, AuditModeActiveTitle, AuditModeActiveMessage,
 	PageErrorTitle, PageInvalidRequest, PageInvalidClient, PageSessionExpired, PageSignInFailed, PageNotAdmin, PageBusy, PageSignedInAs, PageConsentTitle, PageConsentClaimed, PageConsentVerified, PageConsentUnverified, PageConsentReturn, PageConsentName, PageConsentTemplate, PageConsentApprove, PageConsentDeny, PageConsentNoTemplates, PageConsentInvalid, PageDenied, PageAdmitted, PagePairTitle, PagePairIntro, PagePairCode, PagePairSubmit, PagePairInvalid, PagePairLocked,
 	TemplateReadOnlyTitle, TemplateReadOnlyDescription, TemplateLightClimateTitle, TemplateLightClimateDescription,
 	TemplateVoiceCautiousTitle, TemplateVoiceCautiousDescription,

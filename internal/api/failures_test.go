@@ -84,6 +84,8 @@ func TestEndpointsReportDatabaseErrors(t *testing.T) {
 		{http.MethodPost, "/api/approvers/" + adminID + "/test", nil},
 		{http.MethodPut, "/api/emergency-stop", map[string]any{"active": true}},
 		{http.MethodGet, "/api/area-moves", nil},
+		{http.MethodPost, "/api/mandates/" + m.ID + "/audit-mode/confirm", map[string]any{"digest": m.Digest}},
+		{http.MethodPost, "/api/mandates/" + m.ID + "/audit-mode/discard", nil},
 		{http.MethodPost, "/api/area-moves/dismiss", map[string]any{"entity_id": "light.kitchen", "current": []string{"cellar"}}},
 	} {
 		r := h.do(tc.method, tc.path, tc.body)

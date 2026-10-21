@@ -164,3 +164,13 @@ export function withExpires(draft: MandateDraft, expires: string | null): Mandat
   void _dropped;
   return expires === null ? rest : { ...rest, expires };
 }
+
+/**
+ * withAuditMode switches audit mode of a draft on ("enforce": false) or off (no member;
+ * enforce has no other value, SPEC-v0 section 3.1 item 11).
+ */
+export function withAuditMode(draft: MandateDraft, on: boolean): MandateDraft {
+  const { enforce: _was, ...rest } = draft;
+  void _was;
+  return on ? { ...rest, enforce: false } : rest;
+}

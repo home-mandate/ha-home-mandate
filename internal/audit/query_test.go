@@ -589,3 +589,29 @@ func TestDeviceFilterFindsDirectoryChanges(t *testing.T) {
 		}
 	}
 }
+
+// The denies a mandate in audit mode did not enforce can be listed on their own and next
+// to other decisions (SPEC-v0 section 11.6 item 3).
+func TestQueryNotEnforced(t *testing.T) {
+	l, _ := clocked(t, start)
+	trial := decision("hm-client:voice-1", "Voice", "light.kitchen", "kitchen", "deny", "no_match")
+	trial.Evaluation.NotEnforced = true
+	trial.Request.Resource.Category, trial.Request.Resource.CriticalStated = "light", true
+	trial.Result = &audit.Result{Status: audit.StatusExecuted}
+	trial.Mandate = &audit.Mandate{ID: "m-voice", Digest: "sha256:" + strings.Repeat("a", 64)}
+	appendAll(t, l, []audit.Entry{decision("hm-client:voice-1", "Voice", "light.kitchen", "kitchen", "allow", "rule"), trial})
+	for name, tc := range map[string]struct {
+		decisions []string
+		want      []int64
+	}{
+		"not enforced": {[]string{audit.DecisionNotEnforced}, []int64{2}},
+		"with allow":   {[]string{"allow", audit.DecisionNotEnforced}, []int64{2, 1}},
+		"default only": {[]string{"default"}, []int64{2}},
+		"allow only":   {[]string{"allow"}, []int64{1}},
+	} {
+		p, err := l.Query(context.Background(), audit.Filter{Limit: 10, Decisions: tc.decisions})
+		if err != nil || !slices.Equal(seqs(p), tc.want) {
+			t.Errorf("%s: %v, %v; want %v", name, seqs(p), err, tc.want)
+		}
+	}
+}
