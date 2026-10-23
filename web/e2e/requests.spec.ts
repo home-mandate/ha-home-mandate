@@ -7,9 +7,9 @@ import { expect, pageScroll, test } from './support.ts';
 
 const text = {
   de: { open: /^Offen/, history: 'Verlauf', decline: 'Ablehnen', approve: 'Freigeben', yes: 'Ja, freigeben', confirm: 'Freigabe bestätigen',
-    declined: /^Abgelehnt von \u2068?Markus\u2069? · in Home-Mandate/, approved: /^Freigegeben von \u2068?Markus\u2069? · in Home-Mandate/ },
+    declined: /^Abgelehnt von \u2068?Markus\u2069? · in Home-Mandate/, declinedPage: 'Abgelehnt', allApprovals: /Alle Rückfragen/, approvedPage: 'Freigegeben', approved: /^Freigegeben von \u2068?Markus\u2069? · in Home-Mandate/ },
   en: { open: /^Pending/, history: 'History', decline: 'Decline', approve: 'Approve', yes: 'Yes, approve', confirm: 'Confirm approval',
-    declined: /^Declined by \u2068?Markus\u2069? · in Home-Mandate/, approved: /^Approved by \u2068?Markus\u2069? · in Home-Mandate/ },
+    declined: /^Declined by \u2068?Markus\u2069? · in Home-Mandate/, declinedPage: 'Declined', allApprovals: /All approvals/, approvedPage: 'Approved', approved: /^Approved by \u2068?Markus\u2069? · in Home-Mandate/ },
 } as const;
 
 type Lang = keyof typeof text;
@@ -94,4 +94,69 @@ test('mobile: a switch between pending and history, nothing scrolls sideways', a
   await tabs.getByRole('tab', { name: t.history }).click();
   await expect(page.getByRole('tabpanel', { name: t.history }).getByRole('listitem')).toHaveCount(5);
   expect(await pageScroll(page)).toBe(0);
+});
+
+// A request's own page (issue #53), the target of every notification: on a small phone
+// both buttons are on the first screen, and the page ends with the outcome alone.
+const PAGE_ID = 'e2e00000000000000000000000000001';
+
+test('request page on a phone: both buttons without scrolling, then only the outcome', async ({ page }, info) => {
+  const t = text[info.project.name as Lang];
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.goto('./#/audit/requests');
+  await answerable(page, PAGE_ID);
+  await page.goto(`./#/audit/requests/${PAGE_ID}`);
+  const decline = page.getByRole('button', { name: t.decline });
+  const approve = page.getByRole('button', { name: t.approve, exact: true });
+  for (const button of [decline, approve]) {
+    const box = await button.boundingBox();
+    expect(box).not.toBeNull();
+    expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(667);
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+  }
+  expect(await pageScroll(page)).toBe(0);
+  await approve.click();
+  const yes = page.getByRole('button', { name: t.yes });
+  await expect(yes).toBeEnabled();
+  await yes.click();
+  await expect(page.getByRole('heading', { name: t.approvedPage, exact: true })).toBeVisible();
+  await expect(page.getByRole('article')).toHaveCount(0);
+  await expect(page.getByRole('main').getByText('Markus')).toHaveCount(0);
+});
+
+test('request page: declining ends it, the list no longer has it', async ({ page }, info) => {
+  const t = text[info.project.name as Lang];
+  await page.goto('./#/audit/requests');
+  await answerable(page, PAGE_ID);
+  await page.goto(`./#/audit/requests/${PAGE_ID}`);
+  await page.getByRole('button', { name: t.decline }).click();
+  await expect(page.getByRole('heading', { name: t.declinedPage, exact: true })).toBeVisible();
+  await page.goto('./#/audit/requests');
+  await expect(page.getByRole('region', { name: t.open }).getByRole('article')).toHaveCount(1);
+});
+
+// The app's panel (issue #53): Home Assistant loads the UI at the Ingress address alone
+// and hands it the rest of its route when the UI subscribes. A stand-in for the panel on
+// the same origin answers the subscription with a request's route.
+test('in the app panel, the route the panel hands over opens the request page', async ({ page }, info) => {
+  const t = text[info.project.name as Lang];
+  const id = 'a1000000000000000000000000000001'; // open in the mock
+  await page.route('**/panel-stand-in.html', (route) =>
+    route.fulfill({
+      contentType: 'text/html',
+      body: `<!doctype html><title>panel</title><iframe id="app" src="./" style="width:100%;height:90vh"></iframe>
+<script>
+  const frame = document.getElementById('app');
+  addEventListener('message', (e) => {
+    if (e.source !== frame.contentWindow || e.data?.type !== 'home-assistant/subscribe-properties') return;
+    frame.contentWindow.postMessage({ type: 'home-assistant/properties', narrow: false,
+      route: { prefix: '/app/local_home_mandate', path: '/requests/${id}' } }, location.origin);
+  });
+</script>`,
+    }),
+  );
+  await page.goto('./panel-stand-in.html');
+  const app = page.frameLocator('#app');
+  await expect(app.getByRole('link', { name: t.allApprovals })).toBeVisible();
+  await expect(app.getByRole('article')).toHaveCount(1);
 });

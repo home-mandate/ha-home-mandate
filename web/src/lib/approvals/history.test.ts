@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { ApprovalCause, ApprovalHistoryEntry } from '../api/types.ts';
 import { approvalsHistoryFixture } from '../api/fixtures.ts';
 import { setLocale } from '../paraglide/runtime.js';
-import { historyOutcome } from './history.ts';
+import { historyOutcome, pageOutcome } from './history.ts';
 
 beforeEach(() => setLocale('en', { reload: false }));
 
@@ -56,5 +56,16 @@ describe('historyOutcome', () => {
 
   it('never shows hidden characters of a name', () => {
     expect(historyOutcome(with_({ by_name: 'Ma\u202Erkus\n' })).text).toBe(`Approved by ${iso('Markus')} · after 0:42`);
+  });
+});
+
+describe('pageOutcome', () => {
+  it('shows the end of a request on its page without anybody’s name (issue #53)', () => {
+    expect(pageOutcome('approved', undefined)).toEqual({ icon: 'allow', tone: 'positive', text: 'Approved', hint: null, dashed: false });
+    expect(pageOutcome('rejected', undefined)).toEqual({ icon: 'deny', tone: 'danger', text: 'Declined', hint: null, dashed: false });
+    expect(pageOutcome('timeout', undefined)).toMatchObject({ text: 'Timed out, declined', dashed: true });
+    expect(pageOutcome('invalid_response', undefined)).toMatchObject({ icon: 'warning', hint: expect.stringContaining('without permission') });
+    expect(pageOutcome('cancelled', 'withdrawn')).toMatchObject({ text: 'Withdrawn by the agent' });
+    expect(pageOutcome('cancelled', undefined)).toMatchObject({ text: 'Ended before an answer' });
   });
 });

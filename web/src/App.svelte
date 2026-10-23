@@ -25,6 +25,8 @@
   import TemplateEditor from './lib/pages/TemplateEditor.svelte';
   import TemplateList from './lib/pages/TemplateList.svelte';
   import Overview from './lib/pages/Overview.svelte';
+  import RequestPage from './lib/pages/RequestPage.svelte';
+  import { followPanel } from './lib/app/panel.ts';
   import Requests from './lib/pages/Requests.svelte';
   import Settings from './lib/pages/Settings.svelte';
   import AgentConnect from './lib/pages/AgentConnect.svelte';
@@ -64,6 +66,9 @@
     }
   }
 
+  // In the app's panel, a notification's link names the request in the panel's route.
+  onMount(() => followPanel({ self: window, parent: window.parent, origin: window.location.origin }, (id) => go({ name: 'request', id })));
+
   // Browser notifications for new requests (decision S4), on every page.
   const notifier = new BrowserNotifier({
     Notification: typeof Notification === 'undefined' ? undefined : Notification,
@@ -74,7 +79,7 @@
     app.on('approval.opened', ({ request }) =>
       notifier.notify(request, { title: m.notify_title(), body: m.notify_body() }, () => {
         window.focus();
-        go({ name: 'requests' });
+        go({ name: 'request', id: request.id });
       }),
     ),
   );
@@ -219,7 +224,7 @@
   {#if app.phase === 'loading'}
     <Skeleton lines={['30%', '70%', '50%']} />
   {:else if app.phase === 'signed_out'}
-    <SignIn error={signInFailure} />
+    <SignIn error={signInFailure} request={route.name === 'request' ? route.id : null} />
   {:else if app.phase === 'forbidden'}
     <FullPageState icon="lock" badge="person" title={m.noaccess_title()} body={m.noaccess_body()} note={m.noaccess_approver()} />
   {:else if app.phase === 'error'}
@@ -238,6 +243,8 @@
     {#key visits}<AuditLog {app} {now} query={route.query} />{/key}
   {:else if route.name === 'requests'}
     <Requests {app} />
+  {:else if route.name === 'request'}
+    {#key route.id}<RequestPage {app} id={route.id} />{/key}
   {:else if route.name === 'audit_entry'}
     {#key route.seq}<AuditEntry {app} seq={route.seq} />{/key}
   {:else if route.name === 'agents'}

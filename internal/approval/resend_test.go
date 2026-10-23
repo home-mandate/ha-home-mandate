@@ -38,9 +38,27 @@ func TestNotificationTapTargetAndSticky(t *testing.T) {
 	}{{"with a target", tapURL}, {"without", ""}} {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newEnv(t, time.Minute)
-			e.svc.cfg.TapTarget = func() string { return tt.target }
+			var mu sync.Mutex
+			asked := map[string]bool{}
+			e.svc.cfg.TapTarget = func(id string) string {
+				mu.Lock()
+				defer mu.Unlock()
+				asked[id] = true
+				return tt.target
+			}
 			e.ask(request())
 			s := e.notifier.next(t)
+			// Asked for this request's ID only, once per device reached.
+			mu.Lock()
+			if len(asked) != 1 || strings.Contains(s.n.URL, s.n.Tag) {
+				t.Errorf("tap target asked for %v", asked)
+			}
+			for id := range asked {
+				if len(id) != 32 {
+					t.Errorf("tap target asked for %q", id)
+				}
+			}
+			mu.Unlock()
 			if s.n.URL != tt.target || !s.n.Sticky {
 				t.Errorf("url %q, sticky %v", s.n.URL, s.n.Sticky)
 			}
@@ -114,7 +132,7 @@ func TestClearedNotificationIsNotSentAgain(t *testing.T) {
 // still reaches everyone.
 func TestInvalidTapTargetNeverStopsTheRequest(t *testing.T) {
 	e := newEnv(t, time.Minute)
-	e.svc.cfg.TapTarget = func() string { return "http://localhost:8765/ui/#/audit/requests" }
+	e.svc.cfg.TapTarget = func(string) string { return "http://localhost:8765/ui/#/audit/requests" }
 	e.ask(request())
 	for range 2 {
 		if s := e.notifier.next(t); s.n.URL != "" || len(s.n.Actions) != 2 {

@@ -855,3 +855,51 @@ func TestByIdempotencyKeyAndStateShown(t *testing.T) {
 		t.Errorf("closed: %v", err)
 	}
 }
+
+// The request page learns only the outcome (issue #53): nothing while open, approved once
+// a confirmation executes, the outcome and cause once ended; never who answered, and
+// nothing after a day.
+func TestClosedGivesOnlyTheOutcome(t *testing.T) {
+	je := newJournalEnv(t)
+	ctx := context.Background()
+	for _, id := range []string{idOpen, idExecuting, idEnded} {
+		je.open(t, id)
+	}
+	if err := je.journal.Executing(ctx, idExecuting, audit.Approval{Outcome: OutcomeApproved, By: u1, Via: ViaUI, At: je.now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := je.journal.EndNow(ctx, idEnded, &audit.Approval{Outcome: OutcomeCancelled, Cause: audit.CauseWithdrawn, At: je.now},
+		audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]*Closed{
+		idOpen: nil, strings.Repeat("9", 32): nil, "": nil,
+		idExecuting: {Outcome: OutcomeApproved}, idEnded: {Outcome: OutcomeCancelled, Cause: audit.CauseWithdrawn},
+	} {
+		got, ok, err := je.journal.Closed(ctx, id)
+		if err != nil || ok != (want != nil) || (want != nil && got != *want) {
+			t.Errorf("Closed(%q) = %+v, %v, %v; want %+v", id, got, ok, err, want)
+		}
+	}
+	// A row ended without an approval is cancelled.
+	je.open(t, strings.Repeat("4", 32))
+	if err := je.journal.EndNow(ctx, strings.Repeat("4", 32), nil, audit.Result{Status: audit.StatusFailed, Error: "unrecorded"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, _ := je.journal.Closed(ctx, strings.Repeat("4", 32)); !ok || got != (Closed{Outcome: OutcomeCancelled}) {
+		t.Errorf("without an approval = %+v, %v", got, ok)
+	}
+	je.now = je.now.Add(keepEnded + time.Minute)
+	if _, err := je.journal.Expire(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := je.journal.Closed(ctx, idEnded); ok {
+		t.Error("found after a day")
+	}
+	if err := je.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := je.journal.Closed(ctx, idEnded); !errors.Is(err, ErrJournal) {
+		t.Errorf("closed database: %v", err)
+	}
+}

@@ -109,49 +109,64 @@ func TestUISessionLimits(t *testing.T) {
 func TestSignInStates(t *testing.T) {
 	c := &clock{t: testStart}
 	s := newUISessions(c.Now)
-	state := s.startSignIn("192.0.2.10")
-	if s.finishSignIn(state, state+"x") || s.finishSignIn("", "") {
+	state := s.startSignIn("192.0.2.10", "")
+	if finished(s.finishSignIn(state, state+"x")) || finished(s.finishSignIn("", "")) {
 		t.Error("a sign-in finished with a state that does not match the cookie")
 	}
-	if !s.finishSignIn(state, state) {
+	if !finished(s.finishSignIn(state, state)) {
 		t.Fatal("matching state refused")
 	}
-	if s.finishSignIn(state, state) {
+	if finished(s.finishSignIn(state, state)) {
 		t.Error("a state was used twice")
 	}
 
-	old := s.startSignIn("192.0.2.10")
+	old := s.startSignIn("192.0.2.10", "")
 	c.Add(signInTTL + time.Second)
-	if s.finishSignIn(old, old) {
+	if finished(s.finishSignIn(old, old)) {
 		t.Error("an expired sign-in finished")
 	}
 	// One never finished is forgotten at the next start.
-	s.startSignIn("192.0.2.30")
+	s.startSignIn("192.0.2.30", "")
 	c.Add(signInTTL)
-	s.startSignIn("192.0.2.31")
+	s.startSignIn("192.0.2.31", "")
 	if n := len(s.signIns); n != 1 {
 		t.Errorf("%d sign-ins in progress after the expiry, want 1", n)
 	}
 
 	// Per address, the oldest gives way; other addresses keep theirs.
-	other := s.startSignIn("192.0.2.21")
+	other := s.startSignIn("192.0.2.21", "")
 	var states []string
 	for range signInPerAddr + 1 {
-		states = append(states, s.startSignIn("192.0.2.20"))
+		states = append(states, s.startSignIn("192.0.2.20", ""))
 		c.Add(time.Second)
 	}
-	if s.finishSignIn(states[0], states[0]) {
+	if finished(s.finishSignIn(states[0], states[0])) {
 		t.Error("the oldest sign-in of the address did not give way")
 	}
-	if !s.finishSignIn(states[1], states[1]) || !s.finishSignIn(other, other) {
+	if !finished(s.finishSignIn(states[1], states[1])) || !finished(s.finishSignIn(other, other)) {
 		t.Error("a newer sign-in or one of another address is gone")
 	}
 
 	// Overall, the oldest gives way too: the table never grows past signInTotal.
 	for i := range signInTotal * 2 {
-		s.startSignIn("198.51.100." + strconv.Itoa(i))
+		s.startSignIn("198.51.100."+strconv.Itoa(i), "")
 	}
 	if n := len(s.signIns); n > signInTotal {
 		t.Errorf("%d sign-ins in progress, at most %d", n, signInTotal)
+	}
+}
+
+// finished tells whether a sign-in was finished, whatever its target.
+func finished(_ string, ok bool) bool { return ok }
+
+// A sign-in gives back the target it was started with, once.
+func TestSignInKeepsItsTarget(t *testing.T) {
+	s := newUISessions(time.Now)
+	state := s.startSignIn("192.0.2.10", strings.Repeat("ab", 16))
+	if target, ok := s.finishSignIn(state, state); !ok || target != strings.Repeat("ab", 16) {
+		t.Errorf("finish = %q, %v", target, ok)
+	}
+	if target, ok := s.finishSignIn(state, state); ok || target != "" {
+		t.Errorf("again = %q, %v", target, ok)
 	}
 }

@@ -362,7 +362,7 @@ const claude = { client_id: 'https://claude.ai/oauth/claude-code-client-metadata
 
 export const approvalsOpenFixture: ApprovalRequest[] = [
   {
-    id: 'apr-1',
+    id: 'a1000000000000000000000000000001',
     agent: claude,
     entity_id: 'lock.front_door',
     device_name: 'Haustür',

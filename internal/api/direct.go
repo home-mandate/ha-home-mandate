@@ -29,6 +29,10 @@ const (
 	DirectCallbackPath = DirectPrefix + "/signin/callback"
 	directSignInPath   = DirectPrefix + "/signin"
 	directSignOutPath  = DirectPrefix + "/signout"
+	// DirectRequestPath is followed by a request's ID: the link every notification of
+	// it carries (issue #53). It has no fragment, so Markdown can carry it, and the server
+	// sees the target and keeps it through the sign-in.
+	DirectRequestPath = DirectPrefix + "/requests/"
 
 	uiCookie     = "__Host-hm_ui"
 	signInCookie = "__Host-hm_signin"
@@ -87,11 +91,13 @@ func (s *Server) DirectHandler() http.Handler {
 		switch p := r.URL.Path; {
 		case p == DirectPrefix:
 			http.Redirect(w, r, DirectPrefix+"/", http.StatusMovedPermanently)
+		case strings.HasPrefix(p, DirectRequestPath) && r.Method == http.MethodGet:
+			s.openRequest(w, r, strings.TrimPrefix(p, DirectRequestPath))
 		case (p == directSignInPath || p == DirectCallbackPath) && r.Method == http.MethodGet && !s.signInAllowed(r):
 			w.Header().Set("Cache-Control", "no-store")
 			http.Redirect(w, r, signInBusy, http.StatusSeeOther)
 		case p == directSignInPath && r.Method == http.MethodGet:
-			s.startSignIn(w, r)
+			s.startSignIn(w, r, "")
 		case p == DirectCallbackPath && r.Method == http.MethodGet:
 			s.finishSignIn(w, r)
 		case p == directSignOutPath && r.Method == http.MethodPost:
@@ -182,11 +188,38 @@ func sender(r *http.Request) string {
 	return network.String()
 }
 
+// requestPage is the UI's page of the request id (web/src/lib/router.ts).
+func requestPage(id string) string {
+	return DirectPrefix + "/#/audit/requests/" + id
+}
+
+// openRequest leads a notification's link to the request's page: at once with a session,
+// else through the sign-in, which keeps the request as its target. Only a well-formed ID
+// is a target, so the link cannot send the browser anywhere else.
+func (s *Server) openRequest(w http.ResponseWriter, r *http.Request, id string) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !requestIDPattern.MatchString(id) {
+		http.NotFound(w, r)
+		return
+	}
+	if c, err := r.Cookie(uiCookie); err == nil {
+		if _, ok := s.ui.lookup(c.Value); ok {
+			http.Redirect(w, r, requestPage(id), http.StatusSeeOther)
+			return
+		}
+	}
+	if !s.signInAllowed(r) {
+		http.Redirect(w, r, signInBusy, http.StatusSeeOther)
+		return
+	}
+	s.startSignIn(w, r, id)
+}
+
 // startSignIn needs no session and keeps nothing per address beyond the bounded table of
 // sign-ins in progress (uisessions.go) and the windows of signInAllowed: unauthenticated
 // requests never grow other state.
-func (s *Server) startSignIn(w http.ResponseWriter, r *http.Request) {
-	state := s.ui.startSignIn(peer(r))
+func (s *Server) startSignIn(w http.ResponseWriter, r *http.Request, target string) {
+	state := s.ui.startSignIn(peer(r), target)
 	// Lax: Home Assistant sends the browser back with a top-level navigation from its
 	// own origin, which a Strict cookie would not accompany.
 	http.SetCookie(w, &http.Cookie{Name: signInCookie, Value: state, Path: "/", MaxAge: int(signInTTL / time.Second),
@@ -201,7 +234,12 @@ func (s *Server) finishSignIn(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode})
 	q := r.URL.Query()
 	cookie, _ := r.Cookie(signInCookie)
-	if cookie == nil || len(q["state"]) != 1 || len(q["code"]) != 1 || !s.ui.finishSignIn(cookie.Value, q.Get("state")) {
+	var target string
+	ok := cookie != nil && len(q["state"]) == 1 && len(q["code"]) == 1
+	if ok {
+		target, ok = s.ui.finishSignIn(cookie.Value, q.Get("state"))
+	}
+	if !ok {
 		s.cfg.Logger.Warn("UI sign-in refused: state missing, reused or not matching")
 		http.Redirect(w, r, signInFailed, http.StatusSeeOther)
 		return
@@ -237,6 +275,10 @@ func (s *Server) finishSignIn(w http.ResponseWriter, r *http.Request) {
 	}
 	setUICookie(w, token, 0)
 	s.cfg.Logger.Info("signed in to the UI", "user_id", user.ID)
+	if target != "" {
+		http.Redirect(w, r, requestPage(target), http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, DirectPrefix+"/", http.StatusSeeOther)
 }
 

@@ -145,18 +145,20 @@ type Config struct {
 	// App tells that Home-Mandate runs as an app of Home Assistant: its UI opens in the
 	// sidebar, and the bell says so.
 	App bool
-	// TapTarget returns what a tap on a request's notification opens: the open requests
-	// in the UI or the app's panel (issue #49); "" when there is none. Never about one
-	// request, never with its nonce.
-	TapTarget func() string
+	// TapTarget returns what a tap on the notification of the request id opens: its page
+	// in the UI (issue #53) or the app's panel (issue #49); "" when there is none. It may
+	// carry the request's ID, which is no secret (the page checks who opens it), never its
+	// nonce.
+	TapTarget func(id string) string
 	// ResendDelay is how long a request's notification that was cleared waits before it
 	// is sent again (default resendDelay): answering clears it too, and the answer must
 	// win.
 	ResendDelay time.Duration
-	// UIAddress returns where the UI can be opened in a browser outside Home Assistant,
-	// or "" when it has no address of its own (the app, or a container without direct
-	// mode). The bell links to it; it is never about a request.
-	UIAddress func() string
+	// RequestAddress returns where the page of the request id opens in a browser outside
+	// Home Assistant, or "" when the UI has no address of its own (the app, or a container
+	// without direct mode). The bell links to it (issue #53): it carries the request's ID,
+	// which is no secret, and nothing else about the request.
+	RequestAddress func(id string) string
 	// OnOpened is called when a request was delivered and is open (shown by Open); the UI
 	// announces it. It must not block.
 	OnOpened func(Open)
@@ -210,8 +212,11 @@ type Open struct {
 	Request    Request
 	Recipients []string // user IDs reached on at least one channel
 	UIUsers    []string // user IDs who may answer in the UI
-	CreatedAt  time.Time
-	ExpiresAt  time.Time
+	// Approvers are the user IDs whose answer counts now: those asked, less those
+	// withdrawn since (Withdraw); sorted.
+	Approvers []string
+	CreatedAt time.Time
+	ExpiresAt time.Time
 }
 
 // recipient is an approver with their channels for one request.
@@ -490,7 +495,7 @@ func (s *Service) deliver(ctx context.Context, p *pending, nonce string) (reache
 		}
 		lang := s.language(r.Approver)
 		n := buildRequest(lang, p.req, nonce)
-		n.Tag, n.Sticky, n.URL = p.tag, true, s.tapTarget()
+		n.Tag, n.Sticky, n.URL = p.tag, true, s.tapTarget(p.id)
 		s.mu.Lock()
 		p.notices[r.UserID] = n
 		s.mu.Unlock()
@@ -517,11 +522,11 @@ func (s *Service) deliver(ctx context.Context, p *pending, nonce string) (reache
 // tapTarget is what a tap on a notification opens, or "" when there is none or it is not
 // valid: the tap target is a convenience and must never stop a request from reaching
 // anyone (an invalid one would make Home Assistant refuse the whole notification).
-func (s *Service) tapTarget() string {
+func (s *Service) tapTarget(id string) string {
 	if s.cfg.TapTarget == nil {
 		return ""
 	}
-	target := s.cfg.TapTarget()
+	target := s.cfg.TapTarget(id)
 	if target != "" && !ha.ValidTapTarget(target) {
 		s.cfg.Logger.Warn("approval notifications get no tap target: it must be an https address or a path of Home Assistant")
 		return ""
@@ -542,7 +547,7 @@ func (s *Service) ring(ctx context.Context, p *pending) bool {
 		return false
 	}
 	lang := s.householdLanguage()
-	n := ha.Notification{Title: i18n.T(lang, i18n.ApprovalBellTitle, nil), Message: bellText(lang, s.cfg.App, s.uiAddress())}
+	n := ha.Notification{Title: i18n.T(lang, i18n.ApprovalBellTitle, nil), Message: bellText(lang, s.cfg.App, s.requestAddress(p.id))}
 	if err := s.cfg.Bell.Ring(ctx, p.bellID, n); err != nil {
 		s.cfg.Logger.Warn("approval hint in Home Assistant not shown", "error", err)
 	}
@@ -673,7 +678,7 @@ func (s *Service) openOf(p *pending) Open {
 	req := p.req
 	req.Approvers, req.Params = slices.Clone(req.Approvers), maps.Clone(req.Params)
 	return Open{ID: p.id, Request: req, Recipients: slices.Clone(p.reached), UIUsers: slices.Clone(p.uiUsers),
-		CreatedAt: p.created, ExpiresAt: p.expires}
+		Approvers: slices.Sorted(maps.Keys(p.approvers)), CreatedAt: p.created, ExpiresAt: p.expires}
 }
 
 // CancelAgent ends the open requests of an agent that was revoked, or whose mandate was,
