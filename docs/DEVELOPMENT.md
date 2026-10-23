@@ -50,7 +50,7 @@ Playwright's CDN, for tests only.
 ```bash
 make webui build            # static binaries in bin/ with the embedded UI (without webui: a placeholder page)
 make image                  # image home-mandate:dev for this machine (podman; E2E_RUNTIME=docker for docker)
-make image VERSION=0.1.0-rc.6
+make image VERSION=0.1.0-rc.7
 ```
 
 The image sets no `USER`: in app mode the Supervisor runs it as root and creates `/data`
