@@ -30,9 +30,11 @@
     now?: () => number;
     /** Actions; they get the ID of the card's heading, e.g. for aria-describedby. */
     children?: Snippet<[string]>;
+    /** Level of the card's heading: 3 under a section's h2, 2 right under the page's h1. */
+    level?: 2 | 3;
   }
 
-  let { request, areaName, offsetMs, ctx, now = Date.now, children }: Props = $props();
+  let { request, areaName, offsetMs, ctx, now = Date.now, children, level = 3 }: Props = $props();
 
   const SEPARATOR = ' · ';
   const LIST_SEPARATOR = ', ';
@@ -55,11 +57,11 @@
       {#if request.critical}<DecisionBadge kind="critical" size="sm" />{/if}
       <span class="where">{where}</span>
     </div>
-    <h3 id={titleId}>
+    <svelte:element this={`h${level}`} id={titleId} class="title">
       {#each title as piece, i (i)}{#if 'text' in piece}{piece.text}{:else if piece.slot === 1}<AgentName name={request.agent.display_name} />{:else}<bdi
             >{cleanUntrusted(request.device_name)}</bdi
           >{/if}{/each}
-    </h3>
+    </svelte:element>
     {#if identity}
       <div class="client">
         <span>{m.agent_client_id()}</span>
@@ -113,7 +115,7 @@
     color: var(--hm-color-text-muted);
     font-size: var(--hm-font-size-sm);
   }
-  h3 {
+  .title {
     margin: 0;
     font-size: var(--hm-font-size-lg);
     font-weight: 600;

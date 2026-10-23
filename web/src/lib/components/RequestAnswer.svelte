@@ -26,9 +26,12 @@
     describedBy?: string;
     onanswer: (approve: boolean) => void;
     now?: () => number;
+    /** Touch-sized buttons across the full width, for a request's own page (issue #53). */
+    large?: boolean;
   }
 
-  let { request, busy, describedBy, onanswer, now = () => performance.now() }: Props = $props();
+  let { request, busy, describedBy, onanswer, now = () => performance.now(), large = false }: Props = $props();
+  const size = $derived(large ? 'lg' : 'md');
 
   /** The confirmation is armed this long after it appears. */
   const ARM_MS = 600;
@@ -87,17 +90,17 @@
           />{:else}<bdi>{cleanUntrusted(request.device_name)}</bdi>{/if}{/each}
     </p>
     {#if values}<p class="values">{valuesLine[0]}<bdi>{values}</bdi>{valuesLine[1]}</p>{/if}
-    <div class="buttons">
-      <Button variant="primary" {busy} disabled={!armed} bind:element={confirmButton} aria-describedby={describedBy} onclick={confirm}
+    <div class="buttons" class:large>
+      <Button variant="primary" {size} {busy} disabled={!armed} bind:element={confirmButton} aria-describedby={describedBy} onclick={confirm}
         >{m.request_approve_confirm_btn()}</Button
       >
-      <Button variant="secondary" disabled={busy} onclick={cancel}>{m.common_cancel()}</Button>
+      <Button variant="secondary" {size} disabled={busy} onclick={cancel}>{m.common_cancel()}</Button>
     </div>
   </div>
 {:else}
-  <div class="buttons">
-    <Button variant="secondary" icon="deny" {busy} aria-describedby={describedBy} onclick={() => onanswer(false)}>{m.request_decline()}</Button>
-    <Button variant="secondary" icon="allow" disabled={busy} aria-describedby={describedBy} bind:element={approveButton} onclick={ask}
+  <div class="buttons" class:large>
+    <Button variant="secondary" {size} icon="deny" {busy} aria-describedby={describedBy} onclick={() => onanswer(false)}>{m.request_decline()}</Button>
+    <Button variant="secondary" {size} icon="allow" disabled={busy} aria-describedby={describedBy} bind:element={approveButton} onclick={ask}
       >{m.request_approve()}</Button
     >
   </div>
@@ -122,5 +125,8 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--hm-space-2);
+  }
+  .buttons.large > :global(*) {
+    flex: 1 1 0;
   }
 </style>

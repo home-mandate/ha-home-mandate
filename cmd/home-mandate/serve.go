@@ -301,7 +301,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 			a := uiAPI.Load()
 			return a != nil && a.BellEnabled()
 		},
-		App: s.cfg.Mode == config.ModeApp, UIAddress: g.uiAddress, TapTarget: g.tapTarget,
+		App: s.cfg.Mode == config.ModeApp, RequestAddress: g.requestAddress, TapTarget: g.requestAddress,
 		OnOpened: func(o approval.Open) {
 			if a := uiAPI.Load(); a != nil {
 				a.ApprovalOpened(o)
@@ -349,7 +349,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 
 	apiCfg := api.Config{Proxy: trustedProxy(ctx, s.cfg, lookupHost, logger), Store: s.store, Log: s.log, Agents: s.agents, Mandates: s.mandates, Admission: s.admission,
-		Approvers: s.approvers, Approvals: approvals, HA: client, Catalog: g.catalog, Marks: g.marks, Renames: g.renames, AreaMoves: g.moves, Status: g.status, UI: webui.Handler(),
+		Approvers: s.approvers, Approvals: approvals, Closed: s.journal, HA: client, Catalog: g.catalog, Marks: g.marks, Renames: g.renames, AreaMoves: g.moves, Status: g.status, UI: webui.Handler(),
 		Principal: s.household, Mode: string(s.cfg.Mode), Version: version, Commit: commit, Retention: retention,
 		ApprovalTimeout: s.cfg.ApprovalTimeout, TLS: g.tlsStatus, Logger: logger}
 	if as != nil {
@@ -482,25 +482,29 @@ func (g *gateway) uiAddress() string {
 	return g.state.cfg.PublicURL + api.DirectPrefix + "/"
 }
 
-// requestsRoute is the UI's page of the open requests (web/src/lib/router.ts).
-const requestsRoute = "#/audit/requests"
-
 // ingressPanelPath is where Home Assistant's frontend opens an app's panel by its slug,
 // whether or not it is shown in the sidebar (measured with 2026.9.4 and 2026.10.1;
 // /hassio/ingress/<slug> is a 404 there).
 const ingressPanelPath = "/app/"
 
-// tapTarget is what a tap on a request's notification opens (issue #49): the open
-// requests in the UI in direct mode, the app's panel in Home Assistant, or nothing.
-func (g *gateway) tapTarget() string {
-	if address := g.uiAddress(); address != "" {
-		return address + requestsRoute
+// requestAddress is the link of the request id's page (issue #53), for the tap on its
+// notification and the bell: in direct mode the
+// link that keeps the request through the sign-in; in the app the panel with the route
+// tail requests/<id>, which Home Assistant's frontend hands the UI (web/src/lib/app/
+// panel.ts); "" otherwise.
+func (g *gateway) requestAddress(id string) string {
+	switch {
+	case g.direct != nil:
+		return g.state.cfg.PublicURL + api.DirectRequestPath + id
+	case g.slug != "":
+		return ingressPanelPath + g.slug + panelRequestPath + id
+	default:
+		return ""
 	}
-	if g.slug != "" {
-		return ingressPanelPath + g.slug
-	}
-	return ""
 }
+
+// panelRequestPath is the route tail of a request's page in the app's panel.
+const panelRequestPath = "/requests/"
 
 // serveDirect serves direct mode once the API exists; 404 while it is off.
 func (g *gateway) serveDirect(w http.ResponseWriter, r *http.Request) {

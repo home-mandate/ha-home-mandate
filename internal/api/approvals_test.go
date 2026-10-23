@@ -264,3 +264,115 @@ func TestAuditCommittedIgnoresOtherEntries(t *testing.T) {
 	// A history entry that cannot be built (no request) is not announced.
 	h.srv.AuditCommitted(2, audit.Entry{Event: audit.EventDecision, ApprovalID: "x"})
 }
+
+// A request's page (issue #53): its approvers see what is to be confirmed; anyone else,
+// an unknown ID and a malformed one get the same answer; once it is answered everyone
+// sees only the outcome; only administrators reach the page at all (issue #92 later).
+func TestApprovalPage(t *testing.T) {
+	h := newHarness(t)
+	h.putApprover(approval.Approver{UserID: adminID, UI: true, UICritical: true})
+	id, done := h.ask(unlockRequest(adminID))
+	var page wireApprovalPage
+	h.ok(http.MethodGet, "/api/approvals/"+id, nil, &page)
+	if page.Status != pageOpen || page.Request == nil || page.Request.ID != id || page.Request.EntityID != "lock.front_door" ||
+		!page.Request.CanAnswer || page.Outcome != "" {
+		t.Errorf("approver = %+v", page)
+	}
+	unavailable := wireApprovalPage{Status: pageUnavailable}
+	for _, tc := range []struct {
+		name, user, id string
+	}{
+		{"not an approver", annaID, id},
+		{"unknown", adminID, strings.Repeat("0", 32)},
+		{"malformed", adminID, "0123456789ABCDEF0123456789ABCDEF"},
+		{"short", adminID, id[:31]},
+	} {
+		var got wireApprovalPage
+		h.ok(http.MethodGet, "/api/approvals/"+tc.id, nil, &got, as(tc.user))
+		if got != unavailable {
+			t.Errorf("%s = %+v", tc.name, got)
+		}
+	}
+	if r := h.do(http.MethodGet, "/api/approvals/"+id, nil, as(guestID)); r.errCode() != codeForbidden {
+		t.Errorf("no administrator = %d", r.code)
+	}
+	h.ok(http.MethodPost, "/api/approvals/"+id+"/answer", map[string]any{"approve": false}, nil)
+	<-done
+	// Not in the journal yet (or deleted after a day): nothing to show.
+	var got wireApprovalPage
+	h.ok(http.MethodGet, "/api/approvals/"+id, nil, &got)
+	if got != unavailable {
+		t.Errorf("ended, not in the journal = %+v", got)
+	}
+	h.closed.set(id, approval.Closed{Outcome: approval.OutcomeRejected})
+	for _, user := range []string{adminID, annaID} {
+		var got wireApprovalPage
+		h.ok(http.MethodGet, "/api/approvals/"+id, nil, &got, as(user))
+		if got != (wireApprovalPage{Status: pageClosed, Outcome: approval.OutcomeRejected}) {
+			t.Errorf("ended, seen by %s = %+v", user, got)
+		}
+	}
+}
+
+// An approver withdrawn while the request is open (removed from the approvers) no longer
+// sees it, though the mandate still names them.
+func TestApprovalPageAfterWithdrawal(t *testing.T) {
+	h := newHarness(t)
+	h.putApprover(approval.Approver{UserID: adminID, UI: true, UICritical: true})
+	h.putApprover(approval.Approver{UserID: annaID, UI: true, UICritical: true})
+	id, _ := h.ask(unlockRequest(adminID, annaID))
+	var got wireApprovalPage
+	h.ok(http.MethodGet, "/api/approvals/"+id, nil, &got, as(annaID))
+	if got.Status != pageOpen {
+		t.Fatalf("before = %+v", got)
+	}
+	if n := h.approvals.Withdraw(annaID); n != 1 {
+		t.Fatalf("withdrawn from %d", n)
+	}
+	var after wireApprovalPage
+	h.ok(http.MethodGet, "/api/approvals/"+id, nil, &after, as(annaID))
+	if after != (wireApprovalPage{Status: pageUnavailable}) {
+		t.Errorf("after = %+v", after)
+	}
+}
+
+// The journal comes first: a request it has closed shows its outcome even while the
+// service still lists it.
+func TestApprovalPageJournalFirst(t *testing.T) {
+	h := newHarness(t)
+	h.putApprover(approval.Approver{UserID: adminID, UI: true})
+	id, _ := h.ask(lightRequest(adminID))
+	h.closed.set(id, approval.Closed{Outcome: approval.OutcomeApproved})
+	var got wireApprovalPage
+	h.ok(http.MethodGet, "/api/approvals/"+id, nil, &got)
+	if got != (wireApprovalPage{Status: pageClosed, Outcome: approval.OutcomeApproved}) {
+		t.Errorf("page = %+v", got)
+	}
+}
+
+// The page passes on only known outcomes and causes; a cause only with cancelled; a
+// journal it cannot read is an error, never "unavailable".
+func TestApprovalPageShowsOnlyKnownOutcomes(t *testing.T) {
+	h := newHarness(t)
+	id := strings.Repeat("a", 32)
+	for name, tc := range map[string]struct {
+		in   approval.Closed
+		want wireApprovalPage
+	}{
+		"withdrawn":               {approval.Closed{Outcome: approval.OutcomeCancelled, Cause: audit.CauseWithdrawn}, wireApprovalPage{Status: pageClosed, Outcome: approval.OutcomeCancelled, Cause: audit.CauseWithdrawn}},
+		"unknown cause":           {approval.Closed{Outcome: approval.OutcomeCancelled, Cause: "<b>"}, wireApprovalPage{Status: pageClosed, Outcome: approval.OutcomeCancelled}},
+		"cause without cancelled": {approval.Closed{Outcome: approval.OutcomeTimeout, Cause: audit.CauseRevoked}, wireApprovalPage{Status: pageClosed, Outcome: approval.OutcomeTimeout}},
+		"unknown outcome":         {approval.Closed{Outcome: "maybe"}, wireApprovalPage{Status: pageUnavailable}},
+	} {
+		h.closed.set(id, tc.in)
+		var got wireApprovalPage
+		h.ok(http.MethodGet, "/api/approvals/"+id, nil, &got)
+		if got != tc.want {
+			t.Errorf("%s = %+v", name, got)
+		}
+	}
+	h.closed.err = approval.ErrJournal
+	if r := h.do(http.MethodGet, "/api/approvals/"+id, nil); r.errCode() != codeInternal {
+		t.Errorf("journal unreadable = %d %s", r.code, r.body)
+	}
+}

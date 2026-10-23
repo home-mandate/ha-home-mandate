@@ -108,6 +108,8 @@ const SCREENS: Screen[] = [
   { name: 'audit log', path: './#/audit' },
   { name: 'audit entry', path: './#/audit/8' },
   { name: 'requests', path: './#/audit/requests' },
+  { name: 'request page', path: './#/audit/requests/a1000000000000000000000000000001' },
+  { name: 'request page, unavailable', path: './#/audit/requests/00000000000000000000000000000000' },
   { name: 'agents', path: './#/agents' },
   { name: 'agents, adding', path: './#/agents?add' },
   { name: 'agents, adding to an empty household', path: './#/agents?add', mock: { empty: true } },

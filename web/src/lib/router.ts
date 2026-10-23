@@ -25,6 +25,8 @@ export type Route =
   | { name: 'audit'; query: Record<string, string[]> }
   | { name: 'audit_entry'; seq: number }
   | { name: 'requests' }
+  /** One request's page (issue #53), the target of every notification. */
+  | { name: 'request'; id: string }
   | { name: 'settings'; section: SettingsSection | null }
   | { name: 'not_found' };
 
@@ -35,6 +37,8 @@ const MANDATE_ID = /^[A-Za-z0-9_-]{4,64}$/;
 /** The new template has a segment no template name can take. */
 const NEW_TEMPLATE = '_new';
 const SEQ = /^[1-9]\d{0,14}$/;
+/** An approval request's ID (128 bits in hex, internal/api). */
+const REQUEST_ID = /^[0-9a-f]{32}$/;
 const NOT_FOUND: Route = { name: 'not_found' };
 
 function decode(segment: string): string | null {
@@ -66,6 +70,7 @@ export function parseHash(hash: string): Route {
       const id = decode(third);
       return id === null ? NOT_FOUND : { name: 'agent', id };
     }
+    if (first === 'audit' && second === 'requests') return REQUEST_ID.test(third) ? { name: 'request', id: third } : NOT_FOUND;
     const versions = first === 'mandates' && third === 'versions' && second !== undefined && MANDATE_ID.test(second);
     return versions ? { name: 'mandate_versions', id: second } : NOT_FOUND;
   }
@@ -141,6 +146,8 @@ export function href(route: Route): string {
       return `#/audit/${route.seq}`;
     case 'requests':
       return '#/audit/requests';
+    case 'request':
+      return `#/audit/requests/${route.id}`;
     case 'settings':
       return route.section ? `#/settings/${route.section}` : '#/settings';
   }
@@ -165,6 +172,7 @@ export function sectionOf(route: Route): Section | null {
     case 'audit':
     case 'audit_entry':
     case 'requests':
+    case 'request':
       return 'audit';
     case 'settings':
       return 'settings';

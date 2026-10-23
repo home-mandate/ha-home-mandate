@@ -539,10 +539,10 @@ func TestDirectSignInPerAddressKeepsTheNewest(t *testing.T) {
 		}
 		states = append(states, d.startState(b))
 	}
-	if d.srv.ui.finishSignIn(states[0], states[0]) {
+	if finished(d.srv.ui.finishSignIn(states[0], states[0])) {
 		t.Error("the oldest sign-in of the address did not give way")
 	}
-	if !d.srv.ui.finishSignIn(states[len(states)-1], states[len(states)-1]) {
+	if !finished(d.srv.ui.finishSignIn(states[len(states)-1], states[len(states)-1])) {
 		t.Error("the newest sign-in is gone")
 	}
 }
@@ -808,5 +808,47 @@ func TestDirectPrefixTricksAndBearerTokens(t *testing.T) {
 		if rec.Code == http.StatusOK && strings.Contains(rec.Body.String(), "csrf_token") {
 			t.Errorf("%s: a session without signing in", target)
 		}
+	}
+}
+
+// A notification's link (issue #53): with a session straight to the request's page;
+// without one through the sign-in, which ends on that page; a denied sign-in does not;
+// a link without a well-formed ID leads nowhere.
+func TestDirectRequestLinkKeepsItsTarget(t *testing.T) {
+	d := newDirect(t)
+	id := strings.Repeat("ab", 16)
+	page := "/ui/#/audit/requests/" + id
+
+	b := newBrowser()
+	start := d.send(b, http.MethodGet, "/ui/requests/"+id, nil)
+	if start.Code != http.StatusSeeOther || !strings.HasPrefix(start.Header().Get("Location"), "https://ha.example.org/auth/authorize?state=") ||
+		start.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("without a session = %d %s", start.Code, start.Header().Get("Location"))
+	}
+	to, _ := url.Parse(start.Header().Get("Location"))
+	if got := d.callback(b, "code-admin", to.Query().Get("state")); got != page {
+		t.Errorf("after the sign-in = %q", got)
+	}
+	if r := d.send(b, http.MethodGet, "/ui/requests/"+id, nil); r.Code != http.StatusSeeOther || r.Header().Get("Location") != page {
+		t.Errorf("with a session = %d %s", r.Code, r.Header().Get("Location"))
+	}
+	// The plain sign-in still ends on the start page.
+	if got := d.signInWith(newBrowser(), "code-admin"); got != "/ui/" {
+		t.Errorf("plain sign-in = %q", got)
+	}
+
+	guest := newBrowser()
+	to, _ = url.Parse(d.send(guest, http.MethodGet, "/ui/requests/"+id, nil).Header().Get("Location"))
+	if got := d.callback(guest, "code-guest", to.Query().Get("state")); got != signInDenied {
+		t.Errorf("no administrator = %q", got)
+	}
+
+	for _, bad := range []string{"", strings.ToUpper(id), id[:31], id + "/x", "..%2f..%2fapi", "https:%2f%2fevil.example"} {
+		if r := d.send(newBrowser(), http.MethodGet, "/ui/requests/"+bad, nil); r.Code != http.StatusNotFound {
+			t.Errorf("%q = %d %s", bad, r.Code, r.Header().Get("Location"))
+		}
+	}
+	if r := d.send(b, http.MethodPost, "/ui/requests/"+id, nil); r.Code == http.StatusSeeOther {
+		t.Errorf("POST = %d", r.Code)
 	}
 }
