@@ -874,7 +874,7 @@ func (g *Gateway) entry(a agent.Agent, d pdp.Decision, withEvaluation bool, resu
 		Request: &audit.Request{Time: d.Time, Timezone: d.TimeZone, Revoked: d.Status == evaluator.StatusRevoked,
 			Resource: audit.Resource{EntityID: d.Resource.EntityID, Category: d.Resource.Category, Areas: d.Resource.Areas, Critical: d.Resource.Critical,
 				CriticalStated: withEvaluation && d.Result.NotEnforced},
-			Action:   d.Action, Parameters: d.Parameters},
+			Action: d.Action, Parameters: d.Parameters},
 		Result: &result,
 	}
 	if withEvaluation {
