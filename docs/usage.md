@@ -193,8 +193,8 @@ verified", the values it wants to set, and has two buttons: **Allow** and **Deny
 
 Optionally, **Also in Home Assistant's notification bell** shows a neutral hint in Home
 Assistant while a request waits, without agent, device or reason, because every Home
-Assistant user can see that bell. It says where to answer: as an app, "Open Home-Mandate
-in the sidebar"; in container mode, "Open the Home-Mandate UI", with a link to the
+Assistant user can see that bell. It says where to answer: as an app, a link that opens the
+request in the Home-Mandate panel; in container mode, "Open the Home-Mandate UI", with a link to the
 request's page (your public URL with `/ui/requests/` and the request's random number) when
 Home-Mandate serves the UI there (direct mode, see
 [Troubleshooting](troubleshooting.md#the-ui)). Everyone who can sign in to Home Assistant
@@ -328,8 +328,8 @@ expand it (depending on the phone) to see **Allow** and **Deny**; the notificati
 in its second line. On an iPhone, the phone asks you to unlock it first for a critical
 action.
 
-A tap on the notification itself opens the place to answer: the Home-Mandate panel in the
-app, or the request's own page in the Home-Mandate UI in a container with its own
+A tap on the notification itself opens the place to answer: the request's own page, in the
+Home-Mandate panel in the app, or in the Home-Mandate UI in a container with its own
 address (direct mode), after signing in if needed; without either, the Companion App
 opens. The page shows exactly this request with large **Decline** and **Approve**
 buttons, and once it is answered only how it ended. Answering there needs

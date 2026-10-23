@@ -390,10 +390,13 @@ checked on every request.
   request as `invalid_response` and warns the approvers (decision W8, 2026-10-02).
 - A tap on the notification (issues #49, #53) opens where the request can be answered:
   `data.url` (iOS) and `data.clickAction` (Android) are the request's own page in direct
-  mode (`<public URL>/ui/requests/<request ID>`, section 12), the app's panel in the app
-  (`/app/<slug>`, the slug from the Supervisor's `/addons/self/info`; it opens also when
-  the panel is not in the sidebar, `/hassio/ingress/<slug>` does not), and absent
-  otherwise. The link carries at most the UI's random request ID, which is no secret
+  mode (`<public URL>/ui/requests/<request ID>`, section 12), in the app the panel with
+  the request in its route (`/app/<slug>/requests/<request ID>`, the slug from the
+  Supervisor's `/addons/self/info`; `/app/<slug>` opens also when the panel is not in the
+  sidebar, `/hassio/ingress/<slug>` does not), and absent otherwise. Home Assistant's
+  frontend loads the UI at the Ingress address alone and hands the rest of the route to an
+  app that subscribes (`home-assistant/subscribe-properties`); the UI follows it only from
+  its parent window of the same origin and only to a well-formed request ID. The link carries at most the UI's random request ID, which is no secret
   (the page checks who opens it), and never the nonce; answering in the UI needs the UI
   channel as everywhere. On Android the notification is `sticky`, so a
   tap does not dismiss it. When the Companion App reports it cleared
@@ -679,7 +682,8 @@ checked on every request.
   content of the request (no agent, device, reason or nonce) and with its own
   random ID (`hm_approval_…`, not the request ID: persistent notifications are visible to
   every HA user), removed however the request ends. It says where to answer: as an app,
-  Home-Mandate in the sidebar; in container mode, the Home-Mandate UI, with a Markdown
+  with a link to the request in the panel (`/app/<slug>/requests/<request ID>`, as the
+  tap), or Home-Mandate in the sidebar while the slug is unknown; in container mode, the Home-Mandate UI, with a Markdown
   link to the request's page (`<public URL>/ui/requests/<request ID>`, issue #53) only in
   direct mode (section 12), because `/ui/` exists nowhere else. The link is the configured
   address and the request's random ID, so every HA user sees that a request waits and its

@@ -21,6 +21,8 @@ const markdownUnsafe = "()[]<>\\`\"'"
 // the bell names the UI without a link.
 func bellText(lang i18n.Lang, app bool, link string) string {
 	switch {
+	case app && linkablePath(link):
+		return i18n.T(lang, i18n.ApprovalBellMessageAppLink, i18n.Args{"url": link})
 	case app:
 		return i18n.T(lang, i18n.ApprovalBellMessage, nil)
 	case linkable(link):
@@ -44,6 +46,18 @@ func linkable(link string) bool {
 	}
 	return (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" && u.User == nil && u.Opaque == "" &&
 		u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" && !strings.Contains(link, "#")
+}
+
+// linkablePath tells whether link is a path of Home Assistant's frontend, such as the
+// app's panel, that can stand in a Markdown link as it is: absolute, not to another host,
+// without query or fragment.
+func linkablePath(link string) bool {
+	if !strings.HasPrefix(link, "/") || strings.HasPrefix(link, "//") || strings.ContainsAny(link, markdownUnsafe+"?#") ||
+		strings.ContainsFunc(link, isSpaceOrControl) {
+		return false
+	}
+	u, err := url.Parse(link)
+	return err == nil && u.Scheme == "" && u.Host == "" && u.Path == link
 }
 
 func isSpaceOrControl(r rune) bool {

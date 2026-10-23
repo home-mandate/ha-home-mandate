@@ -301,7 +301,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 			a := uiAPI.Load()
 			return a != nil && a.BellEnabled()
 		},
-		App: s.cfg.Mode == config.ModeApp, RequestAddress: g.requestAddress, TapTarget: g.tapTarget,
+		App: s.cfg.Mode == config.ModeApp, RequestAddress: g.requestAddress, TapTarget: g.requestAddress,
 		OnOpened: func(o approval.Open) {
 			if a := uiAPI.Load(); a != nil {
 				a.ApprovalOpened(o)
@@ -487,26 +487,24 @@ func (g *gateway) uiAddress() string {
 // /hassio/ingress/<slug> is a 404 there).
 const ingressPanelPath = "/app/"
 
-// requestAddress is the link of the request id's page in direct mode, which keeps the
-// request through the sign-in (issue #53); "" without direct mode.
+// requestAddress is the link of the request id's page (issue #53), for the tap on its
+// notification and the bell: in direct mode the
+// link that keeps the request through the sign-in; in the app the panel with the route
+// tail requests/<id>, which Home Assistant's frontend hands the UI (web/src/lib/app/
+// panel.ts); "" otherwise.
 func (g *gateway) requestAddress(id string) string {
-	if g.direct == nil {
+	switch {
+	case g.direct != nil:
+		return g.state.cfg.PublicURL + api.DirectRequestPath + id
+	case g.slug != "":
+		return ingressPanelPath + g.slug + panelRequestPath + id
+	default:
 		return ""
 	}
-	return g.state.cfg.PublicURL + api.DirectRequestPath + id
 }
 
-// tapTarget is what a tap on the notification of the request id opens: its page in
-// direct mode, the app's panel in Home Assistant (issue #49), or nothing.
-func (g *gateway) tapTarget(id string) string {
-	if address := g.requestAddress(id); address != "" {
-		return address
-	}
-	if g.slug != "" {
-		return ingressPanelPath + g.slug
-	}
-	return ""
-}
+// panelRequestPath is the route tail of a request's page in the app's panel.
+const panelRequestPath = "/requests/"
 
 // serveDirect serves direct mode once the API exists; 404 while it is off.
 func (g *gateway) serveDirect(w http.ResponseWriter, r *http.Request) {

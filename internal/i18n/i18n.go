@@ -58,6 +58,9 @@ const (
 	// Markdown link), without an address otherwise (issue #48).
 	ApprovalBellMessageLink Key = "approval_bell_message_link"
 	ApprovalBellMessageUI   Key = "approval_bell_message_ui"
+	// The bell of the app with a link to the request's page in the panel ({url}, a path
+	// of Home Assistant's frontend; issue #53).
+	ApprovalBellMessageAppLink Key = "approval_bell_message_app_link"
 
 	// Sent after a restart in place of a request's notification (same tag).
 	ApprovalInterruptedTitle   Key = "approval_interrupted_title"
@@ -159,7 +162,7 @@ var actions = []string{"read", "turn_on", "turn_off", "set", "set_temperature", 
 // Keys lists every message key.
 var Keys = append([]Key{
 	ApprovalTitle, ApprovalMessage, ApprovalMessageState, ApprovalMessageRead, ApprovalReason, ApprovalParams, ApprovalIdentity, ApprovalNoAnswer, ApprovalExpand, ApprovalApprove, ApprovalDeny,
-	ApprovalInvalidTitle, ApprovalInvalidMessage, ApprovalBellTitle, ApprovalBellMessage, ApprovalBellMessageLink, ApprovalBellMessageUI, ApprovalTestTitle, ApprovalTestMessage,
+	ApprovalInvalidTitle, ApprovalInvalidMessage, ApprovalBellTitle, ApprovalBellMessage, ApprovalBellMessageLink, ApprovalBellMessageUI, ApprovalBellMessageAppLink, ApprovalTestTitle, ApprovalTestMessage,
 	ApprovalInterruptedTitle, ApprovalInterruptedMessage, ApprovalUnknownTitle, ApprovalUnknownMessage,
 	CheckpointTitle, CheckpointMessage, RenameFloodTitle, RenameFloodMessage,
 	AuditModeProposedTitle, AuditModeProposedMessage, AuditModeActiveTitle, AuditModeActiveMessage,

@@ -14,6 +14,7 @@
   "approval_bell_message": "An approval request is waiting for an answer. Open Home-Mandate in the sidebar.",
   "approval_bell_message_link": "An approval request is waiting for an answer. Answer it in the Home-Mandate UI: [Open the request]({url})",
   "approval_bell_message_ui": "An approval request is waiting for an answer. Open the Home-Mandate UI.",
+  "approval_bell_message_app_link": "An approval request is waiting for an answer: [open it in Home-Mandate]({url}).",
   "approval_test_title": "Home-Mandate: test",
   "approval_test_message": "Test from Home-Mandate: approval requests reach this device. Nothing to do here.",
   "approval_interrupted_title": "Approval request ended",

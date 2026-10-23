@@ -26,6 +26,7 @@
   import TemplateList from './lib/pages/TemplateList.svelte';
   import Overview from './lib/pages/Overview.svelte';
   import RequestPage from './lib/pages/RequestPage.svelte';
+  import { followPanel } from './lib/app/panel.ts';
   import Requests from './lib/pages/Requests.svelte';
   import Settings from './lib/pages/Settings.svelte';
   import AgentConnect from './lib/pages/AgentConnect.svelte';
@@ -64,6 +65,9 @@
       return undefined;
     }
   }
+
+  // In the app's panel, a notification's link names the request in the panel's route.
+  onMount(() => followPanel({ self: window, parent: window.parent, origin: window.location.origin }, (id) => go({ name: 'request', id })));
 
   // Browser notifications for new requests (decision S4), on every page.
   const notifier = new BrowserNotifier({

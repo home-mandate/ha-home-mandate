@@ -390,8 +390,8 @@ func TestUIAddressOnlyInDirectMode(t *testing.T) {
 	}
 }
 
-// Issues #49 and #53: a tap on a request's notification opens its page in direct mode,
-// the app's panel in Home Assistant, or nothing.
+// Issues #49 and #53: a tap on a request's notification and the bell open its page: in
+// direct mode through its link, in the app in the panel with the route tail, or nothing.
 func TestTapTarget(t *testing.T) {
 	direct := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 	for _, tc := range []struct {
@@ -401,14 +401,14 @@ func TestTapTarget(t *testing.T) {
 		slug   string
 		want   string
 	}{
-		{"app", config.Config{Mode: config.ModeApp}, nil, "a0d7b954_home_mandate", "/app/a0d7b954_home_mandate"},
+		{"app", config.Config{Mode: config.ModeApp}, nil, "a0d7b954_home_mandate", "/app/a0d7b954_home_mandate/requests/0123456789abcdef0123456789abcdef"},
 		{"app, slug unknown", config.Config{Mode: config.ModeApp}, nil, "", ""},
 		{"container, direct mode", config.Config{Mode: config.ModeContainer, PublicURL: "https://hm.example.org"}, direct, "",
 			"https://hm.example.org/ui/requests/0123456789abcdef0123456789abcdef"},
 		{"container without direct mode", config.Config{Mode: config.ModeContainer, PublicURL: "https://hm.example.org"}, nil, "", ""},
 	} {
 		g := &gateway{state: &state{cfg: tc.cfg}, direct: tc.direct, slug: tc.slug}
-		if got := g.tapTarget("0123456789abcdef0123456789abcdef"); got != tc.want {
+		if got := g.requestAddress("0123456789abcdef0123456789abcdef"); got != tc.want {
 			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
 		}
 	}

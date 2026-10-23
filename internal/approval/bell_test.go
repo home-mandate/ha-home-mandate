@@ -23,6 +23,14 @@ func TestBellText(t *testing.T) {
 	}{
 		{"app, de", i18n.DE, true, "", "Eine Rückfrage wartet auf Antwort. Öffne Home-Mandate in der Seitenleiste."},
 		{"app, en", i18n.EN, true, "", "An approval request is waiting for an answer. Open Home-Mandate in the sidebar."},
+		{"app with link, de", i18n.DE, true, "/app/local_home_mandate/requests/0123456789abcdef0123456789abcdef",
+			"Eine Rückfrage wartet auf Antwort: [in Home-Mandate öffnen](/app/local_home_mandate/requests/0123456789abcdef0123456789abcdef)."},
+		{"app with link, en", i18n.EN, true, "/app/local_home_mandate/requests/0123456789abcdef0123456789abcdef",
+			"An approval request is waiting for an answer: [open it in Home-Mandate](/app/local_home_mandate/requests/0123456789abcdef0123456789abcdef)."},
+		{"app with a link that is no path", i18n.EN, true, "https://evil.example/x", "An approval request is waiting for an answer. Open Home-Mandate in the sidebar."},
+		{"app with another host", i18n.EN, true, "//evil.example/x", "An approval request is waiting for an answer. Open Home-Mandate in the sidebar."},
+		{"app with a fragment", i18n.EN, true, "/app/x#y", "An approval request is waiting for an answer. Open Home-Mandate in the sidebar."},
+		{"app with a parenthesis", i18n.EN, true, "/app/x)(y", "An approval request is waiting for an answer. Open Home-Mandate in the sidebar."},
 		{"container with link, de", i18n.DE, false, link,
 			"Eine Rückfrage wartet auf Antwort. Beantworte sie in der Oberfläche von Home-Mandate: [Rückfrage öffnen](" + link + ")"},
 		{"container with link, en", i18n.EN, false, link,
@@ -77,6 +85,7 @@ func TestBellMessageByMode(t *testing.T) {
 		link string
 	}{
 		{"app", true, ""},
+		{"app, panel", true, "/app/local_home_mandate/requests/"},
 		{"container, direct mode", false, link},
 		{"container, no direct mode", false, ""},
 	}
@@ -113,7 +122,7 @@ func TestBellMessageByMode(t *testing.T) {
 					t.Errorf("message %q, want %q", rung[0].n.Message, want)
 				}
 				text := rung[0].n.Title + " " + rung[0].n.Message
-				if !c.app && c.link != "" && !strings.Contains(text, link+id) {
+				if c.link != "" && !strings.Contains(text, c.link+id) {
 					t.Errorf("bell text %q does not link the request's page", text)
 				}
 				for _, secret := range []string{rung[0].id, push.n.Tag, nonce} {
