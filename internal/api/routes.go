@@ -218,12 +218,13 @@ func (s *Server) checkWrite(r *http.Request, user string) error {
 // same-origin where the browser sends it. Browsers send it only to secure origins, so
 // Home Assistant reached over plain HTTP (http://homeassistant.local:8123) gets none;
 // then the Origin, which browsers send on every write, must be the UI's own, as for the
-// event stream (streamFromPage).
+// event stream (streamFromPage). This is defence in depth: another site's page cannot
+// send X-HM-CSRF (or X-Forwarded-Host) without a preflight, which fails without CORS.
 func (s *Server) fromOwnPage(r *http.Request) bool {
 	if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
 		return site == "same-origin"
 	}
-	return s.streamFromPage(r)
+	return len(r.Header.Values("Origin")) == 1 && s.streamFromPage(r)
 }
 
 // readBody reads at most maxBody bytes of JSON for routes that take a body, and refuses
