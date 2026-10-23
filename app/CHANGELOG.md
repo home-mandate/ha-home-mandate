@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.1.0-rc.7
+
+Sixth release candidate. Experimental. Implements the Home-Mandate Specification
+v0.1.0-rc.3.
+
+Mandates
+- Areas and floors: a device has its room and, if the room is on a floor in Home
+  Assistant, the floor (`floor:` and its ID). A rule can name a room or a whole floor (#80)
+- Devices that leave or enter a room or floor a rule names are listed in the mandate list
+  with the mandates they affect, until someone marks them as seen (#80)
+- The climate mode can be limited: a rule on "set mode" lets through only the checked
+  modes. "Automatic" stands for Home Assistant's `heat_cool` and `auto` (#81)
+- Audit mode (trial): a mandate can be tried before it enforces its denials. What it would
+  deny is carried out and logged as "not enforced"; critical actions, confirmations, the
+  rate limit and the emergency stop still apply, and the agent does not notice. Switching
+  it on takes effect only after someone in the household confirms that version; the
+  approvers are notified when it is proposed and when it takes effect (#82)
+- The editor says when limits need a rule of their own (an allowing rule whose actions all
+  carry the value, e.g. only "set mode")
+
+Agents
+- Numbers are taken exactly as the agent sends them: a value that is no whole step of its
+  unit is refused, also where floating point would round it (#81)
+- `list_devices` gives each device its `areas` (room and floor) and lists floors; the
+  `area` filter takes a floor as well. `list_my_permissions` names permitted modes (#80, #81)
+
+Audit log
+- Decision entries name the set of areas and the evaluated values; the details show them
+  ("Mode: Cool", "Temperature: 21.5 °C"). The log can be filtered by "not enforced"
+- Upgrade: a log written by an earlier version whose entries name a single area no longer
+  matches the audit format of the specification. On the first start it is archived
+  unchanged as `audit-archive-<time>.jsonl` in the data directory and the log is truncated
+  with a signed checkpoint, only if its chain and checkpoints are intact
+
 ## 0.1.0-rc.6
 
 Fifth release candidate. Experimental. Implements the Home-Mandate Specification
