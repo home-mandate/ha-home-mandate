@@ -1033,7 +1033,9 @@ the browser with a port of the evaluation rule that passes the conformance cases
 The UI talks only to `api/…` on its own origin (contract: `web/src/lib/api/types.ts`).
 Every request goes through: Supervisor address → user → administrator (section 8) → a
 request limit per user (600 per minute). Writes additionally need `Sec-Fetch-Site:
-same-origin` and the header `X-HM-CSRF` (decision U4): HMAC-SHA256 under a key that lives
+same-origin` (browsers send it only to secure origins; without it, as for Home Assistant
+over plain HTTP, the `Origin` must name the host the browser asked for, `X-Forwarded-Host`
+behind Ingress, or the public URL in direct mode) and the header `X-HM-CSRF` (decision U4): HMAC-SHA256 under a key that lives
 only in the process, over the user and a 12-hour period; valid in its period and the next,
 compared in constant time. Bodies are JSON, at most 64 KiB, no unknown fields; errors carry a
 code and at most a JSON pointer, never internal details or the value sent. There is no CORS.

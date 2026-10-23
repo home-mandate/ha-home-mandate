@@ -202,9 +202,9 @@ func (s *Server) wrap(kind bodyKind, h handler) http.Handler {
 }
 
 // checkWrite applies what every write needs (decision U4): a request of the page
-// itself (Sec-Fetch-Site), and the session's CSRF token.
+// itself (fromOwnPage), and the session's CSRF token.
 func (s *Server) checkWrite(r *http.Request, user string) error {
-	if r.Header.Get("Sec-Fetch-Site") != "same-origin" {
+	if !s.fromOwnPage(r) {
 		return fail(codeForbidden)
 	}
 	tokens := r.Header.Values("X-HM-CSRF")
@@ -212,6 +212,18 @@ func (s *Server) checkWrite(r *http.Request, user string) error {
 		return fail(codeCSRF)
 	}
 	return nil
+}
+
+// fromOwnPage tells whether a request comes from the UI's own page: Sec-Fetch-Site
+// same-origin where the browser sends it. Browsers send it only to secure origins, so
+// Home Assistant reached over plain HTTP (http://homeassistant.local:8123) gets none;
+// then the Origin, which browsers send on every write, must be the UI's own, as for the
+// event stream (streamFromPage).
+func (s *Server) fromOwnPage(r *http.Request) bool {
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
+		return site == "same-origin"
+	}
+	return s.streamFromPage(r)
 }
 
 // readBody reads at most maxBody bytes of JSON for routes that take a body, and refuses
