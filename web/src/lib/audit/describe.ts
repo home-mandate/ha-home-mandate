@@ -11,7 +11,7 @@ import { m } from '../i18n.ts';
 import { cleanUntrusted, isolate } from '../untrusted.ts';
 
 /** decisionOf returns the decision of a request, or null for anything that is no decision. */
-export function decisionOf(entry: AuditEntry): DecisionFilter | null {
+export function decisionOf(entry: AuditEntry): Exclude<DecisionFilter, 'not_enforced'> | null {
   const evaluation = entry.event === 'decision' ? entry.evaluation : undefined;
   if (!evaluation) return null;
   return evaluation.decision === 'deny' && evaluation.reason === 'no_match' ? 'default' : evaluation.decision;

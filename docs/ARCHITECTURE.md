@@ -45,13 +45,13 @@ without restructuring.
 | `cmd/home-mandate` | Entry point, configuration, starting the services |
 | `internal/config` | Reads `/data/options.json` (app mode) or environment variables (container mode) |
 | `internal/ha` | Client for the HA WebSocket API: states, entity/device/area registry, service calls, notifications, event subscriptions |
-| `internal/catalog` | The resource directory: maps HA entities to the mandate vocabulary (category, area, permitted actions), keeps the household's critical marks, reports renamed entities |
+| `internal/catalog` | The resource directory: maps HA entities to the mandate vocabulary (category, set of areas with the floor, permitted actions), keeps the household's critical marks, reports renamed entities and devices that changed their areas |
 | `internal/mandate` | Storing, versioning and validating mandates; issues every version with issuer and version (SPEC-v0 section 3.5); returns the candidates for the selection. The **evaluation** comes from the reference library `home-mandate/spec/evaluator` (Go module, pinned version) |
 | `internal/pdp` | Selects the mandate (SPEC-v0 section 4.3) and evaluates; AuthZEN endpoint `POST /access/v1/evaluation`, bound to loopback only |
 | `internal/mcp` | MCP server (Streamable HTTP), own tools, calls the PDP before every action |
 | `internal/oauth` | Authorization server for agents: Authorization Code + PKCE, Device Authorization Grant (pairing code), token management |
 | `internal/approval` | Approval requests via actionable notifications, waiting for the answer, timeout |
-| `internal/audit` | Audit log, hash-chained, 30 days retention |
+| `internal/audit` | Audit log, hash-chained, 30 days retention; archives a log of an earlier format at start-up |
 | `home-mandate/spec/ratelimit` | At most N requests of an agent in every 3600 s, counted per mandate; restored from the audit log on start |
 | `internal/store` | SQLite (pure Go, no CGO), migrations |
 | `internal/removal` | Removing revoked agents and mandates for a human and for the retention, deleting their data once no audit entry refers to them (tombstones) |
@@ -112,17 +112,22 @@ tells no more than the grant. Its parameters are checked as for any other device
    2, 4 … seconds (at most every minute) until it does or the connection ends.
    The clock is checked against the audit log, then the rate limit, counted per mandate
    (SPEC-v0 section 11.2). Exceeded → refusal, logged.
-4. `catalog` resolves the entity exactly as Home Assistant spells it: category `lock`, area
-   `hallway`, and whether the household marked it as critical. An entity it does not know
+4. `catalog` resolves the entity exactly as Home Assistant spells it: category `lock`, areas
+   `hallway` and `floor:ground_floor`, and whether the household marked it as critical. An entity it does not know
    is denied with `unknown_resource`.
-5. `mcp` derives the parameters of the action in the units of the vocabulary (brightness in
-   percent, temperature in hundredths of a degree Celsius, position, volume) and refuses a
+5. `mcp` derives the parameters of the action in the types and units of the vocabulary
+   (brightness in percent, temperature in hundredths of a degree Celsius, position,
+   volume; the HVAC mode as `mode`, where `heat_cool` and `auto` both become `auto` per
+   the Home Assistant profile, and the requested mode is executed) and refuses a
    call that sets the same quantity twice or a value that is no integer in that unit
    (0.335 as a volume, 21.555 °C), before the decision and also under a rule without a
    limit (SPEC-v0 section 4.5): `invalid_params` naming the parameter, but only for a
    device the agent may read; for any other it is `not_found`, logged as `failed` /
-   `invalid_params` without an evaluation. Binary noise (0.29 is 28.999… percent) is no
-   fraction; what is evaluated and executed is the canonical value of the step (0.29).
+   `invalid_params` without an evaluation. Numbers are read from the arguments as the agent
+   sent them, by their exact decimal value (the MCP SDK decodes them through floating point
+   first, so `params` is read again from the raw arguments): 19.99 °C are 1999 hundredths,
+   50.00000000000000000001 % is no whole percent and refused; exponents beyond two digits
+   are refused. What is evaluated is exactly what is executed.
    A temperature is evaluated in the household's unit and as exactly one parameter (spec
    #21 part B): `temperature` (0.01 °C) in a °C household, `temperature_f` (0.01 °F) in a
    °F household, never converted; its range is −50 to 100 °C or −58 to 212 °F. A rule
@@ -188,12 +193,37 @@ was missed.
   the catalog is not ready and every request is denied. When storing has failed for two
   minutes, the UI says so. More than 50 renames in an hour hint at a broken integration:
   the UI shows a notice and the approvers get a notification, at most once an hour.
-- **Areas.** A rule on an area covers the devices that are in it now. A removed area is
-  reported like a renamed device; a device moved out of an area leaves the area's rules,
-  which the editor points out at every `deny` or `ask` rule that names only an area.
+- **Areas.** A device has a set of areas (SPEC-v0 section 3.4, Home Assistant profile): the
+  area of the entity, otherwise of its device, and `floor:` with the floor ID if that area
+  is on a floor, always prefixed, as area and floor IDs come from separate registries. A
+  floor ID too long for an area keeps its beginning and ends in a hash of the whole ID. A
+  rule names one area or one floor and covers the devices that are in it now. A removed area
+  is reported like a renamed device; a device moved out of an area leaves the area's rules,
+  which the editor points out at every `deny` or `ask` rule that names only an area. Every
+  refresh compares the sets with those last seen (`directory_areas`); a device that left or
+  entered an area that a rule of an active mandate names is shown in the mandate list with
+  the affected mandates (`area_moves`) until a human marks it as seen. A new device enters its
+  areas; the first refresh of a household only records them.
 - **Saving.** A rule that names a device together with a category the device does not have
   is refused (it could never apply); a device the directory does not know is stored and
   reported.
+- **Audit mode** (SPEC-v0 sections 4.6 and 11.6). A mandate with `"enforce": false` is
+  tried: a deny by its rules (`no_match` or a deny rule) of an action that is not critical
+  is executed as an allow and recorded with `enforced: false` (and `request.resource.critical`
+  stated); critical actions, `ask`, the rate limit and the emergency stop stay enforced. The
+  agent learns nothing: answers, `list_devices`, `list_my_permissions` and `approval_status`
+  treat such a deny as an allow. A confirmed `ask` that is a deny when evaluated again is not
+  executed, enforced or not. Switching audit mode on (`evaluator.EntersAuditMode`) is
+  possible only in the editor of an existing mandate: the new version waits in
+  `mandate_pending` and the version in force stays until a human of the household confirms
+  it with its digest (`POST api/mandates/{id}/audit-mode/confirm`); every other version
+  that takes effect, a revocation or `…/discard` ends the proposal. A new mandate, a
+  template (which never carries `enforce`) or any other path that would switch it on is
+  refused. Every approver the mandate names gets a notification when it is proposed and
+  when it takes effect. Switching it off takes effect at once. The mandate list marks
+  mandates in audit mode and waiting proposals, the editor says what audit mode does and
+  that reading is never protected by it, and the log filters the requests that were not
+  enforced (`decision=not_enforced`).
 
 ### Selection and versions of the mandate
 
@@ -747,6 +777,14 @@ verify them.
   prints `first_seq` and `truncation`, the UI shows the chain broken at the first remaining
   entry, and the gateway logs an error at start; if the log has checkpoints but none
   covers the truncation, it is tampering and the gateway does not start.
+  A log that an earlier version wrote and that no longer verifies only because the audit
+  format changed (decision entries with the single `area` of a resource, before a resource
+  had a set of areas) is archived at start-up: every entry, unchanged, goes to
+  `audit-archive-<time>.jsonl` in the data directory (readable only by the gateway and
+  verifiable with the version that wrote it), and the log is truncated after a checkpoint,
+  with `log.truncated` and another checkpoint (actor `system`, ID `upgrade`). This happens
+  only if the chain of the old entries is intact; otherwise nothing is archived and the
+  gateway does not start, as for any broken log.
 - **The clock.** Validity periods, time windows and the audit log follow the host clock.
   While it lies more than a minute behind the latest time in the audit log, nothing is
   decided (SPEC-v0 section 11.4): requests fail with `clock_behind`, the UI shows a banner.

@@ -30,6 +30,7 @@ const LABELS: Readonly<Record<Setting, () => string>> = {
   valid_from: () => m.editor_valid_from(),
   expires: () => m.mandates_col_valid_until(),
   limit: () => m.editor_rate(),
+  audit_mode: () => m.audit_switch_label(),
   timeout: () => m.timeout_label(),
   approvers: () => m.editor_approvers(),
   order: () => m.save_order_changed(),
@@ -60,6 +61,8 @@ function value(setting: Setting, of: Edited, ctx: FormatContext, people: People)
     }
     case 'limit':
       return formatNumber(draft.limits.max_actions_per_hour, ctx);
+    case 'audit_mode':
+      return draft.enforce === false ? m.audit_mode_on() : m.audit_mode_off();
     case 'timeout':
       return timeoutText(draft.approval.timeout, ctx.locale);
     case 'approvers':

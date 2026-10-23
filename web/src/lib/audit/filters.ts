@@ -29,7 +29,9 @@ export interface AuditFilters {
 export const DEFAULT_FILTERS: AuditFilters = { period: 'all', agent: null, device: null, q: '', type: 'all', decisions: [], seq: null };
 
 export const PERIODS: readonly Period[] = ['24h', '7d', 'all'];
-export const DECISIONS: readonly DecisionFilter[] = ['allow', 'ask', 'deny', 'default'];
+/** The filter of the denies a mandate in audit mode did not enforce. */
+export const NOT_ENFORCED = 'not_enforced' as const satisfies DecisionFilter;
+export const DECISIONS: readonly DecisionFilter[] = ['allow', 'ask', 'deny', 'default', NOT_ENFORCED];
 export const EVENTS: readonly AuditEvent[] = [
   'decision',
   'agent.registered',

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -35,7 +36,8 @@ const (
 
 // Intervals of the event stream; variables so that tests can shorten them.
 var (
-	csrfWait     = 10 * time.Second
+	// csrfWait is how long the stream waits for the CSRF token; tests shorten it.
+	csrfWait     = atomicDuration(10 * time.Second)
 	adminRecheck = 60 * time.Second
 	heartbeat    = 30 * time.Second // a "system" event; the UI's watchdog notices a dead stream
 	tailEvery    = time.Second
@@ -267,7 +269,7 @@ func (s *Server) readCSRF(ctx context.Context, conn *websocket.Conn, user string
 		typ, data, err := conn.Read(ctx)
 		got <- message{typ, data, err}
 	}()
-	timer := time.NewTimer(csrfWait)
+	timer := time.NewTimer(time.Duration(csrfWait.Load()))
 	defer timer.Stop()
 	var m message
 	select {
@@ -422,4 +424,11 @@ func (s *Server) tail(ctx context.Context) {
 	if system {
 		s.publishSystem(ctx)
 	}
+}
+
+// atomicDuration is a duration that a test may change while handlers read it.
+func atomicDuration(d time.Duration) *atomic.Int64 {
+	var v atomic.Int64
+	v.Store(int64(d))
+	return &v
 }

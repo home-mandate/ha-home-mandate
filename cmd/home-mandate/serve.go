@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"maps"
@@ -15,6 +16,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,7 +56,7 @@ const (
 )
 
 // registryEvents keep the catalog current (ARCHITECTURE section 11.2).
-var registryEvents = []string{"entity_registry_updated", "device_registry_updated", "area_registry_updated"}
+var registryEvents = []string{"entity_registry_updated", "device_registry_updated", "area_registry_updated", "floor_registry_updated"}
 
 // restoredLimiter returns the rate limiter filled with the requests of the last hour
 // from the audit log, so that a restart does not hand every agent a fresh limit
@@ -113,6 +115,22 @@ func serve(ctx context.Context, e env) int {
 		logger.Warn(warning)
 	}
 
+	// A log an earlier version wrote no longer verifies once the audit schema changed
+	// (sets of areas): it is archived unchanged next to the database and truncated.
+	var archive string
+	archived, err := s.log.ArchiveLegacy(ctx, func() (io.WriteCloser, error) {
+		w, name, err := newArchive(cfg.DataDir, time.Now())
+		archive = name
+		return w, err
+	}, audit.Actor{Kind: audit.ActorSystem, ID: "upgrade"})
+	if ctx.Err() != nil {
+		return exitOK
+	}
+	if err != nil {
+		logger.Error("cannot archive the audit log of an earlier version", "error", err)
+	} else if archived > 0 {
+		logger.Warn("audit log of an earlier version archived and truncated", "entries", archived, "archive", archive)
+	}
 	// A stop signal during start-up cancels ctx and makes the step in progress fail; that
 	// is a clean stop, not a failed start.
 	r, err := s.log.Verify(ctx)
@@ -181,6 +199,7 @@ func recoverApprovals(ctx context.Context, journal *approval.Journal, log *audit
 type gateway struct {
 	marks   *catalog.Marks
 	renames *catalog.Renames
+	moves   *catalog.AreaMoves
 	state   *state
 	logger  *slog.Logger
 	client  *ha.Client
@@ -253,6 +272,10 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	renames.SetRelevance(s.mandates.Named)
 	g.catalog.SetAliases(renames)
 	g.renames = renames
+	// Devices that change their areas are reported until a human looked (SPEC-v0 section 3.4).
+	if g.moves, err = catalog.LoadAreaMoves(ctx, s.store.DB()); err != nil {
+		return nil, err
+	}
 	for _, event := range append([]string{ha.EventStateChanged}, registryEvents...) {
 		if _, err := client.SubscribeEvents(ctx, event, g.catalog.HandleEvent); err != nil {
 			return nil, fmt.Errorf("subscribe %s: %w", event, err)
@@ -326,7 +349,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 
 	apiCfg := api.Config{Proxy: trustedProxy(ctx, s.cfg, lookupHost, logger), Store: s.store, Log: s.log, Agents: s.agents, Mandates: s.mandates, Admission: s.admission,
-		Approvers: s.approvers, Approvals: approvals, HA: client, Catalog: g.catalog, Marks: g.marks, Renames: g.renames, Status: g.status, UI: webui.Handler(),
+		Approvers: s.approvers, Approvals: approvals, HA: client, Catalog: g.catalog, Marks: g.marks, Renames: g.renames, AreaMoves: g.moves, Status: g.status, UI: webui.Handler(),
 		Principal: s.household, Mode: string(s.cfg.Mode), Version: version, Commit: commit, Retention: retention,
 		ApprovalTimeout: s.cfg.ApprovalTimeout, TLS: g.tlsStatus, Logger: logger}
 	if as != nil {
@@ -359,6 +382,9 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		return approvers.tell(ctx, i18n.RenameFloodTitle, i18n.RenameFloodMessage, i18n.Args{"count": fmt.Sprint(count)})
 	}}
 	g.catalog.OnRefresh(func(renames []catalog.Rename) {
+		if err := g.moves.Observe(ctx, g.catalog.All()); err != nil && ctx.Err() == nil {
+			logger.Error("area moves not stored", "error", err)
+		}
 		directoryChanged(ctx, logger, g.marks, g.renames, flood, func() {
 			g.api.DevicesChanged()
 			// Whether storing renames fails is part of the system status.
@@ -902,4 +928,23 @@ func userURL(cfg config.Config) string {
 		return cfg.HAUserURL
 	}
 	return cfg.HAURL
+}
+
+// archivePrefix names the archives of audit logs that an earlier version wrote.
+const archivePrefix = "audit-archive-"
+
+// syncedFile is a file that is flushed to disk when it is closed.
+type syncedFile struct{ *os.File }
+
+func (f syncedFile) Close() error { return errors.Join(f.Sync(), f.File.Close()) }
+
+// newArchive creates the archive file for the audit log in dir, readable only by the
+// gateway, and returns it with its name; it never overwrites one.
+func newArchive(dir string, now time.Time) (io.WriteCloser, string, error) {
+	name := filepath.Join(dir, archivePrefix+now.UTC().Format("20060102T150405Z")+".jsonl")
+	f, err := os.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, name, fmt.Errorf("create the archive %s: %w", name, err)
+	}
+	return syncedFile{f}, name, nil
 }

@@ -3,10 +3,15 @@
 package mcp
 
 import (
+	"encoding/json"
 	"errors"
 	"maps"
 	"math"
 	"testing"
+
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/home-mandate/spec/evaluator"
 
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
 )
@@ -76,40 +81,88 @@ func TestRequestParameters(t *testing.T) {
 			case err != nil:
 				t.Fatalf("error = %v", err)
 			}
-			if !maps.Equal(got, tt.want) {
+			if !maps.Equal(got, integers(tt.want)) {
 				t.Errorf("parameters = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-// What is executed is exactly what was evaluated: the canonical value of the step, not
-// the binary noise the agent sent.
-func TestCanonicalValueIsSent(t *testing.T) {
+// What is executed is exactly what was evaluated: the value the agent gave, by its exact
+// decimal value. A number that is no whole step of the unit is refused, also where binary
+// floating point would round it to one (SPEC-v0 section 4.5).
+func TestNumbersAreReadExactly(t *testing.T) {
 	tests := []struct {
-		name   string
-		entity string
-		action string
-		param  string
-		sent   float64
-		want   float64
+		name     string
+		category string
+		action   string
+		param    string
+		sent     any
+		want     any // nil: refused
+		evaluate int64
 	}{
-		{"volume with float noise", "media_player.kitchen", "set_volume", "volume_level", 0.29, 0.29},
-		{"volume a little off", "media_player.kitchen", "set_volume", "volume_level", 0.33000000099, 0.33},
-		{"temperature", "climate.living_room", "set_temperature", "temperature", 19.990000001, 19.99},
+		{"volume", "media", "set_volume", "volume_level", json.Number("0.29"), 0.29, 29},
+		{"volume as float", "media", "set_volume", "volume_level", 0.29, 0.29, 29},
+		{"volume a little off", "media", "set_volume", "volume_level", json.Number("0.33000000099"), nil, 0},
+		{"temperature", "climate", "set_temperature", "temperature", json.Number("19.99"), 19.99, 1999},
+		{"temperature a little off", "climate", "set_temperature", "temperature", json.Number("19.990000001"), nil, 0},
+		{"exponent", "light", "set", "brightness_pct", json.Number("2e1"), 20, 20},
+		{"trailing zeros", "light", "set", "brightness_pct", json.Number("20.000"), 20, 20},
+		{"a fraction floating point rounds away", "light", "set", "brightness_pct", json.Number("50.00000000000000000001"), nil, 0},
+		{"a huge exponent", "light", "set", "brightness_pct", json.Number("1e400"), nil, 0},
+		{"a tiny exponent", "light", "set", "brightness_pct", json.Number("1e-400"), nil, 0},
+		{"no JSON number", "light", "set", "brightness_pct", json.Number("0x10"), nil, 0},
+		{"out of range", "cover", "set_position", "position", json.Number("101"), nil, 0},
 	}
-	categories := map[string]string{"set_volume": "media", "set_temperature": "climate"}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			call, err := buildCall(tt.entity, categories[tt.action], tt.action, map[string]any{tt.param: tt.sent}, "°C")
+			entity := tt.category + ".x"
+			call, err := buildCall(entity, tt.category, tt.action, map[string]any{tt.param: tt.sent}, "°C")
+			if tt.want == nil {
+				if err == nil {
+					t.Fatalf("sent %v: %v, want refused", tt.sent, call.Data)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, _ := call.Data[tt.param].(float64)
-			if math.Float64bits(got) != math.Float64bits(tt.want) {
-				t.Errorf("sent %v, want %v", got, tt.want)
+			if call.Data[tt.param] != tt.want {
+				t.Errorf("sent %v, want %v", call.Data[tt.param], tt.want)
+			}
+			got, err := requestParameters(tt.category, tt.action, map[string]any{tt.param: tt.sent}, "°C")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, v := range got {
+				if n, _ := v.AsInteger(); n != tt.evaluate {
+					t.Errorf("evaluated %v, want %d", v, tt.evaluate)
+				}
 			}
 		})
+	}
+}
+
+// The HVAC modes of Home Assistant are evaluated as mode (Home Assistant profile); the
+// requested mode is executed unchanged.
+func TestClimateModes(t *testing.T) {
+	for mode, want := range map[string]string{"off": "off", "heat": "heat", "cool": "cool", "heat_cool": "auto", "auto": "auto", "dry": "dry", "fan_only": "fan_only"} {
+		got, err := requestParameters("climate", "set_mode", map[string]any{"hvac_mode": mode}, "°C")
+		if s, _ := got["mode"].AsString(); err != nil || s != want || len(got) != 1 {
+			t.Errorf("%s: %v, %v; want mode %s", mode, got, err, want)
+		}
+		call, err := buildCall("climate.x", "climate", "set_mode", map[string]any{"hvac_mode": mode}, "°C")
+		if err != nil || call.Data["hvac_mode"] != mode || call.Service != "set_hvac_mode" {
+			t.Errorf("%s: call %+v, %v", mode, call, err)
+		}
+	}
+	for _, mode := range []any{"eco", "Heat", 4, nil} {
+		if got, err := requestParameters("climate", "set_mode", map[string]any{"hvac_mode": mode}, "°C"); err == nil {
+			t.Errorf("%v: %v, want refused", mode, got)
+		}
+	}
+	if _, err := requestParameters("climate", "set_mode", nil, "°C"); err == nil {
+		t.Error("set_mode without a mode was accepted")
 	}
 }
 
@@ -132,7 +185,7 @@ func TestEvaluationParametersFailClosed(t *testing.T) {
 			}
 		})
 	}
-	if got, err := evaluationParameters("cover", "set_position", map[string]any{"position": 30}, "°C"); err != nil || got["position"] != 30 {
+	if got, err := evaluationParameters("cover", "set_position", map[string]any{"position": 30}, "°C"); err != nil || got["position"] != evaluator.IntegerValue(30) {
 		t.Errorf("checked integer: %v, %v", got, err)
 	}
 }
@@ -200,5 +253,63 @@ func TestTemperatureUnitChangedWhileTheHumanDecides(t *testing.T) {
 	}
 	if reqs := f.requests(); len(reqs) != 1 || reqs[0].Params["temperature"] != "21 °C" {
 		t.Errorf("shown = %v", reqs[0].Params)
+	}
+}
+
+// integers are the parameters of an evaluation that are all integers; nil for none.
+func integers(in map[string]int64) map[string]evaluator.Value {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]evaluator.Value, len(in))
+	for name, n := range in {
+		out[name] = evaluator.IntegerValue(n)
+	}
+	return out
+}
+
+// params is read from the arguments as sent: exactly the key "params", the last of
+// duplicates as the SDK validated it, numbers as json.Number.
+func TestExactParams(t *testing.T) {
+	read := func(args string) (map[string]any, error) {
+		return exactParams(&sdk.CallToolRequest{Params: &sdk.CallToolParamsRaw{Arguments: json.RawMessage(args)}})
+	}
+	for args, want := range map[string]map[string]any{
+		`{"params":{"brightness_pct":50.00000000000000000001}}`: {"brightness_pct": json.Number("50.00000000000000000001")},
+		`{"params":{"a":1},"params":{"b":2}}`:                   {"b": json.Number("2")},
+		`{"Params":{"a":1}}`:                                    nil,
+		`{"entity_id":"light.x"}`:                               nil,
+		`{"params":null}`:                                       nil,
+		`{}`:                                                    nil,
+	} {
+		got, err := read(args)
+		if err != nil || !maps.Equal(got, want) {
+			t.Errorf("%s: %v, %v; want %v", args, got, err, want)
+		}
+	}
+	for _, args := range []string{`[]`, `{"params":[1]}`, `{"params":"x"}`} {
+		if got, err := read(args); err == nil {
+			t.Errorf("%s: %v, want an error", args, got)
+		}
+	}
+	if got, err := exactParams(nil); got != nil || err != nil {
+		t.Errorf("without a request: %v, %v", got, err)
+	}
+}
+
+func TestExactStepsEdges(t *testing.T) {
+	for value, want := range map[any]bool{
+		json.Number("1234567890123456789012345678901"):  false, // 31 digits: a number, out of range
+		json.Number("12345678901234567890123456789012"): false, // 32 digits: no number here
+		json.Number("-0"):   true,
+		json.Number("2E1"):  true,
+		json.Number("2e+1"): true,
+		true:                false,
+		"20":                false,
+		math.NaN():          false,
+	} {
+		if _, ok := exactSteps(value, 1); ok != want {
+			t.Errorf("exactSteps(%v) = %t, want %t", value, ok, want)
+		}
 	}
 }

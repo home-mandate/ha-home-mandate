@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Package pdp is the Policy Decision Point: the AuthZEN evaluation endpoint of SPEC-v0
-// section 6 on top of the reference evaluator. It takes category, area, time, time zone
+// section 6 on top of the reference evaluator. It takes category, areas, time, time zone
 // and mandate status from the catalog, its clock, the household configuration and the
 // mandate store, never from the request (SPEC-v0 section 4, origin of inputs). The HTTP
 // endpoint listens on loopback only; the PEP calls Decide in-process.
@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net"
 	"net/http"
 	"time"
@@ -33,7 +32,7 @@ type Mandates interface {
 	Candidates(ctx context.Context, clientID string) ([]mandate.Candidate, error)
 }
 
-// Catalog resolves entities to category and area.
+// Catalog resolves entities to category and areas.
 type Catalog interface {
 	Lookup(entityID string) (catalog.Device, bool)
 }
@@ -70,7 +69,7 @@ type Decision struct {
 	Result     evaluator.Result
 	Resource   evaluator.Resource
 	Action     string
-	Parameters map[string]int64
+	Parameters map[string]evaluator.Value
 	Known      bool // the entity is in the catalog
 	Time       time.Time
 	TimeZone   string
@@ -113,14 +112,14 @@ func (p *PDP) Snapshot(ctx context.Context, clientID string) (*Snapshot, error) 
 }
 
 // Decide evaluates action on entityID. parameters are the parameters of the action in
-// the units of the vocabulary (SPEC-v0 section 4.5); nil if the action has none.
-// Category, area and the critical marking come from the catalog; an entity the catalog
+// the types and units of the vocabulary (SPEC-v0 section 4.5); nil if the action has none.
+// Category, areas and the critical marking come from the catalog; an entity the catalog
 // does not know has no category and is denied with unknown_resource. The mandate is
 // selected per SPEC-v0 section 4.3 among the agent's candidates for this household.
-func (s *Snapshot) Decide(entityID, action string, parameters map[string]int64) Decision {
+func (s *Snapshot) Decide(entityID, action string, parameters map[string]evaluator.Value) Decision {
 	d := Decision{Time: s.now, TimeZone: s.timeZone, Resource: evaluator.Resource{EntityID: entityID}, Action: action, Parameters: parameters}
 	if dev, ok := s.p.cfg.Catalog.Lookup(entityID); ok {
-		d.Known, d.Resource.Category, d.Resource.Area, d.Resource.Critical = true, dev.Category, dev.Area, dev.Critical
+		d.Known, d.Resource.Category, d.Resource.Areas, d.Resource.Critical = true, dev.Category, dev.Areas, dev.Critical
 	}
 	_, d.Result = evaluator.SelectAndEvaluate(s.stored, s.clientID, s.p.cfg.Principal, evaluator.Request{
 		Resource: d.Resource, Action: action, Parameters: parameters, Time: d.Time, TimeZone: d.TimeZone,
@@ -174,7 +173,7 @@ func (s *Snapshot) Limits(entityID, action string) []map[string]evaluator.Limit 
 			return nil
 		}
 	}
-	req.Resource.Category, req.Resource.Area, req.Resource.Critical = dev.Category, dev.Area, dev.Critical
+	req.Resource.Category, req.Resource.Areas, req.Resource.Critical = dev.Category, dev.Areas, dev.Critical
 	m, _ := evaluator.SelectAndEvaluate(s.stored, s.clientID, s.p.cfg.Principal, req)
 	req.Status = evaluator.StatusActive // a selected mandate is never revoked
 	return m.Limits(req)
@@ -225,7 +224,7 @@ func (s *Snapshot) MaxActionsPerHour() int {
 
 // Decide evaluates action on entityID for the agent clientID. A store error is returned
 // together with a deny decision.
-func (p *PDP) Decide(ctx context.Context, clientID, entityID, action string, parameters map[string]int64) (Decision, error) {
+func (p *PDP) Decide(ctx context.Context, clientID, entityID, action string, parameters map[string]evaluator.Value) (Decision, error) {
 	s, err := p.Snapshot(ctx, clientID)
 	return s.Decide(entityID, action, parameters), err
 }
@@ -248,8 +247,9 @@ type (
 	}
 	Action struct {
 		Name string `json:"name"`
-		// Properties are the parameters of the action (SPEC-v0 section 4.5).
-		Properties map[string]json.Number `json:"properties,omitempty"`
+		// Properties are the parameters of the action (SPEC-v0 section 4.5): JSON numbers
+		// or strings, read as they arrived so that a number keeps its exact value.
+		Properties map[string]json.RawMessage `json:"properties,omitempty"`
 	}
 	Resource struct {
 		Type       string             `json:"type"`
@@ -257,7 +257,7 @@ type (
 		Properties ResourceProperties `json:"properties"`
 	}
 	ResourceProperties struct {
-		Area string `json:"area,omitempty"`
+		Areas []string `json:"areas,omitempty"`
 	}
 	RequestContext struct {
 		Time string `json:"time,omitempty"`
@@ -273,10 +273,13 @@ type (
 		ApprovalTimeout string   `json:"approval_timeout,omitempty"`
 		Approvers       []string `json:"approvers,omitempty"`
 		MandateDigest   string   `json:"mandate_digest,omitempty"`
+		// Enforced is present, and false, only for a deny the PEP does not enforce
+		// (audit mode, SPEC-v0 sections 4.6 and 6).
+		Enforced *bool `json:"enforced,omitempty"`
 	}
 )
 
-// Evaluate answers an AuthZEN request. resource.type, resource.properties.area and
+// Evaluate answers an AuthZEN request. resource.type, resource.properties.areas and
 // context.time are not used (SPEC-v0 section 6). A subject that is no agent is an invalid
 // request; an agent without a mandate for this household is deny with no_mandate.
 func (p *PDP) Evaluate(ctx context.Context, req Request) Response {
@@ -286,10 +289,10 @@ func (p *PDP) Evaluate(ctx context.Context, req Request) Response {
 	if req.Subject.ID == "" || req.Subject.Properties.Principal != p.cfg.Principal {
 		return response(evaluator.Result{Decision: evaluator.Deny, Reason: evaluator.ReasonNoMandate})
 	}
-	parameters, ok := integerParameters(req.Action.Properties)
+	parameters, ok := values(req.Action.Properties)
 	d, _ := p.Decide(ctx, req.Subject.ID, req.Resource.ID, req.Action.Name, parameters) // an error is a deny already
 	if !ok && d.Result.MandateDigest != "" {
-		// A parameter that is no integer cannot be passed to the evaluation. The request is
+		// A parameter that is no integer or string cannot be passed to the evaluation. The request is
 		// invalid; only a missing or invalid mandate comes before that (SPEC-v0 section 4.1).
 		return response(evaluator.Result{Decision: evaluator.Deny, Reason: evaluator.ReasonInvalidRequest, MandateDigest: d.Result.MandateDigest})
 	}
@@ -299,22 +302,19 @@ func (p *PDP) Evaluate(ctx context.Context, req Request) Response {
 	return response(d.Result)
 }
 
-// maxParameter is the largest magnitude of a parameter (SPEC-v0 section 4.5).
-const maxParameter = 1<<53 - 1
-
-// integerParameters converts the parameters of a request; ok is false if one of them
-// is not an integer in the exact range.
-func integerParameters(raw map[string]json.Number) (map[string]int64, bool) {
+// values reads the parameters of a request; ok is false if one of them is no integer
+// (by its exact value, below 2^53 in magnitude) or string (SPEC-v0 section 4.5).
+func values(raw map[string]json.RawMessage) (map[string]evaluator.Value, bool) {
 	if len(raw) == 0 {
 		return nil, true
 	}
-	out := make(map[string]int64, len(raw))
-	for name, n := range raw {
-		f, err := n.Float64()
-		if err != nil || f != math.Trunc(f) || math.Abs(f) > maxParameter {
+	out := make(map[string]evaluator.Value, len(raw))
+	for name, data := range raw {
+		var v evaluator.Value
+		if err := json.Unmarshal(data, &v); err != nil {
 			return nil, false
 		}
-		out[name] = int64(f)
+		out[name] = v
 	}
 	return out, true
 }
@@ -323,6 +323,10 @@ func response(r evaluator.Result) Response {
 	out := Response{Decision: r.Decision == evaluator.Allow, Context: ResponseContext{
 		Outcome: string(r.Decision), Reason: string(r.Reason), RuleID: r.RuleID, MandateDigest: r.MandateDigest,
 	}}
+	if r.NotEnforced {
+		enforced := false
+		out.Context.Enforced = &enforced
+	}
 	if r.Decision == evaluator.Ask && r.Approval != nil {
 		out.Context.ApprovalTimeout, out.Context.Approvers = r.Approval.Timeout, r.Approval.Approvers
 	}

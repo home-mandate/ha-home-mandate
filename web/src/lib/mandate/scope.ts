@@ -68,6 +68,6 @@ export function categoryOf(rule: Rule, devices: readonly Device[]): Category | u
 /** deviceOptions lists the devices the "single device" select offers for a scope. */
 export function deviceOptions(scope: Scope, devices: readonly Device[]): Device[] {
   return devices.filter(
-    (d) => (scope.category === 'all' || d.category === scope.category) && (scope.area === null || d.area === scope.area),
+    (d) => (scope.category === 'all' || d.category === scope.category) && (scope.area === null || d.areas.includes(scope.area)),
   );
 }

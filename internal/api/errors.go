@@ -19,15 +19,18 @@ const (
 	codeInvalidInput    = "invalid_input"
 	codeInvalidMandate  = "invalid_mandate"
 	codeCriticalConfirm = "critical_confirmation_required"
-	codeBuiltinTemplate = "builtin_template" // a base template cannot be changed or removed
-	codeNoApprovers     = "no_approvers"     // a template's placeholder has nobody to stand for
-	codePairingInvalid  = "pairing_code_invalid"
-	codePairingExpired  = "pairing_code_expired"
-	codePairingLocked   = "pairing_locked"
-	codeTooLarge        = "too_large"
-	codeRateLimited     = "rate_limited"
-	codeUnavailable     = "unavailable"
-	codeInternal        = "internal"
+	// codeAuditModeNotHere: audit mode can only be switched on in an existing mandate's
+	// editor, where it waits for a confirmation (a new mandate or a template cannot).
+	codeAuditModeNotHere = "audit_mode_not_here"
+	codeBuiltinTemplate  = "builtin_template" // a base template cannot be changed or removed
+	codeNoApprovers      = "no_approvers"     // a template's placeholder has nobody to stand for
+	codePairingInvalid   = "pairing_code_invalid"
+	codePairingExpired   = "pairing_code_expired"
+	codePairingLocked    = "pairing_locked"
+	codeTooLarge         = "too_large"
+	codeRateLimited      = "rate_limited"
+	codeUnavailable      = "unavailable"
+	codeInternal         = "internal"
 )
 
 // statusOf is the HTTP status of every code (types.ts, header comment).

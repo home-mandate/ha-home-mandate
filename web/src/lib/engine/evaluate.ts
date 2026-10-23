@@ -7,13 +7,14 @@
 
 import type { Approval, Decision, MandateDraft, Reason, Rule, Weekday } from '../api/types.ts';
 import { checkDraft, parseDateTime, windowMinutes } from './check.ts';
-import { lookupAction } from './vocabulary.ts';
+import { lookupAction, opaque, parametersAdmitted, type ParameterValue, validValue } from './vocabulary.ts';
 
 export interface EvalRequest {
-  resource: { entity_id: string; category?: string; area?: string; critical?: boolean };
+  /** areas: the set of areas of the resource (SPEC-v0 section 3.4); absent or empty: none. */
+  resource: { entity_id: string; category?: string; areas?: readonly string[]; critical?: boolean };
   action: string;
-  /** Integer parameters of the action in the units of the vocabulary (SPEC-v0 section 4.5). */
-  parameters?: Record<string, number>;
+  /** Parameters of the action: integers in the units of the vocabulary, or strings (SPEC-v0 section 4.5). */
+  parameters?: Record<string, ParameterValue>;
   /** RFC 3339 point in time. */
   time: string;
   /** IANA time zone of the household; absent or empty: the offset in `time` applies. */
@@ -27,6 +28,11 @@ export interface EvalResult {
   rule_id: string | null;
   /** Approval settings, only for "ask". */
   approval?: Approval;
+  /**
+   * false only for a deny the PEP does not enforce: the mandate is in audit mode, the deny
+   * results from its rules and the action is not critical (SPEC-v0 section 4.6).
+   */
+  enforced?: false;
 }
 
 /** Household local time: weekday and minute since midnight. */
@@ -35,8 +41,7 @@ export interface LocalTime {
   minute: number;
 }
 
-const ENTITY_ID = /^[!-~]{1,255}$/;
-const AREA = /^[!-~]{1,64}$/;
+const MAX_AREAS = 16;
 const OFFSET = /(Z|([+-])(\d{2}):(\d{2}))$/;
 const ZONE_PART = /^[A-Z][A-Za-z0-9_+-]*$/;
 const MAX_ZONE_LENGTH = 64;
@@ -122,16 +127,29 @@ export function resourceMatches(rule: Rule, resource: EvalRequest['resource']): 
   return (
     (r.entity_id === undefined || r.entity_id === resource.entity_id) &&
     (r.category === undefined || r.category === resource.category) &&
-    (r.area === undefined || r.area === resource.area)
+    (r.area === undefined || (resource.areas ?? []).includes(r.area))
   );
 }
 
-/** constraintsMet: the request carries every constrained parameter within the limits. */
+/**
+ * constraintsMet: the request carries every constrained parameter, within the limits of an
+ * integer or equal to one of the permitted values (an integer never equals a string).
+ */
 export function constraintsMet(rule: Rule, parameters: EvalRequest['parameters']): boolean {
-  return Object.entries(rule.constraints ?? {}).every(([name, { min = -Infinity, max = Infinity }]) => {
-    const value = parameters?.[name];
-    return value !== undefined && value >= min && value <= max;
+  return Object.entries(rule.constraints ?? {}).every(([name, c]) => {
+    const value = parameters !== undefined && Object.hasOwn(parameters, name) ? parameters[name] : undefined;
+    if (value === undefined) return false;
+    if ('one_of' in c) return c.one_of.includes(value);
+    const { min = -Infinity, max = Infinity } = c;
+    return typeof value === 'number' && value >= min && value <= max;
   });
+}
+
+/** validAreas: a set of at most 16 area identifiers without duplicates. */
+function validAreas(areas: unknown): boolean {
+  if (areas === undefined) return true;
+  if (!Array.isArray(areas) || areas.length > MAX_AREAS) return false;
+  return areas.every((area, i) => opaque(area, 64) && areas.indexOf(area) === i);
 }
 
 export function coversAction(rule: Rule, action: string): boolean {
@@ -145,9 +163,10 @@ const clone = (a: Approval): Approval => ({ timeout: a.timeout, approvers: [...a
 function precheck(mandate: MandateDraft, req: EvalRequest): { local: LocalTime; critical: boolean } | EvalResult {
   const local = localTime(req.time, req.timezone);
   const res = req.resource;
-  const integers = Object.values(req.parameters ?? {}).every((v) => Number.isInteger(v) && Math.abs(v) <= Number.MAX_SAFE_INTEGER);
-  const validRequest =
-    typeof res.entity_id === 'string' && ENTITY_ID.test(res.entity_id) && (res.area === undefined || res.area === '' || AREA.test(res.area)) && integers;
+  const parameters = req.parameters ?? {};
+  const validParameters =
+    typeof parameters === 'object' && parameters !== null && Object.values(parameters).every(validValue) && parametersAdmitted(res.category, req.action, parameters);
+  const validRequest = opaque(res.entity_id, 255) && validAreas(res.areas) && validParameters;
   if (!local || !validRequest) return deny('invalid_request');
   // A resource without category is not in the directory of the PEP.
   if (typeof res.category !== 'string' || res.category === '') return deny('unknown_resource');
@@ -193,6 +212,7 @@ export function evaluate(mandate: MandateDraft, req: EvalRequest): EvalResult {
   const pre = precheck(mandate, req);
   if ('decision' in pre) return pre;
   const matched = matchingRules(mandate, req, pre.local);
-  if (matched.length === 0) return deny('no_match');
-  return decide(mandate, matched, pre.critical);
+  const result = matched.length === 0 ? deny('no_match') : decide(mandate, matched, pre.critical);
+  // Audit mode (section 4.6): only a deny by the rules, never one of a critical action.
+  return mandate.enforce === false && result.decision === 'deny' && !pre.critical ? { ...result, enforced: false } : result;
 }

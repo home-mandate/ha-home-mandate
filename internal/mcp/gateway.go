@@ -8,8 +8,10 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -472,7 +474,17 @@ type (
 // denied. Neither list names a device it may not read, and every refusal on one is
 // not_found, the answer for a device that does not exist.
 func readable(snap *pdp.Snapshot, entityID string) bool {
-	return snap.Decide(entityID, "read", nil).Result.Decision != evaluator.Deny
+	return effective(snap.Decide(entityID, "read", nil).Result) != evaluator.Deny
+}
+
+// effective is the decision the PEP enforces: allow for a deny that a mandate in audit
+// mode does not enforce (SPEC-v0 section 4.6). The agent learns nothing else, in no
+// answer and no list (section 11.6 item 2); only the audit log records the deny.
+func effective(r evaluator.Result) evaluator.Decision {
+	if r.NotEnforced {
+		return evaluator.Allow
+	}
+	return r.Decision
 }
 
 // listSnapshot checks availability and the rate limit for a list request (one token per
@@ -574,7 +586,12 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 	// The unit is read once: the value is evaluated and executed in the same unit, also
 	// if Home Assistant's configuration is read again meanwhile (spec #21 part B).
 	unit := g.temperatureUnit()
-	var parameters map[string]int64
+	params, err := exactParams(req)
+	if err != nil {
+		return nil, actionOut{}, errors.New(codeInvalidParams)
+	}
+	in.Params = params
+	var parameters map[string]evaluator.Value
 	var paramErr error
 	if dev, ok := g.cfg.Catalog.Lookup(in.EntityID); ok {
 		parameters, paramErr = requestParameters(dev.Category, in.Action, in.Params, unit)
@@ -600,6 +617,32 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 		return g.askHuman(ctx, a, tokenOf(req), d, call, in.Reason, in.IdempotencyKey)
 	}
 	return g.execute(ctx, a, d, call, approvalRef{}, time.Time{})
+}
+
+// exactParams reads the params of perform_action from the arguments as the agent sent
+// them, numbers as json.Number: the SDK has decoded the arguments through floating point
+// already, which rounds 50.00000000000000000001 to 50 (SPEC-v0 section 4.5). The SDK
+// checked the arguments against the input schema before.
+func exactParams(req *sdk.CallToolRequest) (map[string]any, error) {
+	if req == nil || req.Params == nil || len(req.Params.Arguments) == 0 {
+		return nil, nil
+	}
+	// Exactly the key "params", the last of duplicates, as the SDK validated it.
+	var args map[string]json.RawMessage
+	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+		return nil, fmt.Errorf("arguments: %w", err)
+	}
+	raw, ok := args["params"]
+	if !ok {
+		return nil, nil
+	}
+	var params map[string]any
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&params); err != nil {
+		return nil, fmt.Errorf("arguments: params: %w", err)
+	}
+	return params, nil
 }
 
 // execute calls Home Assistant only while its "executed" entry is being written in the
@@ -662,7 +705,7 @@ func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, ca
 // every refusal. It returns the decision only if the action is allowed. paramErr, the
 // result of checking the parameters, refuses the request before the decision. An agent
 // that may not read the entity gets not_found for every refusal, as for a missing entity.
-func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action string, parameters map[string]int64, paramErr error) (pdp.Decision, error) {
+func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action string, parameters map[string]evaluator.Value, paramErr error) (pdp.Decision, error) {
 	if g.stopped(ctx) {
 		d := pdp.Decision{Time: g.cfg.Now(), Resource: evaluator.Resource{EntityID: entityID}, Action: action}
 		_ = g.record(ctx, a, d, false, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByEmergencyStop})
@@ -694,8 +737,8 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 	if paramErr != nil {
 		return pdp.Decision{}, g.refuseParameters(ctx, a, snap, d, paramErr)
 	}
-	if d.Result.Decision == evaluator.Allow {
-		return d, nil
+	if effective(d.Result) == evaluator.Allow {
+		return d, nil // executed as an allow, also when audit mode does not enforce a deny
 	}
 	known := d.Result.Decision != evaluator.Deny
 	if action != "read" {
@@ -829,13 +872,14 @@ func (g *Gateway) entry(a agent.Agent, d pdp.Decision, withEvaluation bool, resu
 		Event: audit.EventDecision,
 		Agent: &audit.Agent{ClientID: a.ClientID, DisplayName: a.DisplayName},
 		Request: &audit.Request{Time: d.Time, Timezone: d.TimeZone, Revoked: d.Status == evaluator.StatusRevoked,
-			Resource: audit.Resource{EntityID: d.Resource.EntityID, Category: d.Resource.Category, Area: d.Resource.Area, Critical: d.Resource.Critical},
-			Action:   d.Action, Parameters: d.Parameters},
+			Resource: audit.Resource{EntityID: d.Resource.EntityID, Category: d.Resource.Category, Areas: d.Resource.Areas, Critical: d.Resource.Critical,
+				CriticalStated: withEvaluation && d.Result.NotEnforced},
+			Action: d.Action, Parameters: d.Parameters},
 		Result: &result,
 	}
 	if withEvaluation {
 		r := d.Result
-		e.Evaluation = &audit.Evaluation{Decision: string(r.Decision), Reason: string(r.Reason)}
+		e.Evaluation = &audit.Evaluation{Decision: string(r.Decision), Reason: string(r.Reason), NotEnforced: r.NotEnforced}
 		if r.RuleID != "" {
 			e.Evaluation.RuleID = &r.RuleID
 		}

@@ -260,13 +260,14 @@ func newHarness(t *testing.T, edit func(map[string]any)) *harness {
 
 	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin", self: "hm-service-user", unit: "°C", clock: &fakeClock{}, now: &fakeNow{t: time.Now()},
 		ha: &fakeHA{connected: true}, journal: approval.NewJournal(st.DB(), nil),
-		catalog: &fakeCatalog{ready: true, areas: []catalog.Area{{ID: "garden", Name: "Garden"}, {ID: "hallway", Name: "Hallway"}, {ID: "kitchen", Name: "Kitchen"}, {ID: "porch", Name: "Porch"}},
+		catalog: &fakeCatalog{ready: true, areas: []catalog.Area{{ID: "garden", Name: "Garden"}, {ID: "hallway", Name: "Hallway"}, {ID: "kitchen", Name: "Kitchen", FloorID: "floor:ground"}, {ID: "porch", Name: "Porch"},
+			{ID: "floor:ground", Name: "Ground floor", Floor: true}},
 			devices: map[string]catalog.Device{
-				"light.kitchen":            {EntityID: "light.kitchen", Category: "light", Area: "kitchen", State: "off", Attributes: map[string]any{"friendly_name": "Kitchen"}},
-				"lock.front_door":          {EntityID: "lock.front_door", Category: "lock", Area: "hallway", State: "locked"},
-				"lock.back_door":           {EntityID: "lock.back_door", Category: "lock", Area: "garden", State: "locked"},
-				"lock.garden_gate":         {EntityID: "lock.garden_gate", Category: "lock", Area: "garden", State: "locked"},
-				"camera.porch":             {EntityID: "camera.porch", Category: "camera", Area: "porch", State: "idle", Attributes: map[string]any{"entity_picture": "/api/camera_proxy/camera.porch?token=secret"}},
+				"light.kitchen":            {EntityID: "light.kitchen", Category: "light", Areas: []string{"kitchen", "floor:ground"}, State: "off", Attributes: map[string]any{"friendly_name": "Kitchen"}},
+				"lock.front_door":          {EntityID: "lock.front_door", Category: "lock", Areas: []string{"hallway", "floor:ground"}, State: "locked"},
+				"lock.back_door":           {EntityID: "lock.back_door", Category: "lock", Areas: []string{"garden"}, State: "locked"},
+				"lock.garden_gate":         {EntityID: "lock.garden_gate", Category: "lock", Areas: []string{"garden"}, State: "locked"},
+				"camera.porch":             {EntityID: "camera.porch", Category: "camera", Areas: []string{"porch"}, State: "idle", Attributes: map[string]any{"entity_picture": "/api/camera_proxy/camera.porch?token=secret"}},
 				"alarm_control_panel.home": {EntityID: "alarm_control_panel.home", Category: "alarm", State: "armed_away"},
 				"climate.living_room":      {EntityID: "climate.living_room", Category: "climate", State: "heat"},
 				"number.wallbox":           {EntityID: "number.wallbox", Category: "other", State: "16"},
@@ -383,6 +384,20 @@ func (h *harness) lastEntry() map[string]any {
 	var e map[string]any
 	_ = json.Unmarshal([]byte(lines[len(lines)-1]), &e)
 	return e
+}
+
+// entries are all entries of the audit log, decoded.
+func (h *harness) entries() []map[string]any {
+	h.t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(h.auditLog()), "\n") {
+		var e map[string]any
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			h.t.Fatal(err)
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 func path(m map[string]any, keys ...string) any {
@@ -618,11 +633,15 @@ func TestParametersAreChecked(t *testing.T) {
 		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": 40}}, ""},
 		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": 150}}, "invalid_params: brightness_pct must be an integer between 0 and 100"},
 		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": 40.5}}, "invalid_params: brightness_pct must be an integer between 0 and 100"},
+		// Read by the exact value the agent sent, not as floating point (SPEC-v0 section 4.5).
+		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": json.Number("50.00000000000000000001")}}, "invalid_params: brightness_pct must be an integer between 0 and 100"},
+		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"brightness_pct": json.Number("2e1")}}, ""},
 		{map[string]any{"entity_id": "light.kitchen", "action": "set", "params": map[string]any{"entity_id": "lock.front_door"}}, "invalid_params"},
 		{map[string]any{"entity_id": "light.kitchen", "action": "set"}, "invalid_params"},
 		{map[string]any{"entity_id": "climate.living_room", "action": "set_temperature"}, "invalid_params"},
 		{map[string]any{"entity_id": "climate.living_room", "action": "set_mode", "params": map[string]any{"hvac_mode": "sauna"}}, "invalid_params"},
 		{map[string]any{"entity_id": "climate.living_room", "action": "set_temperature", "params": map[string]any{"temperature": 21.5}}, ""},
+		{map[string]any{"entity_id": "climate.living_room", "action": "set_mode", "params": map[string]any{"hvac_mode": "heat_cool"}}, ""},
 		{map[string]any{"entity_id": "alarm_control_panel.home", "action": "arm", "params": map[string]any{"mode": "night"}}, ""},
 		{map[string]any{"entity_id": "camera.porch", "action": "snapshot"}, "not_supported"},
 		{map[string]any{"entity_id": "number.wallbox", "action": "set"}, "not_supported"},
@@ -634,8 +653,20 @@ func TestParametersAreChecked(t *testing.T) {
 		}
 	}
 	calls := h.ha.recorded()
-	if len(calls) != 3 || calls[0].Data["brightness_pct"] != 40 || calls[2].Service != "alarm_arm_night" {
+	if len(calls) != 5 || calls[0].Data["brightness_pct"] != 40 || calls[1].Data["brightness_pct"] != 20 ||
+		calls[3].Data["hvac_mode"] != "heat_cool" || calls[4].Service != "alarm_arm_night" {
 		t.Errorf("HA calls = %+v", calls)
+	}
+	// The mode is evaluated and logged as the vocabulary has it; Home Assistant got its own.
+	entries := h.entries()
+	var logged []any
+	for _, e := range entries {
+		if path(e, "request", "action") == "set_mode" && path(e, "result", "status") == "executed" {
+			logged = append(logged, path(e, "request", "parameters", "mode"))
+		}
+	}
+	if len(logged) != 1 || logged[0] != "auto" {
+		t.Errorf("logged modes = %v", logged)
 	}
 }
 

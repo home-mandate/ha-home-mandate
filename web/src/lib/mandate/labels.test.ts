@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setLocale } from '../paraglide/runtime.js';
-import { actionLabel, categoryLabel, decisionLabel, weekdayNames, weekdayOrder, WEEKDAYS } from './labels.ts';
+import { actionLabel, areaLabel, categoryLabel, decisionLabel, weekdayNames, weekdayOrder, WEEKDAYS } from './labels.ts';
 
 beforeEach(() => setLocale('en', { reload: false }));
 
@@ -27,6 +27,22 @@ describe('actionLabel', () => {
     expect(actionLabel('light', 'dim')).toBe('dim');
     expect(actionLabel('light', 'constructor')).toBe('constructor');
     expect(actionLabel('light', 'a\u202Eb')).toBe('ab');
+  });
+});
+
+describe('areaLabel', () => {
+  it('names a floor as a floor and a room by its name', () => {
+    setLocale('en');
+    expect(areaLabel({ id: 'floor:ground_floor', name: 'Ground floor', floor: true })).toBe('Ground floor (floor)');
+    expect(areaLabel({ id: 'kitchen', name: 'Kitchen', floor: false })).toBe('Kitchen');
+    setLocale('de');
+    expect(areaLabel({ id: 'floor:ground_floor', name: 'Erdgeschoss', floor: true })).toBe('Erdgeschoss (Etage)');
+  });
+
+  it('shows the ID of an area without a name, never hidden characters', () => {
+    setLocale('en');
+    expect(areaLabel({ id: 'floor:attic', name: '', floor: true })).toBe('floor:attic (floor)');
+    expect(areaLabel({ id: 'kitchen', name: 'K\u202Eitchen', floor: false })).toBe('Kitchen');
   });
 });
 

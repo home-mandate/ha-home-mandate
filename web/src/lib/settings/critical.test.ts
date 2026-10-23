@@ -9,6 +9,7 @@ const device = (entity_id: string, name: string, extra: Partial<Device> = {}): D
   name,
   category: 'switch',
   area: null,
+  areas: [],
   actions: ['read', 'turn_off', 'turn_on'],
   critical: false,
   suggest_critical: false,
@@ -16,14 +17,14 @@ const device = (entity_id: string, name: string, extra: Partial<Device> = {}): D
 });
 
 const catalog: DeviceCatalog = {
-  areas: [{ id: 'hall', name: 'Flur' }],
+  areas: [{ id: 'hall', name: 'Flur', floor: false, floor_id: null }],
   devices: [
     device('switch.zeta', 'Zeta'),
     device('switch.cellar', 'Kellertür', { critical: true }),
     device('switch.gate', 'Hoftor', { suggest_critical: true }),
-    device('switch.alpha', 'Alpha', { area: 'hall', critical: true }),
+    device('switch.alpha', 'Alpha', { area: 'hall', areas: ['hall'], critical: true }),
     device('sensor.temp', 'Temperatur', { category: 'sensor', actions: ['read'] }),
-    device('switch.coffee', 'Kaffee', { area: 'hall' }),
+    device('switch.coffee', 'Kaffee', { area: 'hall', areas: ['hall'] }),
   ],
 };
 

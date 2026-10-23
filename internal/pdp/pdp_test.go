@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -51,21 +52,22 @@ type conformanceCase struct {
 	Mandate       string          `json:"mandate"`
 	MandateInline json.RawMessage `json:"mandate_inline"`
 	RawResource   struct {
-		EntityID string `json:"entity_id"`
-		Category string `json:"category"`
-		Area     string `json:"area"`
-		Critical bool   `json:"critical"`
+		EntityID string   `json:"entity_id"`
+		Category string   `json:"category"`
+		Areas    []string `json:"areas"`
+		Critical bool     `json:"critical"`
 	} `json:"resource"`
-	Action          string                 `json:"action"`
-	Parameters      map[string]json.Number `json:"parameters"`
-	Time            string                 `json:"time"`
-	Timezone        string                 `json:"timezone"`
-	Revoked         bool                   `json:"revoked"`
-	Expected        string                 `json:"expected"`
-	Reason          string                 `json:"reason"`
-	RuleID          *string                `json:"rule_id"`
-	ApprovalTimeout string                 `json:"approval_timeout"`
-	Why             string                 `json:"why"`
+	Action          string                     `json:"action"`
+	Parameters      map[string]json.RawMessage `json:"parameters"`
+	Time            string                     `json:"time"`
+	Timezone        string                     `json:"timezone"`
+	Revoked         bool                       `json:"revoked"`
+	Expected        string                     `json:"expected"`
+	Reason          string                     `json:"reason"`
+	RuleID          *string                    `json:"rule_id"`
+	ApprovalTimeout string                     `json:"approval_timeout"`
+	Enforced        *bool                      `json:"enforced"`
+	Why             string                     `json:"why"`
 }
 
 func loadCases(t *testing.T) []conformanceCase {
@@ -113,7 +115,7 @@ func pdpFor(t *testing.T, c conformanceCase) (*PDP, string) {
 	p := New(Config{
 		Principal: meta.Principal,
 		Mandates:  fakeMandates{candidates: []mandate.Candidate{stored(doc, mandate.Info{})}},
-		Catalog:   catalogFor(r.EntityID, r.Category, r.Area, r.Critical),
+		Catalog:   catalogFor(r.EntityID, r.Category, r.Areas, r.Critical),
 		TimeZone:  func() string { return c.Timezone },
 		Now:       func() time.Time { return at },
 	})
@@ -122,11 +124,11 @@ func pdpFor(t *testing.T, c conformanceCase) (*PDP, string) {
 
 // catalogFor knows the resource of a case; a case without category stands for a
 // resource the directory does not contain (SPEC-v0 section 4).
-func catalogFor(entityID, category, area string, critical bool) fakeCatalog {
+func catalogFor(entityID, category string, areas []string, critical bool) fakeCatalog {
 	if category == "" {
 		return fakeCatalog{}
 	}
-	return fakeCatalog{entityID: {EntityID: entityID, Category: category, Area: area, Critical: critical}}
+	return fakeCatalog{entityID: {EntityID: entityID, Category: category, Areas: areas, Critical: critical}}
 }
 
 func post(t *testing.T, url string, body any) (*http.Response, Response) {
@@ -157,7 +159,7 @@ func TestConformanceCasesOverHTTP(t *testing.T) {
 			resp, got := post(t, srv.URL, Request{
 				Subject:  Subject{Type: "agent", ID: clientID, Properties: SubjectProperties{Principal: p.cfg.Principal}},
 				Action:   Action{Name: c.Action, Properties: c.Parameters},
-				Resource: Resource{Type: c.RawResource.Category, ID: c.RawResource.EntityID, Properties: ResourceProperties{Area: c.RawResource.Area}},
+				Resource: Resource{Type: c.RawResource.Category, ID: c.RawResource.EntityID, Properties: ResourceProperties{Areas: c.RawResource.Areas}},
 				Context:  RequestContext{Time: c.Time},
 			})
 			if resp.StatusCode != http.StatusOK {
@@ -172,6 +174,9 @@ func TestConformanceCasesOverHTTP(t *testing.T) {
 			}
 			if got.Context.RuleID != wantRule || got.Context.ApprovalTimeout != c.ApprovalTimeout {
 				t.Errorf("%s: rule %q timeout %q, want %q %q", c.ID, got.Context.RuleID, got.Context.ApprovalTimeout, wantRule, c.ApprovalTimeout)
+			}
+			if notEnforced := c.Enforced != nil && !*c.Enforced; notEnforced != (got.Context.Enforced != nil && !*got.Context.Enforced) {
+				t.Errorf("%s: enforced %v, want not enforced %t", c.ID, got.Context.Enforced, notEnforced)
 			}
 			if c.Reason != "invalid_mandate" && !strings.HasPrefix(got.Context.MandateDigest, "sha256:") {
 				t.Errorf("%s: mandate_digest missing", c.ID)
@@ -192,9 +197,9 @@ func voice(t *testing.T) (Config, string) {
 		Mandates: fakeMandates{candidates: []mandate.Candidate{{Stored: evaluator.NewStored(doc, evaluator.StatusActive),
 			Info: mandate.Info{ID: "m-voice-assistant", Digest: m.Digest(), MaxActionsPerHour: 60}}}},
 		Catalog: fakeCatalog{
-			"light.kitchen": {EntityID: "light.kitchen", Category: "light", Area: "kitchen"},
-			"camera.porch":  {EntityID: "camera.porch", Category: "camera", Area: "porch"},
-			"lock.front":    {EntityID: "lock.front", Category: "lock", Area: "hallway"},
+			"light.kitchen": {EntityID: "light.kitchen", Category: "light", Areas: []string{"kitchen"}},
+			"camera.porch":  {EntityID: "camera.porch", Category: "camera", Areas: []string{"porch"}},
+			"lock.front":    {EntityID: "lock.front", Category: "lock", Areas: []string{"hallway"}},
 		},
 		TimeZone: func() string { return "Europe/Berlin" },
 		Now:      func() time.Time { return time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC) },
@@ -208,7 +213,7 @@ func TestInputsComeFromThePEPNotTheRequest(t *testing.T) {
 	got := p.Evaluate(context.Background(), Request{
 		Subject:  Subject{Type: "agent", ID: clientID, Properties: SubjectProperties{Principal: cfg.Principal}},
 		Action:   Action{Name: "turn_on"},
-		Resource: Resource{Type: "light", ID: "camera.porch", Properties: ResourceProperties{Area: "kitchen"}},
+		Resource: Resource{Type: "light", ID: "camera.porch", Properties: ResourceProperties{Areas: []string{"kitchen"}}},
 		Context:  RequestContext{Time: "2026-01-01T00:00:00Z"},
 	})
 	if got.Decision || got.Context.Reason != "unknown_action" {
@@ -222,7 +227,7 @@ func TestDecideReportsTheResolvedInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Result.Decision != evaluator.Ask || d.Resource.Category != "lock" || d.Resource.Area != "hallway" ||
+	if d.Result.Decision != evaluator.Ask || d.Resource.Category != "lock" || !slices.Equal(d.Resource.Areas, []string{"hallway"}) ||
 		d.TimeZone != "Europe/Berlin" || !d.Time.Equal(cfg.Now()) || d.MandateID != "m-voice-assistant" ||
 		d.MaxActionsPerHour != 60 || d.Status != evaluator.StatusActive || !d.Known {
 		t.Errorf("Decide = %+v", d)
@@ -377,17 +382,18 @@ func TestEvaluatePassesParametersAndApprovers(t *testing.T) {
 	if got.Context.Outcome != "ask" || got.Context.ApprovalTimeout == "" || len(got.Context.Approvers) == 0 {
 		t.Errorf("ask without approval settings: %+v", got)
 	}
-	for name, properties := range map[string]map[string]json.Number{
-		"fraction":  {"brightness": "50.5"},
-		"too large": {"brightness": "9007199254740992"},
-		"no number": {"brightness": "x"},
+	for name, properties := range map[string]map[string]json.RawMessage{
+		"fraction":  {"brightness": json.RawMessage(`50.5`)},
+		"too large": {"brightness": json.RawMessage(`9007199254740992`)},
+		"no number": {"brightness": json.RawMessage(`true`)},
+		"null":      {"brightness": json.RawMessage(`null`)},
 	} {
 		got := p.Evaluate(context.Background(), Request{Subject: subject, Action: Action{Name: "turn_on", Properties: properties}, Resource: Resource{ID: "light.kitchen"}})
 		if got.Decision || got.Context.Reason != "invalid_request" {
 			t.Errorf("%s: %+v, want invalid_request", name, got)
 		}
 	}
-	got = p.Evaluate(context.Background(), Request{Subject: subject, Action: Action{Name: "turn_on", Properties: map[string]json.Number{"brightness": "5e1"}}, Resource: Resource{ID: "light.kitchen"}})
+	got = p.Evaluate(context.Background(), Request{Subject: subject, Action: Action{Name: "turn_on", Properties: map[string]json.RawMessage{"brightness": json.RawMessage(`5e1`)}}, Resource: Resource{ID: "light.kitchen"}})
 	if !got.Decision {
 		t.Errorf("integer parameter written as 5e1: %+v", got)
 	}
@@ -443,7 +449,7 @@ func TestSelectionCasesOverHTTP(t *testing.T) {
 			}
 			r := c.RawResource
 			p := New(Config{Principal: c.Subject.Principal, Mandates: fakeMandates{candidates: candidates},
-				Catalog:  catalogFor(r.EntityID, r.Category, r.Area, r.Critical),
+				Catalog:  catalogFor(r.EntityID, r.Category, r.Areas, r.Critical),
 				TimeZone: func() string { return c.Timezone }, Now: func() time.Time { return at }})
 			srv := httptest.NewServer(p.Handler())
 			defer srv.Close()

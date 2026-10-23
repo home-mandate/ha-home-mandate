@@ -7,7 +7,7 @@
 
 import type { Approval, MandateDraft, Rule } from '../api/types.ts';
 import { displayable } from './displaytext.ts';
-import { hasParameter, knownAction, lookupAction } from './vocabulary.ts';
+import { type ConstraintSpec, knownAction, lookupAction, parameterFits, validValue } from './vocabulary.ts';
 
 export type ProblemCode =
   | 'required'
@@ -38,6 +38,8 @@ const ENTITY_ID = /^[!-~]{1,255}$/;
 const AREA = /^[!-~]{1,64}$/;
 const PARAMETER = /^[a-z][a-z0-9_]{0,63}$/;
 export const MAX_LIMIT = Number.MAX_SAFE_INTEGER;
+/** Largest number of permitted values of a constraint (SPEC-v0 section 4.5). */
+export const MAX_ONE_OF = 32;
 const EXTENSION_CATEGORY = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_]*$/;
 const ACTION = /^(\*|[a-z][a-z0-9_]{0,63})$/;
 const TIMEOUT = /^PT(?:([0-9]{1,5})H)?(?:([0-9]{1,5})M)?(?:([0-9]{1,5})S)?$/;
@@ -170,18 +172,40 @@ function checkConstraints(rule: Rule, at: string): Problem[] {
   const category = (rule.resource as { category?: unknown } | undefined)?.category;
   const core = typeof category === 'string' && lookupAction(category, 'read').categoryKnown;
   const checked = category === undefined || core;
-  return Object.entries(constraints as Record<string, unknown>).flatMap(([name, limits]): Problem[] => {
+  return Object.entries(constraints as Record<string, unknown>).flatMap(([name, given]): Problem[] => {
     const field = `${at}/${name}`;
-    if (!PARAMETER.test(name) || limits === null || typeof limits !== 'object') return [{ field, code: 'format' }];
-    const { min, max, ...rest } = limits as Record<string, unknown>;
-    if (Object.keys(rest).length > 0) return [{ field, code: 'format' }];
-    if (min === undefined && max === undefined) return [{ field, code: 'required' }];
-    const limit = (v: unknown) => v === undefined || (Number.isInteger(v) && Math.abs(v as number) <= MAX_LIMIT);
-    if (!limit(min) || !limit(max)) return [{ field, code: 'format' }];
-    if (min !== undefined && max !== undefined && (min as number) > (max as number)) return [{ field, code: 'order' }];
-    const fits = actions.every((a) => typeof a === 'string' && hasParameter(core ? category : undefined, a, name));
+    if (!PARAMETER.test(name) || given === null || typeof given !== 'object') return [{ field, code: 'format' }];
+    const parsed = 'one_of' in given ? checkOneOf(given as Record<string, unknown>, field) : checkLimits(given as Record<string, unknown>, field);
+    if (Array.isArray(parsed)) return parsed;
+    const fits = actions.every((a) => typeof a === 'string' && parameterFits(core ? category : undefined, a, name, parsed));
     return checked && !fits ? [{ field, code: 'unknown' }] : [];
   });
+}
+
+/** checkLimits reads limits of an integer parameter: min, max or both. */
+function checkLimits(given: Record<string, unknown>, field: string): ConstraintSpec | Problem[] {
+  const { min, max, ...rest } = given;
+  if (Object.keys(rest).length > 0) return [{ field, code: 'format' }];
+  if (min === undefined && max === undefined) return [{ field, code: 'required' }];
+  const limit = (v: unknown) => v === undefined || (Number.isInteger(v) && Math.abs(v as number) <= MAX_LIMIT);
+  if (!limit(min) || !limit(max)) return [{ field, code: 'format' }];
+  if (min !== undefined && max !== undefined && (min as number) > (max as number)) return [{ field, code: 'order' }];
+  return given as ConstraintSpec;
+}
+
+/** checkOneOf reads a list of permitted values: 1 to 32 distinct values of one type, without min and max. */
+function checkOneOf(given: Record<string, unknown>, field: string): ConstraintSpec | Problem[] {
+  const { one_of: values, ...rest } = given;
+  if (Object.keys(rest).length > 0 || !Array.isArray(values)) return [{ field, code: 'format' }];
+  if (values.length === 0) return [{ field: `${field}/one_of`, code: 'required' }];
+  if (values.length > MAX_ONE_OF) return [{ field: `${field}/one_of`, code: 'too_many' }];
+  const seen = new Set<unknown>();
+  for (const [i, v] of values.entries()) {
+    if (!validValue(v) || typeof v !== typeof values[0]) return [{ field: `${field}/one_of/${i}`, code: 'format' }];
+    if (seen.has(v)) return [{ field: `${field}/one_of/${i}`, code: 'duplicate' }];
+    seen.add(v);
+  }
+  return { one_of: values as (number | string)[] };
 }
 
 function checkConditions(rule: Rule, at: string): Problem[] {
@@ -231,6 +255,8 @@ export function checkDraft(draft: MandateDraft): Problem[] {
     problems.push({ field: '/limits/max_actions_per_hour', code: 'range' });
   }
   problems.push(...checkApproval(draft.approval, '/approval'));
+  // enforce has no other value than false (SPEC-v0 section 3.1 item 11).
+  if ('enforce' in draft && draft.enforce !== undefined && (draft.enforce as unknown) !== false) problems.push({ field: '/enforce', code: 'format' });
 
   const validFrom = parseDateTime(draft.valid_from);
   if (Number.isNaN(validFrom)) problems.push({ field: '/valid_from', code: 'format' });

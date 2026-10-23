@@ -96,6 +96,12 @@ type Config struct {
 	Marks interface {
 		Set(ctx context.Context, entityID string, critical bool, by string) error
 	}
+	// AreaMoves are the entities that changed their areas since a human last looked
+	// (catalog.AreaMoves); nil: none are tracked.
+	AreaMoves interface {
+		Open() []catalog.AreaMove
+		Dismiss(ctx context.Context, entityID string, current []string) error
+	}
 	// Renames are the renamed entities a human has not resolved (catalog.Renames).
 	Renames interface {
 		Open() map[string][]string

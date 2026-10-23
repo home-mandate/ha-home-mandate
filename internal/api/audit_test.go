@@ -64,7 +64,7 @@ func TestAuditQuery(t *testing.T) {
 	e.Mandate = &audit.Mandate{ID: m.ID, Digest: m.Digest}
 	_, _ = h.log.Append(ctx, e) // 3
 	e2 := decisionAt("hm-client:other", "Garten 50%_off", true)
-	e2.Request.Resource = audit.Resource{EntityID: "lock.front_door", Area: "hall"}
+	e2.Request.Resource = audit.Resource{EntityID: "lock.front_door", Areas: []string{"hall"}}
 	_, _ = h.log.Append(ctx, e2)                                                                // 4
 	_, _ = h.agents.SetEmergencyStop(ctx, true, audit.Actor{Kind: audit.ActorUser, ID: annaID}) // 5
 

@@ -52,3 +52,30 @@ func TestGetStateNamesTheTemperatureUnit(t *testing.T) {
 		t.Errorf("climate %v, light %v", climate, light)
 	}
 }
+
+// A list of permitted modes is told in the agent's terms: auto stands for heat_cool and
+// auto of Home Assistant (Home Assistant profile); a refused mode names the allowed ones.
+func TestAgentLearnsItsModes(t *testing.T) {
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+			map[string]any{"id": "r-modes", "resource": map[string]any{"category": "climate"}, "actions": []any{"set_mode"}, "decision": "allow",
+				"constraints": map[string]any{"mode": map[string]any{"one_of": []any{"heat", "auto", "sleep"}}}},
+		}
+	})
+	s := h.session()
+	perms, errText := h.call(s, "list_my_permissions", map[string]any{"category": "climate"})
+	if errText != "" {
+		t.Fatal(errText)
+	}
+	if got := mustJSON(perms["groups"]); got != `[{"actions":{"read":"allow","set_mode":"allow"},"category":"climate","entity_ids":["climate.living_room"],`+
+		`"limits":{"set_mode":[{"hvac_mode":{"one_of":["auto","heat","heat_cool"]}}]}}]` {
+		t.Errorf("groups = %s", got)
+	}
+	for mode, want := range map[string]string{"heat_cool": "", "heat": "", "off": "denied: no_match: allowed only with hvac_mode one of auto, heat, heat_cool"} {
+		if _, errText := h.call(s, "perform_action", map[string]any{"entity_id": "climate.living_room", "action": "set_mode",
+			"params": map[string]any{"hvac_mode": mode}}); errText != want {
+			t.Errorf("%s: %q, want %q", mode, errText, want)
+		}
+	}
+}

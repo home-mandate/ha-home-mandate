@@ -29,12 +29,12 @@ type request struct {
 		Principal string `json:"principal"`
 	} `json:"subject"`
 	Request *struct {
-		Resource   resource               `json:"resource"`
-		Action     string                 `json:"action"`
-		Parameters map[string]json.Number `json:"parameters"`
-		Time       string                 `json:"time"`
-		Timezone   string                 `json:"timezone"`
-		Revoked    bool                   `json:"revoked"`
+		Resource   resource                   `json:"resource"`
+		Action     string                     `json:"action"`
+		Parameters map[string]json.RawMessage `json:"parameters"`
+		Time       string                     `json:"time"`
+		Timezone   string                     `json:"timezone"`
+		Revoked    bool                       `json:"revoked"`
 	} `json:"request"`
 	Stored  *string         `json:"stored"`
 	Offered *string         `json:"offered"`
@@ -132,12 +132,12 @@ func evaluate(ctx context.Context, req request) response {
 		return invalidRequest(m)
 	}
 	if req.Request.Revoked {
-		parameters, ok := integers(req.Request.Parameters)
+		parameters, ok := values(req.Request.Parameters)
 		if !ok {
 			return invalidRequest(m)
 		}
 		r := req.Request.Resource
-		res := evaluator.Evaluate(m, evaluator.Request{Resource: evaluator.Resource{EntityID: r.EntityID, Category: r.Category, Area: r.Area,
+		res := evaluator.Evaluate(m, evaluator.Request{Resource: evaluator.Resource{EntityID: r.EntityID, Category: r.Category, Areas: r.Areas,
 			Critical: r.Critical}, Action: req.Request.Action, Parameters: parameters, Time: at, TimeZone: req.Request.Timezone,
 			Status: evaluator.StatusRevoked})
 		return fromResult(res)
@@ -224,19 +224,16 @@ func pointInTime(text string) (time.Time, bool) {
 	return at, err == nil
 }
 
-// integers converts parameters as the PDP does for a revoked mandate's evaluation.
-func integers(raw map[string]json.Number) (map[string]int64, bool) {
-	out := make(map[string]int64, len(raw))
-	for name, n := range raw {
-		i, err := n.Int64()
-		if err != nil {
-			f, ferr := n.Float64()
-			if ferr != nil || f != float64(int64(f)) {
-				return nil, false
-			}
-			i = int64(f)
+// values reads parameters as the PDP does for a revoked mandate's evaluation: integers
+// by their exact value, and strings.
+func values(raw map[string]json.RawMessage) (map[string]evaluator.Value, bool) {
+	out := make(map[string]evaluator.Value, len(raw))
+	for name, data := range raw {
+		var v evaluator.Value
+		if err := json.Unmarshal(data, &v); err != nil {
+			return nil, false
 		}
-		out[name] = i
+		out[name] = v
 	}
 	return out, true
 }
@@ -257,6 +254,9 @@ func fromResult(r evaluator.Result) response {
 	}
 	if r.Approval != nil {
 		out.ApprovalTimeout, out.Approvers = r.Approval.Timeout, r.Approval.Approvers
+	}
+	if r.NotEnforced {
+		out.Enforced = new(bool)
 	}
 	return response{outcome: out}
 }

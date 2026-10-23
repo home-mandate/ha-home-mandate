@@ -118,6 +118,10 @@ describe('ruleText', () => {
     expect(text(rule({ resource: { entity_id: 'light.kitchen', category: 'light', area: 'kitchen' }, actions: ['set'] }))).toMatchObject({ subject: 'Küchenlicht', area: '', actions: 'adjust' });
   });
 
+  it('names a rule on a floor as a floor', () => {
+    expect(ruleLine(text(rule({ resource: { category: 'light', area: 'floor:ground_floor' } })))).toBe('Lights · Erdgeschoss (floor): read, turn on');
+  });
+
   it('shows ids for devices and areas the catalog does not know', () => {
     expect(text(rule({ resource: { entity_id: 'lock.gone' } })).subject).toBe('lock.gone');
     expect(text(rule({ resource: { category: 'light', area: 'attic' } })).area).toBe('attic');
@@ -125,7 +129,7 @@ describe('ruleText', () => {
 
   it('keeps hostile device names as plain text without hidden characters', () => {
     expect(text(rule({ resource: { entity_id: 'script.demo' } })).subject).toBe(HOSTILE_NAME);
-    const catalog = { areas: [{ id: 'kitchen', name: 'K\u202Eüche\n2' }], devices: [] };
+    const catalog = { areas: [{ id: 'kitchen', name: 'K\u202Eüche\n2', floor: false, floor_id: null }], devices: [] };
     expect(ruleText(rule({ resource: { category: 'light', area: 'kitchen' } }), catalog, 'en').area).toBe('Küche 2');
   });
 

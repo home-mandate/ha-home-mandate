@@ -7,17 +7,24 @@ import (
 	"github.com/home-mandate/ha-home-mandate/internal/mcp"
 )
 
+// wireArea is an area of Home Assistant or a floor; a rule can name either.
 type wireArea struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	// Floor: the area is a floor of Home Assistant (its ID begins with floor:).
+	Floor bool `json:"floor"`
+	// FloorID is the area ID of the floor an area is on.
+	FloorID *string `json:"floor_id"`
 }
 
 type wireDevice struct {
-	EntityID string   `json:"entity_id"`
-	Name     string   `json:"name"`
-	Category string   `json:"category"`
-	Area     *string  `json:"area"`
-	Actions  []string `json:"actions"`
+	EntityID string `json:"entity_id"`
+	Name     string `json:"name"`
+	Category string `json:"category"`
+	// Area is the room of the device, Areas its set of areas: the room and its floor.
+	Area    *string  `json:"area"`
+	Areas   []string `json:"areas"`
+	Actions []string `json:"actions"`
 	// Critical: the household marked the device; every action except read is critical.
 	Critical bool `json:"critical"`
 	// SuggestCritical: the UI proposes marking the device (catalog.SuggestCritical).
@@ -30,12 +37,12 @@ type wireDeviceCatalog struct {
 }
 
 // getDevices is the catalog for the mandate editor: every device with its category,
-// area and the actions of its category's vocabulary. Names come from Home Assistant and
+// areas and the actions of its category's vocabulary. Names come from Home Assistant and
 // are untrusted; the UI shows them cleaned and escaped.
 func (s *Server) getDevices(*request) (any, error) {
 	out := wireDeviceCatalog{Areas: []wireArea{}, Devices: []wireDevice{}}
 	for _, a := range s.cfg.Catalog.Areas() {
-		out.Areas = append(out.Areas, wireArea{ID: a.ID, Name: a.Name})
+		out.Areas = append(out.Areas, wireArea{ID: a.ID, Name: a.Name, Floor: a.Floor, FloorID: optional(a.FloorID)})
 	}
 	for _, d := range s.cfg.Catalog.All() {
 		name := d.Name()
@@ -46,7 +53,12 @@ func (s *Server) getDevices(*request) (any, error) {
 		if actions == nil {
 			actions = []string{}
 		}
-		out.Devices = append(out.Devices, wireDevice{EntityID: d.EntityID, Name: name, Category: d.Category, Area: optional(d.Area),
+		areas := d.Areas
+		if areas == nil {
+			areas = []string{}
+		}
+		out.Devices = append(out.Devices, wireDevice{EntityID: d.EntityID, Name: name, Category: d.Category,
+			Area: optional(catalog.Room(d.Areas)), Areas: areas,
 			Actions: actions, Critical: d.Critical, SuggestCritical: !d.Critical && catalog.SuggestCritical(d)})
 	}
 	return out, nil

@@ -11,6 +11,7 @@
   import type { DecisionFilter } from '../../api/types.ts';
   import {
     DECISIONS,
+    NOT_ENFORCED,
     DEFAULT_FILTERS,
     EVENTS,
     PERIODS,
@@ -124,6 +125,9 @@
     const decisions = DECISIONS.filter((d) => (d === decision ? on : filters.decisions.includes(d)));
     set({ decisions });
   }
+
+  /** The label of a decision chip; not enforced is no decision of its own. */
+  const chipLabel = (d: DecisionFilter) => (d === NOT_ENFORCED ? m.audit_filter_not_enforced() : decisionLabel(d));
 </script>
 
 <div class="filters" role="search" aria-label={m.filter_label()}>
@@ -166,7 +170,7 @@
     <legend>{m.filter_decision()}</legend>
     <div class="chips">
       {#each DECISIONS as decision (decision)}
-        <ToggleChip pressed={filters.decisions.includes(decision)} onchange={(on) => toggle(decision, on)}>{decisionLabel(decision)}</ToggleChip>
+        <ToggleChip pressed={filters.decisions.includes(decision)} onchange={(on) => toggle(decision, on)}>{chipLabel(decision)}</ToggleChip>
       {/each}
     </div>
   </fieldset>

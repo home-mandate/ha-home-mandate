@@ -5,7 +5,8 @@ package mcp
 import (
 	"errors"
 	"fmt"
-	"math"
+
+	"github.com/home-mandate/spec/evaluator"
 )
 
 // The units Home Assistant reports for temperatures: metric and US customary households.
@@ -24,7 +25,7 @@ const errTemperatureUnitChanged = "temperature_unit_changed"
 
 // unitOf is the unit a temperature among the parameters of an evaluation is in: "" if
 // there is none.
-func unitOf(parameters map[string]int64) string {
+func unitOf(parameters map[string]evaluator.Value) string {
 	for unit, name := range evaluationParameterOf["climate"]["set_temperature"]["temperature"].perUnit {
 		if _, ok := parameters[name]; ok {
 			return unit
@@ -44,23 +45,50 @@ type evaluationParameter struct {
 	// a conversion. A temperature in any other unit is refused, in an unknown unit it is
 	// unavailable (#42, #44).
 	perUnit map[string]string
+	// values maps the values of a string parameter of the service call to the permitted
+	// values of the vocabulary (Home Assistant profile); a value without one is invalid.
+	values map[string]string
+}
+
+// hvacModes maps the HVAC modes of Home Assistant to mode (Home Assistant profile).
+var hvacModes = map[string]string{
+	"off": "off", "heat": "heat", "cool": "cool", "heat_cool": "auto", "auto": "auto", "dry": "dry", "fan_only": "fan_only",
 }
 
 // evaluationParameterOf: category → action → parameter of the service call.
 var evaluationParameterOf = map[string]map[string]map[string]evaluationParameter{
-	"light":   {"set": {"brightness_pct": {name: "brightness", scale: 1}}},
-	"climate": {"set_temperature": {"temperature": {scale: 100, perUnit: map[string]string{celsius: "temperature", fahrenheit: "temperature_f"}}}},
-	"cover":   {"set_position": {"position": {name: "position", scale: 1}}},
-	"media":   {"set_volume": {"volume_level": {name: "volume", scale: 100}}},
+	"light": {"set": {"brightness_pct": {name: "brightness", scale: 1}}},
+	"climate": {
+		"set_temperature": {"temperature": {scale: 100, perUnit: map[string]string{celsius: "temperature", fahrenheit: "temperature_f"}}},
+		// The HVAC modes of Home Assistant as modes of the vocabulary (Home Assistant
+		// profile): heat_cool and auto both mean Matter's Auto; the requested mode is executed.
+		"set_mode": {"hvac_mode": {name: "mode", values: hvacModes}},
+	},
+	"cover": {"set_position": {"position": {name: "position", scale: 1}}},
+	"media": {"set_volume": {"volume_level": {name: "volume", scale: 100}}},
 }
 
-const (
-	// exactness is how far a scaled value may be from an integer and still count as one;
-	// it absorbs binary floating-point noise such as 19.99 * 100, nothing more.
-	exactness = 1e-6
-	// maxExactInteger is the largest integer a float64 holds exactly.
-	maxExactInteger = 1<<53 - 1
-)
+// maxExactInteger is the largest magnitude of an integer parameter (SPEC-v0 section 4.5).
+const maxExactInteger = 1<<53 - 1
+
+// evaluated is the value of the evaluation for the checked value of a service call: an
+// integer in the unit of the vocabulary, by its exact decimal value, or the permitted
+// value a string maps to. A value that is neither fails closed with an error.
+func (p evaluationParameter) evaluated(callName string, value any, temperatureUnit string) (evaluator.Value, error) {
+	if p.values != nil {
+		s, _ := value.(string)
+		mapped, ok := p.values[s]
+		if !ok {
+			return evaluator.Value{}, fmt.Errorf("%w: %s has no value of the vocabulary", errInvalidParams, callName)
+		}
+		return evaluator.StringValue(mapped), nil
+	}
+	n, ok := exactSteps(value, int64(p.scale))
+	if !ok {
+		return evaluator.Value{}, fmt.Errorf("parameter %s is no integer in the unit of the vocabulary: %v", callName, value)
+	}
+	return evaluator.IntegerValue(n), nil
+}
 
 // requestParameters checks the parameters of a vocabulary action before the decision and
 // derives the parameters of the evaluation, in the units of the vocabulary. A value that
@@ -68,7 +96,7 @@ const (
 // section 4.5): an error wrapping errInvalidParams that names the parameter. A
 // temperature while the household's unit is unknown gives errTemperatureUnitUnknown. An
 // action outside the vocabulary has no parameters to check; the decision refuses it.
-func requestParameters(category, action string, params map[string]any, temperatureUnit string) (map[string]int64, error) {
+func requestParameters(category, action string, params map[string]any, temperatureUnit string) (map[string]evaluator.Value, error) {
 	spec, ok := specFor(category, action, temperatureUnit)
 	if !ok || action == "read" {
 		return nil, nil
@@ -101,26 +129,16 @@ func checkTemperatureUnit(category, action string, params map[string]any, unit s
 // evaluationParameters derives the parameters of the evaluation from the checked data of
 // the service call. Every value has been checked to be a whole step of its unit; one that
 // is not anyway fails closed with an error, it is never dropped.
-func evaluationParameters(category, action string, data map[string]any, temperatureUnit string) (map[string]int64, error) {
-	var out map[string]int64
+func evaluationParameters(category, action string, data map[string]any, temperatureUnit string) (map[string]evaluator.Value, error) {
+	var out map[string]evaluator.Value
 	for callName, p := range evaluationParameterOf[category][action] {
 		value, present := data[callName]
 		if !present {
 			continue
 		}
-		var f float64
-		switch v := value.(type) {
-		case int:
-			f = float64(v)
-		case float64:
-			f = v
-		default:
-			return nil, fmt.Errorf("parameter %s is no number: %T", callName, value)
-		}
-		scaled := f * p.scale
-		rounded := math.Round(scaled)
-		if math.IsNaN(scaled) || math.IsInf(scaled, 0) || math.Abs(scaled-rounded) > exactness || math.Abs(rounded) > maxExactInteger {
-			return nil, fmt.Errorf("parameter %s is no integer in the unit of the vocabulary: %v", callName, f)
+		v, err := p.evaluated(callName, value, temperatureUnit)
+		if err != nil {
+			return nil, err
 		}
 		name := p.name
 		if p.perUnit != nil {
@@ -129,9 +147,9 @@ func evaluationParameters(category, action string, data map[string]any, temperat
 			}
 		}
 		if out == nil {
-			out = map[string]int64{}
+			out = map[string]evaluator.Value{}
 		}
-		out[name] = int64(rounded)
+		out[name] = v
 	}
 	return out, nil
 }

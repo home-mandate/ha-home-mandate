@@ -3,6 +3,7 @@
 package mcp
 
 import (
+	"fmt"
 	"maps"
 	"slices"
 	"strconv"
@@ -14,9 +15,11 @@ import (
 // limitOut is one limit of the agent's mandate on a parameter, in the units the agent
 // uses in perform_action: degrees in the household's unit, percent, a volume level.
 type limitOut struct {
-	Min  *float64 `json:"min,omitempty"`
-	Max  *float64 `json:"max,omitempty"`
-	Unit string   `json:"unit,omitempty"`
+	Min *float64 `json:"min,omitempty"`
+	Max *float64 `json:"max,omitempty"`
+	// OneOf are the only values allowed, in the agent's terms (numbers or strings).
+	OneOf []any  `json:"one_of,omitempty"`
+	Unit  string `json:"unit,omitempty"`
 }
 
 // agentLimits turns the limits of the allow rules that could allow an action (one map per
@@ -29,12 +32,24 @@ func agentLimits(rules []map[string]evaluator.Limit, category, action, unit stri
 		limits := map[string]limitOut{}
 		usable := true
 		for name, l := range rule {
-			callName, scale, ok := agentParameter(category, action, name, unit)
+			p, callName, ok := agentParameter(category, action, name, unit)
 			if !ok {
 				usable = false
 				break
 			}
-			limits[callName] = limitOut{Min: scaled(l.Min, scale), Max: scaled(l.Max, scale), Unit: unitLabel(callName, unit)}
+			lim := limitOut{Unit: unitLabel(callName, unit)}
+			if p.scale != 0 {
+				lim.Min, lim.Max = scaled(l.Min, p.scale), scaled(l.Max, p.scale)
+			}
+			if l.OneOf != nil {
+				// A value the agent cannot give here (a mode Home Assistant has none for)
+				// is left out; a rule without one never applies.
+				if lim.OneOf = agentValues(p, l.OneOf); len(lim.OneOf) == 0 {
+					usable = false
+					break
+				}
+			}
+			limits[callName] = lim
 		}
 		if usable {
 			out = append(out, limits)
@@ -44,18 +59,44 @@ func agentLimits(rules []map[string]evaluator.Limit, category, action, unit stri
 }
 
 // agentParameter is the parameter of perform_action that the evaluation parameter name
-// comes from in this household, and its scale.
-func agentParameter(category, action, name, unit string) (string, float64, bool) {
+// comes from in this household, with its mapping.
+func agentParameter(category, action, name, unit string) (evaluationParameter, string, bool) {
 	for callName, p := range evaluationParameterOf[category][action] {
 		evaluated := p.name
 		if p.perUnit != nil {
 			evaluated = p.perUnit[unit]
 		}
 		if evaluated != "" && evaluated == name {
-			return callName, p.scale, true
+			return p, callName, true
 		}
 	}
-	return "", 0, false
+	return evaluationParameter{}, "", false
+}
+
+// agentValues are the permitted values in the agent's terms: a number in the unit of
+// perform_action, or every value of the service call that maps to a permitted string
+// (heat_cool and auto for auto), sorted.
+func agentValues(p evaluationParameter, values []evaluator.Value) []any {
+	var out []any
+	if p.values != nil {
+		var names []string
+		for callValue, mapped := range p.values {
+			if slices.Contains(values, evaluator.StringValue(mapped)) {
+				names = append(names, callValue)
+			}
+		}
+		slices.Sort(names)
+		for _, n := range names {
+			out = append(out, n)
+		}
+		return out
+	}
+	for _, v := range values {
+		if n, ok := v.AsInteger(); ok {
+			out = append(out, float64(n)/p.scale)
+		}
+	}
+	return out
 }
 
 func scaled(v *int64, scale float64) *float64 {
@@ -100,6 +141,15 @@ func limitsText(limits []map[string]limitOut) string {
 				unit = " " + l.Unit
 			}
 			switch {
+			case l.OneOf != nil:
+				items := make([]string, len(l.OneOf))
+				for i, v := range l.OneOf {
+					items[i] = fmt.Sprint(v)
+					if f, ok := v.(float64); ok {
+						items[i] = formatNumber(f)
+					}
+				}
+				parts = append(parts, name+" one of "+strings.Join(items, ", ")+unit)
 			case l.Min != nil && l.Max != nil:
 				parts = append(parts, name+" "+formatNumber(*l.Min)+" to "+formatNumber(*l.Max)+unit)
 			case l.Min != nil:

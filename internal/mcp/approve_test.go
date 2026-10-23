@@ -42,6 +42,11 @@ func (f *fakeApprover) Start(ctx context.Context, req approval.Request) (approva
 	f.mu.Lock()
 	f.asked = append(f.asked, req)
 	during, res, err, journal, hold := f.during, f.result, f.err, f.journal, f.hold
+	if res.At.Equal(answeredAt) {
+		// The answer is given now: a confirmation is valid for the timeout from its answer,
+		// and a slow run reaches a test minutes after answeredAt was taken.
+		res.At = time.Now().UTC().Truncate(time.Second)
+	}
 	if hold && res.ID == "" {
 		res.ID = fmt.Sprintf("%032x", len(f.asked))
 	}
@@ -119,9 +124,10 @@ func (f *fakeApprover) requests() []approval.Request {
 
 const approverID = "user-1" // approver of the voice assistant example
 
-// answeredAt is when the fake approver answers: now, by the clock the gateway checks a
-// confirmation's validity against. A fixed date made every test after it fail with
-// approval_expired once it was more than the validity in the past.
+// answeredAt stands for "the fake approver answers now", by the clock the gateway checks a
+// confirmation's validity against: Start replaces it with the time of the answer. A fixed
+// date made every test after it fail with approval_expired once it was more than the
+// validity in the past, and so did the start of the package on a slow run.
 var answeredAt = time.Now().UTC().Truncate(time.Second)
 
 func approvalHarness(t *testing.T, f *fakeApprover) *harness {

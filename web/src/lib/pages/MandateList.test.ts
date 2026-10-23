@@ -223,6 +223,44 @@ describe('MandateList', () => {
     expect(JSON.stringify(doc.rules)).toContain('"lock.front_door_main"');
   });
 
+  it('tells which mandates a device affects that left an area their rules name, until it was seen', async () => {
+    const { api } = await start({}, async (api) => {
+      const { document: doc, summary } = await api.mandate('mandate-voice');
+      const floor: Rule = { id: 'r-floor', resource: { category: 'light', area: 'floor:ground_floor' }, actions: ['turn_on'], decision: 'allow' };
+      const draft = { rules: [...doc.rules, floor], approval: doc.approval, limits: doc.limits, valid_from: doc.valid_from };
+      await api.putMandate('mandate-voice', { name: 'Sprachassistent Küche', draft, base_digest: summary.digest });
+    });
+    await screen.findByRole('table');
+    expect(screen.queryByRole('region', { name: 'Devices changed their area' })).toBeNull();
+    // A move between areas no rule names is not shown.
+    api.control.moveDevice('cover.garage_door', ['hallway', 'floor:ground_floor']);
+    api.control.moveDevice('cover.garage_door', ['garage']);
+    api.control.moveDevice('light.kitchen', ['garage']);
+    const notice = await screen.findByRole('region', { name: 'Devices changed their area' });
+    expect(within(notice).getByText('Küchenlicht')).toBeTruthy();
+    const where = within(notice).getByText(/^before /);
+    expect(cleanUntrusted(where.textContent ?? '')).toBe('before Erdgeschoss (floor) and Küche, now Garage');
+    expect(within(notice).getByRole('link', { name: 'Sprachassistent Küche' }).getAttribute('href')).toBe('#/mandates/mandate-voice');
+    await fireEvent.click(within(notice).getByRole('button', { name: 'Seen' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Devices changed their area' })).toBeNull());
+    expect(await api.areaMoves()).toEqual([]);
+  });
+
+  it('marks a mandate in audit mode and one whose audit mode waits for a confirmation', async () => {
+    const { api } = await start({}, async (api) => {
+      const { document: doc, summary } = await api.mandate('mandate-voice');
+      const draft = { rules: doc.rules, approval: doc.approval, limits: doc.limits, valid_from: doc.valid_from, enforce: false as const };
+      await api.putMandate('mandate-voice', { name: 'Sprachassistent Küche', draft, base_digest: summary.digest });
+    });
+    const table = await screen.findByRole('table');
+    const row = within(within(table).getByRole('link', { name: 'Sprachassistent Küche' }).closest('tr') as HTMLElement);
+    expect(row.getByText('Audit mode waiting')).toBeTruthy();
+    const pending = (await api.mandate('mandate-voice')).pending;
+    await api.confirmAuditMode('mandate-voice', pending?.digest ?? '');
+    expect(await row.findByText('Audit mode')).toBeTruthy();
+    expect(row.queryByText('Audit mode waiting')).toBeNull();
+  });
+
   it('asks before a rename is dismissed', async () => {
     const { api } = await start();
     await screen.findByRole('table');

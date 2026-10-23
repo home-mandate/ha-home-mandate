@@ -47,6 +47,7 @@ func TestListFilters(t *testing.T) {
 		{"area", map[string]any{"area": "garden"}, []string{"lock.back_door", "lock.garden_gate"}},
 		{"category", map[string]any{"category": "lock"}, []string{"lock.back_door", "lock.front_door", "lock.garden_gate"}},
 		{"area and category", map[string]any{"area": "hallway", "category": "lock"}, []string{"lock.front_door"}},
+		{"floor", map[string]any{"area": "floor:ground"}, []string{"light.kitchen", "lock.front_door"}},
 		{"search in the entity ID, any case", map[string]any{"search": "GARDEN"}, []string{"lock.garden_gate"}},
 		{"search in the name", map[string]any{"search": "itche"}, []string{"light.kitchen"}},
 		{"area of an unreadable device", map[string]any{"area": "porch"}, nil},
@@ -147,7 +148,7 @@ func TestListDefaultPageSize(t *testing.T) {
 	h.catalog.mu.Lock()
 	for i := range 520 {
 		id := fmt.Sprintf("light.bulb_%03d", i)
-		h.catalog.devices[id] = catalog.Device{EntityID: id, Category: "light", Area: "kitchen", State: "off"}
+		h.catalog.devices[id] = catalog.Device{EntityID: id, Category: "light", Areas: []string{"kitchen"}, State: "off"}
 	}
 	h.catalog.mu.Unlock()
 	s := h.session()
@@ -201,7 +202,7 @@ func TestListDevicesOverview(t *testing.T) {
 		t.Fatal(errText)
 	}
 	areas := mustJSON(out["areas"])
-	if want := `[{"count":2,"id":"garden","name":"Garden"},{"count":1,"id":"hallway","name":"Hallway"},{"count":1,"id":"kitchen","name":"Kitchen"}]`; areas != want {
+	if want := `[{"count":2,"floor":true,"id":"floor:ground","name":"Ground floor"},{"count":2,"id":"garden","name":"Garden"},{"count":1,"id":"hallway","name":"Hallway"},{"count":1,"id":"kitchen","name":"Kitchen"}]`; areas != want {
 		t.Errorf("areas = %s, want %s (the porch has only the unreadable camera)", areas, want)
 	}
 	categories := mustJSON(out["categories"])

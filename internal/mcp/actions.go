@@ -3,11 +3,14 @@
 package mcp
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
-	"math"
+	"math/big"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
@@ -189,17 +192,17 @@ func (p param) check(value any) (any, error) {
 		}
 		return s, nil
 	default:
-		f, ok := value.(float64)
-		steps := p.steps
+		steps := int64(p.steps)
 		if p.kind == "int" || steps == 0 {
 			steps = 1
 		}
-		v, whole := canonical(f, steps)
-		if !ok || !whole || v < p.min || v > p.max {
+		n, ok := exactSteps(value, steps)
+		v := float64(n) / float64(steps)
+		if !ok || v < p.min || v > p.max {
 			return nil, errors.New(p.message())
 		}
 		if p.kind == "int" {
-			return int(v), nil
+			return int(n), nil
 		}
 		return v, nil
 	}
@@ -217,17 +220,41 @@ func (p param) message() string {
 	return fmt.Sprintf("must be %s %s between %g and %g", article, p.kind, p.min, p.max)
 }
 
-// canonical returns the whole step closest to f, as a value of the service call, and
-// whether f is that step but for binary floating-point noise (such as 0.29 * 100). The
-// canonical value is what is evaluated and what is executed.
-func canonical(f, steps float64) (float64, bool) {
-	scaled := f * steps
-	if math.IsNaN(scaled) || math.IsInf(scaled, 0) {
+// jsonNumber is a JSON number (RFC 8259) whose exponent has at most two digits: far
+// beyond any value of the vocabulary, and small enough to compute with exactly.
+var jsonNumber = regexp.MustCompile(`^-?(0|[1-9][0-9]{0,30})(\.[0-9]{1,30})?([eE][+-]?[0-9]{1,2})?$`)
+
+// exactSteps returns value in steps of the vocabulary's unit (steps per unit of the
+// service call) and whether it is a whole number of them by its exact decimal value
+// (SPEC-v0 section 4.5): 19.99 degrees are 1999 hundredths, 50.00000000000000000001
+// percent is no whole percent. Numbers arrive as json.Number from the agent's arguments;
+// a float64 counts by its shortest decimal form. The magnitude is at most 2^53 − 1 steps.
+func exactSteps(value any, steps int64) (int64, bool) {
+	var text string
+	switch v := value.(type) {
+	case json.Number:
+		text = string(v)
+	case float64:
+		text = strconv.FormatFloat(v, 'g', -1, 64)
+	case int:
+		text = strconv.Itoa(v)
+	default:
 		return 0, false
 	}
-	rounded := math.Round(scaled)
-	if math.Abs(scaled-rounded) > exactness || math.Abs(rounded) > maxExactInteger {
+	if !jsonNumber.MatchString(text) {
 		return 0, false
 	}
-	return rounded / steps, true
+	r, ok := new(big.Rat).SetString(text)
+	if !ok {
+		return 0, false
+	}
+	r.Mul(r, new(big.Rat).SetInt64(steps))
+	if !r.IsInt() || !r.Num().IsInt64() {
+		return 0, false
+	}
+	n := r.Num().Int64()
+	if n > maxExactInteger || n < -maxExactInteger {
+		return 0, false
+	}
+	return n, true
 }

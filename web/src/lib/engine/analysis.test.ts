@@ -6,10 +6,10 @@ import type { Device, MandateDraft, Rule } from '../api/types.ts';
 import { cell, criticalIncluded, demotedIn, diff, isWidening, overrides, ruleMatches, validityChange } from './analysis.ts';
 
 const devices: Device[] = [
-  { entity_id: 'light.kitchen', name: 'Küchenlicht', category: 'light', area: 'kitchen', actions: ['read', 'set', 'turn_off', 'turn_on'], critical: false, suggest_critical: false },
-  { entity_id: 'light.bedroom', name: 'Schlafzimmer', category: 'light', area: 'bedroom', actions: ['read', 'set', 'turn_off', 'turn_on'], critical: false, suggest_critical: false },
-  { entity_id: 'lock.front_door', name: 'Haustür', category: 'lock', area: 'hallway', actions: ['lock', 'open', 'read', 'unlock'], critical: false, suggest_critical: false },
-  { entity_id: 'cover.garage', name: 'Garagentor', category: 'gate', area: 'garage', actions: ['close', 'open', 'read'], critical: false, suggest_critical: false },
+  { entity_id: 'light.kitchen', name: 'Küchenlicht', category: 'light', area: 'kitchen', areas: ['kitchen'], actions: ['read', 'set', 'turn_off', 'turn_on'], critical: false, suggest_critical: false },
+  { entity_id: 'light.bedroom', name: 'Schlafzimmer', category: 'light', area: 'bedroom', areas: ['bedroom'], actions: ['read', 'set', 'turn_off', 'turn_on'], critical: false, suggest_critical: false },
+  { entity_id: 'lock.front_door', name: 'Haustür', category: 'lock', area: 'hallway', areas: ['hallway'], actions: ['lock', 'open', 'read', 'unlock'], critical: false, suggest_critical: false },
+  { entity_id: 'cover.garage', name: 'Garagentor', category: 'gate', area: 'garage', areas: ['garage'], actions: ['close', 'open', 'read'], critical: false, suggest_critical: false },
 ];
 const [kitchen, bedroom, door, garage] = devices as [Device, Device, Device, Device];
 

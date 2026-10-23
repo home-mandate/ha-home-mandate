@@ -5,7 +5,7 @@
 // differently from the specification, the specification name stays and only the label
 // differs (decision D10). Anything unknown is shown as it is, without hidden characters.
 
-import type { Weekday } from '../api/types.ts';
+import type { Area, Weekday } from '../api/types.ts';
 import type { CellDecision } from '../engine/analysis.ts';
 import { isCountryCode } from '../format.ts';
 import { m } from '../i18n.ts';
@@ -79,6 +79,12 @@ export function actionLabel(category: string | undefined, action: string): strin
 }
 
 /** categoryLabel names a category; "all" stands for a rule without one. */
+/** areaLabel names an area, a floor as such: a rule on it covers every room on the floor. */
+export function areaLabel(area: Pick<Area, 'id' | 'name' | 'floor'>): string {
+  const name = cleanUntrusted(area.name) || cleanUntrusted(area.id);
+  return area.floor ? m.area_floor({ name }) : name;
+}
+
 export function categoryLabel(category: string): string {
   const text = lookup(CATEGORIES, category);
   return text ? text() : cleanUntrusted(category, MAX_IDENTIFIER);

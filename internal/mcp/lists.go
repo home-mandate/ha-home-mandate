@@ -38,7 +38,7 @@ type (
 	// agent may read, so an unknown value and one that matches only unreadable devices
 	// give the same empty page.
 	listInput struct {
-		Area     string `json:"area,omitempty" jsonschema:"only devices in this area, by its id from the areas of list_devices"`
+		Area     string `json:"area,omitempty" jsonschema:"only devices in this area or on this floor, by its id from the areas of list_devices"`
 		Category string `json:"category,omitempty" jsonschema:"only devices of this category, e.g. light or lock"`
 		Search   string `json:"search,omitempty" jsonschema:"only devices whose entity ID or name contains this text, ignoring case"`
 		Cursor   string `json:"cursor,omitempty" jsonschema:"next_cursor of the previous page; omit it for the first page"`
@@ -48,13 +48,16 @@ type (
 		EntityID string `json:"entity_id"`
 		Name     string `json:"name,omitempty"`
 		Category string `json:"category"`
-		Area     string `json:"area,omitempty"`
-		State    string `json:"state"`
+		// Areas are the room and the floor of the device; IDs of floors begin with floor:.
+		Areas []string `json:"areas,omitempty"`
+		State string   `json:"state"`
 	}
 	areaOut struct {
-		ID    string `json:"id"`
-		Name  string `json:"name,omitempty"`
-		Count int    `json:"count"`
+		ID   string `json:"id"`
+		Name string `json:"name,omitempty"`
+		// Floor: a floor of the home; its devices are those of the rooms on it.
+		Floor bool `json:"floor,omitempty"`
+		Count int  `json:"count"`
 	}
 	categoryOut struct {
 		Name  string `json:"name"`
@@ -109,7 +112,7 @@ func (in listInput) pageSize() (int, error) {
 
 // matches reports whether dev passes the filters; search is in.Search in lower case.
 func (in listInput) matches(dev catalog.Device, search string) bool {
-	if in.Area != "" && dev.Area != in.Area {
+	if in.Area != "" && !slices.Contains(dev.Areas, in.Area) {
 		return false
 	}
 	if in.Category != "" && dev.Category != in.Category {
@@ -149,7 +152,7 @@ func (in listInput) page(devices []catalog.Device, size int) (page []catalog.Dev
 func (g *Gateway) readableDevices(snap *pdp.Snapshot, allowedOnly bool) []catalog.Device {
 	var out []catalog.Device
 	for _, dev := range g.cfg.Catalog.All() {
-		d := snap.Decide(dev.EntityID, "read", nil).Result.Decision
+		d := effective(snap.Decide(dev.EntityID, "read", nil).Result)
 		if d == evaluator.Allow || (!allowedOnly && d != evaluator.Deny) {
 			out = append(out, dev)
 		}
@@ -173,7 +176,7 @@ func (g *Gateway) listDevices(ctx context.Context, req *sdk.CallToolRequest, in 
 	readable := g.readableDevices(snap, true)
 	page, total, next := in.page(readable, size)
 	for _, dev := range page {
-		out.Devices = append(out.Devices, deviceOut{EntityID: dev.EntityID, Name: dev.Name(), Category: dev.Category, Area: dev.Area, State: dev.State})
+		out.Devices = append(out.Devices, deviceOut{EntityID: dev.EntityID, Name: dev.Name(), Category: dev.Category, Areas: dev.Areas, State: dev.State})
 	}
 	out.Total, out.NextCursor = total, next
 	if in.Cursor == "" && in.Area == "" && in.Category == "" && in.Search == "" {
@@ -182,23 +185,23 @@ func (g *Gateway) listDevices(ctx context.Context, req *sdk.CallToolRequest, in 
 	return nil, out, nil
 }
 
-// overview counts the devices per area and per category. It names only areas with a
-// device the agent may read.
+// overview counts the devices per area (rooms and floors) and per category. It names only
+// areas with a device the agent may read.
 func (g *Gateway) overview(devices []catalog.Device) ([]areaOut, []categoryOut) {
 	areaCount, categoryCount := map[string]int{}, map[string]int{}
 	for _, dev := range devices {
-		if dev.Area != "" {
-			areaCount[dev.Area]++
+		for _, area := range dev.Areas {
+			areaCount[area]++
 		}
 		categoryCount[dev.Category]++
 	}
-	names := map[string]string{}
+	names, floors := map[string]string{}, map[string]bool{}
 	for _, a := range g.cfg.Catalog.Areas() {
-		names[a.ID] = a.Name
+		names[a.ID], floors[a.ID] = a.Name, a.Floor
 	}
 	areas := []areaOut{}
 	for _, id := range slices.Sorted(maps.Keys(areaCount)) {
-		areas = append(areas, areaOut{ID: id, Name: names[id], Count: areaCount[id]})
+		areas = append(areas, areaOut{ID: id, Name: names[id], Floor: floors[id], Count: areaCount[id]})
 	}
 	categories := []categoryOut{}
 	for _, name := range slices.Sorted(maps.Keys(categoryCount)) {
@@ -227,8 +230,8 @@ func (g *Gateway) listPermissions(ctx context.Context, req *sdk.CallToolRequest,
 		var limits map[string][]map[string]limitOut
 		for _, action := range actionsOf(dev.Category) {
 			d := snap.Decide(dev.EntityID, action, nil)
-			if d.Result.Decision != evaluator.Deny {
-				actions[action] = string(d.Result.Decision)
+			if decision := effective(d.Result); decision != evaluator.Deny {
+				actions[action] = string(decision)
 				continue
 			}
 			// Evaluated without values, an action allowed only within limits does not

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -58,6 +59,9 @@ type Page struct {
 	NextBefore int64
 	Total      int
 }
+
+// DecisionNotEnforced is the filter of the denies a mandate in audit mode did not enforce.
+const DecisionNotEnforced = "not_enforced"
 
 // Query returns a page of entries matching f.
 func (l *Log) Query(ctx context.Context, f Filter) (Page, error) {
@@ -115,7 +119,8 @@ func (f Filter) where() (string, []any, error) {
 		add(`a.client_id = ?`, f.Agent)
 	}
 	if f.Device != "" {
-		add(`(a.entity_id = ? OR a.area = ? OR a.directory_entity_id = ? OR a.directory_previous_id = ?)`, f.Device, f.Device, f.Device, f.Device)
+		add(`(a.entity_id = ? OR a.directory_entity_id = ? OR a.directory_previous_id = ?
+			OR EXISTS (SELECT 1 FROM json_each(a.entry, '$.request.resource.areas') r WHERE r.value = ?))`, f.Device, f.Device, f.Device, f.Device)
 	}
 	switch f.Group {
 	case "":
@@ -130,13 +135,18 @@ func (f Filter) where() (string, []any, error) {
 		add(`a.event = ?`, f.Event)
 	}
 	if len(f.Decisions) > 0 {
-		add(`a.decision IN (SELECT value FROM json_each(?))`, jsonList(f.Decisions))
+		// not_enforced selects the denies a mandate in audit mode did not enforce, also
+		// next to decisions: the entries match either.
+		add(`(a.decision IN (SELECT value FROM json_each(?))
+			OR (? AND a.event = 'decision' AND json_extract(a.entry, '$.evaluation.enforced') = 0))`,
+			jsonList(f.Decisions), slices.Contains(f.Decisions, DecisionNotEnforced))
 	}
 	if f.Search != "" {
 		// json_each instead of one placeholder per name: no limit on SQL variables.
 		// instr, not LIKE: % and _ in the text are plain characters.
 		add(`(a.seq IN (SELECT seq FROM audit_search WHERE instr(text, ?) > 0)
-			OR a.entity_id IN (SELECT value FROM json_each(?)) OR a.area IN (SELECT value FROM json_each(?))
+			OR a.entity_id IN (SELECT value FROM json_each(?))
+			OR EXISTS (SELECT 1 FROM json_each(a.entry, '$.request.resource.areas') r WHERE r.value IN (SELECT value FROM json_each(?)))
 			OR a.directory_entity_id IN (SELECT value FROM json_each(?)))`,
 			f.Search, jsonList(f.SearchEntities), jsonList(f.SearchAreas), jsonList(f.SearchEntities))
 	}

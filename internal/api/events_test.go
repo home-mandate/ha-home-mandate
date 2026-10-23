@@ -221,9 +221,8 @@ func TestEventStreamRefusals(t *testing.T) {
 		t.Errorf("binary: closed with %d", code)
 	}
 	// No message in time.
-	old := csrfWait
-	csrfWait = 50 * time.Millisecond
-	defer func() { csrfWait = old }()
+	old := csrfWait.Swap(int64(50 * time.Millisecond))
+	defer csrfWait.Store(old)
 	s, _, _ = h.connect(srv, adminID, nil)
 	if _, code := s.next(); code != closeCSRF {
 		t.Errorf("silent client: closed with %d", code)

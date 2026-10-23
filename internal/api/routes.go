@@ -66,6 +66,8 @@ func (s *Server) routes() *http.ServeMux {
 	route("GET /api/renames", noBody, s.getRenames)
 	route("POST /api/renames/apply", jsonBody, s.applyRename)
 	route("POST /api/renames/dismiss", jsonBody, s.dismissRename)
+	route("GET /api/area-moves", noBody, s.getAreaMoves)
+	route("POST /api/area-moves/dismiss", jsonBody, s.dismissAreaMove)
 
 	route("GET /api/mandates", noBody, s.getMandates)
 	route("POST /api/mandates", jsonBody, s.createMandate)
@@ -74,6 +76,8 @@ func (s *Server) routes() *http.ServeMux {
 	route("GET /api/mandates/{id}/versions/{number}", noBody, s.getMandateVersion)
 	route("GET /api/mandates/{id}/approvers", noBody, s.getMandateApprovers)
 	route("POST /api/mandates/{id}/apply-template", jsonBody, s.applyTemplate)
+	route("POST /api/mandates/{id}/audit-mode/confirm", jsonBody, s.confirmAuditMode)
+	route("POST /api/mandates/{id}/audit-mode/discard", noBody, s.discardAuditMode)
 	route("POST /api/mandates/{id}/revoke", noBody, s.revokeMandate)
 	route("POST /api/mandates/{id}/remove", noBody, s.removeMandate)
 

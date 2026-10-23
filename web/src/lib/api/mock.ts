@@ -43,25 +43,27 @@ import type {
   Approver,
   ApproverList,
   ApproverUpdate,
-  ReachChannel,
-  Rename,
-  Rule,
-  StaleReference,
+  AreaMove,
   AuditEntry,
   AuditEvent,
   AuditQuery,
-  DeviceCatalog,
   Defaults,
+  DeviceCatalog,
   Household,
   MandateDetail,
   MandateDocument,
   MandateDraft,
   MandateVersion,
-  RulesFrom,
   PairingCandidate,
+  PendingAuditMode,
+  ReachChannel,
   ReconnectCandidate,
+  Rename,
+  Rule,
+  RulesFrom,
   ServerEvent,
   Session,
+  StaleReference,
   SystemStatus,
   Template,
   TemplateRollout,
@@ -117,6 +119,8 @@ interface StoredMandate {
   removed_at: string | null;
   /** Newest first. */
   versions: { meta: MandateVersion; document: MandateDocument }[];
+  /** A version that switches audit mode on and waits for a confirmation. */
+  pending?: { meta: Omit<PendingAuditMode, 'document'>; document: MandateDocument };
 }
 
 interface State {
@@ -126,6 +130,8 @@ interface State {
   devices: DeviceCatalog;
   /** Renames nobody resolved: current entity ID → former IDs, nearest first. */
   renames: Record<string, string[]>;
+  /** Devices whose areas changed and nobody looked yet. */
+  moves: Omit<AreaMove, 'name' | 'mandates'>[];
   agents: Agent[];
   mandates: Record<string, StoredMandate>;
   templates: Template[];
@@ -150,6 +156,8 @@ export interface MockControls {
   setRenamesLastHour(count: number): void;
   /** As a rename in Home Assistant: the device gets another entity ID, rules keep the old one. */
   renameDevice(from: string, to: string): void;
+  /** As a device moved in Home Assistant: it gets these areas (room and floor). */
+  moveDevice(entityId: string, areas: string[]): void;
   breakChain(seq: number): void;
   setEmergencyStop(active: boolean): Promise<void>;
   /** As another administrator's edit of a mandate: a new version with this rate limit. */
@@ -249,6 +257,7 @@ const draftOf = (d: MandateDocument): MandateDraft => ({
   limits: d.limits,
   valid_from: d.valid_from,
   ...(d.expires === undefined ? {} : { expires: d.expires }),
+  ...(d.enforce === false ? { enforce: false as const } : {}),
 });
 
 /** rulesFrom is the template a mandate's rules were last taken from (versions newest first). */
@@ -370,9 +379,8 @@ function searchMatcher(text: string | undefined, catalog: DeviceCatalog): ((e: A
     const res = e.request?.resource;
     return (
       has(res?.entity_id) ||
-      has(res?.area) ||
+      (res?.areas ?? []).some((a) => has(a) || areas.has(a)) ||
       (res !== undefined && devices.has(res.entity_id)) ||
-      (res?.area !== undefined && areas.has(res.area)) ||
       has(cleanUntrusted(e.agent?.display_name)) ||
       has(e.agent?.client_id)
     );
@@ -388,10 +396,13 @@ function matchesQuery(e: AuditEntry, q: AuditQuery): boolean {
     (q.since === undefined || at >= Date.parse(q.since)) &&
     (q.until === undefined || at < Date.parse(q.until)) &&
     (q.agent === undefined || e.agent?.client_id === q.agent) &&
-    (q.device === undefined || res?.entity_id === q.device || res?.area === q.device) &&
+    (q.device === undefined || res?.entity_id === q.device || (res?.areas ?? []).includes(q.device)) &&
     (q.group === undefined || (q.group === 'decision') === (e.event === 'decision')) &&
     (q.event === undefined || e.event === q.event) &&
-    (q.decisions === undefined || q.decisions.length === 0 || (decision !== undefined && q.decisions.includes(decision)))
+    (q.decisions === undefined ||
+      q.decisions.length === 0 ||
+      (decision !== undefined && q.decisions.includes(decision)) ||
+      (q.decisions.includes('not_enforced') && e.evaluation?.enforced === false))
   );
 }
 
@@ -405,6 +416,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     defaults: defaultsFixture,
     devices: devicesFixture,
     renames: {},
+    moves: [],
     agents: options.empty ? [] : startAgents,
     mandates: options.empty ? {} : initialMandates(templatesFixture.map(storedTemplate), startAgents),
     templates: templatesFixture.map(storedTemplate),
@@ -467,9 +479,12 @@ export function createMockClient(options: MockOptions = {}): MockClient {
         stale_references: m.status === 'active' ? staleReferences(doc.rules, state.devices, state.renames) : [],
         rules_from: rulesFrom(m),
         removed_at: m.removed_at,
+        audit_mode: doc.enforce === false,
+        audit_mode_pending: m.pending !== undefined,
       },
       document: doc,
       versions: m.versions.map((v) => v.meta),
+      pending: m.pending ? { ...m.pending.meta, document: m.pending.document } : null,
     });
   }
 
@@ -497,6 +512,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     confirm: boolean | undefined,
     name?: string,
     origin: Pick<MandateVersion, 'origin' | 'template' | 'template_digest'> = EDITED,
+    confirmedDigest?: string,
   ) {
     const m = stored(id);
     const [current] = m.versions;
@@ -511,7 +527,15 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       return detail(id);
     }
     const createdAt = now().toISOString();
-    const document: MandateDocument = { ...current.document, ...draft, created_by: user().id, created_at: createdAt };
+    const { enforce: _was, ...kept } = current.document;
+    void _was;
+    const document: MandateDocument = { ...kept, ...draft, created_by: user().id, created_at: createdAt };
+    // As the server: switching audit mode on waits for a human's confirmation of exactly this version.
+    if (current.document.enforce !== false && document.enforce === false && confirmedDigest === undefined) {
+      const pending = { digest: `sha256:mock-${++counter}`, proposed_by: user().id, proposed_by_name: user().name, proposed_at: createdAt };
+      putStored(id, { ...m, name: name ?? m.name, pending: { meta: pending, document } });
+      return detail(id);
+    }
     const meta = {
       number: m.versions.length + 1,
       digest: `sha256:mock-${++counter}`,
@@ -520,7 +544,10 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       created_by_name: user().name,
       ...origin,
     };
-    putStored(id, { ...m, name: name ?? m.name, versions: [{ meta, document }, ...m.versions] });
+    if (confirmedDigest !== undefined) meta.digest = confirmedDigest;
+    const { pending: _ended, ...rest } = m;
+    void _ended;
+    putStored(id, { ...rest, name: name ?? m.name, versions: [{ meta, document }, ...m.versions] });
     log('mandate.updated', { agent: document.agent, mandate: { id, digest: meta.digest, previous_digest: current.meta.digest } });
     return detail(id);
   }
@@ -732,6 +759,18 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       const { [from]: earlier = [], ...renames } = state.renames;
       state = { ...state, devices: { ...state.devices, devices }, renames: { ...renames, [to]: [from, ...earlier] } };
       log('directory.changed', { actor: { kind: 'system', id: 'directory' }, directory: { change: 'renamed', entity_id: to, previous_entity_id: from } });
+      emit({ type: 'devices.changed' });
+    },
+    moveDevice(entityId, areas) {
+      const device = state.devices.devices.find((d) => d.entity_id === entityId) ?? fail('not_found');
+      const sorted = [...areas].sort();
+      const earlier = state.moves.find((mv) => mv.entity_id === entityId);
+      const previous = earlier?.previous ?? [...device.areas].sort();
+      const others = state.moves.filter((mv) => mv.entity_id !== entityId);
+      const room = areas.find((a) => !a.startsWith('floor:')) ?? null;
+      const devices = state.devices.devices.map((d) => (d.entity_id === entityId ? { ...d, area: room, areas: [...areas] } : d));
+      const moved = sameIds(previous, sorted) ? others : [...others, { entity_id: entityId, previous, current: sorted, moved_at: new Date().toISOString() }];
+      state = { ...state, devices: { ...state.devices, devices }, moves: moved };
       emit({ type: 'devices.changed' });
     },
     setDirectoryStore(since, overflow) {
@@ -957,6 +996,28 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       resolveRename(entityId);
     },
 
+    async areaMoves() {
+      const out: AreaMove[] = [];
+      for (const mv of state.moves) {
+        const changed = [...mv.previous.filter((a) => !mv.current.includes(a)), ...mv.current.filter((a) => !mv.previous.includes(a))];
+        const mandates = Object.keys(state.mandates).flatMap((id) => {
+          if (state.mandates[id]?.status !== 'active') return [];
+          const rules = detail(id).document.rules.filter((r) => r.resource.area !== undefined && changed.includes(r.resource.area));
+          return rules.length > 0 ? [{ id, name: state.mandates[id]?.name ?? id, rules: rules.map((r) => r.id) }] : [];
+        });
+        if (mandates.length === 0) continue;
+        const name = state.devices.devices.find((d) => d.entity_id === mv.entity_id)?.name ?? mv.entity_id;
+        out.push({ ...mv, name, mandates });
+      }
+      return copy(out.sort((a, b) => a.entity_id.localeCompare(b.entity_id)));
+    },
+    async dismissAreaMove(entityId, current) {
+      const mv = state.moves.find((x) => x.entity_id === entityId);
+      if (!mv || !sameIds(mv.current, current)) fail('conflict');
+      state = { ...state, moves: state.moves.filter((x) => x.entity_id !== entityId) };
+      emit({ type: 'devices.changed' });
+    },
+
     async mandates() {
       return Object.keys(state.mandates).map((id) => detail(id).summary);
     },
@@ -989,7 +1050,23 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       const after = storeVersion(id, apply.base_digest, draft, apply.confirm_critical, name, origin);
       return { ...after, result: after.summary.digest === apply.base_digest ? ('unchanged' as const) : ('updated' as const) };
     },
+    async confirmAuditMode(id, digest) {
+      const m = stored(id);
+      if (!m.pending) return fail('not_found');
+      if (m.pending.meta.digest !== digest) return fail('conflict');
+      const [current] = m.versions;
+      return storeVersion(id, current?.meta.digest ?? '', draftOf(m.pending.document), true, undefined, EDITED, digest);
+    },
+    async discardAuditMode(id) {
+      const { pending, ...rest } = stored(id);
+      if (!pending) return fail('not_found');
+      putStored(id, rest);
+      return detail(id);
+    },
     async revokeMandate(id) {
+      const { pending: _dropped, ...rest } = stored(id);
+      void _dropped;
+      putStored(id, rest);
       setMandateStatus(id, 'revoked');
       log('mandate.revoked', { mandate: { id, digest: detail(id).summary.digest } });
       return detail(id).summary;

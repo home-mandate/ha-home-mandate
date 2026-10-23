@@ -51,7 +51,7 @@ export interface Edited {
   draft: MandateDraft;
 }
 
-export type Setting = 'name' | 'valid_from' | 'expires' | 'limit' | 'timeout' | 'approvers' | 'order';
+export type Setting = 'name' | 'valid_from' | 'expires' | 'limit' | 'audit_mode' | 'timeout' | 'approvers' | 'order';
 
 const sameInstant = (a: string | undefined, b: string | undefined) => a === b || parseDateTime(a) === parseDateTime(b);
 
@@ -70,6 +70,7 @@ export function settingChanges(prev: Edited, next: Edited): Setting[] {
     ['valid_from', !sameInstant(a.valid_from, b.valid_from)],
     ['expires', !sameInstant(a.expires, b.expires)],
     ['limit', a.limits.max_actions_per_hour !== b.limits.max_actions_per_hour],
+    ['audit_mode', (a.enforce === false) !== (b.enforce === false)],
     ['timeout', a.approval.timeout !== b.approval.timeout],
     ['approvers', canonical(a.approval.approvers) !== canonical(b.approval.approvers)],
     ['order', sharedOrder(a, b) !== sharedOrder(b, a)],

@@ -16,10 +16,10 @@ import (
 
 // resource is a resource as the directory of the PEP knows it.
 type resource struct {
-	EntityID string `json:"entity_id"`
-	Category string `json:"category,omitempty"`
-	Area     string `json:"area,omitempty"`
-	Critical bool   `json:"critical,omitempty"`
+	EntityID string   `json:"entity_id"`
+	Category string   `json:"category,omitempty"`
+	Areas    []string `json:"areas,omitempty"`
+	Critical bool     `json:"critical,omitempty"`
 }
 
 // storedMandate is a stored mandate with its status.
@@ -71,7 +71,7 @@ func (d directory) Lookup(entityID string) (catalog.Device, bool) {
 func newDirectory(resources []resource) directory {
 	out := directory{}
 	for _, r := range resources {
-		out[r.EntityID] = catalog.Device{EntityID: r.EntityID, Category: r.Category, Area: r.Area, Critical: r.Critical}
+		out[r.EntityID] = catalog.Device{EntityID: r.EntityID, Category: r.Category, Areas: r.Areas, Critical: r.Critical}
 	}
 	return out
 }
@@ -95,19 +95,21 @@ type outcome struct {
 	ApprovalTimeout string   `json:"approval_timeout,omitempty"`
 	Approvers       []string `json:"approvers,omitempty"`
 	MandateDigest   string   `json:"mandate_digest,omitempty"`
-	Selected        *string  `json:"selected,omitempty"`
+	// Enforced is present, and false, only for a deny that is not enforced (audit mode).
+	Enforced *bool   `json:"enforced,omitempty"`
+	Selected *string `json:"selected,omitempty"`
 }
 
 // decide sends the request of an agent through the AuthZEN path of the PDP, as another
 // gateway would, and reports which mandate it was decided on.
-func decide(ctx context.Context, p *pdp.PDP, clientID, principal string, r resource, action string, parameters map[string]json.Number) outcome {
+func decide(ctx context.Context, p *pdp.PDP, clientID, principal string, r resource, action string, parameters map[string]json.RawMessage) outcome {
 	resp := p.Evaluate(ctx, pdp.Request{
 		Subject:  pdp.Subject{Type: "agent", ID: clientID, Properties: pdp.SubjectProperties{Principal: principal}},
 		Action:   pdp.Action{Name: action, Properties: parameters},
 		Resource: pdp.Resource{ID: r.EntityID},
 	})
 	out := outcome{Decision: resp.Context.Outcome, Reason: resp.Context.Reason, ApprovalTimeout: resp.Context.ApprovalTimeout,
-		Approvers: resp.Context.Approvers, MandateDigest: resp.Context.MandateDigest}
+		Approvers: resp.Context.Approvers, MandateDigest: resp.Context.MandateDigest, Enforced: resp.Context.Enforced}
 	if resp.Context.RuleID != "" {
 		out.RuleID = &resp.Context.RuleID
 	}

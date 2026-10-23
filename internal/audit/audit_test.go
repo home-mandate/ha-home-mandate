@@ -43,7 +43,7 @@ func samples() []audit.Entry {
 	req := &audit.Request{
 		Time:     time.Date(2026, 10, 6, 19, 0, 0, 0, time.UTC),
 		Timezone: "Europe/Berlin",
-		Resource: audit.Resource{EntityID: "light.kitchen", Category: "light", Area: "kitchen"},
+		Resource: audit.Resource{EntityID: "light.kitchen", Category: "light", Areas: []string{"kitchen"}},
 		Action:   "turn_on",
 	}
 	return []audit.Entry{

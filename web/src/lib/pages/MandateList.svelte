@@ -9,7 +9,7 @@
   import { onMount, tick } from 'svelte';
   import { Loader } from '../app/loader.svelte.ts';
   import type { AppState } from '../app/state.svelte.ts';
-  import type { Agent, DeviceCatalog, MandateSummary, Rename, Template } from '../api/types.ts';
+  import type { Agent, AreaMove, DeviceCatalog, MandateSummary, Rename, Template } from '../api/types.ts';
   import AgentName from '../components/AgentName.svelte';
   import Button from '../components/Button.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -19,6 +19,7 @@
   import NewMandateDialog from '../components/mandate/NewMandateDialog.svelte';
   import RemoveRevoked from '../components/RemoveRevoked.svelte';
   import Switch from '../components/Switch.svelte';
+  import AreaMovesNotice from '../components/mandate/AreaMovesNotice.svelte';
   import RenamesNotice from '../components/mandate/RenamesNotice.svelte';
   import TemplateCard from '../components/mandate/TemplateCard.svelte';
   import { formatDate } from '../format.ts';
@@ -45,6 +46,7 @@
     agents: Agent[];
     catalog: DeviceCatalog;
     renames: Rename[];
+    moves: AreaMove[];
   }
 
   let { app, now }: Props = $props();
@@ -59,14 +61,15 @@
     // Only the mandates are essential. Without templates or agents the list still shows
     // (a new mandate cannot be created then); without Home Assistant the template cards
     // show ids instead of names. Hidden base templates are not offered.
-    const [mandates, templates, agents, catalog, renames] = await Promise.all([
+    const [mandates, templates, agents, catalog, renames, moves] = await Promise.all([
       api.mandates(),
       offeredTemplates(api).catch((): Template[] => []),
       api.agents().catch((): Agent[] => []),
       api.devices().catch(() => NO_CATALOG),
       api.renames().catch((): Rename[] => []),
+      api.areaMoves().catch((): AreaMove[] => []),
     ]);
-    return { mandates, templates, agents, catalog, renames };
+    return { mandates, templates, agents, catalog, renames, moves };
   });
 
   let dialog = $state(false);
@@ -141,6 +144,9 @@
   {#if data.renames.length > 0}
     <RenamesNotice renames={data.renames} api={app.api} locale={ctx.locale} onresolved={resolved} />
   {/if}
+  {#if data.moves.length > 0}
+    <AreaMovesNotice moves={data.moves} catalog={data.catalog} api={app.api} locale={ctx.locale} onresolved={resolved} />
+  {/if}
 
   {#if data.mandates.length === 0}
     <EmptyState icon="logo" title={m.mandates_empty_title()} body={m.mandates_empty_body()} />
@@ -195,6 +201,8 @@
               <td>
                 <MandateStatus status={effectiveStatus(mandate, serverNow)} />
                 {#if mandate.removed_at !== null}<span class="removed">{m.status_removed()}</span>{/if}
+                {#if mandate.audit_mode}<span class="audit">{m.mandate_badge_audit()}</span>{/if}
+                {#if mandate.audit_mode_pending}<span class="audit">{m.mandate_badge_audit_pending()}</span>{/if}
                 {#if mandate.stale_references.length > 0}
                   <span class="stale"><Icon name="warning" /><span>{m.mandates_stale({ count: mandate.stale_references.length })}</span></span>
                 {/if}
@@ -215,6 +223,8 @@
             <span class="facts">
               <MandateStatus status={effectiveStatus(mandate, serverNow)} compact />
               {#if mandate.removed_at !== null}<span>{m.status_removed()}</span>{/if}
+              {#if mandate.audit_mode}<span class="audit">{m.mandate_badge_audit()}</span>{/if}
+              {#if mandate.audit_mode_pending}<span class="audit">{m.mandate_badge_audit_pending()}</span>{/if}
               <span>{m.mandates_rules_count({ count: mandate.rule_count })} · {m.mandates_valid_until_date({ date: until(mandate) })}</span>
             </span>
             {#if mandate.stale_references.length > 0}
@@ -243,6 +253,13 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--hm-space-3) var(--hm-space-4);
+  }
+  .audit {
+    display: block;
+    margin-block-start: var(--hm-space-1);
+    font-size: var(--hm-font-size-sm);
+    font-weight: var(--hm-font-weight-medium);
+    color: var(--hm-color-warning-fg);
   }
   .removed {
     display: block;

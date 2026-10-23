@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
 )
 
 func TestNewFillsDefaults(t *testing.T) {
@@ -42,6 +43,8 @@ func TestEndpointsReportDatabaseErrors(t *testing.T) {
 	m := h.mandateOf(voice.ClientID)
 	h.putApprover(approval.Approver{UserID: adminID, UI: true})
 	same := currentDraft(t, h, m.ID)
+	_ = h.moves.Observe(context.Background(), []catalog.Device{{EntityID: "light.kitchen", Areas: []string{"kitchen"}}})
+	_ = h.moves.Observe(context.Background(), []catalog.Device{{EntityID: "light.kitchen", Areas: []string{"cellar"}}})
 	_ = h.st.Close()
 	for _, tc := range []struct {
 		method, path string
@@ -80,6 +83,10 @@ func TestEndpointsReportDatabaseErrors(t *testing.T) {
 		{http.MethodDelete, "/api/approvers/" + adminID, nil},
 		{http.MethodPost, "/api/approvers/" + adminID + "/test", nil},
 		{http.MethodPut, "/api/emergency-stop", map[string]any{"active": true}},
+		{http.MethodGet, "/api/area-moves", nil},
+		{http.MethodPost, "/api/mandates/" + m.ID + "/audit-mode/confirm", map[string]any{"digest": m.Digest}},
+		{http.MethodPost, "/api/mandates/" + m.ID + "/audit-mode/discard", nil},
+		{http.MethodPost, "/api/area-moves/dismiss", map[string]any{"entity_id": "light.kitchen", "current": []string{"cellar"}}},
 	} {
 		r := h.do(tc.method, tc.path, tc.body)
 		if r.code != http.StatusInternalServerError || r.errCode() != codeInternal {

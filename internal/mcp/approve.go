@@ -24,6 +24,7 @@ import (
 	"github.com/home-mandate/ha-home-mandate/internal/agent"
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/catalog"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 	"github.com/home-mandate/ha-home-mandate/internal/pdp"
 )
@@ -110,7 +111,7 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 	}
 
 	ref := newAgentRef()
-	req := approval.Request{ClientID: a.ClientID, Agent: a.DisplayName, EntityID: d.Resource.EntityID, Area: d.Resource.Area,
+	req := approval.Request{ClientID: a.ClientID, Agent: a.DisplayName, EntityID: d.Resource.EntityID, Area: catalog.Room(d.Resource.Areas),
 		Device: d.Resource.EntityID, Action: d.Action, Reason: reason, Params: shownParams(d, call), Critical: criticalRequest(d),
 		Record: &approval.Record{Entry: g.entry(a, d, true, audit.Result{}), ParamsDigest: digest, AgentRef: ref, IdempotencyKey: key}}
 	if dev, ok := g.cfg.Catalog.Lookup(d.Resource.EntityID); ok {

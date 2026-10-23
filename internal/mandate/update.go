@@ -27,6 +27,10 @@ type Change struct {
 	Name string
 	// Origin says where the rules of the new version came from; the zero value is an edit.
 	Origin Origin
+	// MayPropose: a version that switches audit mode on is kept waiting for a human's
+	// confirmation (the editor of the mandate). Without it such a version is refused with
+	// ErrAuditModeNeedsConfirmation, so that no other path leaves a proposal behind.
+	MayPropose bool
 }
 
 // Update stores document as a new version of the mandate id that a human edited. It is
@@ -35,11 +39,24 @@ type Change struct {
 // current version does not have in exactly this form (a changed or renamed rule is a new
 // grant) and change.ConfirmCritical is not set. A document with the rules, approval
 // settings, limits and validity of the current version (SameEditable) creates no
-// version, whatever its metadata: the returned digest is then change.BaseDigest.
+// version, whatever its metadata: the returned digest is then change.BaseDigest. A
+// version that switches audit mode on is kept waiting for its confirmation and
+// ErrAuditModeProposed returned; inside UpdateTx the caller decides whether to keep it.
 func (s *Store) Update(ctx context.Context, id string, document []byte, change Change, by audit.Actor) (Info, error) {
-	err := s.inTx(ctx, func(tx *sql.Tx) error { return s.UpdateTx(ctx, tx, id, document, change, by) })
+	proposed := false
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		err := s.UpdateTx(ctx, tx, id, document, change, by)
+		if errors.Is(err, ErrAuditModeProposed) {
+			proposed = true // the proposal is kept: commit it
+			return nil
+		}
+		return err
+	})
 	if err != nil {
 		return Info{}, err
+	}
+	if proposed {
+		return Info{}, ErrAuditModeProposed
 	}
 	return s.Get(ctx, id)
 }
@@ -86,7 +103,20 @@ func (s *Store) UpdateTx(ctx context.Context, tx *sql.Tx, id string, document []
 			return ErrCriticalConfirmation
 		}
 	}
-	if err := s.put(ctx, tx, info, document, origin, by); err != nil {
+	var p *proposal
+	switch err := s.put(ctx, tx, info, document, origin, by, ""); {
+	case errors.As(err, &p) && !change.MayPropose:
+		return err
+	case errors.As(err, &p):
+		// Switching audit mode on waits for a human's confirmation of exactly this version.
+		if err := s.proposeTx(ctx, tx, p, by); err != nil {
+			return err
+		}
+		if err := s.renameTx(ctx, tx, id, change.Name); err != nil {
+			return err
+		}
+		return ErrAuditModeProposed
+	case err != nil:
 		return err
 	}
 	return s.renameTx(ctx, tx, id, change.Name)

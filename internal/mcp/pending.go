@@ -377,7 +377,7 @@ func (g *Gateway) approvalStatus(ctx context.Context, req *sdk.CallToolRequest, 
 // failure counts as denied.
 func (g *Gateway) readDenied(ctx context.Context, clientID, entityID string) bool {
 	snap, err := g.cfg.PDP.Snapshot(ctx, clientID)
-	return err != nil || snap.Decide(entityID, "read", nil).Result.Decision == evaluator.Deny
+	return err != nil || effective(snap.Decide(entityID, "read", nil).Result) == evaluator.Deny
 }
 
 // fromJournal answers for a request the gateway no longer follows: one that ended more
@@ -406,7 +406,7 @@ func (g *Gateway) fromJournal(ctx context.Context, ref, clientID string) (*sdk.C
 // failure means no. An agent that may not read learns nothing about the state.
 func (g *Gateway) mayRead(ctx context.Context, clientID, entityID string) bool {
 	snap, err := g.cfg.PDP.Snapshot(ctx, clientID)
-	return err == nil && snap.Decide(entityID, "read", nil).Result.Decision == evaluator.Allow
+	return err == nil && effective(snap.Decide(entityID, "read", nil).Result) == evaluator.Allow
 }
 
 // knownState is the device as the directory has it, if its state can be trusted now:

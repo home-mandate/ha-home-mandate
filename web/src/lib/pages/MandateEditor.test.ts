@@ -181,6 +181,31 @@ describe('MandateEditor', () => {
     expect(put.mock.calls[0]?.[1].draft.rules[1]).toMatchObject({ actions: ['set_temperature'], constraints: { temperature: { max: 2250 } } });
   });
 
+  it('limits the modes a rule lets through, never reading "none checked" as "all" (SPEC-v0 section 4.5)', async () => {
+    const { api } = await start();
+    const climate = await open(2);
+    for (const action of ['read', 'set temperature']) {
+      const button = climate.getByRole('button', { name: action });
+      if (button.getAttribute('aria-pressed') === 'true') await fireEvent.click(button);
+    }
+    await fireEvent.click(climate.getByRole('button', { name: 'set mode' }));
+    const mode = within((await card(2)).getByRole('group', { name: 'Mode' }));
+    expect(mode.getAllByRole('checkbox').every((c) => (c as HTMLInputElement).checked)).toBe(true);
+    expect((await card(2)).getByText(/“Automatic” stands for “Heat\/Cool” \(heat_cool\)/)).toBeTruthy();
+    for (const name of ['Off', 'Cool', 'Dry', 'Fan only']) await fireEvent.click(mode.getByRole('checkbox', { name }));
+    expect((await cards())[1]?.textContent).toContain('Mode: Heat or Automatic');
+    for (const name of ['Heat', 'Automatic']) await fireEvent.click(mode.getByRole('checkbox', { name }));
+    expect((await card(2)).getByText('Choose at least one mode or remove the limits.')).toBeTruthy();
+    await fireEvent.click(saveButton());
+    expect(screen.queryByRole('dialog', { name: 'Save changes?' })).toBeNull();
+    await fireEvent.click(mode.getByRole('checkbox', { name: 'Heat' }));
+    const put = vi.spyOn(api, 'putMandate');
+    await fireEvent.click(saveButton());
+    await fireEvent.click(within(await screen.findByRole('dialog', { name: 'Save changes?' })).getByRole('button', { name: 'Save as version 2' }));
+    await waitFor(() => expect(put).toHaveBeenCalled());
+    expect(put.mock.calls[0]?.[1].draft.rules[1]).toMatchObject({ actions: ['set_mode'], constraints: { mode: { one_of: ['heat'] } } });
+  });
+
   // #42, spec #21 part B: a °F household limits temperatures in °F (temperature_f); a limit
   // in °C, which can never apply there, is flagged.
   it('limits temperatures in the unit of the household and flags the other unit', async () => {
@@ -566,6 +591,59 @@ describe('validation', () => {
     await waitFor(() => expect(put).toHaveBeenCalled());
     // Berlin: November 1 starts at 23:00 UTC the day before (winter time), December 31 ends at 23:00 UTC.
     expect((put.mock.calls[0]?.[1] as MandateUpdate).draft).toMatchObject({ valid_from: '2026-10-31T23:00:00Z', expires: '2026-12-31T23:00:00Z' });
+  });
+});
+
+describe('audit mode', () => {
+  it('waits after saving until a human confirms exactly that version (SPEC-v0 section 11.6)', async () => {
+    const { api } = await start();
+    const trial = await screen.findByRole('switch', { name: 'Audit mode' });
+    expect(trial.getAttribute('aria-checked')).toBe('false');
+    await fireEvent.click(trial);
+    expect(screen.getByText(/After saving, audit mode waits for a confirmation/)).toBeTruthy();
+    const put = vi.spyOn(api, 'putMandate');
+    await fireEvent.click(saveButton());
+    const dialog = await screen.findByRole('dialog', { name: 'Save changes?' });
+    expect(dialog.textContent).toContain('Audit mode');
+    await fireEvent.click(within(dialog).getByRole('button', { name: /^Save as version/ }));
+    await waitFor(() => expect(put).toHaveBeenCalled());
+    expect((put.mock.calls[0]?.[1] as MandateUpdate).draft.enforce).toBe(false);
+    await waitFor(() => expect(toastTexts()).toContain('Saved. Audit mode waits for a confirmation.'));
+    // The version in force stays; the proposal waits with its digest.
+    const pending = await screen.findByRole('region', { name: 'Audit mode waits for a confirmation' });
+    const { pending: waiting, summary } = await api.mandate(ID);
+    expect(summary.audit_mode).toBe(false);
+    expect(within(pending).getByText(new RegExp(`Digest ${waiting?.digest.slice(0, 19)}`))).toBeTruthy();
+    expect(screen.getByRole('switch', { name: 'Audit mode' }).getAttribute('aria-checked')).toBe('false');
+    const confirm = vi.spyOn(api, 'confirmAuditMode');
+    await fireEvent.click(within(pending).getByRole('button', { name: 'Confirm audit mode' }));
+    await waitFor(() => expect(confirm).toHaveBeenCalledWith(ID, waiting?.digest));
+    const active = await screen.findByRole('region', { name: 'Audit mode: denials are not enforced' });
+    expect(within(active).getByRole('link', { name: 'See requests that were not enforced' }).getAttribute('href')).toContain('decision=not_enforced');
+    expect(screen.queryByRole('region', { name: 'Audit mode waits for a confirmation' })).toBeNull();
+    expect(screen.getByRole('switch', { name: 'Audit mode' }).getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('shows what else the waiting version changes, so that the human confirms what they saw', async () => {
+    await start({}, async (api) => {
+      await store(api, (d) => ({ ...d, enforce: false, limits: { max_actions_per_hour: 5 }, rules: d.rules.slice(1) }));
+    });
+    const pending = await screen.findByRole('region', { name: 'Audit mode waits for a confirmation' });
+    expect(within(pending).getByText('This version also changes:')).toBeTruthy();
+    expect(within(pending).getByText('1 rule added, changed or removed')).toBeTruthy();
+    expect(within(pending).getByText(/^Rate limit: \d+ → 5$/)).toBeTruthy();
+  });
+
+  it('discards a proposal, and the version in force stays', async () => {
+    const { api } = await start({}, async (api) => {
+      await store(api, (d) => ({ ...d, enforce: false }));
+    });
+    const pending = await screen.findByRole('region', { name: 'Audit mode waits for a confirmation' });
+    expect(within(pending).getByText('Otherwise this version changes nothing.')).toBeTruthy();
+    await fireEvent.click(within(pending).getByRole('button', { name: 'Discard the proposal' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Audit mode waits for a confirmation' })).toBeNull());
+    expect((await api.mandate(ID)).pending).toBeNull();
+    expect(toastTexts()).toContain('The proposal is discarded.');
   });
 });
 
