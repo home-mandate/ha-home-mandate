@@ -14,10 +14,11 @@ import (
 // construct inside it.
 const markdownUnsafe = "()[]<>\\`\"'"
 
-// bellText is the bell's message (B2): where a request can be answered, never anything
-// about the request. Home Assistant shows it to every user, so it holds at most the UI's
-// address (issue #48). The app's UI is in the sidebar; a container's UI has an address
-// of its own only in direct mode; without one, the bell names the UI without a link.
+// bellText is the bell's message (B2): where a request can be answered, never what it is
+// about. Home Assistant shows it to every user, so it holds at most the link of the
+// request's page, with the request's random ID (issues #48, #53). The app's UI is in the
+// sidebar; a container's UI has an address of its own only in direct mode; without one,
+// the bell names the UI without a link.
 func bellText(lang i18n.Lang, app bool, link string) string {
 	switch {
 	case app:
@@ -49,10 +50,10 @@ func isSpaceOrControl(r rune) bool {
 	return r <= ' ' || r == 0x7f || unicode.IsSpace(r) || unicode.IsControl(r)
 }
 
-// uiAddress is the UI's address from the hook, "" without one.
-func (s *Service) uiAddress() string {
-	if s.cfg.UIAddress == nil {
+// requestAddress is the address of the request id's page from the hook, "" without one.
+func (s *Service) requestAddress(id string) string {
+	if s.cfg.RequestAddress == nil {
 		return ""
 	}
-	return s.cfg.UIAddress()
+	return s.cfg.RequestAddress(id)
 }

@@ -154,10 +154,11 @@ type Config struct {
 	// is sent again (default resendDelay): answering clears it too, and the answer must
 	// win.
 	ResendDelay time.Duration
-	// UIAddress returns where the UI can be opened in a browser outside Home Assistant,
-	// or "" when it has no address of its own (the app, or a container without direct
-	// mode). The bell links to it; it is never about a request.
-	UIAddress func() string
+	// RequestAddress returns where the page of the request id opens in a browser outside
+	// Home Assistant, or "" when the UI has no address of its own (the app, or a container
+	// without direct mode). The bell links to it (issue #53): it carries the request's ID,
+	// which is no secret, and nothing else about the request.
+	RequestAddress func(id string) string
 	// OnOpened is called when a request was delivered and is open (shown by Open); the UI
 	// announces it. It must not block.
 	OnOpened func(Open)
@@ -546,7 +547,7 @@ func (s *Service) ring(ctx context.Context, p *pending) bool {
 		return false
 	}
 	lang := s.householdLanguage()
-	n := ha.Notification{Title: i18n.T(lang, i18n.ApprovalBellTitle, nil), Message: bellText(lang, s.cfg.App, s.uiAddress())}
+	n := ha.Notification{Title: i18n.T(lang, i18n.ApprovalBellTitle, nil), Message: bellText(lang, s.cfg.App, s.requestAddress(p.id))}
 	if err := s.cfg.Bell.Ring(ctx, p.bellID, n); err != nil {
 		s.cfg.Logger.Warn("approval hint in Home Assistant not shown", "error", err)
 	}

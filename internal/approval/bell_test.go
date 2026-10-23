@@ -11,9 +11,9 @@ import (
 )
 
 // The bell points to where the UI really is (issue #48): the sidebar of the app, the
-// UI's address in direct mode, or the UI without an address.
+// link of the request's page in direct mode, or the UI without an address.
 func TestBellText(t *testing.T) {
-	const link = "https://hm.example.org:8765/ui/"
+	const link = "https://hm.example.org:8765/ui/requests/0123456789abcdef0123456789abcdef"
 	cases := []struct {
 		name string
 		lang i18n.Lang
@@ -24,9 +24,9 @@ func TestBellText(t *testing.T) {
 		{"app, de", i18n.DE, true, "", "Eine Rückfrage wartet auf Antwort. Öffne Home-Mandate in der Seitenleiste."},
 		{"app, en", i18n.EN, true, "", "An approval request is waiting for an answer. Open Home-Mandate in the sidebar."},
 		{"container with link, de", i18n.DE, false, link,
-			"Eine Rückfrage wartet auf Antwort. Öffne die Oberfläche von Home-Mandate: [Home-Mandate öffnen](" + link + ")"},
+			"Eine Rückfrage wartet auf Antwort. Beantworte sie in der Oberfläche von Home-Mandate: [Rückfrage öffnen](" + link + ")"},
 		{"container with link, en", i18n.EN, false, link,
-			"An approval request is waiting for an answer. Open the Home-Mandate UI: [Open Home-Mandate](" + link + ")"},
+			"An approval request is waiting for an answer. Answer it in the Home-Mandate UI: [Open the request](" + link + ")"},
 		{"container without link, de", i18n.DE, false, "", "Eine Rückfrage wartet auf Antwort. Öffne die Oberfläche von Home-Mandate."},
 		{"container without link, en", i18n.EN, false, "", "An approval request is waiting for an answer. Open the Home-Mandate UI."},
 	}
@@ -67,10 +67,10 @@ func TestBellTextRefusesUnsafeLinks(t *testing.T) {
 	}
 }
 
-// The bell rings with the text for the mode and the UI's address, and never with
-// anything about the request: no request ID, bell ID, tag or nonce.
+// The bell rings with the text for the mode and the link of the request's page, and
+// never with anything else about the request: no bell ID, tag or nonce (issue #53).
 func TestBellMessageByMode(t *testing.T) {
-	const link = "https://hm.example.org/ui/"
+	const link = "https://hm.example.org/ui/requests/"
 	cases := []struct {
 		name string
 		app  bool
@@ -87,7 +87,12 @@ func TestBellMessageByMode(t *testing.T) {
 				e.bellOn = true
 				e.svc.cfg.Language = func() i18n.Lang { return lang }
 				e.svc.cfg.App = c.app
-				e.svc.cfg.UIAddress = func() string { return c.link }
+				e.svc.cfg.RequestAddress = func(id string) string {
+					if c.link == "" {
+						return ""
+					}
+					return c.link + id
+				}
 				e.put(t, Approver{UserID: u2, Devices: phones("mobile_app_anna"), UI: true})
 				e.admins.put(u2, true)
 				ch := e.ask(request())
@@ -100,11 +105,18 @@ func TestBellMessageByMode(t *testing.T) {
 				if len(rung) != 1 {
 					t.Fatalf("rung %+v", rung)
 				}
-				if want := bellText(lang, c.app, c.link); rung[0].n.Message != want {
+				want := bellText(lang, c.app, "")
+				if c.link != "" {
+					want = bellText(lang, c.app, c.link+id)
+				}
+				if rung[0].n.Message != want {
 					t.Errorf("message %q, want %q", rung[0].n.Message, want)
 				}
 				text := rung[0].n.Title + " " + rung[0].n.Message
-				for _, secret := range []string{id, rung[0].id, push.n.Tag, nonce} {
+				if !c.app && c.link != "" && !strings.Contains(text, link+id) {
+					t.Errorf("bell text %q does not link the request's page", text)
+				}
+				for _, secret := range []string{rung[0].id, push.n.Tag, nonce} {
 					if secret == "" || strings.Contains(text, secret) {
 						t.Errorf("bell text %q contains or misses %q", text, secret)
 					}
@@ -118,7 +130,7 @@ func TestBellMessageByMode(t *testing.T) {
 }
 
 // Without the hook the bell names the UI without a link.
-func TestBellWithoutUIAddress(t *testing.T) {
+func TestBellWithoutRequestAddress(t *testing.T) {
 	e := newChannelEnv(t, time.Minute)
 	e.bellOn = true
 	e.put(t, Approver{UserID: u2, Devices: phones("mobile_app_anna"), UI: true})

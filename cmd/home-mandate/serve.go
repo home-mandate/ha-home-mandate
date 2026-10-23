@@ -301,7 +301,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 			a := uiAPI.Load()
 			return a != nil && a.BellEnabled()
 		},
-		App: s.cfg.Mode == config.ModeApp, UIAddress: g.uiAddress, TapTarget: g.tapTarget,
+		App: s.cfg.Mode == config.ModeApp, RequestAddress: g.requestAddress, TapTarget: g.tapTarget,
 		OnOpened: func(o approval.Open) {
 			if a := uiAPI.Load(); a != nil {
 				a.ApprovalOpened(o)
@@ -487,12 +487,20 @@ func (g *gateway) uiAddress() string {
 // /hassio/ingress/<slug> is a 404 there).
 const ingressPanelPath = "/app/"
 
-// tapTarget is what a tap on the notification of the request id opens: in direct mode
-// its link, which keeps the request through the sign-in (issue #53); in Home Assistant
-// the app's panel (issue #49); or nothing.
+// requestAddress is the link of the request id's page in direct mode, which keeps the
+// request through the sign-in (issue #53); "" without direct mode.
+func (g *gateway) requestAddress(id string) string {
+	if g.direct == nil {
+		return ""
+	}
+	return g.state.cfg.PublicURL + api.DirectRequestPath + id
+}
+
+// tapTarget is what a tap on the notification of the request id opens: its page in
+// direct mode, the app's panel in Home Assistant (issue #49), or nothing.
 func (g *gateway) tapTarget(id string) string {
-	if g.direct != nil {
-		return g.state.cfg.PublicURL + api.DirectRequestPath + id
+	if address := g.requestAddress(id); address != "" {
+		return address
 	}
 	if g.slug != "" {
 		return ingressPanelPath + g.slug

@@ -194,11 +194,12 @@ verified", the values it wants to set, and has two buttons: **Allow** and **Deny
 Optionally, **Also in Home Assistant's notification bell** shows a neutral hint in Home
 Assistant while a request waits, without agent, device or reason, because every Home
 Assistant user can see that bell. It says where to answer: as an app, "Open Home-Mandate
-in the sidebar"; in container mode, "Open the Home-Mandate UI", with a link to the UI's
-address (your public URL with `/ui/`) when Home-Mandate serves the UI there (direct mode,
-see [Troubleshooting](troubleshooting.md#the-ui)). Everyone who can sign in to Home
-Assistant then sees that address, never anything about the request; only administrators
-can sign in to the UI.
+in the sidebar"; in container mode, "Open the Home-Mandate UI", with a link to the
+request's page (your public URL with `/ui/requests/` and the request's random number) when
+Home-Mandate serves the UI there (direct mode, see
+[Troubleshooting](troubleshooting.md#the-ui)). Everyone who can sign in to Home Assistant
+then sees that address, never what the request is about: only its approvers see that on the
+page, and only administrators can sign in to the UI.
 
 The hint has no buttons. To answer on your phone, register the phone as a device of the
 approver (see [Approvers and their devices](#approvers-and-their-devices)); Android devices

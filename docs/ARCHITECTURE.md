@@ -667,23 +667,24 @@ checked on every request.
   a separate random request ID, never the nonce. Administrator rights and settings are checked
   again at the moment of the answer; a refused UI answer leaves the request open. The first
   answer on any channel counts; the audit entry records it as `approval.via` (`push`, `ui`).
+  Every person needs at least one channel; the settings show who cannot be reached for
+  ordinary or critical requests.
 - **A page per request (issue #53):** `#/audit/requests/<request ID>` shows one request
   with large buttons, backed by `GET /api/approvals/{id}`. Only those whose answer counts
   now (the approvers asked, less those withdrawn since) see what is to be confirmed; once
   the request is answered or has ended, everyone sees its outcome from the approval
   journal and nobody's name; anyone else, an unknown ID and one deleted after a day get
   the same `unavailable`. Every notification that links to a request leads to this page.
-  Every person needs at least one channel; the settings show who cannot be reached for
-  ordinary or critical requests.
 - **Hint in Home Assistant (B2, off by default):** a persistent notification without any
-  content of the request (no agent, device, reason, request ID or nonce) and with its own
+  content of the request (no agent, device, reason or nonce) and with its own
   random ID (`hm_approval_…`, not the request ID: persistent notifications are visible to
   every HA user), removed however the request ends. It says where to answer: as an app,
   Home-Mandate in the sidebar; in container mode, the Home-Mandate UI, with a Markdown
-  link to the UI's address (`<public URL>/ui/`) only in direct mode (section 12), because
-  `/ui/` exists nowhere else. The link is the configured address and nothing else, so
-  every HA user sees the UI's address, never anything about the request. It has no
-  buttons. At start the gateway removes such hints a crash
+  link to the request's page (`<public URL>/ui/requests/<request ID>`, issue #53) only in
+  direct mode (section 12), because `/ui/` exists nowhere else. The link is the configured
+  address and the request's random ID, so every HA user sees that a request waits and its
+  ID, nothing else: the page shows the request only to its approvers and, once it has
+  ended, its outcome to every administrator. It has no buttons. At start the gateway removes such hints a crash
   left behind (`persistent_notification/get`, only IDs of this form are touched).
 - **Revocation and emergency stop (decision F1, SPEC-v0 sections 11.1 item 8 and 11.3):**
   when triggered in the running gateway (UI), open requests of the agent, or all, end at
