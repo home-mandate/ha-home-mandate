@@ -6,7 +6,7 @@ human has to approve first, and what it may never do. Approval requests go to yo
 through the Home Assistant Companion app, an emergency stop blocks every agent at once,
 and every request is recorded in a tamper-evident audit log.
 
-**Status: experimental.** 0.1.0-rc.6 is the fifth published release candidate. Expect rough edges,
+**Status: experimental.** 0.1.0-rc.7 is the sixth published release candidate. Expect rough edges,
 read the [limits of this version](#limits-of-this-version) and keep backups.
 
 ## Why
@@ -184,18 +184,18 @@ pass all its conformance cases.
 
 ## Conformance
 
-Home-Mandate 0.1.0-rc.6 conforms to the Home-Mandate Specification `v0.1.0-rc.1` (manifest
-`conformance/manifest.json`, SHA-256 `9d2e22efd8af6dd00b068b93b790bc5d740eefb5adb5900b855f844df3d1ce52`)
+Home-Mandate 0.1.0-rc.7 conforms to the Home-Mandate Specification `v0.1.0-rc.3` (manifest
+`conformance/manifest.json`, SHA-256 `22407bbeca9c1fb1f12bade54c8839ea06b9ca654c3206d313118db1e5b86e99`)
 in these classes (SPEC-v0 section 8.1), tested with the specification's test tool
 `mandate-conformance` on every pull request and with `make conformance`:
 
 | Class | Cases | Binding |
 |---|---|---|
-| `evaluator` | 306 | process (the evaluation Home-Mandate uses) |
+| `evaluator` | 383 | process (the evaluation Home-Mandate uses) |
 | `selection` | 19 | process |
-| `audit` | 169 | process |
+| `audit` | 204 | process |
 | `audit-anchored` | 14 | process |
-| `pdp` | 150 | HTTP (its AuthZEN endpoint) |
+| `pdp` | 202 | HTTP (its AuthZEN endpoint) |
 
 It does not claim the class `signatures`. It passes the 12 succession cases of that class
 (SPEC-v0 section 3.5), but it does not accept signed mandates (section 7.1): it issues every
