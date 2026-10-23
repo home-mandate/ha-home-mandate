@@ -279,18 +279,18 @@ func TestApprovalPage(t *testing.T) {
 		t.Errorf("approver = %+v", page)
 	}
 	unavailable := wireApprovalPage{Status: pageUnavailable}
-	for name, path := range map[string]string{
-		"not an approver": "/api/approvals/" + id, "unknown": "/api/approvals/" + strings.Repeat("0", 32),
-		"malformed": "/api/approvals/" + strings.ToUpper(id), "short": "/api/approvals/" + id[:31],
+	for _, tc := range []struct {
+		name, user, id string
+	}{
+		{"not an approver", annaID, id},
+		{"unknown", adminID, strings.Repeat("0", 32)},
+		{"malformed", adminID, "0123456789ABCDEF0123456789ABCDEF"},
+		{"short", adminID, id[:31]},
 	} {
 		var got wireApprovalPage
-		user := adminID
-		if name == "not an approver" {
-			user = annaID
-		}
-		h.ok(http.MethodGet, path, nil, &got, as(user))
+		h.ok(http.MethodGet, "/api/approvals/"+tc.id, nil, &got, as(tc.user))
 		if got != unavailable {
-			t.Errorf("%s = %+v", name, got)
+			t.Errorf("%s = %+v", tc.name, got)
 		}
 	}
 	if r := h.do(http.MethodGet, "/api/approvals/"+id, nil, as(guestID)); r.errCode() != codeForbidden {
@@ -311,6 +311,42 @@ func TestApprovalPage(t *testing.T) {
 		if got != (wireApprovalPage{Status: pageClosed, Outcome: approval.OutcomeRejected}) {
 			t.Errorf("ended, seen by %s = %+v", user, got)
 		}
+	}
+}
+
+// An approver withdrawn while the request is open (removed from the approvers) no longer
+// sees it, though the mandate still names them.
+func TestApprovalPageAfterWithdrawal(t *testing.T) {
+	h := newHarness(t)
+	h.putApprover(approval.Approver{UserID: adminID, UI: true, UICritical: true})
+	h.putApprover(approval.Approver{UserID: annaID, UI: true, UICritical: true})
+	id, _ := h.ask(unlockRequest(adminID, annaID))
+	var got wireApprovalPage
+	h.ok(http.MethodGet, "/api/approvals/"+id, nil, &got, as(annaID))
+	if got.Status != pageOpen {
+		t.Fatalf("before = %+v", got)
+	}
+	if n := h.approvals.Withdraw(annaID); n != 1 {
+		t.Fatalf("withdrawn from %d", n)
+	}
+	var after wireApprovalPage
+	h.ok(http.MethodGet, "/api/approvals/"+id, nil, &after, as(annaID))
+	if after != (wireApprovalPage{Status: pageUnavailable}) {
+		t.Errorf("after = %+v", after)
+	}
+}
+
+// The journal comes first: a request it has closed shows its outcome even while the
+// service still lists it.
+func TestApprovalPageJournalFirst(t *testing.T) {
+	h := newHarness(t)
+	h.putApprover(approval.Approver{UserID: adminID, UI: true})
+	id, _ := h.ask(lightRequest(adminID))
+	h.closed.set(id, approval.Closed{Outcome: approval.OutcomeApproved})
+	var got wireApprovalPage
+	h.ok(http.MethodGet, "/api/approvals/"+id, nil, &got)
+	if got != (wireApprovalPage{Status: pageClosed, Outcome: approval.OutcomeApproved}) {
+		t.Errorf("page = %+v", got)
 	}
 }
 

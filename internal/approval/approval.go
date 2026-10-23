@@ -210,8 +210,11 @@ type Open struct {
 	Request    Request
 	Recipients []string // user IDs reached on at least one channel
 	UIUsers    []string // user IDs who may answer in the UI
-	CreatedAt  time.Time
-	ExpiresAt  time.Time
+	// Approvers are the user IDs whose answer counts now: those asked, less those
+	// withdrawn since (Withdraw); sorted.
+	Approvers []string
+	CreatedAt time.Time
+	ExpiresAt time.Time
 }
 
 // recipient is an approver with their channels for one request.
@@ -673,7 +676,7 @@ func (s *Service) openOf(p *pending) Open {
 	req := p.req
 	req.Approvers, req.Params = slices.Clone(req.Approvers), maps.Clone(req.Params)
 	return Open{ID: p.id, Request: req, Recipients: slices.Clone(p.reached), UIUsers: slices.Clone(p.uiUsers),
-		CreatedAt: p.created, ExpiresAt: p.expires}
+		Approvers: slices.Sorted(maps.Keys(p.approvers)), CreatedAt: p.created, ExpiresAt: p.expires}
 }
 
 // CancelAgent ends the open requests of an agent that was revoked, or whose mandate was,

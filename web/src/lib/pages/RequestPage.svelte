@@ -7,7 +7,7 @@
   neutral sentence. The page follows the request live.
 -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { Loader } from '../app/loader.svelte.ts';
   import type { AppState } from '../app/state.svelte.ts';
   import type { ApprovalPage, DeviceCatalog } from '../api/types.ts';
@@ -39,21 +39,30 @@
   let { app, id }: Props = $props();
 
   const SKELETON = ['40%', '70%', '60%'];
+  const uid = $props.id();
 
   let busy = $state(false);
   const live = new Announcer();
+  let heading: HTMLElement | undefined = $state();
 
   const loader = new Loader<Data>(async () => {
     const [page, catalog] = await Promise.all([app.api.approval(id), app.api.devices().catch(() => null)]);
     return { page, catalog };
   });
 
-  /** reload fetches the page again and says the outcome once the request has ended. */
+  /**
+   * reload fetches the page again. Once the request has ended it says the outcome and,
+   * if a button that is gone now had the focus, moves the focus to the page's heading.
+   */
   async function reload() {
     const wasOpen = loader.data?.page.status === 'open';
+    const focused = document.activeElement;
     await loader.run();
     const page = loader.data?.page;
-    if (wasOpen && page?.status === 'closed') await live.say(pageOutcome(page.outcome, page.cause).text);
+    if (!wasOpen || page?.status === 'open') return;
+    await tick();
+    if (focused instanceof HTMLElement && !focused.isConnected) heading?.focus();
+    if (page?.status === 'closed') await live.say(pageOutcome(page.outcome, page.cause).text);
   }
 
   onMount(() => {
@@ -79,9 +88,11 @@
       toasts.show({ kind: 'error', text: answerError(err) });
     }
     // The buttons stay busy until the page shows the outcome, so it offers no second
-    // answer meanwhile (security review S8).
+    // answer meanwhile (security review S8); a failed load is tried once more, or the
+    // buttons would come back for a request that is answered.
     try {
       await reload();
+      if (loader.status === 'error') await reload();
     } finally {
       busy = false;
     }
@@ -97,17 +108,17 @@
 </script>
 
 <BackLink href={href({ name: 'requests' })} label={m.request_page_all()} />
-<h1>{m.request_page_title()}</h1>
+<h1 tabindex="-1" bind:this={heading}>{m.request_page_title()}</h1>
 
 <div class="hm-visually-hidden" aria-live="polite">{live.text}</div>
 
 {#if loader.status === 'error'}
-  <ErrorState title={m.overview_error_title()} body={m.overview_error_body()} onretry={() => void loader.run()} />
+  <ErrorState title={m.request_page_error_title()} body={m.request_page_error_body()} onretry={() => void loader.run()} />
 {:else if !page}
   <Skeleton lines={SKELETON} />
 {:else if page.status === 'open'}
   {@const request = page.request}
-  <RequestCard {request} areaName={areaName(request.area)} offsetMs={app.offsetMs} {ctx}>
+  <RequestCard {request} areaName={areaName(request.area)} offsetMs={app.offsetMs} {ctx} level={2}>
     {#snippet children(titleId)}
       {#if request.can_answer}
         <RequestAnswer {request} {busy} describedBy={titleId} large onanswer={(approve) => void answer(approve)} />
@@ -118,16 +129,16 @@
   <ClaimLegend />
 {:else if page.status === 'closed'}
   {@const outcome = pageOutcome(page.outcome, page.cause)}
-  <section class="state" class:dashed={outcome.dashed} aria-label={m.request_page_closed()}>
+  <section class="state" class:dashed={outcome.dashed} aria-labelledby="{uid}-outcome">
     <span class="icon {outcome.tone}"><Icon name={outcome.icon} size={32} /></span>
-    <strong class={outcome.tone}>{outcome.text}</strong>
+    <h2 id="{uid}-outcome" class={outcome.tone}>{outcome.text}</h2>
     {#if outcome.hint}<span class="hint">{outcome.hint}</span>{/if}
     <span>{m.request_page_closed()}</span>
   </section>
 {:else}
   <section class="state dashed">
     <span class="icon muted"><Icon name="ask" size={32} /></span>
-    <span>{m.request_page_unavailable()}</span>
+    <p>{m.request_page_unavailable()}</p>
   </section>
 {/if}
 
@@ -135,6 +146,9 @@
   h1 {
     margin: 0;
     font-size: var(--hm-font-size-3xl);
+  }
+  h1:focus {
+    outline: none;
   }
   .note,
   .hint {
@@ -161,7 +175,11 @@
   .state.dashed {
     border-style: dashed;
   }
-  strong {
+  h2,
+  p {
+    margin: 0;
+  }
+  h2 {
     font-size: var(--hm-font-size-xl);
   }
   .positive {

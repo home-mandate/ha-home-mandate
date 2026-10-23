@@ -1033,6 +1033,8 @@
   "request_page_closed": "This approval request has ended.",
   "request_page_unavailable": "You can’t answer this request. The people who can have been notified.",
   "request_page_all": "All approvals",
+  "request_page_error_title": "Couldn’t load the approval request",
+  "request_page_error_body": "Approving or declining from the notification on your phone still works.",
   "result_already_in_state": "Not executed: the device was already in that state",
   "result_state_changed": "Not executed: the device’s state changed after the request",
   "reason_duplicate": "This call executed nothing itself: it was tied to the open request for the same action",

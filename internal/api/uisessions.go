@@ -39,6 +39,7 @@ type uiSession struct {
 
 type signIn struct {
 	addr    string
+	target  string // the request whose page the sign-in leads to (issue #53); empty: the start page
 	created time.Time
 	seq     uint64 // order of starting: times can be equal
 }
@@ -137,9 +138,9 @@ func live(s *uiSession, now time.Time) bool {
 	return !now.Before(s.created) && now.Sub(s.created) < uiMaxAge && now.Sub(s.seen) < uiIdle
 }
 
-// startSignIn returns the state of a new sign-in from addr; it goes into a cookie and
-// into the request to Home Assistant, and must come back in both.
-func (u *uiSessions) startSignIn(addr string) string {
+// startSignIn returns the state of a new sign-in from addr that leads to target; it goes
+// into a cookie and into the request to Home Assistant, and must come back in both.
+func (u *uiSessions) startSignIn(addr, target string) string {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	now := u.now()
@@ -152,7 +153,7 @@ func (u *uiSessions) startSignIn(addr string) string {
 	}
 	state := newToken()
 	u.started++
-	u.signIns[tokenHash(state)] = &signIn{addr: addr, created: now, seq: u.started}
+	u.signIns[tokenHash(state)] = &signIn{addr: addr, target: target, created: now, seq: u.started}
 	return state
 }
 
@@ -174,21 +175,24 @@ func (u *uiSessions) oldestSignIn(match func(*signIn) bool) ([sha256.Size]byte, 
 }
 
 // finishSignIn uses up the sign-in if the state from the cookie and the one Home
-// Assistant sent back are the same and it has not expired.
-func (u *uiSessions) finishSignIn(cookie, state string) bool {
+// Assistant sent back are the same and it has not expired, and returns its target.
+func (u *uiSessions) finishSignIn(cookie, state string) (target string, ok bool) {
 	if cookie == "" || subtle.ConstantTimeCompare([]byte(cookie), []byte(state)) != 1 {
-		return false
+		return "", false
 	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	key := tokenHash(state)
 	s, ok := u.signIns[key]
 	if !ok {
-		return false
+		return "", false
 	}
 	delete(u.signIns, key)
 	now := u.now()
-	return !now.Before(s.created) && now.Sub(s.created) < signInTTL
+	if now.Before(s.created) || now.Sub(s.created) >= signInTTL {
+		return "", false
+	}
+	return s.target, true
 }
 
 // sweep forgets what has expired; called with mu held.

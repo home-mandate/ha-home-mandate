@@ -220,7 +220,7 @@
   {#if app.phase === 'loading'}
     <Skeleton lines={['30%', '70%', '50%']} />
   {:else if app.phase === 'signed_out'}
-    <SignIn error={signInFailure} />
+    <SignIn error={signInFailure} request={route.name === 'request' ? route.id : null} />
   {:else if app.phase === 'forbidden'}
     <FullPageState icon="lock" badge="person" title={m.noaccess_title()} body={m.noaccess_body()} note={m.noaccess_approver()} />
   {:else if app.phase === 'error'}

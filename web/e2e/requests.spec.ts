@@ -7,9 +7,9 @@ import { expect, pageScroll, test } from './support.ts';
 
 const text = {
   de: { open: /^Offen/, history: 'Verlauf', decline: 'Ablehnen', approve: 'Freigeben', yes: 'Ja, freigeben', confirm: 'Freigabe bestätigen',
-    declined: /^Abgelehnt von \u2068?Markus\u2069? · in Home-Mandate/, declinedPage: 'Abgelehnt', ended: 'Diese Rückfrage ist beendet.', approvedPage: 'Freigegeben', approved: /^Freigegeben von \u2068?Markus\u2069? · in Home-Mandate/ },
+    declined: /^Abgelehnt von \u2068?Markus\u2069? · in Home-Mandate/, declinedPage: 'Abgelehnt', approvedPage: 'Freigegeben', approved: /^Freigegeben von \u2068?Markus\u2069? · in Home-Mandate/ },
   en: { open: /^Pending/, history: 'History', decline: 'Decline', approve: 'Approve', yes: 'Yes, approve', confirm: 'Confirm approval',
-    declined: /^Declined by \u2068?Markus\u2069? · in Home-Mandate/, declinedPage: 'Declined', ended: 'This approval request has ended.', approvedPage: 'Approved', approved: /^Approved by \u2068?Markus\u2069? · in Home-Mandate/ },
+    declined: /^Declined by \u2068?Markus\u2069? · in Home-Mandate/, declinedPage: 'Declined', approvedPage: 'Approved', approved: /^Approved by \u2068?Markus\u2069? · in Home-Mandate/ },
 } as const;
 
 type Lang = keyof typeof text;
@@ -116,9 +116,10 @@ test('request page on a phone: both buttons without scrolling, then only the out
   }
   expect(await pageScroll(page)).toBe(0);
   await approve.click();
-  await page.waitForTimeout(700);
-  await page.getByRole('button', { name: t.yes }).click();
-  await expect(page.getByRole('region', { name: t.ended }).getByText(t.approvedPage, { exact: true })).toBeVisible();
+  const yes = page.getByRole('button', { name: t.yes });
+  await expect(yes).toBeEnabled();
+  await yes.click();
+  await expect(page.getByRole('heading', { name: t.approvedPage, exact: true })).toBeVisible();
   await expect(page.getByRole('article')).toHaveCount(0);
   await expect(page.getByRole('main').getByText('Markus')).toHaveCount(0);
 });
@@ -129,7 +130,7 @@ test('request page: declining ends it, the list no longer has it', async ({ page
   await answerable(page, PAGE_ID);
   await page.goto(`./#/audit/requests/${PAGE_ID}`);
   await page.getByRole('button', { name: t.decline }).click();
-  await expect(page.getByRole('region', { name: t.ended }).getByText(t.declinedPage, { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: t.declinedPage, exact: true })).toBeVisible();
   await page.goto('./#/audit/requests');
   await expect(page.getByRole('region', { name: t.open }).getByRole('article')).toHaveCount(1);
 });

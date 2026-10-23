@@ -1033,6 +1033,8 @@
   "request_page_closed": "Diese Rückfrage ist beendet.",
   "request_page_unavailable": "Du kannst diese Rückfrage nicht beantworten. Wer sie beantworten kann, wurde benachrichtigt.",
   "request_page_all": "Alle Rückfragen",
+  "request_page_error_title": "Rückfrage konnte nicht geladen werden",
+  "request_page_error_body": "Freigeben oder ablehnen in der Benachrichtigung auf deinem Handy geht weiterhin.",
   "result_already_in_state": "Nicht ausgeführt: das Gerät war schon in diesem Zustand",
   "result_state_changed": "Nicht ausgeführt: der Zustand des Geräts hat sich nach der Anfrage geändert",
   "reason_duplicate": "Dieser Aufruf hat selbst nichts ausgeführt: er wurde an die offene Anfrage für dieselbe Aktion gebunden",

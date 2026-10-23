@@ -145,43 +145,47 @@ type wireApprovalPage struct {
 var pageOutcomes = []string{approval.OutcomeApproved, approval.OutcomeRejected, approval.OutcomeTimeout,
 	approval.OutcomeInvalidResponse, approval.OutcomeCancelled}
 
-// getApproval is the page of one request that every doorbell links to (issue #53). Only
-// its approvers see what is to be confirmed; once it is answered or ended everyone sees
-// its outcome alone. Someone who is not an approver, an unknown ID and a request deleted
-// after a day look alike, so the page tells nothing about requests of others.
+// getApproval is the page of one request that every notification links to (issue #53).
+// Only those whose answer counts now see what is to be confirmed (stricter than the list,
+// which shows every open request to every administrator); once it is answered or ended
+// everyone sees its outcome alone. Someone else, an unknown ID and a request deleted after
+// a day look alike, so the page tells nothing about requests of others. The journal comes
+// first: a request answered a moment ago is closed there before its outcome is written,
+// and between the answer and the journal's step the page is briefly unavailable, until
+// approval.closed makes the UI load it again.
 func (s *Server) getApproval(r *request) (any, error) {
+	unavailable := wireApprovalPage{Status: pageUnavailable}
 	id := r.PathValue("id")
 	if !requestIDPattern.MatchString(id) {
-		return wireApprovalPage{Status: pageUnavailable}, nil
+		return unavailable, nil
 	}
-	for _, o := range s.cfg.Approvals.Open() {
-		if o.ID != id {
-			continue
-		}
-		if !slices.Contains(o.Request.Approvers, r.user) || r.user == s.cfg.Status().ServiceUser {
-			return wireApprovalPage{Status: pageUnavailable}, nil
-		}
-		approvers, err := s.cfg.Approvers.List(r.Context())
+	if s.cfg.Closed != nil {
+		c, ok, err := s.cfg.Closed.Closed(r.Context(), id)
 		if err != nil {
 			return nil, err
 		}
-		return wireApprovalPage{Status: pageOpen, Request: ptr(s.presentRequest(r.Context(), o, r.user, approvers))}, nil
+		if ok {
+			if !slices.Contains(pageOutcomes, c.Outcome) {
+				return unavailable, nil
+			}
+			out := wireApprovalPage{Status: pageClosed, Outcome: c.Outcome}
+			if c.Outcome == approval.OutcomeCancelled {
+				out.Cause = known(historyCauses, c.Cause, "")
+			}
+			return out, nil
+		}
 	}
-	if s.cfg.Closed == nil {
-		return wireApprovalPage{Status: pageUnavailable}, nil
+	open := s.cfg.Approvals.Open()
+	i := slices.IndexFunc(open, func(o approval.Open) bool { return o.ID == id })
+	if i < 0 || !slices.Contains(open[i].Approvers, r.user) {
+		return unavailable, nil
 	}
-	c, ok, err := s.cfg.Closed.Closed(r.Context(), id)
+	o := open[i]
+	approvers, err := s.cfg.Approvers.List(r.Context())
 	if err != nil {
 		return nil, err
 	}
-	if !ok || !slices.Contains(pageOutcomes, c.Outcome) {
-		return wireApprovalPage{Status: pageUnavailable}, nil
-	}
-	out := wireApprovalPage{Status: pageClosed, Outcome: c.Outcome}
-	if c.Outcome == approval.OutcomeCancelled {
-		out.Cause = known(historyCauses, c.Cause, "")
-	}
-	return out, nil
+	return wireApprovalPage{Status: pageOpen, Request: ptr(s.presentRequest(r.Context(), o, r.user, approvers))}, nil
 }
 
 // errNoRequest means an entry has no request, so it cannot have ended one.
