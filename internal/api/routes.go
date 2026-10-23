@@ -94,6 +94,7 @@ func (s *Server) routes() *http.ServeMux {
 	route("PUT /api/settings", jsonBody, s.putSettings)
 
 	route("GET /api/approvals", noBody, s.getApprovals)
+	route("GET /api/approvals/{id}", noBody, s.getApproval)
 	route("POST /api/approvals/{id}/answer", jsonBody, s.answerApproval)
 
 	route("GET /api/audit", noBody, s.getAudit)

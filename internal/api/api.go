@@ -88,6 +88,11 @@ type Config struct {
 	Admission *admission.Store
 	Approvers *approval.Approvers
 	Approvals Approvals
+	// Closed tells the outcome of a request that was answered or ended (approval.Journal);
+	// nil: a request's page shows nothing once it is no longer open.
+	Closed interface {
+		Closed(ctx context.Context, id string) (approval.Closed, bool, error)
+	}
 	// Pairing is nil when OAuth is off (no public URL): agents cannot be admitted then.
 	Pairing Pairing
 	HA      HA

@@ -190,6 +190,7 @@ type harness struct {
 	approvers *approval.Approvers
 	approvals *approval.Service
 	notifier  *recordingNotifier
+	closed    *fakeClosed
 	now       *clock
 	status    Status
 	pairing   Pairing
@@ -212,6 +213,26 @@ func (c *clock) Add(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.t = c.t.Add(d)
+}
+
+// fakeClosed stands in for the approval journal's outcomes of requests no longer open.
+type fakeClosed struct {
+	mu   sync.Mutex
+	byID map[string]approval.Closed
+	err  error
+}
+
+func (f *fakeClosed) Closed(_ context.Context, id string) (approval.Closed, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c, ok := f.byID[id]
+	return c, ok, f.err
+}
+
+func (f *fakeClosed) set(id string, c approval.Closed) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.byID[id] = c
 }
 
 // recordingNotifier takes the pushes of the approval service.
@@ -271,7 +292,7 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	h := &harness{t: t, ha: fakeHousehold(), cat: house(), marks: &fakeMarks{set: map[string]string{}}, renames: renames, moves: moves, st: st, log: log, agents: agents, mandates: mandates, adm: adm,
-		approvers: approval.NewApprovers(st.DB(), log), notifier: &recordingNotifier{}, now: &clock{t: testStart},
+		approvers: approval.NewApprovers(st.DB(), log), notifier: &recordingNotifier{}, closed: &fakeClosed{byID: map[string]approval.Closed{}}, now: &clock{t: testStart},
 		status: Status{HAConnected: true, HASince: testStart.Add(-time.Hour), HAVersion: "2026.9.4", ServiceUser: serviceID,
 			TimeZone: "Europe/Berlin", Language: "de", Country: "DE", Units: map[string]string{"temperature": "°C", "length": "km", "extra": "x"}}}
 	h.build()
@@ -286,7 +307,7 @@ func (h *harness) build() {
 		IsAdmin:     func(ctx context.Context, u string) (bool, error) { return srv.IsAdmin(ctx, u) },
 		OnOpened:    func(o approval.Open) { srv.ApprovalOpened(o) }})
 	srv = New(Config{Store: h.st, Log: h.log, Agents: h.agents, Mandates: h.mandates, Admission: h.adm, Approvers: h.approvers,
-		Approvals: h.approvals, Pairing: h.pairing, HA: h.ha, Catalog: h.cat, Marks: h.marks, Renames: h.renames, AreaMoves: h.moves, Status: func() Status { return h.status },
+		Approvals: h.approvals, Closed: h.closed, Pairing: h.pairing, HA: h.ha, Catalog: h.cat, Marks: h.marks, Renames: h.renames, AreaMoves: h.moves, Status: func() Status { return h.status },
 		UI:    http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ui") }),
 		Proxy: netip.MustParseAddr(supervisorAddr), Principal: household, Mode: "app", Version: "0.1.0", Commit: "abc123", MCPURL: "https://hm.example.org:8765/mcp",
 		TLS: func() TLSStatus { return TLSStatus{Present: true, ValidUntil: testStart.Add(90 * 24 * time.Hour)} }, Retention: 30 * 24 * time.Hour, ApprovalTimeout: 5 * time.Minute,

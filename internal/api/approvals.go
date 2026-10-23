@@ -127,6 +127,63 @@ func (s *Server) getApprovals(r *request) (any, error) {
 	return out, nil
 }
 
+// The states of a request's page (issue #53).
+const (
+	pageOpen        = "open"        // the person is an approver: the request as on the list
+	pageClosed      = "closed"      // answered or ended: only the outcome, never who answered
+	pageUnavailable = "unavailable" // anything else, alike: not an approver, unknown, deleted
+)
+
+type wireApprovalPage struct {
+	Status  string               `json:"status"`
+	Request *wireApprovalRequest `json:"request,omitempty"`
+	Outcome string               `json:"outcome,omitempty"`
+	Cause   string               `json:"cause,omitempty"`
+}
+
+// pageOutcomes are the outcomes a request's page passes on; anything else is unavailable.
+var pageOutcomes = []string{approval.OutcomeApproved, approval.OutcomeRejected, approval.OutcomeTimeout,
+	approval.OutcomeInvalidResponse, approval.OutcomeCancelled}
+
+// getApproval is the page of one request that every doorbell links to (issue #53). Only
+// its approvers see what is to be confirmed; once it is answered or ended everyone sees
+// its outcome alone. Someone who is not an approver, an unknown ID and a request deleted
+// after a day look alike, so the page tells nothing about requests of others.
+func (s *Server) getApproval(r *request) (any, error) {
+	id := r.PathValue("id")
+	if !requestIDPattern.MatchString(id) {
+		return wireApprovalPage{Status: pageUnavailable}, nil
+	}
+	for _, o := range s.cfg.Approvals.Open() {
+		if o.ID != id {
+			continue
+		}
+		if !slices.Contains(o.Request.Approvers, r.user) || r.user == s.cfg.Status().ServiceUser {
+			return wireApprovalPage{Status: pageUnavailable}, nil
+		}
+		approvers, err := s.cfg.Approvers.List(r.Context())
+		if err != nil {
+			return nil, err
+		}
+		return wireApprovalPage{Status: pageOpen, Request: ptr(s.presentRequest(r.Context(), o, r.user, approvers))}, nil
+	}
+	if s.cfg.Closed == nil {
+		return wireApprovalPage{Status: pageUnavailable}, nil
+	}
+	c, ok, err := s.cfg.Closed.Closed(r.Context(), id)
+	if err != nil {
+		return nil, err
+	}
+	if !ok || !slices.Contains(pageOutcomes, c.Outcome) {
+		return wireApprovalPage{Status: pageUnavailable}, nil
+	}
+	out := wireApprovalPage{Status: pageClosed, Outcome: c.Outcome}
+	if c.Outcome == approval.OutcomeCancelled {
+		out.Cause = known(historyCauses, c.Cause, "")
+	}
+	return out, nil
+}
+
 // errNoRequest means an entry has no request, so it cannot have ended one.
 var errNoRequest = errors.New("api: entry without a request")
 

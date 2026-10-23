@@ -254,6 +254,32 @@ func (j *Journal) Lookup(ctx context.Context, ref, clientID string) (Status, boo
 	return st, true, nil
 }
 
+// Closed is what anyone who opens a request's page learns of it once it is answered or
+// ended (issue #53): the outcome and, with cancelled, the cause; never who answered.
+type Closed struct {
+	Outcome string
+	Cause   string
+}
+
+// Closed returns the outcome of the request with the UI's ID id once a confirmation is
+// executing or the request has ended. Open, unknown and deleted requests all give false.
+// A row ended without an approval (a corrupt one after a restart) is cancelled.
+func (j *Journal) Closed(ctx context.Context, id string) (Closed, bool, error) {
+	var c Closed
+	err := j.db.QueryRowContext(ctx, `SELECT outcome, cause FROM approval_journal WHERE id = ? AND state <> ?`, id, stateOpen).
+		Scan(&c.Outcome, &c.Cause)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Closed{}, false, nil
+	}
+	if err != nil {
+		return Closed{}, false, fmt.Errorf("%w: %w", ErrJournal, err)
+	}
+	if c.Outcome == "" {
+		c.Outcome = OutcomeCancelled
+	}
+	return c, true, nil
+}
+
 // replayAfter is how long beyond its timeout an executed request is replayed: the same
 // call of the same agent for the device gets its result instead of a new request
 // (issue #27, layer 2; covers clients that give up after about 4 minutes).
