@@ -390,8 +390,8 @@ func TestUIAddressOnlyInDirectMode(t *testing.T) {
 	}
 }
 
-// Issue #49: a tap on a request's notification opens the open requests in the UI in
-// direct mode, the app's panel in Home Assistant, or nothing.
+// Issues #49 and #53: a tap on a request's notification opens its page in direct mode,
+// the app's panel in Home Assistant, or nothing.
 func TestTapTarget(t *testing.T) {
 	direct := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 	for _, tc := range []struct {
@@ -404,11 +404,11 @@ func TestTapTarget(t *testing.T) {
 		{"app", config.Config{Mode: config.ModeApp}, nil, "a0d7b954_home_mandate", "/app/a0d7b954_home_mandate"},
 		{"app, slug unknown", config.Config{Mode: config.ModeApp}, nil, "", ""},
 		{"container, direct mode", config.Config{Mode: config.ModeContainer, PublicURL: "https://hm.example.org"}, direct, "",
-			"https://hm.example.org/ui/#/audit/requests"},
+			"https://hm.example.org/ui/requests/0123456789abcdef0123456789abcdef"},
 		{"container without direct mode", config.Config{Mode: config.ModeContainer, PublicURL: "https://hm.example.org"}, nil, "", ""},
 	} {
 		g := &gateway{state: &state{cfg: tc.cfg}, direct: tc.direct, slug: tc.slug}
-		if got := g.tapTarget(); got != tc.want {
+		if got := g.tapTarget("0123456789abcdef0123456789abcdef"); got != tc.want {
 			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
 		}
 	}
@@ -417,11 +417,15 @@ func TestTapTarget(t *testing.T) {
 func TestLookUpSlug(t *testing.T) {
 	saved := appSlug
 	t.Cleanup(func() { appSlug = saved })
-	appSlug = func(context.Context, string, ha.Secret, ha.Plaintext) (string, error) { return "local_home_mandate", nil }
+	appSlug = func(context.Context, string, ha.Secret, ha.Plaintext) (string, error) {
+		return "local_home_mandate", nil
+	}
 	if got := lookUpSlug(t.Context(), config.Config{}, slog.New(slog.DiscardHandler)); got != "local_home_mandate" {
 		t.Errorf("slug = %q", got)
 	}
-	appSlug = func(context.Context, string, ha.Secret, ha.Plaintext) (string, error) { return "", errors.New("refused") }
+	appSlug = func(context.Context, string, ha.Secret, ha.Plaintext) (string, error) {
+		return "", errors.New("refused")
+	}
 	if got := lookUpSlug(t.Context(), config.Config{}, slog.New(slog.DiscardHandler)); got != "" {
 		t.Errorf("slug after a refusal = %q", got)
 	}

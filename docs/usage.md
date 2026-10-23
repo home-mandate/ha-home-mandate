@@ -328,8 +328,10 @@ in its second line. On an iPhone, the phone asks you to unlock it first for a cr
 action.
 
 A tap on the notification itself opens the place to answer: the Home-Mandate panel in the
-app, or the page of open requests in the Home-Mandate UI in a container with its own
-address (direct mode); without either, the Companion App opens. Answering there needs
+app, or the request's own page in the Home-Mandate UI in a container with its own
+address (direct mode), after signing in if needed; without either, the Companion App
+opens. The page shows exactly this request with large **Decline** and **Approve**
+buttons, and once it is answered only how it ended. Answering there needs
 **Answer in Home-Mandate** to be on for you. On Android, a tap does not remove the
 notification; if you swipe it away while the request is still open, it comes back once
 after a few seconds. iPhones do not report a swipe, so there it does not come back.

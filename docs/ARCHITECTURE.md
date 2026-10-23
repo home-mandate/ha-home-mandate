@@ -388,13 +388,14 @@ checked on every request.
   `context.user_id` must belong to an approver; otherwise the answer is discarded and logged.
   An answer with an open nonce from anyone else (also Home-Mandate's own HA user) ends the
   request as `invalid_response` and warns the approvers (decision W8, 2026-10-02).
-- A tap on the notification (issue #49) opens where the request can be answered:
-  `data.url` (iOS) and `data.clickAction` (Android) are the open requests in the UI in
-  direct mode (`<public URL>/ui/#/audit/requests`), the app's panel in the app
+- A tap on the notification (issues #49, #53) opens where the request can be answered:
+  `data.url` (iOS) and `data.clickAction` (Android) are the request's own page in direct
+  mode (`<public URL>/ui/requests/<request ID>`, section 12), the app's panel in the app
   (`/app/<slug>`, the slug from the Supervisor's `/addons/self/info`; it opens also when
   the panel is not in the sidebar, `/hassio/ingress/<slug>` does not), and absent
-  otherwise. The link names no request and never carries the nonce; answering in
-  the UI needs the UI channel as everywhere. On Android the notification is `sticky`, so a
+  otherwise. The link carries at most the UI's random request ID, which is no secret
+  (the page checks who opens it), and never the nonce; answering in the UI needs the UI
+  channel as everywhere. On Android the notification is `sticky`, so a
   tap does not dismiss it. When the Companion App reports it cleared
   (`mobile_app_notification_cleared`, Android only) while the request is open, the same
   notification (same tag, same buttons) is sent again after 5 seconds, once per request
@@ -666,6 +667,12 @@ checked on every request.
   a separate random request ID, never the nonce. Administrator rights and settings are checked
   again at the moment of the answer; a refused UI answer leaves the request open. The first
   answer on any channel counts; the audit entry records it as `approval.via` (`push`, `ui`).
+- **A page per request (issue #53):** `#/audit/requests/<request ID>` shows one request
+  with large buttons, backed by `GET /api/approvals/{id}`. Only those whose answer counts
+  now (the approvers asked, less those withdrawn since) see what is to be confirmed; once
+  the request is answered or has ended, everyone sees its outcome from the approval
+  journal and nobody's name; anyone else, an unknown ID and one deleted after a day get
+  the same `unavailable`. Every notification that links to a request leads to this page.
   Every person needs at least one channel; the settings show who cannot be reached for
   ordinary or critical requests.
 - **Hint in Home Assistant (B2, off by default):** a persistent notification without any
@@ -970,6 +977,12 @@ human in for Home-Mandate, so it does so itself.
   exchange are used once and revoked at once); the `state` is bound to a cookie of the
   sign-in. Only administrators get a session, and the administrator check of section 8
   still runs on every request.
+- `GET /ui/requests/<request ID>` is the link of a notification (issue #53): with a
+  session a `303` to `/ui/#/audit/requests/<request ID>`, without one the sign-in, which
+  keeps the request in its state on the server and ends on that page. Only an ID of 32
+  lowercase hex digits is a target (anything else is `404`), so the link cannot lead
+  anywhere else; it is limited like the sign-in and reveals nothing about whether the
+  request exists.
 - Session cookie `__Host-hm_ui`: `Secure`, `HttpOnly`, `SameSite=Strict`, path `/`, 256
   random bits kept only as a hash in memory; a new ID at every sign-in. A session ends
   after 30 minutes without a request, after 12 hours in any case, on sign-out (`POST`

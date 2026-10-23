@@ -177,7 +177,8 @@ func (s *Server) getApproval(r *request) (any, error) {
 	}
 	open := s.cfg.Approvals.Open()
 	i := slices.IndexFunc(open, func(o approval.Open) bool { return o.ID == id })
-	if i < 0 || !slices.Contains(open[i].Approvers, r.user) {
+	// The service user is never asked (approval.Service); checked again all the same.
+	if i < 0 || !slices.Contains(open[i].Approvers, r.user) || r.user == s.cfg.Status().ServiceUser {
 		return unavailable, nil
 	}
 	o := open[i]

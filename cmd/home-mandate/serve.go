@@ -482,19 +482,17 @@ func (g *gateway) uiAddress() string {
 	return g.state.cfg.PublicURL + api.DirectPrefix + "/"
 }
 
-// requestsRoute is the UI's page of the open requests (web/src/lib/router.ts).
-const requestsRoute = "#/audit/requests"
-
 // ingressPanelPath is where Home Assistant's frontend opens an app's panel by its slug,
 // whether or not it is shown in the sidebar (measured with 2026.9.4 and 2026.10.1;
 // /hassio/ingress/<slug> is a 404 there).
 const ingressPanelPath = "/app/"
 
-// tapTarget is what a tap on a request's notification opens (issue #49): the open
-// requests in the UI in direct mode, the app's panel in Home Assistant, or nothing.
-func (g *gateway) tapTarget() string {
-	if address := g.uiAddress(); address != "" {
-		return address + requestsRoute
+// tapTarget is what a tap on the notification of the request id opens: in direct mode
+// its link, which keeps the request through the sign-in (issue #53); in Home Assistant
+// the app's panel (issue #49); or nothing.
+func (g *gateway) tapTarget(id string) string {
+	if g.direct != nil {
+		return g.state.cfg.PublicURL + api.DirectRequestPath + id
 	}
 	if g.slug != "" {
 		return ingressPanelPath + g.slug
