@@ -122,13 +122,23 @@ func TestWritesNeedCSRFAndSameOrigin(t *testing.T) {
 		opts []reqOpt
 		code string
 	}{
-		"no token":          {[]reqOpt{header("X-HM-CSRF", "")}, codeCSRF},
-		"garbage token":     {[]reqOpt{header("X-HM-CSRF", "not-base64!")}, codeCSRF},
-		"short token":       {[]reqOpt{header("X-HM-CSRF", "YWJj")}, codeCSRF},
-		"token of another":  {[]reqOpt{header("X-HM-CSRF", h.srv.csrfToken(annaID, h.now.Now()))}, codeCSRF},
-		"cross site":        {[]reqOpt{header("Sec-Fetch-Site", "cross-site")}, codeForbidden},
-		"same site":         {[]reqOpt{header("Sec-Fetch-Site", "same-site")}, codeForbidden},
-		"no Sec-Fetch-Site": {[]reqOpt{header("Sec-Fetch-Site", "")}, codeForbidden},
+		"no token":                          {[]reqOpt{header("X-HM-CSRF", "")}, codeCSRF},
+		"garbage token":                     {[]reqOpt{header("X-HM-CSRF", "not-base64!")}, codeCSRF},
+		"short token":                       {[]reqOpt{header("X-HM-CSRF", "YWJj")}, codeCSRF},
+		"token of another":                  {[]reqOpt{header("X-HM-CSRF", h.srv.csrfToken(annaID, h.now.Now()))}, codeCSRF},
+		"cross site":                        {[]reqOpt{header("Sec-Fetch-Site", "cross-site")}, codeForbidden},
+		"same site":                         {[]reqOpt{header("Sec-Fetch-Site", "same-site")}, codeForbidden},
+		"no Sec-Fetch-Site, no Origin":      {[]reqOpt{header("Sec-Fetch-Site", "")}, codeForbidden},
+		"no Sec-Fetch-Site, foreign Origin": {[]reqOpt{header("Sec-Fetch-Site", ""), header("Origin", "http://evil.example")}, codeForbidden},
+		"no Sec-Fetch-Site, Origin of another host": {[]reqOpt{header("Sec-Fetch-Site", ""), header("Origin", "http://ingress.local"),
+			header("X-Forwarded-Host", "ha.example.org")}, codeForbidden},
+		"no Sec-Fetch-Site, Origin null": {[]reqOpt{header("Sec-Fetch-Site", ""), header("Origin", "null")}, codeForbidden},
+		"no Sec-Fetch-Site, two Origins": {[]reqOpt{header("Sec-Fetch-Site", ""), func(r *http.Request) {
+			r.Header["Origin"] = []string{"http://ingress.local", "http://ingress.local"}
+		}}, codeForbidden},
+		"no Sec-Fetch-Site, last forwarded host another": {[]reqOpt{header("Sec-Fetch-Site", ""), header("Origin", "http://homeassistant.local:8123"),
+			header("X-Forwarded-Host", "homeassistant.local:8123, evil.example")}, codeForbidden},
+		"cross site with own Origin": {[]reqOpt{header("Sec-Fetch-Site", "cross-site"), header("Origin", "http://ingress.local")}, codeForbidden},
 		"two tokens": {[]reqOpt{func(r *http.Request) {
 			r.Header["X-Hm-Csrf"] = []string{h.srv.csrfToken(adminID, h.now.Now()), "x"}
 		}}, codeCSRF},
@@ -139,6 +149,11 @@ func TestWritesNeedCSRFAndSameOrigin(t *testing.T) {
 			t.Errorf("%s = %d %s", name, r.code, r.body)
 		}
 	}
+	// Home Assistant over plain HTTP: no Sec-Fetch-Site, the Origin names the host the
+	// browser asked for (Home Assistant's X-Forwarded-Host behind Ingress, else Host).
+	h.ok(http.MethodPut, path, body, nil, header("Sec-Fetch-Site", ""), header("Origin", "http://homeassistant.local:8123"),
+		header("X-Forwarded-Host", "homeassistant.local:8123"))
+	h.ok(http.MethodPut, path, body, nil, header("Sec-Fetch-Site", ""), header("Origin", "http://ingress.local"))
 	// A token of the previous 12-hour period still works, one of before not.
 	token := h.srv.csrfToken(adminID, h.now.Now())
 	h.now.Add(csrfPeriod)

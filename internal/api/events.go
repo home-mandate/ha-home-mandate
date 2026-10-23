@@ -233,7 +233,8 @@ func (s *Server) streamFromPage(r *http.Request) bool {
 // Firefox sends Sec-Fetch-Site, Chromium does not on WebSocket handshakes; then the
 // Origin must name the host the browser asked for. Behind Ingress that is
 // X-Forwarded-Host (set by Home Assistant from the browser's Host; a page cannot set it
-// on a WebSocket), otherwise Host.
+// on a WebSocket, and on a write of another site only after a preflight that fails),
+// otherwise Host.
 func sameOriginStream(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
