@@ -579,11 +579,11 @@ describe('createMockClient: approvals, settings, audit, approvers, emergency sto
     const { events } = listen(api);
     const request = { ...approvalsOpenFixture[0]!, id: 'apr-2' };
     api.control.openApproval(request);
-    expect((await api.approvals()).open.map((r) => r.id)).toEqual(['apr-1', 'apr-2']);
+    expect((await api.approvals()).open.map((r) => r.id)).toEqual(['a1000000000000000000000000000001', 'apr-2']);
     api.control.closeApproval('apr-2', 'approved', 'Markus');
     api.control.closeApproval('apr-unknown', 'approved', null);
     const { open, history } = await api.approvals();
-    expect(open.map((r) => r.id)).toEqual(['apr-1']);
+    expect(open.map((r) => r.id)).toEqual(['a1000000000000000000000000000001']);
     expect(history[0]).toMatchObject({ outcome: 'approved', by_name: 'Markus' });
     expect(types(events)).toEqual(['approval.opened', 'approval.closed']);
   });
@@ -847,19 +847,19 @@ describe('createMockClient: answering approvals in the UI (F2)', () => {
     const entry = await api.answerApproval('apr-ui', true);
     expect(entry).toMatchObject({ outcome: 'approved', by_name: 'Markus', via: 'ui' });
     const approvals = await api.approvals();
-    expect(approvals.open.map((r) => r.id)).toEqual(['apr-1']);
+    expect(approvals.open.map((r) => r.id)).toEqual(['a1000000000000000000000000000001']);
     expect(approvals.history[0]).toMatchObject({ outcome: 'approved', via: 'ui' });
     expect(types(events)).toContain('approval.closed');
-    expect(await api.answerApproval('apr-1', true).catch((e: unknown) => e)).toMatchObject({ code: 'not_found' });
+    expect(await api.answerApproval('a1000000000000000000000000000001', true).catch((e: unknown) => e)).toMatchObject({ code: 'not_found' });
   });
 
   it('answers not_found alike for unknown, answered and not answerable requests', async () => {
     const api = createMockClient();
     api.control.openApproval({ ...(approvalsOpenFixture[0] as ApprovalRequest), id: 'apr-ui', can_answer: true });
     await api.answerApproval('apr-ui', false);
-    for (const id of ['nope', 'apr-ui', 'apr-1']) {
+    for (const id of ['nope', 'apr-ui', 'a1000000000000000000000000000001']) {
       await expect(api.answerApproval(id, true)).rejects.toMatchObject({ code: 'not_found', status: 404 });
     }
-    expect((await api.approvals()).open.map((r) => r.id)).toEqual(['apr-1']);
+    expect((await api.approvals()).open.map((r) => r.id)).toEqual(['a1000000000000000000000000000001']);
   });
 });

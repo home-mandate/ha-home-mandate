@@ -4,7 +4,7 @@
 // form and words, so they cannot be confused at a glance; a request that ended before an
 // answer (cancelled) by its cause.
 
-import type { ApprovalCause, ApprovalHistoryEntry } from '../api/types.ts';
+import type { ApprovalCause, ApprovalHistoryEntry, ApprovalOutcome } from '../api/types.ts';
 import { answeredAfter } from '../audit/outcome.ts';
 import type { IconName } from '../components/Icon.svelte';
 import { m } from '../i18n.ts';
@@ -51,6 +51,26 @@ export function historyOutcome(entry: ApprovalHistoryEntry): HistoryOutcome {
       return { icon: 'warning', tone: 'warning', text: m.result_invalid(), hint: m.result_invalid_hint(), dashed: false };
     case 'cancelled':
       return cancelled(entry.cause);
+  }
+}
+
+/**
+ * pageOutcome is how a request's page shows its end (issue #53): the same icons and words
+ * as the history, but nobody's name, since the page shows the outcome to everyone.
+ */
+export function pageOutcome(outcome: ApprovalOutcome, cause: ApprovalCause | undefined): HistoryOutcome {
+  const plain = { hint: null, dashed: false };
+  switch (outcome) {
+    case 'approved':
+      return { icon: 'allow', tone: 'positive', text: m.request_page_approved(), ...plain };
+    case 'rejected':
+      return { icon: 'deny', tone: 'danger', text: m.request_page_declined(), ...plain };
+    case 'timeout':
+      return { icon: 'ask', tone: 'muted', text: m.result_timeout(), hint: null, dashed: true };
+    case 'invalid_response':
+      return { icon: 'warning', tone: 'warning', text: m.result_invalid(), hint: m.result_invalid_hint(), dashed: false };
+    case 'cancelled':
+      return cancelled(cause);
   }
 }
 

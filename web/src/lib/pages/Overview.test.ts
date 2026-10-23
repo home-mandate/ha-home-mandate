@@ -70,13 +70,13 @@ describe('Overview', () => {
 
   it('links to the approvals page when this person may answer a request here (F2)', async () => {
     await start({}, (api) => {
-      const request = { ...(approvalsOpenFixture[0] as ApprovalRequest), id: 'apr-ui', can_answer: true };
-      api.control.closeApproval('apr-1', 'timeout', null);
+      const request = { ...(approvalsOpenFixture[0] as ApprovalRequest), id: 'a1000000000000000000000000000ab0', can_answer: true };
+      api.control.closeApproval('a1000000000000000000000000000001', 'timeout', null);
       api.control.openApproval(request);
     });
     const section = await screen.findByRole('region', { name: /Pending approvals/ });
     const link = await within(section).findByRole('link', { name: 'Answer in Approvals' });
-    expect(link.getAttribute('href')).toBe('#/audit/requests');
+    expect(link.getAttribute('href')).toBe('#/audit/requests/a1000000000000000000000000000ab0');
     expect(within(section).getByText('Approve or decline on your phone or under Approvals.')).toBeTruthy();
     expect(tile(await tiles(), 'Pending approvals').getByText('Approve here or on your phone')).toBeTruthy();
   });
@@ -159,7 +159,7 @@ describe('Overview', () => {
     await within(section).findAllByRole('article');
     api.control.openApproval({ ...(approvalsOpenFixture[0] as ApprovalRequest), id: 'apr-2', device_name: 'Garagentor' });
     await waitFor(() => expect(within(section).getAllByRole('article')).toHaveLength(2));
-    api.control.closeApproval('apr-1', 'approved', 'Markus');
+    api.control.closeApproval('a1000000000000000000000000000001', 'approved', 'Markus');
     api.control.closeApproval('apr-2', 'rejected', 'Alex');
     expect(await within(section).findByText('No pending approvals')).toBeTruthy();
   });

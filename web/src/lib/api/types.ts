@@ -846,6 +846,18 @@ export interface Approvals {
 }
 
 /**
+ * GET api/approvals/{id}: the page of one request that every notification links to (issue
+ * #53). open: the person is one of its approvers and sees it as on the list. closed: it
+ * was answered or has ended; everyone sees only the outcome, never who answered.
+ * unavailable: anything else alike (not an approver, unknown, or deleted after a day), so
+ * the page tells nothing about requests of others.
+ */
+export type ApprovalPage =
+  | { status: 'open'; request: ApprovalRequest }
+  | { status: 'closed'; outcome: ApprovalOutcome; cause?: ApprovalCause }
+  | { status: 'unavailable' };
+
+/**
  * POST api/approvals/{id}/answer: an answer given in the UI (decision F2). The server
  * checks again that the signed-in person may answer this request here now; for an unknown
  * or ended request and for one the person may not answer it says not_found alike, so IDs

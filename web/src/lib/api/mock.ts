@@ -38,6 +38,7 @@ import type {
   ApiErrorCode,
   ApprovalCause,
   ApprovalHistoryEntry,
+  ApprovalPage,
   ApprovalRequest,
   Approvals,
   Approver,
@@ -218,7 +219,7 @@ function hostileState(state: State): State {
   const renamed = renameAgent(state, HOSTILE_AGENT, WORST_NAME);
   const request: ApprovalRequest = {
     ...approvalsOpenFixture[0]!,
-    id: 'apr-hostile',
+    id: 'a1000000000000000000000000000666',
     agent: { client_id: HOSTILE_AGENT, display_name: WORST_NAME },
     reason: WORST_REASON,
     // Service data from the agent: shown cleaned, as hostile as the name.
@@ -717,6 +718,9 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     if (base !== approverList().version) fail('conflict');
   }
 
+  /** What a request's page shows once it is no longer open; the mock forgets nothing. */
+  const closed = new Map<string, ApprovalPage>();
+
   function closeApproval(
     id: string,
     outcome: ApprovalHistoryEntry['outcome'],
@@ -742,6 +746,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       ...(via ? { via } : {}),
     };
     state = { ...state, approvals: { open: state.approvals.open.filter((r) => r.id !== id), history: [entry, ...state.approvals.history] } };
+    closed.set(id, { status: 'closed', outcome, ...(outcome === 'cancelled' && cause ? { cause } : {}) });
     emit({ type: 'approval.closed', id, entry });
     return entry;
   }
@@ -1247,6 +1252,11 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 
     async approvals() {
       return copy(state.approvals);
+    },
+    async approval(id) {
+      // The mock has no approvers per request: every open one is the person's.
+      const request = state.approvals.open.find((r) => r.id === id);
+      return copy(request ? { status: 'open', request } : (closed.get(id) ?? { status: 'unavailable' }));
     },
     async answerApproval(id, approve) {
       // Unknown, ended and not answerable look alike (no probing of IDs).

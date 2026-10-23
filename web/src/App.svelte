@@ -25,6 +25,7 @@
   import TemplateEditor from './lib/pages/TemplateEditor.svelte';
   import TemplateList from './lib/pages/TemplateList.svelte';
   import Overview from './lib/pages/Overview.svelte';
+  import RequestPage from './lib/pages/RequestPage.svelte';
   import Requests from './lib/pages/Requests.svelte';
   import Settings from './lib/pages/Settings.svelte';
   import AgentConnect from './lib/pages/AgentConnect.svelte';
@@ -74,7 +75,7 @@
     app.on('approval.opened', ({ request }) =>
       notifier.notify(request, { title: m.notify_title(), body: m.notify_body() }, () => {
         window.focus();
-        go({ name: 'requests' });
+        go({ name: 'request', id: request.id });
       }),
     ),
   );
@@ -238,6 +239,8 @@
     {#key visits}<AuditLog {app} {now} query={route.query} />{/key}
   {:else if route.name === 'requests'}
     <Requests {app} />
+  {:else if route.name === 'request'}
+    {#key route.id}<RequestPage {app} id={route.id} />{/key}
   {:else if route.name === 'audit_entry'}
     {#key route.seq}<AuditEntry {app} seq={route.seq} />{/key}
   {:else if route.name === 'agents'}

@@ -170,7 +170,7 @@
             <RequestCard {request} areaName={areaName(request.area)} offsetMs={app.offsetMs} {ctx}>
               {#snippet children(titleId)}
                 {#if request.can_answer}
-                  <a class="answer" href={href({ name: 'requests' })} aria-describedby={titleId}>{m.request_answer_link()}</a>
+                  <a class="answer" href={href({ name: 'request', id: request.id })} aria-describedby={titleId}>{m.request_answer_link()}</a>
                 {/if}
               {/snippet}
             </RequestCard>

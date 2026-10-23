@@ -311,7 +311,7 @@ describe('createHttpClient', () => {
   });
 
   it('calls every endpoint with the method, path and body of the contract', async () => {
-    const answers = Array.from({ length: 40 }, () => json({ ...sessionFixture }));
+    const answers = Array.from({ length: 41 }, () => json({ ...sessionFixture }));
     const { api: c, calls } = await signedIn(...answers);
     await c.setLanguage('de');
     await c.system();
@@ -345,6 +345,7 @@ describe('createHttpClient', () => {
     await c.settings();
     await c.putSettings({ approval_timeout: 'PT2M', max_actions_per_hour: 60, bell: false });
     await c.approvals();
+    await c.approval('apr 1');
     await c.answerApproval('apr 1', true);
     await c.audit({});
     await c.verifyAudit();
@@ -386,6 +387,7 @@ describe('createHttpClient', () => {
       'GET api/settings',
       'PUT api/settings {"approval_timeout":"PT2M","max_actions_per_hour":60,"bell":false}',
       'GET api/approvals',
+      'GET api/approvals/apr%201',
       'POST api/approvals/apr%201/answer {"approve":true}',
       'GET api/audit',
       'POST api/audit/verify',

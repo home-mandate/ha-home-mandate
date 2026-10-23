@@ -201,7 +201,7 @@ describe('Requests', () => {
     const { api } = await start();
     const section = await pending();
     await within(section).findAllByRole('article');
-    api.control.closeApproval('apr-1', 'approved', 'Alex', 'push');
+    api.control.closeApproval('a1000000000000000000000000000001', 'approved', 'Alex', 'push');
     expect(await within(section).findByText('No pending approvals')).toBeTruthy();
     await live('Approval for Haustür ended: Approved by Alex · on the phone');
     // The same ending twice in a row is said again.
