@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.1.0-rc.8
+
+Seventh release candidate. Experimental. Implements the Home-Mandate Specification
+v0.1.0-rc.3.
+
+Approvals
+- Every approval request has a page of its own, and a tap on the phone's notification
+  opens it: one tap instead of five to a decision. The page shows what is to be
+  confirmed with large buttons and, once the request is answered or has ended, only how
+  it ended, never who answered. Anyone who is not an approver of the request sees only
+  that they cannot answer it (#53)
+- The hint in Home Assistant's notification bell links to that page. Every Home
+  Assistant user can see the bell, so it now carries the request's random ID, nothing
+  about what the request is about (#53)
+- In a container with its own address, a link to a request signs in through Home
+  Assistant if needed and then opens the request (#53)
+- Nobody is asked for an action the device cannot carry out, for example "open" on a lock
+  without that function: the agent is told right away what the device can do instead, and
+  the audit log records "not executed" without a confirmation. The agent's list of
+  permissions offers only what each device can do. Devices that report nothing are asked
+  for as before (#89)
+
+UI
+- Saving works with Home Assistant reached over plain HTTP, for example
+  `http://homeassistant.local:8123`: every change in the UI was refused there before (#94)
+
+Maintenance
+- The UI's tests use jsdom 30.1.3 (advisories in undici, which only the tests use)
+
 ## 0.1.0-rc.7
 
 Sixth release candidate. Experimental. Implements the Home-Mandate Specification
