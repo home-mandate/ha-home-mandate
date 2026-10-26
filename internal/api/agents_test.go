@@ -150,6 +150,20 @@ func TestDevices(t *testing.T) {
 	if d := byID["number.wallbox"]; d.Category != "other" || strings.Join(d.Actions, ",") != "read,set" {
 		t.Errorf("other = %+v", d)
 	}
+	// The whole vocabulary also for a lock without OPEN and an on/off light (issue #89):
+	// the editor's warnings must cover what a rule permits once the device can do it.
+	h.cat.devices[1].Attributes = map[string]any{"friendly_name": "Haustür", "supported_features": float64(0)}
+	h.cat.devices[0].Attributes = map[string]any{"friendly_name": "Küchenlicht", "supported_color_modes": []any{"onoff"}}
+	h.ok(http.MethodGet, "/api/devices", nil, &c)
+	for _, d := range c.Devices {
+		byID[d.EntityID] = d
+	}
+	if got := strings.Join(byID["lock.front_door"].Actions, ","); got != "lock,open,read,unlock" {
+		t.Errorf("lock without OPEN = %s", got)
+	}
+	if got := strings.Join(byID["light.kitchen"].Actions, ","); got != "read,set,turn_off,turn_on" {
+		t.Errorf("on/off light = %s", got)
+	}
 	h.cat.devices = append(h.cat.devices, h.cat.devices[0])
 	h.cat.devices[len(h.cat.devices)-1].Category = "paperless:document"
 	h.ok(http.MethodGet, "/api/devices", nil, &c)

@@ -1037,6 +1037,7 @@
   "request_page_error_body": "Freigeben oder ablehnen in der Benachrichtigung auf deinem Handy geht weiterhin.",
   "result_already_in_state": "Nicht ausgeführt: das Gerät war schon in diesem Zustand",
   "result_state_changed": "Nicht ausgeführt: der Zustand des Geräts hat sich nach der Anfrage geändert",
+  "result_not_supported": "Nicht ausgeführt: das Gerät kann das nicht, deshalb wurde niemand gefragt",
   "reason_duplicate": "Dieser Aufruf hat selbst nichts ausgeführt: er wurde an die offene Anfrage für dieselbe Aktion gebunden",
   "reason_already_executed": "Dieser Aufruf hat selbst nichts ausgeführt: dieselbe Aktion war kurz zuvor ausgeführt worden"
 }

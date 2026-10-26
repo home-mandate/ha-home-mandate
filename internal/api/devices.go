@@ -49,6 +49,9 @@ func (s *Server) getDevices(*request) (any, error) {
 		if name == "" {
 			name = d.EntityID
 		}
+		// The whole vocabulary, not only what the device reports it can do now (issue #89):
+		// the editor's warnings and its analysis of a rule's effect must cover what a rule
+		// permits once the device can do it, also after an integration changes its features.
 		actions := mcp.Actions(d.Category)
 		if actions == nil {
 			actions = []string{}

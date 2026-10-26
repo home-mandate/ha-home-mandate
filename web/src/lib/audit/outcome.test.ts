@@ -47,6 +47,8 @@ describe('outcomeOf', () => {
   it('says why a confirmed action was not executed: the state that was shown (SPEC-v0 11.1 item 10)', () => {
     const failed = (error: string): AuditEntry => ({ ...bySeq(8), result: { status: 'failed', error } });
     expect(outcomeOf(failed('already_in_state'))).toEqual({ tone: 'warning', text: 'Failed', why: 'Not executed: the device was already in that state' });
+    // Issue #89: refused before anyone was asked.
+    expect(outcomeOf(failed('not_supported'))).toEqual({ tone: 'warning', text: 'Failed', why: 'Not executed: the device can’t do this, so nobody was asked' });
     expect(outcomeOf(failed('state_changed'))).toEqual({ tone: 'warning', text: 'Failed', why: 'Not executed: the device’s state changed after the request' });
   });
 

@@ -575,7 +575,19 @@ checked on every request.
      seconds) can still be toggled twice by two confirmations in that gap. Two agents
      asking the same stateless action and two confirmations run it twice (two separate
      human decisions; layers 1 and 2 are per agent; decision 2026-10-10).
-  4. **`idempotency_key`** (optional argument of `perform_action`, 8 to 64 of `A–Z a–z
+  4. **What the device can do (SPEC-v0 11.1 item 11, issue #89):** before anyone is asked,
+     and also for an allowed action, the entity's current state tells whether it can
+     carry out the call: `supported_features` per domain (lock `open`; cover open, close,
+     stop, position; climate target temperature; media player on, off, play, pause,
+     volume; alarm arm modes), `supported_color_modes` for a light's brightness and colour
+     temperature, `hvac_modes` for a climate mode (`mcp/support.go`, profile Home
+     Assistant). If it cannot: nothing is executed and nobody asked, `failed`,
+     `not_supported`, no `approval`; the agent learns what the device can do instead, an
+     agent that may not read it only the bare code. `list_my_permissions` offers only what
+     each device can do; the UI's device catalog keeps the whole vocabulary, so the
+     editor's warnings cover what a rule permits once a device can do it (features change
+     at runtime). An entity that reports nothing tells nothing and is asked as before.
+  5. **`idempotency_key`** (optional argument of `perform_action`, 8 to 64 of `A–Z a–z
      0–9 _ -`): the same agent with the same key is tied to the request it named for as
      long as the journal holds it (24 hours after the end), regardless of the window:
      attached while open; once ended, its outcome **marked as earlier**: an execution as

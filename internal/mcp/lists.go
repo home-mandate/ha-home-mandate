@@ -228,7 +228,9 @@ func (g *Gateway) listPermissions(ctx context.Context, req *sdk.CallToolRequest,
 	for _, dev := range page {
 		actions := map[string]string{}
 		var limits map[string][]map[string]limitOut
-		for _, action := range actionsOf(dev.Category) {
+		// Only what the device can carry out (issue #89): a well-behaved agent then picks
+		// unlock, not open, for a lock without OPEN.
+		for _, action := range actionsItCanDo(dev.Category, dev.Attributes) {
 			d := snap.Decide(dev.EntityID, action, nil)
 			if decision := effective(d.Result); decision != evaluator.Deny {
 				actions[action] = string(decision)
