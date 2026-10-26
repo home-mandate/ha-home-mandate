@@ -19,6 +19,7 @@ var build = fstest.MapFS{
 	"assets/font.woff2":       {Data: []byte(`wOF2`)},
 	"assets/odd.bin":          {Data: []byte(`?`)},
 	"hm-logo-32.png":          {Data: []byte("\x89PNG")},
+	"hm-logo.svg":             {Data: []byte(`<svg/>`)},
 	"licenses.txt":            {Data: []byte("<script>alert(1)</script> MIT")},
 	".keep":                   {Data: []byte{}},
 	"assets/.hidden.js":       {Data: []byte(`x`)},
@@ -46,6 +47,7 @@ func TestServesTheBuildWithHeaders(t *testing.T) {
 		{"/assets/odd.bin", "application/octet-stream", "public, max-age=31536000, immutable", "?"},
 		{"/assets/sub/deep-xyz.svg", "image/svg+xml", "public, max-age=31536000, immutable", "<svg"},
 		{"/hm-logo-32.png", "image/png", "no-cache", "PNG"},
+		{"/hm-logo.svg", "image/svg+xml", "no-cache", "<svg"},
 		// licenses.txt holds third-party text: plain text with nosniff, never HTML (5e).
 		{"/licenses.txt", "text/plain; charset=utf-8", "no-cache", "<script>"},
 	}

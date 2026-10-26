@@ -30,7 +30,8 @@ const (
 	DevicePath           = "/oauth/device_authorization"
 	ConsentPath          = "/oauth/consent"
 	PairPath             = "/pair"
-	stylePath            = "/oauth/static/style.css"
+	staticPath           = "/oauth/static/"
+	stylePath            = staticPath + "style.css"
 )
 
 const (
@@ -150,6 +151,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+PairPath, s.limited(s.onboarding, false, s.pairPage))
 	mux.HandleFunc("POST "+PairPath, s.limited(s.onboarding, false, s.pair))
 	mux.HandleFunc("GET "+stylePath, s.style)
+	mux.HandleFunc("GET "+staticPath+"{name}", s.logo)
 	return mux
 }
 
@@ -182,6 +184,24 @@ func (s *Server) style(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(styleSheet)
+}
+
+// logo serves the two variants of the logo, the same files as in the UI (web/public).
+func (s *Server) logo(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name != "hm-logo.svg" && name != "hm-logo-dark.svg" {
+		http.NotFound(w, r)
+		return
+	}
+	b, err := pageFiles.ReadFile("pages/" + name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-cache")
+	_, _ = w.Write(b)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -250,7 +270,7 @@ func (s *Server) render(w http.ResponseWriter, status int, name string, p page, 
 	}
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; form-action "+formAction+
+	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; img-src 'self'; form-action "+formAction+
 		"; frame-ancestors 'none'; base-uri 'none'")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("X-Content-Type-Options", "nosniff")

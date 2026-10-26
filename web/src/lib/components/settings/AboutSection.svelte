@@ -2,10 +2,12 @@
 <!--
   About (design README 6.11 section 7; decision S8): version and commit, the license with a
   link to the source code (AGPL-3.0 section 13 asks to offer it to everyone using the
-  program over a network), and the licenses of the included packages (built with the page).
+  program over a network), the licenses of the included packages (built with the page), and
+  that the name and the logo are not part of the license.
 -->
 <script lang="ts">
   import { m } from '../../i18n.ts';
+  import Logo from '../Logo.svelte';
 
   interface Props {
     version: string;
@@ -19,7 +21,7 @@
 </script>
 
 <div class="about">
-  <img src="./hm-logo-128.png" alt="" width="72" height="72" />
+  <Logo size={72} />
   <div class="text">
     <p>{m.set_about_desc()}</p>
     <dl>
@@ -32,6 +34,7 @@
       <dt>{m.set_licenses()}</dt>
       <dd><a href="./licenses.txt" target="_blank" rel="noopener">{m.set_licenses_link()}<span class="hm-visually-hidden"> {m.common_new_tab()}</span></a></dd>
     </dl>
+    <p class="note">{m.set_trademark()}</p>
   </div>
 </div>
 
@@ -64,6 +67,10 @@
   dd {
     margin: 0;
     overflow-wrap: anywhere;
+  }
+  .note {
+    color: var(--hm-color-text-muted);
+    font-size: var(--hm-font-size-sm);
   }
   .mono {
     font-family: var(--hm-font-mono);

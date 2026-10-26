@@ -590,6 +590,7 @@
   "set_license": "License",
   "set_source": "Source code",
   "set_licenses_link": "Licenses of the included packages",
+  "set_trademark": "The name and the logo are not covered by the license. “Home-Mandate” has been filed as a trademark.",
   "set_defaults": "Defaults",
   "common_apply": "Apply",
   "common_new_tab": "(opens in a new tab)",
