@@ -108,3 +108,6 @@ Report security issues privately: see
 
 AGPL-3.0-or-later. The licenses of all included components are in the UI under
 **Settings → About**.
+
+The name and the logo are not covered by the license: “Home-Mandate” has been filed as a
+trademark, and the logo is © 2026 Markus Mazurczak.

@@ -12,6 +12,7 @@
 </head>
 <body>
 <main>
+<p class="brand"><picture><source srcset="/oauth/static/hm-logo-dark.svg" media="(prefers-color-scheme: dark)"><img src="/oauth/static/hm-logo.svg" alt="" width="44" height="48"></picture>Home-Mandate</p>
 <h1>{{.T .Title}}</h1>
 {{if .User}}<p class="user">{{.T "page_signed_in_as" "user" .User}}</p>{{end}}
 {{end}}

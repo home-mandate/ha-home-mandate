@@ -16,6 +16,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -310,6 +311,25 @@ func TestMetadata(t *testing.T) {
 	}
 }
 
+// The pages carry the logo of the UI: the same files, as SVG images under the static path.
+func TestServesTheLogo(t *testing.T) {
+	b := newHarness(t).browser()
+	for _, name := range []string{"hm-logo.svg", "hm-logo-dark.svg"} {
+		res := b.get(staticPath + name)
+		ui, err := os.ReadFile(filepath.Join("..", "..", "web", "public", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.status != http.StatusOK || res.header.Get("Content-Type") != "image/svg+xml" ||
+			res.header.Get("X-Content-Type-Options") != "nosniff" || res.body != string(ui) {
+			t.Errorf("%s = %d %v, same as the UI: %t", name, res.status, res.header, res.body == string(ui))
+		}
+	}
+	if res := b.get(staticPath + "other.svg"); res.status != http.StatusNotFound {
+		t.Errorf("unknown static file = %d", res.status)
+	}
+}
+
 func TestAuthorizationCodeFlow(t *testing.T) {
 	h := newHarness(t)
 	b := h.browser()
@@ -326,8 +346,10 @@ func TestAuthorizationCodeFlow(t *testing.T) {
 	}
 	csp := page.header.Get("Content-Security-Policy")
 	if !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "form-action 'self' http://127.0.0.1:33418") ||
+		!strings.Contains(csp, "img-src 'self'") ||
 		strings.Contains(csp, "unsafe") || page.header.Get("X-Frame-Options") != "DENY" || page.header.Get("Referrer-Policy") != "same-origin" ||
-		!strings.Contains(page.body, `<meta name="referrer" content="same-origin">`) {
+		!strings.Contains(page.body, `<meta name="referrer" content="same-origin">`) ||
+		!strings.Contains(page.body, `src="/oauth/static/hm-logo.svg"`) || !strings.Contains(page.body, `srcset="/oauth/static/hm-logo-dark.svg"`) {
 		t.Errorf("headers = %v", page.header)
 	}
 	code := b.approve(page)

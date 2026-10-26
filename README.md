@@ -207,3 +207,12 @@ class follows once signed mandates can be imported.
 
 AGPL-3.0-or-later, see [LICENSE](LICENSE). The licenses of all included components are in
 the UI under Settings → About → Licenses of the included packages.
+
+### Name and logo
+
+The license covers the code, not the name or the logo. “Home-Mandate” has been filed as a
+trademark. The logo (house with key) is © 2026 Markus Mazurczak, all rights reserved; the
+files are `web/public/hm-logo.svg`, `web/public/hm-logo-dark.svg`, `web/public/hm-logo-32.png`,
+their copies in `internal/oauth/pages/`, `app/icon.png` and `app/logo.png`. They may be
+passed on unchanged as part of Home-Mandate. A modified version under another name needs its
+own name and logo (see also AGPL-3.0 section 7 e).

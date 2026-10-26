@@ -91,6 +91,8 @@
 /* ---------- Light ---------- */
 :root,
 [data-hm-theme="light"] {
+  --hm-logo-light: block; /* logo variant switch: the light or the dark <img> of Logo.svelte */
+  --hm-logo-dark: none;
   --hm-color-bg: #f5f6f8;
   --hm-color-surface: #ffffff;
   --hm-color-surface-raised: #ffffff;
@@ -164,6 +166,8 @@
 
 /* ---------- Dark ---------- */
 [data-hm-theme="dark"] {
+  --hm-logo-light: none;
+  --hm-logo-dark: block;
   --hm-color-bg: #111419;
   --hm-color-surface: #191d24;
   --hm-color-surface-raised: #20252e;
@@ -228,6 +232,8 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-hm-theme="light"]) {
+    --hm-logo-light: none;
+    --hm-logo-dark: block;
     --hm-color-bg: #111419;
     --hm-color-surface: #191d24;
     --hm-color-surface-raised: #20252e;

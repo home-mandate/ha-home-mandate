@@ -10,6 +10,7 @@
   import { m } from '../i18n.ts';
   import type { Section } from '../router.ts';
   import Icon from './Icon.svelte';
+  import Logo from './Logo.svelte';
   import ThemeSwitch from './ThemeSwitch.svelte';
 
   interface Props {
@@ -35,7 +36,7 @@
 
 <header class="header">
   <span class="brand">
-    <img src="./hm-logo-64.png" srcset="./hm-logo-64.png 1x, ./hm-logo-128.png 2x" alt="" width="36" height="36" />
+    <Logo />
     <span class="name">{m.app_name()}</span>
   </span>
   {#if showNav}
@@ -79,12 +80,6 @@
     gap: 10px;
     flex-shrink: 0;
     min-inline-size: 0;
-  }
-  img {
-    display: block;
-    inline-size: 36px;
-    block-size: 36px;
-    flex-shrink: 0;
   }
   .name {
     font-size: var(--hm-font-size-md);

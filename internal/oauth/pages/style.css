@@ -12,6 +12,15 @@ main {
   margin-inline: auto;
   padding-inline: 1rem;
 }
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-block: 0;
+  font-size: 1.1875rem;
+  font-weight: 600;
+}
+.brand img { display: block; }
 h1 { font-size: 1.5rem; }
 .user { opacity: 0.75; font-size: 0.875rem; }
 .warn, .error {

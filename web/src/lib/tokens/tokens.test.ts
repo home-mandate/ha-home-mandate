@@ -106,6 +106,13 @@ describe('tokens.css schemes', () => {
     expect(colours(DARK)).toEqual(colours(SYSTEM_DARK));
   });
 
+  it('shows exactly one logo variant per scheme, the same when forced and from the system', () => {
+    expect([LIGHT.get('--hm-logo-light'), LIGHT.get('--hm-logo-dark')]).toEqual(['block', 'none']);
+    for (const dark of [DARK, SYSTEM_DARK]) {
+      expect([dark.get('--hm-logo-light'), dark.get('--hm-logo-dark')]).toEqual(['none', 'block']);
+    }
+  });
+
   it('defines every colour token in both schemes', () => {
     expect([...colours(DARK).keys()].sort()).toEqual([...colours(LIGHT).keys()].sort());
     expect(colours(LIGHT).size).toBeGreaterThan(50);
