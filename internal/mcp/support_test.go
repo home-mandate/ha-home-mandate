@@ -3,8 +3,8 @@
 package mcp
 
 import (
+	"maps"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -29,6 +29,9 @@ func TestCanDo(t *testing.T) {
 		{"lock unlock needs nothing", "lock", "unlock", ha.ServiceCall{Service: "unlock"}, map[string]any{"supported_features": float64(0)}, true},
 		{"lock without supported_features", "lock", "open", ha.ServiceCall{Service: "open"}, map[string]any{}, true},
 		{"lock with a features value that is no number", "lock", "open", ha.ServiceCall{Service: "open"}, map[string]any{"supported_features": "1"}, true},
+		{"negative features tell nothing", "lock", "open", ha.ServiceCall{Service: "open"}, map[string]any{"supported_features": float64(-1)}, true},
+		{"fractional features tell nothing", "lock", "open", ha.ServiceCall{Service: "open"}, map[string]any{"supported_features": 0.5}, true},
+		{"features as int", "lock", "open", ha.ServiceCall{Service: "open"}, map[string]any{"supported_features": 0}, false},
 		{"cover stop without STOP", "cover", "stop", ha.ServiceCall{}, map[string]any{"supported_features": float64(1 | 2 | 4)}, false},
 		{"cover set_position with SET_POSITION", "cover", "set_position", ha.ServiceCall{}, map[string]any{"supported_features": float64(4)}, true},
 		{"gate close without CLOSE", "gate", "close", ha.ServiceCall{}, map[string]any{"supported_features": float64(1)}, false},
@@ -88,7 +91,7 @@ func (h *harness) setAttrs(entityID string, attrs map[string]any) {
 	h.catalog.mu.Lock()
 	defer h.catalog.mu.Unlock()
 	dev := h.catalog.devices[entityID]
-	dev.Attributes = attrs
+	dev.Attributes = maps.Clone(attrs)
 	h.catalog.devices[entityID] = dev
 }
 
@@ -99,7 +102,7 @@ func TestNobodyIsAskedForWhatTheDeviceCannotDo(t *testing.T) {
 	h, f := pendingHarness(t)
 	h.setAttrs("lock.front_door", map[string]any{"supported_features": float64(0)})
 	_, errText := h.call(h.session(), "perform_action", map[string]any{"entity_id": "lock.front_door", "action": "open"})
-	if errText != "not_supported: lock.front_door cannot open; it can: lock, unlock" {
+	if errText != "not_supported: lock.front_door cannot open; it can: unlock" { // lock is not in its mandate
 		t.Errorf("open a lock without OPEN = %q", errText)
 	}
 	if len(f.requests()) != 0 {
@@ -121,7 +124,7 @@ func TestNobodyIsAskedForWhatTheDeviceCannotDo(t *testing.T) {
 	}
 }
 
-// An agent that may not read the device learns that it cannot do this, not what it can.
+// An agent that may not read the device gets the bare code, not what it can do.
 func TestWhatTheDeviceCanDoOnlyForAgentsThatMayReadIt(t *testing.T) {
 	f := &fakeApprover{hold: true}
 	h := newHarness(t, func(d map[string]any) {
@@ -131,8 +134,15 @@ func TestWhatTheDeviceCanDoOnlyForAgentsThatMayReadIt(t *testing.T) {
 	h.url = h.serve(h.log)
 	h.setAttrs("lock.back_door", map[string]any{"supported_features": float64(0)})
 	_, errText := h.call(h.session(), "perform_action", map[string]any{"entity_id": "lock.back_door", "action": "open"})
-	if !strings.HasPrefix(errText, "not_supported") || strings.Contains(errText, "it can") {
+	if errText != "not_supported" {
 		t.Errorf("an agent that may not read the lock learned its features: %q", errText)
+	}
+	// An allowed action too: not executed, nobody asked, failed/not_supported.
+	if calls := h.ha.recorded(); len(calls) != 0 || len(f.requests()) != 0 {
+		t.Errorf("calls %+v, requests %d", calls, len(f.requests()))
+	}
+	if e := h.lastEntry(); path(e, "result", "error") != "not_supported" || path(e, "approval") != nil || path(e, "evaluation", "decision") != "allow" {
+		t.Errorf("audit entry = %v", e)
 	}
 }
 
@@ -151,5 +161,23 @@ func TestPermissionsListOnlyWhatTheDeviceCanDo(t *testing.T) {
 	}
 	if got["lock.back_door"]["open"] != "ask" || got["lock.front_door"]["unlock"] != "ask" {
 		t.Errorf("permissions = %v / %v", got["lock.front_door"], got["lock.back_door"])
+	}
+}
+
+// What the agent is told it can do leaves out what its mandate denies.
+func TestWhatTheDeviceCanDoLeavesOutWhatTheMandateDenies(t *testing.T) {
+	f := &fakeApprover{hold: true}
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-read", "resource": map[string]any{"category": "lock"}, "actions": []any{"read", "lock"}, "decision": "allow"},
+			map[string]any{"id": "r-open", "resource": map[string]any{"category": "lock"}, "actions": []any{"open"}, "decision": "ask"},
+		}
+	})
+	f.journal, h.approver, h.approvalWait = h.journal, f, 100*time.Millisecond
+	h.url = h.serve(h.log)
+	h.setAttrs("lock.front_door", map[string]any{"supported_features": float64(0)})
+	_, errText := h.call(h.session(), "perform_action", map[string]any{"entity_id": "lock.front_door", "action": "open"})
+	if errText != "not_supported: lock.front_door cannot open; it can: lock" {
+		t.Errorf("error = %q", errText)
 	}
 }

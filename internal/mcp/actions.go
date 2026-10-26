@@ -89,12 +89,6 @@ func Actions(category string) []string {
 	return actionsOf(category)
 }
 
-// DeviceActions returns the actions of a category that an entity with the attributes of
-// its state can carry out (issue #89), sorted; the UI's device catalog offers these.
-func DeviceActions(category string, attrs map[string]any) []string {
-	return actionsItCanDo(category, attrs)
-}
-
 // actionsOf returns the vocabulary of a category in a fixed order.
 func actionsOf(category string) []string {
 	var actions []string

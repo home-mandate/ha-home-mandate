@@ -3,6 +3,7 @@
 package mcp
 
 import (
+	"math"
 	"slices"
 	"strings"
 
@@ -91,7 +92,7 @@ func canDoSome(category, action string, attrs map[string]any) bool {
 // number, which tells nothing.
 func has(attrs map[string]any, bit uint64) bool {
 	n, ok := number(attrs["supported_features"])
-	if !ok || n < 0 || n != float64(uint64(n)) {
+	if !ok || n < 0 || n > math.MaxUint32 || n != math.Trunc(n) {
 		return true
 	}
 	return uint64(n)&bit != 0

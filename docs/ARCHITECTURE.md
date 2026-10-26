@@ -583,9 +583,10 @@ checked on every request.
      temperature, `hvac_modes` for a climate mode (`mcp/support.go`, profile Home
      Assistant). If it cannot: nothing is executed and nobody asked, `failed`,
      `not_supported`, no `approval`; the agent learns what the device can do instead, an
-     agent that may not read it only that it cannot. `list_my_permissions` and the UI's
-     device catalog offer only what each device can do. An entity that reports nothing
-     tells nothing and is asked as before.
+     agent that may not read it only the bare code. `list_my_permissions` offers only what
+     each device can do; the UI's device catalog keeps the whole vocabulary, so the
+     editor's warnings cover what a rule permits once a device can do it (features change
+     at runtime). An entity that reports nothing tells nothing and is asked as before.
   5. **`idempotency_key`** (optional argument of `perform_action`, 8 to 64 of `A–Z a–z
      0–9 _ -`): the same agent with the same key is tied to the request it named for as
      long as the journal holds it (24 hours after the end), regardless of the window:

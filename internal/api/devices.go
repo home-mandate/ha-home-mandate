@@ -37,7 +37,7 @@ type wireDeviceCatalog struct {
 }
 
 // getDevices is the catalog for the mandate editor: every device with its category,
-// areas and the actions of its category's vocabulary that it can carry out (issue #89). Names come from Home Assistant and
+// areas and the actions of its category's vocabulary. Names come from Home Assistant and
 // are untrusted; the UI shows them cleaned and escaped.
 func (s *Server) getDevices(*request) (any, error) {
 	out := wireDeviceCatalog{Areas: []wireArea{}, Devices: []wireDevice{}}
@@ -49,7 +49,10 @@ func (s *Server) getDevices(*request) (any, error) {
 		if name == "" {
 			name = d.EntityID
 		}
-		actions := mcp.DeviceActions(d.Category, d.Attributes)
+		// The whole vocabulary, not only what the device reports it can do now (issue #89):
+		// the editor's warnings and its analysis of a rule's effect must cover what a rule
+		// permits once the device can do it, also after an integration changes its features.
+		actions := mcp.Actions(d.Category)
 		if actions == nil {
 			actions = []string{}
 		}
