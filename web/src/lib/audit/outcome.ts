@@ -86,6 +86,7 @@ export function outcomeOf(entry: AuditEntry): Outcome | null {
       if (result.error === 'outcome_unknown') return { tone: 'warning', text: m.result_failed(), why: m.result_outcome_unknown() };
       if (result.error === 'already_in_state') return { tone: 'warning', text: m.result_failed(), why: m.result_already_in_state() };
       if (result.error === 'state_changed') return { tone: 'warning', text: m.result_failed(), why: m.result_state_changed() };
+      if (result.error === 'not_supported') return { tone: 'warning', text: m.result_failed(), why: m.result_not_supported() };
       return { tone: 'danger', text: m.result_failed(), why: result.error ? cleanUntrusted(result.error, MAX_ERROR) : null };
     case 'denied':
       break;

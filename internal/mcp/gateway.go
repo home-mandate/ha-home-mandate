@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -613,10 +614,27 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 		}
 		return nil, actionOut{}, errors.New(code)
 	}
+	if dev, ok := g.cfg.Catalog.Lookup(in.EntityID); ok && !canDo(dev.Category, in.Action, call, dev.Attributes) {
+		return g.refuseUnsupported(ctx, a, d, dev)
+	}
 	if ask {
 		return g.askHuman(ctx, a, tokenOf(req), d, call, in.Reason, in.IdempotencyKey)
 	}
 	return g.execute(ctx, a, d, call, approvalRef{}, time.Time{})
+}
+
+// refuseUnsupported answers an action the entity cannot carry out without asking anyone
+// (issue #89, SPEC-v0 section 11.1 item 11): failed/not_supported, without an approval.
+// An agent that may read the device learns what it can do instead; any other learns no
+// more than that it cannot do this.
+func (g *Gateway) refuseUnsupported(ctx context.Context, a agent.Agent, d pdp.Decision, dev catalog.Device) (*sdk.CallToolResult, actionOut, error) {
+	_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusFailed, Error: codeNotSupported})
+	text := codeNotSupported + ": " + dev.EntityID + " cannot " + d.Action
+	if g.mayRead(ctx, a.ClientID, dev.EntityID) {
+		can := slices.DeleteFunc(actionsItCanDo(dev.Category, dev.Attributes), func(action string) bool { return action == "read" })
+		text += "; it can: " + strings.Join(can, ", ")
+	}
+	return nil, actionOut{}, errors.New(text)
 }
 
 // exactParams reads the params of perform_action from the arguments as the agent sent
