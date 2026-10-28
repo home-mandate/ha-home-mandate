@@ -51,6 +51,20 @@ describe('RequestCard', () => {
     expect(within(screen.getAllByRole('article')[1] as HTMLElement).queryByRole('figure')).toBeNull();
   });
 
+  it('says that the mandate in audit mode would deny the request, and by which rule (SPEC-v0 11.1 item 2)', () => {
+    show({ would_deny_rule: 'r-no-kids-room' });
+    const card = screen.getByRole('article');
+    const note = within(card).getByText(/Audit mode: this mandate would deny the request/);
+    expect(note.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      'Audit mode: this mandate would deny the request (rule r-no-kids-room). Your answer decides whether it is carried out.',
+    );
+    expect(within(note).getByText('r-no-kids-room').tagName).toBe('BDI');
+    show({ would_deny_rule: null });
+    expect(within(screen.getAllByRole('article')[1] as HTMLElement).queryByText(/Audit mode/)).toBeNull();
+    show({ would_deny_rule: undefined });
+    expect(within(screen.getAllByRole('article')[2] as HTMLElement).queryByText(/Audit mode/)).toBeNull();
+  });
+
   it('shows the requested values, so the human sees what is approved (security S1)', () => {
     show({ params: [{ name: 'brightness_pct', value: '100' }] });
     const values = screen.getByText('Requested values').parentElement as HTMLElement;

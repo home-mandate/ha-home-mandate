@@ -43,6 +43,9 @@ const (
 	ApprovalParams      Key = "approval_params"
 	ApprovalIdentity    Key = "approval_identity"
 	ApprovalNoAnswer    Key = "approval_no_answer"
+	// A deny that audit mode does not enforce but that requires a confirmation: the
+	// approver learns that the mandate would deny it, and by which rule ({rule}).
+	ApprovalWouldDeny Key = "approval_would_deny"
 	// How to answer, right after the first line so that the collapsed notification shows
 	// it (issue #49).
 	ApprovalExpand         Key = "approval_expand"
@@ -161,7 +164,7 @@ var actions = []string{"read", "turn_on", "turn_off", "set", "set_temperature", 
 
 // Keys lists every message key.
 var Keys = append([]Key{
-	ApprovalTitle, ApprovalMessage, ApprovalMessageState, ApprovalMessageRead, ApprovalReason, ApprovalParams, ApprovalIdentity, ApprovalNoAnswer, ApprovalExpand, ApprovalApprove, ApprovalDeny,
+	ApprovalTitle, ApprovalMessage, ApprovalMessageState, ApprovalMessageRead, ApprovalReason, ApprovalParams, ApprovalIdentity, ApprovalNoAnswer, ApprovalWouldDeny, ApprovalExpand, ApprovalApprove, ApprovalDeny,
 	ApprovalInvalidTitle, ApprovalInvalidMessage, ApprovalBellTitle, ApprovalBellMessage, ApprovalBellMessageLink, ApprovalBellMessageUI, ApprovalBellMessageAppLink, ApprovalTestTitle, ApprovalTestMessage,
 	ApprovalInterruptedTitle, ApprovalInterruptedMessage, ApprovalUnknownTitle, ApprovalUnknownMessage,
 	CheckpointTitle, CheckpointMessage, RenameFloodTitle, RenameFloodMessage,

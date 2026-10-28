@@ -212,8 +212,20 @@ was missed.
   is executed as an allow and recorded with `enforced: false` (and `request.resource.critical`
   stated); critical actions, `ask`, the rate limit and the emergency stop stay enforced. The
   agent learns nothing: answers, `list_devices`, `list_my_permissions` and `approval_status`
-  treat such a deny as an allow. A confirmed `ask` that is a deny when evaluated again is not
-  executed, enforced or not. Switching audit mode on (`evaluator.EntersAuditMode`) is
+  treat such a deny as an allow. If a matching rule decides `ask` as well, the deny still
+  requires a confirmation (`confirm: true`, SPEC-v0 `v0.1.0-rc.4`, spec issue #59): the
+  gateway asks the approvers with the approval settings of that `ask` exactly as for an
+  `ask`, and the agent sees an `ask`. The push and the approval card (`would_deny_rule`)
+  tell the approver that the mandate would deny the request and by which rule; the agent
+  is never told. The entry carries `confirm: true` with `approval_timeout` and the
+  approval as for an `ask`; the AuthZEN response carries `confirm: true` with
+  `approval_timeout` and `approvers`. A confirmed `ask` that is a deny when evaluated
+  again is not executed, enforced or not; a confirmed deny with `confirm: true` is executed
+  only if the evaluation again gives `allow`, `ask` or a deny with `confirm: true` on the
+  same mandate digest, and is otherwise recorded as `denied_by: mandate` with the
+  evaluation that was confirmed (`mcp.executableAfterConfirmation`). For an entity with a
+  former ID, a deny that is not enforced weighs less than an `ask`, and one with
+  `confirm: true` more (`pdp.strictness`). Switching audit mode on (`evaluator.EntersAuditMode`) is
   possible only in the editor of an existing mandate: the new version waits in
   `mandate_pending` and the version in force stays until a human of the household confirms
   it with its digest (`POST api/mandates/{id}/audit-mode/confirm`); every other version

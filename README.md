@@ -198,21 +198,22 @@ pass all its conformance cases.
   <img src="https://raw.githubusercontent.com/home-mandate/.github/main/marks/compatible-light.svg" alt="Home-Mandate compatible" width="96" align="left">
 </picture>
 
-Home-Mandate 0.1.0-rc.8 conforms to the Home-Mandate Specification `v0.1.0-rc.3` (manifest
-`conformance/manifest.json`, SHA-256 `22407bbeca9c1fb1f12bade54c8839ea06b9ca654c3206d313118db1e5b86e99`)
+Home-Mandate conforms to the Home-Mandate Specification `v0.1.0-rc.4` (manifest
+`conformance/manifest.json`, SHA-256 `8184b1343c2dcaa179c1cfe73ccf216d139ec6acb10cb8469847af81c0101f9e`)
 in these classes (SPEC-v0 section 8.1), tested with the specification's test tool
-`mandate-conformance` on every pull request and with `make conformance`:
+`mandate-conformance` on every pull request and with `make conformance`. The release
+0.1.0-rc.8 conforms to `v0.1.0-rc.3`; the next release carries `v0.1.0-rc.4`.
 <br clear="left">
 
 | Class | Cases | Binding |
 |---|---|---|
-| `evaluator` | 383 | process (the evaluation Home-Mandate uses) |
-| `selection` | 19 | process |
-| `audit` | 204 | process |
+| `evaluator` | 419 | process (the evaluation Home-Mandate uses) |
+| `selection` | 22 | process |
+| `audit` | 250 | process |
 | `audit-anchored` | 14 | process |
-| `pdp` | 202 | HTTP (its AuthZEN endpoint) |
+| `pdp` | 236 | HTTP (its AuthZEN endpoint) |
 
-It does not claim the class `signatures`. It passes the 12 succession cases of that class
+It does not claim the class `signatures`. It passes the 14 succession cases of that class
 (SPEC-v0 section 3.5), but it does not accept signed mandates (section 7.1): it issues every
 mandate itself and refuses mandates of another issuer, signed ones included. Its test
 adapter therefore offers no `verify_signed`, and the test tool skips those 18 cases. The

@@ -52,9 +52,13 @@ type wireApprovalRequest struct {
 	Params     []wireParam  `json:"params"`
 	Recipients []string     `json:"recipients"`
 	State      *string      `json:"state"` // the device's state when asked; null if unknown
-	CreatedAt  string       `json:"created_at"`
-	ExpiresAt  string       `json:"expires_at"`
-	CanAnswer  bool         `json:"can_answer"`
+	// WouldDenyRule: the mandate is in audit mode and would deny the request by this rule,
+	// which is not enforced, but a matching rule asks (SPEC-v0 section 11.1 item 2); null
+	// for every other request.
+	WouldDenyRule *string `json:"would_deny_rule"`
+	CreatedAt     string  `json:"created_at"`
+	ExpiresAt     string  `json:"expires_at"`
+	CanAnswer     bool    `json:"can_answer"`
 }
 
 type wireHistoryEntry struct {
@@ -84,8 +88,9 @@ func (s *Server) presentRequest(ctx context.Context, o approval.Open, user strin
 	out := wireApprovalRequest{ID: o.ID, Agent: wireAgentRef{ClientID: req.ClientID, DisplayName: req.Agent}, EntityID: req.EntityID,
 		DeviceName: approval.ShownText(req.Device, approval.ShownNameMax), Area: optional(req.Area), Action: req.Action,
 		Critical: req.Critical, Reason: optional(approval.ShownText(req.Reason, approval.ShownReasonMax)),
-		State:  optional(approval.ShownText(req.State, approval.ShownNameMax)),
-		Params: []wireParam{}, Recipients: []string{}, CreatedAt: *formatTime(o.CreatedAt), ExpiresAt: *formatTime(o.ExpiresAt)}
+		State:         optional(approval.ShownText(req.State, approval.ShownNameMax)),
+		WouldDenyRule: optional(approval.ShownText(req.WouldDenyRule, approval.ShownNameMax)),
+		Params:        []wireParam{}, Recipients: []string{}, CreatedAt: *formatTime(o.CreatedAt), ExpiresAt: *formatTime(o.ExpiresAt)}
 	for _, p := range approval.ShownParams(req.Params) {
 		out.Params = append(out.Params, wireParam{Name: p.Name, Value: p.Value})
 	}

@@ -1028,6 +1028,7 @@
   "result_outcome_unknown": "Home-Mandate was restarted while executing it: unknown whether it happened, please check the device",
   "result_cancelled": "Ended before an answer",
   "request_state": "State when asked",
+  "request_would_deny": "Audit mode: this mandate would deny the request (rule {rule}). Your answer decides whether it is carried out.",
   "request_page_title": "Approval request",
   "request_page_approved": "Approved",
   "request_page_declined": "Declined",

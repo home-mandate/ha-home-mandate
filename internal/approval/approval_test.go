@@ -639,3 +639,27 @@ func TestNotificationShowsTheState(t *testing.T) {
 		t.Errorf("no state = %q", n.Message)
 	}
 }
+
+// A deny that a mandate in audit mode does not enforce but that requires a confirmation:
+// the approver learns that the mandate would deny the request, and by which rule (SPEC-v0
+// section 11.1 item 2). Every other request says nothing of it.
+func TestNotificationSaysTheMandateWouldDeny(t *testing.T) {
+	req := Request{ClientID: "hm-client:voice", EntityID: "light.kids_room", Agent: "Voice", Device: "Kids' room", Action: "turn_on",
+		WouldDenyRule: "r-no-kids-room"}
+	for lang, want := range map[i18n.Lang]string{
+		i18n.EN: "Audit mode: the mandate would deny this request (rule r-no-kids-room). Your answer decides.",
+		i18n.DE: "Probebetrieb: Das Mandat würde diese Anfrage ablehnen (Regel r-no-kids-room). Deine Antwort entscheidet.",
+	} {
+		if n := buildRequest(lang, req, strings.Repeat("0", 32)); !strings.Contains(n.Message, "\n"+want+"\n") {
+			t.Errorf("%s = %q", lang, n.Message)
+		}
+	}
+	req.WouldDenyRule = "r-<b>x</b>‮"
+	if n := buildRequest(i18n.EN, req, strings.Repeat("0", 32)); strings.ContainsAny(n.Message, "<>‮") {
+		t.Errorf("unclean rule = %q", n.Message)
+	}
+	req.WouldDenyRule = ""
+	if n := buildRequest(i18n.EN, req, strings.Repeat("0", 32)); strings.Contains(n.Message, "audit mode") || strings.Contains(n.Message, "Audit mode") {
+		t.Errorf("a plain ask mentions audit mode: %q", n.Message)
+	}
+}

@@ -229,19 +229,26 @@ func TestEvaluationNamesOnlyANotEnforcedDeny(t *testing.T) {
 	}{
 		{audit.Evaluation{Decision: "deny", Reason: "no_match", NotEnforced: true}, `{"decision":"deny","reason":"no_match","rule_id":null,"enforced":false}`},
 		{audit.Evaluation{Decision: "deny", Reason: "rule", RuleID: str("r-1")}, `{"decision":"deny","reason":"rule","rule_id":"r-1"}`},
+		{audit.Evaluation{Decision: "deny", Reason: "rule", RuleID: str("r-1"), ApprovalTimeout: "PT1M", NotEnforced: true, Confirm: true},
+			`{"decision":"deny","reason":"rule","rule_id":"r-1","approval_timeout":"PT1M","enforced":false,"confirm":true}`},
+		// confirm only with enforced: false (SPEC-v0 section 9.1)
+		{audit.Evaluation{Decision: "deny", Reason: "rule", RuleID: str("r-1"), Confirm: true}, `{"decision":"deny","reason":"rule","rule_id":"r-1"}`},
 	} {
 		data, err := json.Marshal(tc.e)
 		if err != nil || string(data) != tc.want {
 			t.Errorf("Marshal = %s, %v; want %s", data, err, tc.want)
 		}
 		var back audit.Evaluation
-		if err := json.Unmarshal(data, &back); err != nil || back.NotEnforced != tc.e.NotEnforced || back.Reason != tc.e.Reason {
+		if err := json.Unmarshal(data, &back); err != nil || back.NotEnforced != tc.e.NotEnforced || back.Confirm != (tc.e.Confirm && tc.e.NotEnforced) || back.Reason != tc.e.Reason {
 			t.Errorf("Unmarshal(%s) = %+v, %v", data, back, err)
 		}
 	}
 	var e audit.Evaluation
 	if err := json.Unmarshal([]byte(`{"decision":"deny","reason":"rule","rule_id":null,"enforced":true}`), &e); err != nil || e.NotEnforced {
 		t.Errorf("enforced: true = %+v, %v", e, err)
+	}
+	if err := json.Unmarshal([]byte(`{"decision":"deny","reason":"rule","rule_id":null,"confirm":true}`), &e); err != nil || e.Confirm {
+		t.Errorf("confirm without enforced: false = %+v, %v", e, err)
 	}
 	if err := json.Unmarshal([]byte(`[]`), &e); err == nil {
 		t.Error("an array is no evaluation")

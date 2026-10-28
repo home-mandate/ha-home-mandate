@@ -96,7 +96,9 @@ type outcome struct {
 	Approvers       []string `json:"approvers,omitempty"`
 	MandateDigest   string   `json:"mandate_digest,omitempty"`
 	// Enforced is present, and false, only for a deny that is not enforced (audit mode).
-	Enforced *bool   `json:"enforced,omitempty"`
+	Enforced *bool `json:"enforced,omitempty"`
+	// Confirm is present, and true, only for such a deny that requires a confirmation.
+	Confirm  bool    `json:"confirm,omitempty"`
 	Selected *string `json:"selected,omitempty"`
 }
 
@@ -109,7 +111,8 @@ func decide(ctx context.Context, p *pdp.PDP, clientID, principal string, r resou
 		Resource: pdp.Resource{ID: r.EntityID},
 	})
 	out := outcome{Decision: resp.Context.Outcome, Reason: resp.Context.Reason, ApprovalTimeout: resp.Context.ApprovalTimeout,
-		Approvers: resp.Context.Approvers, MandateDigest: resp.Context.MandateDigest, Enforced: resp.Context.Enforced}
+		Approvers: resp.Context.Approvers, MandateDigest: resp.Context.MandateDigest, Enforced: resp.Context.Enforced,
+		Confirm: resp.Context.Confirm}
 	if resp.Context.RuleID != "" {
 		out.RuleID = &resp.Context.RuleID
 	}

@@ -127,6 +127,11 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 	if ap := d.Result.Approval; ap != nil {
 		req.Approvers, req.Timeout = ap.Approvers, ap.Duration()
 	}
+	// Only the approvers learn that the mandate in audit mode would deny, and by which rule
+	// (SPEC-v0 section 11.1 item 2, decision E3); the agent never does.
+	if d.Result.NotEnforced && d.Result.Confirm {
+		req.WouldDenyRule = d.Result.RuleID
+	}
 	w := &waiting{ref: ref, clientID: a.ClientID, entityID: d.Resource.EntityID, action: d.Action, digest: digest, key: key,
 		state: req.State, canRead: canRead, started: make(chan struct{}), answered: make(chan struct{}), done: make(chan struct{})}
 	// Registered before the device lock is let go: a repeat from now on attaches to it.
@@ -312,7 +317,7 @@ func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: "mandate_unavailable"}, appr)
 		return nil, actionOut{}, errors.New(codeUnavailable)
 	}
-	if now := snap.Decide(d.Resource.EntityID, d.Action, d.Parameters); now.Result.Decision == evaluator.Deny || now.Result.MandateDigest != d.Result.MandateDigest {
+	if now := snap.Decide(d.Resource.EntityID, d.Action, d.Parameters); !executableAfterConfirmation(d.Result, now.Result) {
 		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate}, appr)
 		return nil, actionOut{}, errors.New(codeDenied + ": mandate_changed")
 	}
@@ -345,6 +350,22 @@ func (g *Gateway) afterApproval(ctx context.Context, a agent.Agent, token string
 		return g.readConfirmed(ctx, a, d, appr)
 	}
 	return g.execute(ctx, a, d, call, appr, expires)
+}
+
+// executableAfterConfirmation tells whether a confirmed request may be executed after the
+// evaluation before the execution (SPEC-v0 section 11.1 item 6, decision E2): only on the
+// mandate version that was confirmed, and for a confirmed ask only if the result is no
+// deny at all, also none that audit mode does not enforce. A confirmed deny that required
+// a confirmation (confirm: true) runs on allow, ask or again such a deny; any other deny
+// stops it. Both are then recorded with the evaluation that was confirmed.
+func executableAfterConfirmation(confirmed, now evaluator.Result) bool {
+	if now.MandateDigest != confirmed.MandateDigest {
+		return false
+	}
+	if now.Decision != evaluator.Deny {
+		return true
+	}
+	return confirmed.Decision == evaluator.Deny && confirmed.NotEnforced && confirmed.Confirm && now.NotEnforced && now.Confirm
 }
 
 // readConfirmed reads the device after a confirmation (issue #46): the state goes to the

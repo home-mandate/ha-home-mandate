@@ -53,6 +53,25 @@ func TestOpenApprovals(t *testing.T) {
 	}
 }
 
+// A deny that audit mode does not enforce but that requires a confirmation: the card says
+// that the mandate would deny it, and by which rule (SPEC-v0 section 11.1 item 2), cleaned
+// like the push. A plain request has none.
+func TestOpenApprovalSaysTheMandateWouldDeny(t *testing.T) {
+	for rule, want := range map[string]*string{"r-no-kitchen<b>": ptr("r-no-kitchen b"), "": nil} {
+		h := newHarness(t)
+		h.putApprover(approval.Approver{UserID: annaID, UI: true})
+		req := lightRequest(annaID)
+		req.WouldDenyRule = rule
+		id, _ := h.ask(req)
+		var got wireApprovals
+		h.ok(http.MethodGet, "/api/approvals", nil, &got)
+		open, ok := findOpen(got.Open, id)
+		if !ok || (open.WouldDenyRule == nil) != (want == nil) || (want != nil && *open.WouldDenyRule != *want) {
+			t.Errorf("%q: request = %+v", rule, open)
+		}
+	}
+}
+
 // Combination table: who may answer in the UI (F2), as the server reports it and as it
 // enforces it on the answer. The request stays open after every refusal.
 func TestAnswerCombinations(t *testing.T) {

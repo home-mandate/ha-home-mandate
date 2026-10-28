@@ -26,13 +26,18 @@ export interface EvalResult {
   decision: Decision;
   reason: Reason;
   rule_id: string | null;
-  /** Approval settings, only for "ask". */
+  /** Approval settings, only for "ask" and for a result with confirm. */
   approval?: Approval;
   /**
    * false only for a deny the PEP does not enforce: the mandate is in audit mode, the deny
    * results from its rules and the action is not critical (SPEC-v0 section 4.6).
    */
   enforced?: false;
+  /**
+   * true only for such a deny while a matching rule decides ask: the PEP executes it only
+   * after a confirmation, as an ask (SPEC-v0 sections 4.1 and 4.6).
+   */
+  confirm?: true;
 }
 
 /** Household local time: weekday and minute since midnight. */
@@ -182,14 +187,17 @@ function precheck(mandate: MandateDraft, req: EvalRequest): { local: LocalTime; 
   return { local, critical: critical || (res.critical === true && req.action !== 'read') };
 }
 
+/** askApproval is the approval of the first matching ask rule that has its own, otherwise the mandate's (section 4.1). */
+function askApproval(mandate: MandateDraft, matched: Rule[]): Approval {
+  return clone(matched.find((r) => r.decision === 'ask' && r.approval)?.approval ?? mandate.approval);
+}
+
 /** decide implements steps 4 and 5 and section 4.1 for a non-empty list of matching rules. */
 export function decide(mandate: MandateDraft, matched: Rule[], critical: boolean): EvalResult {
   const final = matched.reduce<Decision>((d, r) => (STRICTNESS[r.decision] > STRICTNESS[d] ? r.decision : d), 'allow');
   const first = matched.find((r) => r.decision === final);
   const result: EvalResult = { decision: final, reason: 'rule', rule_id: first?.id ?? null };
-  if (final === 'ask') {
-    return { ...result, approval: clone(matched.find((r) => r.decision === 'ask' && r.approval)?.approval ?? mandate.approval) };
-  }
+  if (final === 'ask') return { ...result, approval: askApproval(mandate, matched) };
   if (final === 'allow' && critical) {
     const unconfirmed = matched.find((r) => r.allow_critical !== true);
     if (unconfirmed) {
@@ -213,6 +221,9 @@ export function evaluate(mandate: MandateDraft, req: EvalRequest): EvalResult {
   if ('decision' in pre) return pre;
   const matched = matchingRules(mandate, req, pre.local);
   const result = matched.length === 0 ? deny('no_match') : decide(mandate, matched, pre.critical);
-  // Audit mode (section 4.6): only a deny by the rules, never one of a critical action.
-  return mandate.enforce === false && result.decision === 'deny' && !pre.critical ? { ...result, enforced: false } : result;
+  // Audit mode (section 4.6, step 6): only a deny by the rules, never one of a critical
+  // action; it still requires a confirmation if a matching rule decides ask.
+  if (mandate.enforce !== false || result.decision !== 'deny' || pre.critical) return result;
+  if (!matched.some((r) => r.decision === 'ask')) return { ...result, enforced: false };
+  return { ...result, enforced: false, confirm: true, approval: askApproval(mandate, matched) };
 }

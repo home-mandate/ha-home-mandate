@@ -132,7 +132,13 @@ var answeredAt = time.Now().UTC().Truncate(time.Second)
 
 func approvalHarness(t *testing.T, f *fakeApprover) *harness {
 	t.Helper()
-	h := newHarness(t, nil)
+	return approvalHarnessWith(t, f, nil)
+}
+
+// approvalHarnessWith is approvalHarness with the mandate edited by edit.
+func approvalHarnessWith(t *testing.T, f *fakeApprover, edit func(map[string]any)) *harness {
+	t.Helper()
+	h := newHarness(t, edit)
 	f.journal = h.journal
 	h.approver = f
 	h.url = h.serve(h.log)

@@ -479,10 +479,14 @@ func readable(snap *pdp.Snapshot, entityID string) bool {
 }
 
 // effective is the decision the PEP enforces: allow for a deny that a mandate in audit
-// mode does not enforce (SPEC-v0 section 4.6). The agent learns nothing else, in no
-// answer and no list (section 11.6 item 2); only the audit log records the deny.
+// mode does not enforce (SPEC-v0 section 4.6), and ask for one that requires a
+// confirmation (confirm: true). The agent learns nothing else, in no answer and no list
+// (section 11.6 item 2); only the audit log and the approvers learn of the deny.
 func effective(r evaluator.Result) evaluator.Decision {
-	if r.NotEnforced {
+	switch {
+	case r.NotEnforced && r.Confirm:
+		return evaluator.Ask
+	case r.NotEnforced:
 		return evaluator.Allow
 	}
 	return r.Decision
@@ -760,14 +764,15 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 	if paramErr != nil {
 		return pdp.Decision{}, g.refuseParameters(ctx, a, snap, d, paramErr)
 	}
-	if effective(d.Result) == evaluator.Allow {
+	decision := effective(d.Result)
+	if decision == evaluator.Allow {
 		return d, nil // executed as an allow, also when audit mode does not enforce a deny
 	}
-	known := d.Result.Decision != evaluator.Deny
+	known := decision != evaluator.Deny
 	if action != "read" {
 		known = readable(snap, entityID)
 	}
-	if d.Result.Decision == evaluator.Ask {
+	if decision == evaluator.Ask { // also a deny that requires a confirmation
 		if known && g.cfg.Approvals != nil {
 			return d, errAsk // the caller asks a human after checking the parameters
 		}
@@ -906,7 +911,9 @@ func (g *Gateway) entry(a agent.Agent, d pdp.Decision, withEvaluation bool, resu
 		if r.RuleID != "" {
 			e.Evaluation.RuleID = &r.RuleID
 		}
-		if r.Decision == evaluator.Ask && r.Approval != nil {
+		// confirm: true only with enforced: false (SPEC-v0 section 9.1).
+		e.Evaluation.Confirm = r.NotEnforced && r.Confirm
+		if (r.Decision == evaluator.Ask || e.Evaluation.Confirm) && r.Approval != nil {
 			e.Evaluation.ApprovalTimeout = r.Approval.Timeout
 		}
 		switch {

@@ -257,6 +257,7 @@ func fromResult(r evaluator.Result) response {
 	}
 	if r.NotEnforced {
 		out.Enforced = new(bool)
+		out.Confirm = r.Confirm
 	}
 	return response{outcome: out}
 }

@@ -188,6 +188,10 @@ type Request struct {
 	// State is the device's state when the request was made, shown to the approvers
 	// (SPEC-v0 section 11.1 item 10); empty when unknown.
 	State string
+	// WouldDenyRule is set only for a deny that a mandate in audit mode does not enforce
+	// but that requires a confirmation (confirm: true): the rule that would deny the
+	// request. The approvers see it (SPEC-v0 section 11.1 item 2); the agent never does.
+	WouldDenyRule string
 	// Record is what the approval journal keeps for an audit entry after a restart.
 	Record *Record
 }
@@ -852,6 +856,11 @@ func buildRequest(lang i18n.Lang, req Request, nonce string) ha.Notification {
 	// What is confirmed (SPEC-v0 section 11.1 item 2): the agent by its identifier next
 	// to the name it claims, and the device by its ID; names can look alike, IDs cannot.
 	lines = append(lines, i18n.T(lang, i18n.ApprovalIdentity, i18n.Args{"client_id": shownID(req.ClientID), "entity_id": shownID(req.EntityID)}))
+	// The answer also says whether the household wants the deny (SPEC-v0 section 11.1
+	// item 2).
+	if rule := sanitize(req.WouldDenyRule, maxName); rule != "" {
+		lines = append(lines, i18n.T(lang, i18n.ApprovalWouldDeny, i18n.Args{"rule": rule}))
+	}
 	if params := formatParams(req.Params); params != "" {
 		lines = append(lines, i18n.T(lang, i18n.ApprovalParams, i18n.Args{"params": params}))
 	}
