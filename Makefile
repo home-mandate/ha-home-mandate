@@ -11,9 +11,22 @@ GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
 ACTIONLINT  := github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
-# Fuzz targets as package:target; FUZZTIME each (short in pull requests, long twice a month).
+# Fuzz targets as package:target, one for every parser of input from outside (docs/TESTING.md
+# section 1); FUZZTIME each (short in pull requests, long twice a month, one job per target).
 FUZZTIME     ?= 10m
-FUZZ_TARGETS := internal/ha:FuzzDecodeMessage
+FUZZ_TARGETS := \
+	internal/ha:FuzzDecodeMessage \
+	internal/mcp:FuzzGatewayRequest \
+	internal/mcp:FuzzToolArguments \
+	internal/approval:FuzzHandleEvent \
+	internal/api:FuzzWriteRequests \
+	internal/pdp:FuzzEvaluationEndpoint \
+	internal/oauth:FuzzEndpoints \
+	internal/oauth:FuzzClientMetadata \
+	internal/agent:FuzzTokens \
+	internal/mandate:FuzzPut \
+	internal/config:FuzzAppOptions \
+	internal/untrusted:FuzzClean
 
 # Coverage thresholds per package (docs/TESTING.md section 2). The strict packages are
 # enforced as soon as their directory exists.
@@ -25,7 +38,7 @@ VERSION ?= dev
 COMMIT  ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
 GOARCHES := amd64 arm64
 
-.PHONY: check test cover vet staticcheck vulncheck actionlint conformance fuzz build image webui web-install web-check web-conformance web-e2e e2e e2e-ui
+.PHONY: check test cover vet staticcheck vulncheck actionlint conformance fuzz fuzz-targets build image webui web-install web-check web-conformance web-e2e e2e e2e-ui
 
 ## check: everything that must be green before a commit
 check: vet staticcheck cover vulncheck actionlint conformance
@@ -66,6 +79,13 @@ fuzz:
 		pkg=$${spec%%:*}; target=$${spec#*:}; \
 		go test ./$$pkg/ -run '^$$' -fuzz "^$$target\$$" -fuzztime $(FUZZTIME) || exit 1; \
 	done
+
+## fuzz-targets: FUZZ_TARGETS as a JSON array, for the matrix of the long runs
+empty :=
+space := $(empty) $(empty)
+comma := ,
+fuzz-targets:
+	@echo '[$(subst $(space),$(comma),$(patsubst %,"%",$(strip $(FUZZ_TARGETS))))]'
 
 ## conformance: mandate-conformance against Home-Mandate's PDP over both bindings of the
 ## test interface (SPEC-v0 section 10); the test tool is never part of the binary

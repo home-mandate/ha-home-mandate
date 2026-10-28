@@ -174,7 +174,7 @@ func house() *fakeCatalog {
 }
 
 type harness struct {
-	t         *testing.T
+	t         testing.TB
 	srv       *Server
 	h         http.Handler
 	ha        *fakeHA
@@ -250,7 +250,7 @@ func (n *recordingNotifier) Notify(_ context.Context, _ string, msg ha.Notificat
 
 var testStart = time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC)
 
-func voiceTemplate(t *testing.T, edit func(map[string]any)) []byte {
+func voiceTemplate(t testing.TB, edit func(map[string]any)) []byte {
 	t.Helper()
 	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
@@ -265,7 +265,7 @@ func voiceTemplate(t *testing.T, edit func(map[string]any)) []byte {
 	return out
 }
 
-func newHarness(t *testing.T) *harness {
+func newHarness(t testing.TB) *harness {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "hm.db"))
@@ -338,7 +338,7 @@ type result struct {
 	body   []byte
 }
 
-func (r result) json(t *testing.T, v any) {
+func (r result) json(t testing.TB, v any) {
 	t.Helper()
 	if err := json.Unmarshal(r.body, v); err != nil {
 		t.Fatalf("answer %d is no JSON: %v\n%s", r.code, err, r.body)
@@ -529,7 +529,7 @@ func context_(t *testing.T) (context.Context, context.CancelFunc) {
 }
 
 // draft is the voice assistant example as a draft (types.ts MandateDraft).
-func draft(t *testing.T) map[string]any {
+func draft(t testing.TB) map[string]any {
 	t.Helper()
 	var doc map[string]any
 	_ = json.Unmarshal(voiceTemplate(t, nil), &doc)

@@ -43,7 +43,7 @@ func withClock(s *agent.Store) *clock {
 	return c
 }
 
-func issue(t *testing.T, s *agent.Store, clientID string) agent.TokenPair {
+func issue(t testing.TB, s *agent.Store, clientID string) agent.TokenPair {
 	t.Helper()
 	p, err := s.IssueTokens(context.Background(), clientID, resource)
 	if err != nil {

@@ -10,7 +10,7 @@ a negative test, no release without green end-to-end tests.**
 | Unit | `go test`, table-driven | every push to a branch | Every function, every branch |
 | Conformance | Cases from `home-mandate/spec` (embedded in the Go module) against our own PDP; `mandate-conformance` against `tools/conformance` (process binding: classes evaluator, selection, audit, audit-anchored; HTTP binding: class pdp), `make conformance` | every pull request (Go cases: every push); every release attaches both reports with build provenance (`conformance-report.yml`) | Evaluation and selection exactly per specification, through Home-Mandate's own decision path |
 | Negative | Own test cases per package, catalog in section 4 | every push to a branch | Attacks and invalid input are rejected |
-| Fuzzing | `go test -fuzz`, `make fuzz` | every pull request 60 s per target; 1st and 15th of every month 60 min | No panic, unknown input becomes `deny` |
+| Fuzzing | `go test -fuzz`, `make fuzz`, one target per parser of input from outside (below) | every pull request 60 s per target; 1st and 15th of every month 60 min per target, one job each | No panic, no 5xx, unknown input becomes `deny`, a refusal changes nothing |
 | Integration | Real HA instance in a container | every pull request | HA client, catalog, service calls |
 | End to end | MCP client + OAuth + HA container, UI with Playwright | every pull request | Complete flows from the perspective of agent and human |
 | UI unit | Vitest + Svelte Testing Library | every push to a branch | Components, form logic, formatting |
@@ -25,6 +25,25 @@ Playwright. main takes squash-merged pull requests only, up to date and with eve
 check green, so nothing runs after the merge; every merge is tagged. Independent of changes,
 `govulncheck` and `pnpm audit` run every night and long fuzzing twice a month; a failure opens
 an issue.
+
+Fuzz targets (`FUZZ_TARGETS` in the Makefile; a new parser of input from outside gets one):
+
+| Target | Input from outside | Checked besides "no panic" |
+|---|---|---|
+| `internal/ha:FuzzDecodeMessage` | Messages of Home Assistant's WebSocket API | Only typed messages, results and events with an ID |
+| `internal/mcp:FuzzGatewayRequest` | Any body posted to the MCP endpoint, with and without the agent's token | No 5xx; Home Assistant is called only for what the mandate allows, never without a token |
+| `internal/mcp:FuzzToolArguments` | Arguments of `perform_action` for every action of the vocabulary and temperature unit | Defined errors only; only declared parameters reach the call; the executed value is the evaluated value |
+| `internal/approval:FuzzHandleEvent` | Data and user of `mobile_app_notification_action` and `_cleared` events | A request ends only on its exact nonce; only an approver's approve approves |
+| `internal/api:FuzzWriteRequests` | JSON bodies of every API route that reads one (mandates, templates, approvers, approval answers, settings, pairing …) and the audit query | No 5xx but `unavailable`; errors are defined codes; a refusal writes nothing to the audit log |
+| `internal/pdp:FuzzEvaluationEndpoint` | AuthZEN requests to the PDP endpoint | 400 or a well-formed decision; other subjects, households and unknown devices are `deny`; deterministic |
+| `internal/oauth:FuzzEndpoints` | Queries and forms of authorize, callback, consent, token, device authorization and pairing | No 5xx; OAuth JSON errors; redirects only to the sign-in, a registered redirect URI or the server itself; no agent admitted |
+| `internal/oauth:FuzzClientMetadata` | Client ID Metadata Documents (fetched from the internet) | `invalid_client` or a client with safe redirect URIs and a showable name |
+| `internal/agent:FuzzTokens` | Bearer and refresh tokens | Only the issued token authenticates, only for its resource; a wrong refresh token changes nothing |
+| `internal/mandate:FuzzPut` | Mandate documents (editor, import) | Defined errors; a refusal writes nothing; what is stored is what decisions use |
+| `internal/config:FuzzAppOptions` | The app's `options.json` | `ErrInvalid`, or certificate paths in `/ssl` and URLs that are origins |
+| `internal/untrusted:FuzzClean` | Names and reasons chosen by agents and entities | Valid UTF-8 within the limit, nothing hidden, idempotent |
+
+Inputs that once failed stay in the package's `testdata/fuzz` and run with every `go test`.
 
 ## 2. Coverage thresholds (CI fails if not met)
 

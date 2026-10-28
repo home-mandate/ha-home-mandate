@@ -18,7 +18,7 @@ import (
 
 var admin = audit.Actor{Kind: audit.ActorUser, ID: "user-1"}
 
-func newStore(t *testing.T) (*agent.Store, *audit.Log, *sql.DB) {
+func newStore(t testing.TB) (*agent.Store, *audit.Log, *sql.DB) {
 	t.Helper()
 	s, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "hm.db"))
 	if err != nil {
@@ -29,7 +29,7 @@ func newStore(t *testing.T) (*agent.Store, *audit.Log, *sql.DB) {
 	return agent.New(s.DB(), log), log, s.DB()
 }
 
-func register(t *testing.T, s *agent.Store, name string) agent.Agent {
+func register(t testing.TB, s *agent.Store, name string) agent.Agent {
 	t.Helper()
 	a, err := s.Register(context.Background(), name, admin)
 	if err != nil {

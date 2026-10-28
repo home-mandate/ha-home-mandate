@@ -30,7 +30,7 @@ func (h *harness) wsServer() *httptest.Server {
 }
 
 type stream struct {
-	t    *testing.T
+	t    testing.TB
 	conn *websocket.Conn
 }
 

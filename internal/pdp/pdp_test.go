@@ -185,7 +185,7 @@ func TestConformanceCasesOverHTTP(t *testing.T) {
 	}
 }
 
-func voice(t *testing.T) (Config, string) {
+func voice(t testing.TB) (Config, string) {
 	t.Helper()
 	doc, _ := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	m, err := evaluator.Parse(doc)

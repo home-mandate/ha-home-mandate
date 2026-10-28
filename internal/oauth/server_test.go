@@ -86,7 +86,7 @@ func (c *testClock) Add(d time.Duration) {
 }
 
 type harness struct {
-	t      *testing.T
+	t      testing.TB
 	srv    *httptest.Server
 	server *Server
 	clock  *testClock
@@ -102,7 +102,7 @@ var (
 	voiceOnce   sync.Once
 )
 
-func newHarness(t *testing.T) *harness {
+func newHarness(t testing.TB) *harness {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "hm.db"))
@@ -192,7 +192,7 @@ func (b *browser) post(path string, form url.Values, header ...string) response 
 
 var csrfPattern = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
 
-func csrfOf(t *testing.T, body string) string {
+func csrfOf(t testing.TB, body string) string {
 	t.Helper()
 	m := csrfPattern.FindStringSubmatch(body)
 	if m == nil {
@@ -279,7 +279,7 @@ func (h *harness) auditLog() string {
 	return buf.String()
 }
 
-func countAgents(t *testing.T, h *harness) int {
+func countAgents(t testing.TB, h *harness) int {
 	t.Helper()
 	list, err := h.agents.List(context.Background())
 	if err != nil {
