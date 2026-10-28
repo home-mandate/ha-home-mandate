@@ -12,3 +12,9 @@ saveExact: true
 # source-map-js < 1.2.2: GHSA-68fv-2mgg-jv7q (build and test tooling only).
 overrides:
   source-map-js: 1.2.2
+# Advisories without a fixed version (re-check when the parent updates):
+# deepmerge <= 4.3.1: GHSA-gcqx-w48m-w2h4, low. Only @sveltejs/vite-plugin-svelte uses it,
+# at build time, to merge our own Svelte config; no untrusted input reaches it.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-gcqx-w48m-w2h4
