@@ -36,7 +36,7 @@ type env struct {
 	log      *audit.Log
 }
 
-func newEnv(t *testing.T) env {
+func newEnv(t testing.TB) env {
 	t.Helper()
 	s, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "hm.db"))
 	if err != nil {
@@ -47,7 +47,7 @@ func newEnv(t *testing.T) env {
 	return env{db: s.DB(), mandates: mandate.New(s.DB(), log, household, issuer), agents: agent.New(s.DB(), log), log: log}
 }
 
-func (e env) agent(t *testing.T, name string) agent.Agent {
+func (e env) agent(t testing.TB, name string) agent.Agent {
 	t.Helper()
 	a, err := e.agents.Register(context.Background(), name, admin)
 	if err != nil {
@@ -58,7 +58,7 @@ func (e env) agent(t *testing.T, name string) agent.Agent {
 
 // voiceAssistant returns the example mandate of the specification for clientID, with edit
 // applied to the decoded document.
-func voiceAssistant(t *testing.T, clientID string, edit func(map[string]any)) []byte {
+func voiceAssistant(t testing.TB, clientID string, edit func(map[string]any)) []byte {
 	t.Helper()
 	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {

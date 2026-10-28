@@ -31,7 +31,7 @@ make web-install web-check  # UI: lint, svelte-check, Vitest, i18n checks, build
 make web-e2e                # Playwright in German, English and pseudo-locale under a random Ingress path
 make e2e                    # E2E scenarios against Home Assistant and the release image
 make e2e-ui                 # E2E plus Playwright against the release image (needs web-install and Chromium)
-make fuzz FUZZTIME=30s      # fuzz targets
+make fuzz FUZZTIME=30s      # every fuzz target (TESTING.md section 1); one: FUZZ_TARGETS=internal/pdp:FuzzEvaluationEndpoint
 ```
 
 Coverage thresholds and the test catalogue are in [TESTING.md](TESTING.md).

@@ -93,6 +93,15 @@ type env struct {
 
 func newEnv(t *testing.T, maxTimeout time.Duration) env {
 	t.Helper()
+	n := newFakeNotifier()
+	svc, approvers := newService(t, maxTimeout, n)
+	return env{svc: svc, notifier: n, approvers: approvers}
+}
+
+// newService returns the service with three configured approvers (u1, u2, u3) on real
+// stores, sending through n.
+func newService(t testing.TB, maxTimeout time.Duration, n Notifier) (*Service, *Approvers) {
+	t.Helper()
 	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "hm.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -105,9 +114,8 @@ func newEnv(t *testing.T, maxTimeout time.Duration) env {
 			t.Fatal(err)
 		}
 	}
-	n := newFakeNotifier()
 	svc := New(Config{Approvers: approvers, Notifier: n, Language: func() i18n.Lang { return i18n.EN }, MaxTimeout: maxTimeout})
-	return env{svc: svc, notifier: n, approvers: approvers}
+	return svc, approvers
 }
 
 // phones are devices that may also answer critical requests (default of a phone).

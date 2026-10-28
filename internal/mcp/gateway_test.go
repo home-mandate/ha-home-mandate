@@ -180,7 +180,7 @@ func (f *fakeNow) advance(d time.Duration) {
 type harness struct {
 	clock    *fakeClock
 	now      *fakeNow // the gateway's clock
-	t        *testing.T
+	t        testing.TB
 	url      string
 	token    string
 	agent    agent.Agent
@@ -197,8 +197,9 @@ type harness struct {
 	// journalOverride replaces journal in the gateway when set.
 	journalOverride Journal
 	logger          *slog.Logger
-	approvalWait    time.Duration // the gateway's ApprovalWait; zero: the default
-	gw              *Gateway      // the gateway serve started last
+	approvalWait    time.Duration    // the gateway's ApprovalWait; zero: the default
+	limiterNow      func() time.Time // the clock of the agent's hourly limit; nil: the real one
+	gw              *Gateway         // the gateway serve started last
 
 	mu   sync.Mutex
 	tz   string
@@ -234,7 +235,7 @@ func (h *harness) setHousehold(tz, self string) {
 
 // newHarness runs the gateway on real stores with the voice assistant mandate of
 // the specification, edited by edit.
-func newHarness(t *testing.T, edit func(map[string]any)) *harness {
+func newHarness(t testing.TB, edit func(map[string]any)) *harness {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "hm.db"))
@@ -283,7 +284,7 @@ func (h *harness) serve(auditor Auditor) string {
 	if h.decider != nil {
 		decider = h.decider
 	}
-	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Journal: h.gatewayJournal(), Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(nil), Audit: auditor, Version: "test",
+	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Journal: h.gatewayJournal(), Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(h.limiterNow), Audit: auditor, Version: "test",
 		TimeZone: h.timeZone, ServiceUser: h.serviceUser, TemperatureUnit: h.temperatureUnit, Now: h.now.Now, Logger: h.logger, ApprovalWait: h.approvalWait})
 	g.cfg.Clock = h.clock
 	h.gw = g
@@ -309,7 +310,7 @@ func (h *harness) issue(clientID string) string {
 	return p.AccessToken
 }
 
-func mandateDoc(t *testing.T, clientID string, edit func(map[string]any)) []byte {
+func mandateDoc(t testing.TB, clientID string, edit func(map[string]any)) []byte {
 	t.Helper()
 	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
 	if err != nil {
