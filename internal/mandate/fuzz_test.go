@@ -66,7 +66,8 @@ func FuzzPut(f *testing.F) {
 		}
 		info, err := e.mandates.Put(ctx, document, admin)
 		if err != nil {
-			if !errors.Is(err, mandate.ErrInvalid) && !errors.Is(err, mandate.ErrConflict) && !errors.Is(err, mandate.ErrCriticalConfirmation) {
+			if !errors.Is(err, mandate.ErrInvalid) && !errors.Is(err, mandate.ErrConflict) && !errors.Is(err, mandate.ErrCriticalConfirmation) &&
+				!errors.Is(err, mandate.ErrAuditModeNeedsConfirmation) {
 				t.Fatalf("undefined error %v", err)
 			}
 			if after, err := e.log.LastSeq(ctx); err != nil || after != before {
