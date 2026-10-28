@@ -2,7 +2,7 @@
 # for the target (TARGETOS/TARGETARCH), so no stage runs under emulation.
 
 # 1) UI: Svelte + Vite, built without package install scripts
-FROM --platform=$BUILDPLATFORM node:24.21.0-alpine@sha256:83f1c388c31fb2e51f7cbd4dea949b96260798c98f206e8e4696bc93bd964e3a AS web
+FROM --platform=$BUILDPLATFORM node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS web
 WORKDIR /web
 RUN corepack enable
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
