@@ -19,6 +19,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/home-mandate/spec/evaluator"
+	"github.com/home-mandate/spec/jcs"
 
 	"github.com/home-mandate/ha-home-mandate/internal/agent"
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
@@ -45,7 +46,7 @@ const (
 // request outlives the call: it is followed in the background (follow), and the call
 // waits for its outcome at most ApprovalWait (await).
 func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, reason, key string) (*sdk.CallToolResult, actionOut, error) {
-	digest := callDigest(call)
+	digest := callDigest(d.Resource.Category, d.Action, call)
 	if digest == "" {
 		// Fail closed: without a fingerprint repeats cannot be told apart.
 		g.cfg.Logger.Error("call fingerprint failed, request refused", "entity_id", d.Resource.EntityID)
@@ -245,29 +246,42 @@ func (g *Gateway) cancelled(ctx context.Context, a agent.Agent, token string, d 
 }
 
 // callDigest is the digest of the effective call: domain, service and data as they would
-// be executed, canonicalised, so that 50 and 50.0 or another key order are the same call.
-// The specification's jcs package takes integers only, but a call carries Home Assistant
-// units (21.5 degrees, a volume of 0.4; issue #108). So every number is decoded as a
-// float64 and encoded in its shortest form, keys sorted, without HTML escaping; for the
-// integers and identifiers of a call that is the RFC 8785 form, and the digests of
-// requests made before stay the same. It is empty if the call cannot be encoded, which
-// never happens for data that came from JSON.
-func callDigest(call ha.ServiceCall) string {
-	data, err := json.Marshal(map[string]any{"domain": call.Domain, "service": call.Service, "entity_id": call.EntityID, "data": call.Data})
+// be executed, canonicalised (RFC 8785), so that 50 and 50.0 or another key order are the
+// same call. A number of a declared parameter counts in whole steps of the vocabulary's
+// unit, as everywhere in the specification (SPEC-v0 section 4.5): 21.5 degrees is 2150, a
+// volume level of 0.4 is 40 (issue #108). So the canonical form holds integers only. It is
+// empty if a number is no whole step or the call cannot be encoded, which never happens
+// for a call that buildCall made.
+func callDigest(category, action string, call ha.ServiceCall) string {
+	params := vocabulary[category][action].params
+	stepped := make(map[string]any, len(call.Data))
+	for name, value := range call.Data {
+		p, declared := params[name]
+		if !declared || (p.kind != "int" && p.kind != "number") {
+			stepped[name] = value
+			continue
+		}
+		n, ok := exactSteps(value, int64(max(p.steps, 1)))
+		if !ok {
+			return ""
+		}
+		stepped[name] = n
+	}
+	data, err := json.Marshal(map[string]any{"domain": call.Domain, "service": call.Service, "entity_id": call.EntityID, "data": stepped})
 	if err != nil {
 		return ""
 	}
 	var generic any
-	if err := json.Unmarshal(data, &generic); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(&generic); err != nil {
 		return ""
 	}
-	var canonical bytes.Buffer
-	enc := json.NewEncoder(&canonical)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(generic); err != nil {
+	canonical, err := jcs.Canonicalize(generic)
+	if err != nil {
 		return ""
 	}
-	sum := sha256.Sum256(bytes.TrimSuffix(canonical.Bytes(), []byte("\n")))
+	sum := sha256.Sum256(canonical)
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 

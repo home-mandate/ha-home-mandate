@@ -66,9 +66,9 @@ func FuzzToolArguments(f *testing.F) {
 		if call.EntityID != "x.fuzz" || call.Domain != "x" || call.Service == "" {
 			t.Fatalf("call %+v", call)
 		}
-		// Every call has a fingerprint, also one with a fractional number (21.5 degrees, a
-		// volume of 0.4; issue #108, the seed in testdata keeps the case).
-		if callDigest(call) == "" {
+		// Every call has a fingerprint, also one with a fractional number in Home Assistant
+		// units (21.5 degrees, a volume of 0.4; issue #108, the seed in testdata keeps it).
+		if callDigest(tg.category, tg.action, call) == "" {
 			t.Fatalf("no fingerprint for %+v", call)
 		}
 		spec, _ := specFor(tg.category, tg.action, unit)
