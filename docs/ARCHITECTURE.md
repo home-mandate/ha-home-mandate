@@ -501,8 +501,10 @@ checked on every request.
   switched twice). The gateway cannot see that a client gave up, only that the same thing
   is asked again. The fingerprint of a call is the digest of the effective call
   (`params_digest`: domain, service, entity and data after the parameter check, RFC 8785,
-  SHA-256), so `50` and `50.0` or another key order are the same call. The checks and the
-  creation of a request run under a lock per agent and device (and per idempotency key),
+  SHA-256), so `50` and `50.0` or another key order are the same call. A number counts in
+  whole steps of the vocabulary's unit, as in the specification: 21.5 degrees is `2150`,
+  a volume level of 0.4 is `40`, so the canonical form holds integers only. The checks
+  and the creation of a request run under a lock per agent and device (and per idempotency key),
   so concurrent identical calls make one request; the locks are a fixed set of 256 each,
   chosen by hash, so agent-chosen keys cannot make them grow.
   1. **One open request per agent and device:** while a request of the agent for the
@@ -623,7 +625,7 @@ checked on every request.
   recorded (`journal_unavailable`). States only
   move forward (`open` → `executing` → `ended`, or `open` → `ended`; database triggers).
   The row holds the request ID (the one the UI knows), agent, entity, action, the digest
-  of the effective call (domain, service, entity and data, RFC 8785, SHA-256), created and
+  of the effective call (domain, service, entity and data in whole steps, RFC 8785, SHA-256), created and
   expiry time, the tag, the devices notified with their approver and language (written
   as planned, then narrowed to the devices the request reached once the delivery is
   over), and the

@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-mandate/spec/jcs"
+
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
@@ -150,7 +152,7 @@ func TestCallDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := func(data map[string]any) string {
-		return callDigest(ha.ServiceCall{Domain: "light", Service: "turn_on", EntityID: "light.kitchen", Data: data})
+		return callDigest("light", "set", ha.ServiceCall{Domain: "light", Service: "turn_on", EntityID: "light.kitchen", Data: data})
 	}
 	if call(a) != call(b) || !strings.HasPrefix(call(a), "sha256:") || len(call(a)) != 71 {
 		t.Errorf("digests %s, %s", call(a), call(b))
@@ -158,8 +160,50 @@ func TestCallDigest(t *testing.T) {
 	if call(a) == call(map[string]any{"brightness_pct": 51}) || call(nil) == call(a) {
 		t.Error("different calls share a digest")
 	}
-	if callDigest(ha.ServiceCall{Data: map[string]any{"x": func() {}}}) != "" {
+	if callDigest("light", "set", ha.ServiceCall{Data: map[string]any{"x": func() {}}}) != "" {
 		t.Error("unencodable call has a digest")
+	}
+}
+
+// A call carries Home Assistant units, its fingerprint whole steps of the vocabulary
+// (issue #108): 21.5 degrees counts as 2150 and a volume level of 0.4 as 40, so the
+// canonical form holds integers only. A number that is no whole step has no fingerprint,
+// and a call of whole numbers keeps the one it had.
+func TestCallDigestInSteps(t *testing.T) {
+	digest := func(v map[string]any) string {
+		t.Helper()
+		d, err := jcs.Digest(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	climate := func(data map[string]any) string {
+		return callDigest("climate", "set_temperature", ha.ServiceCall{Domain: "climate", Service: "set_temperature", EntityID: "climate.hall", Data: data})
+	}
+	var written map[string]any
+	if err := json.Unmarshal([]byte(`{"temperature": 21.50}`), &written); err != nil {
+		t.Fatal(err)
+	}
+	half := climate(map[string]any{"temperature": 21.5})
+	if want := digest(map[string]any{"domain": "climate", "service": "set_temperature", "entity_id": "climate.hall",
+		"data": map[string]any{"temperature": json.Number("2150")}}); half != want || climate(written) != want {
+		t.Errorf("21.5 degrees: %q, %q, want %q", half, climate(written), want)
+	}
+	if half == climate(map[string]any{"temperature": 21.51}) || climate(map[string]any{"temperature": 21.555}) != "" {
+		t.Error("steps are not told apart, or a fraction of a step has a fingerprint")
+	}
+	volume := callDigest("media", "set_volume", ha.ServiceCall{Domain: "media_player", Service: "volume_set", EntityID: "media_player.kitchen",
+		Data: map[string]any{"volume_level": 0.4}})
+	if want := digest(map[string]any{"domain": "media_player", "service": "volume_set", "entity_id": "media_player.kitchen",
+		"data": map[string]any{"volume_level": json.Number("40")}}); volume != want {
+		t.Errorf("volume 0.4: %q, want %q", volume, want)
+	}
+	if got, want := callDigest("light", "set", ha.ServiceCall{Domain: "light", Service: "turn_on", EntityID: "light.kitchen",
+		Data: map[string]any{"brightness_pct": 50, "color_temp_kelvin": 2700.0}}),
+		digest(map[string]any{"domain": "light", "service": "turn_on", "entity_id": "light.kitchen",
+			"data": map[string]any{"brightness_pct": json.Number("50"), "color_temp_kelvin": json.Number("2700")}}); got != want {
+		t.Errorf("whole numbers: %s, before %s", got, want)
 	}
 }
 

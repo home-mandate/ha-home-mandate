@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -67,12 +66,9 @@ func FuzzToolArguments(f *testing.F) {
 		if call.EntityID != "x.fuzz" || call.Domain != "x" || call.Service == "" {
 			t.Fatalf("call %+v", call)
 		}
-		// Known gap: callDigest canonicalises with RFC 8785 as the specification's jcs
-		// package does, integers only, so a call with a fractional number (21.5 degrees, a
-		// volume of 0.4) has no fingerprint and askHuman refuses it (call_fingerprint).
-		// Checked for every other call until that is fixed; the seed in testdata keeps
-		// the case.
-		if callDigest(call) == "" && !fractional(call.Data) {
+		// Every call has a fingerprint, also one with a fractional number in Home Assistant
+		// units (21.5 degrees, a volume of 0.4; issue #108, the seed in testdata keeps it).
+		if callDigest(tg.category, tg.action, call) == "" {
 			t.Fatalf("no fingerprint for %+v", call)
 		}
 		spec, _ := specFor(tg.category, tg.action, unit)
@@ -109,16 +105,6 @@ func FuzzToolArguments(f *testing.F) {
 			}
 		}
 	})
-}
-
-// fractional reports whether data has a number that is no integer.
-func fractional(data map[string]any) bool {
-	for _, v := range data {
-		if f, ok := v.(float64); ok && f != math.Trunc(f) {
-			return true
-		}
-	}
-	return false
 }
 
 // FuzzGatewayRequest: any body an agent posts to the MCP endpoint, with or without its

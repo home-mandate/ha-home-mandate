@@ -46,7 +46,7 @@ const (
 // request outlives the call: it is followed in the background (follow), and the call
 // waits for its outcome at most ApprovalWait (await).
 func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d pdp.Decision, call ha.ServiceCall, reason, key string) (*sdk.CallToolResult, actionOut, error) {
-	digest := callDigest(call)
+	digest := callDigest(d.Resource.Category, d.Action, call)
 	if digest == "" {
 		// Fail closed: without a fingerprint repeats cannot be told apart.
 		g.cfg.Logger.Error("call fingerprint failed, request refused", "entity_id", d.Resource.EntityID)
@@ -247,10 +247,27 @@ func (g *Gateway) cancelled(ctx context.Context, a agent.Agent, token string, d 
 
 // callDigest is the digest of the effective call: domain, service and data as they would
 // be executed, canonicalised (RFC 8785), so that 50 and 50.0 or another key order are the
-// same call. It is empty if the call cannot be encoded, which never happens for data
-// that came from JSON.
-func callDigest(call ha.ServiceCall) string {
-	data, err := json.Marshal(map[string]any{"domain": call.Domain, "service": call.Service, "entity_id": call.EntityID, "data": call.Data})
+// same call. A number of a declared parameter counts in whole steps of the vocabulary's
+// unit, as everywhere in the specification (SPEC-v0 section 4.5): 21.5 degrees is 2150, a
+// volume level of 0.4 is 40 (issue #108). So the canonical form holds integers only. It is
+// empty if a number is no whole step or the call cannot be encoded, which never happens
+// for a call that buildCall made.
+func callDigest(category, action string, call ha.ServiceCall) string {
+	params := vocabulary[category][action].params
+	stepped := make(map[string]any, len(call.Data))
+	for name, value := range call.Data {
+		p, declared := params[name]
+		if !declared || (p.kind != "int" && p.kind != "number") {
+			stepped[name] = value
+			continue
+		}
+		n, ok := exactSteps(value, int64(max(p.steps, 1)))
+		if !ok {
+			return ""
+		}
+		stepped[name] = n
+	}
+	data, err := json.Marshal(map[string]any{"domain": call.Domain, "service": call.Service, "entity_id": call.EntityID, "data": stepped})
 	if err != nil {
 		return ""
 	}
