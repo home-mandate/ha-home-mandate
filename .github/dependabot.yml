@@ -1,0 +1,34 @@
+# Dependabot: version updates for what the nightly checks in scheduled.yml do not cover
+# (govulncheck and pnpm audit check the Go and npm dependencies).
+version: 2
+updates:
+  # The pinned GitHub Actions. All updates of a week in one pull request, and only
+  # releases that are at least 7 days old.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+  # The base images of the Dockerfile, pinned by digest. Patch versions and new digests
+  # only: a minor or major version (e.g. of Go or Node) must match the toolchain in the
+  # repository and is updated by hand.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      images:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    commit-message:
+      prefix: chore
