@@ -19,7 +19,6 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/home-mandate/spec/evaluator"
-	"github.com/home-mandate/spec/jcs"
 
 	"github.com/home-mandate/ha-home-mandate/internal/agent"
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
@@ -246,25 +245,29 @@ func (g *Gateway) cancelled(ctx context.Context, a agent.Agent, token string, d 
 }
 
 // callDigest is the digest of the effective call: domain, service and data as they would
-// be executed, canonicalised (RFC 8785), so that 50 and 50.0 or another key order are the
-// same call. It is empty if the call cannot be encoded, which never happens for data
-// that came from JSON.
+// be executed, canonicalised, so that 50 and 50.0 or another key order are the same call.
+// The specification's jcs package takes integers only, but a call carries Home Assistant
+// units (21.5 degrees, a volume of 0.4; issue #108). So every number is decoded as a
+// float64 and encoded in its shortest form, keys sorted, without HTML escaping; for the
+// integers and identifiers of a call that is the RFC 8785 form, and the digests of
+// requests made before stay the same. It is empty if the call cannot be encoded, which
+// never happens for data that came from JSON.
 func callDigest(call ha.ServiceCall) string {
 	data, err := json.Marshal(map[string]any{"domain": call.Domain, "service": call.Service, "entity_id": call.EntityID, "data": call.Data})
 	if err != nil {
 		return ""
 	}
 	var generic any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&generic); err != nil {
+	if err := json.Unmarshal(data, &generic); err != nil {
 		return ""
 	}
-	canonical, err := jcs.Canonicalize(generic)
-	if err != nil {
+	var canonical bytes.Buffer
+	enc := json.NewEncoder(&canonical)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(generic); err != nil {
 		return ""
 	}
-	sum := sha256.Sum256(canonical)
+	sum := sha256.Sum256(bytes.TrimSuffix(canonical.Bytes(), []byte("\n")))
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 

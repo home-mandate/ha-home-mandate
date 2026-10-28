@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-mandate/spec/jcs"
+
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
@@ -160,6 +162,38 @@ func TestCallDigest(t *testing.T) {
 	}
 	if callDigest(ha.ServiceCall{Data: map[string]any{"x": func() {}}}) != "" {
 		t.Error("unencodable call has a digest")
+	}
+}
+
+// A call with a fractional number (21.5 degrees, a volume of 0.4) has a digest too
+// (issue #108), and a call with integers only keeps the RFC 8785 digest it had, so the
+// journal still recognises requests made before.
+func TestCallDigestFractional(t *testing.T) {
+	climate := func(data map[string]any) string {
+		return callDigest(ha.ServiceCall{Domain: "climate", Service: "set_temperature", EntityID: "climate.hall", Data: data})
+	}
+	var written map[string]any
+	if err := json.Unmarshal([]byte(`{"temperature": 21.50}`), &written); err != nil {
+		t.Fatal(err)
+	}
+	half := climate(map[string]any{"temperature": 21.5})
+	if half == "" || half != climate(written) || half == climate(map[string]any{"temperature": 21.6}) {
+		t.Errorf("digests %q, %q", half, climate(written))
+	}
+	if callDigest(ha.ServiceCall{Domain: "media_player", Service: "volume_set", EntityID: "media_player.kitchen",
+		Data: map[string]any{"volume_level": 0.4}}) == "" {
+		t.Error("volume 0.4 has no digest")
+	}
+
+	whole := map[string]any{"domain": "light", "service": "turn_on", "entity_id": "light.kitchen",
+		"data": map[string]any{"brightness_pct": json.Number("50"), "transition": json.Number("2")}}
+	before, err := jcs.Digest(whole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := callDigest(ha.ServiceCall{Domain: "light", Service: "turn_on", EntityID: "light.kitchen",
+		Data: map[string]any{"brightness_pct": 50, "transition": 2.0}}); got != before {
+		t.Errorf("integer call: %s, before %s", got, before)
 	}
 }
 

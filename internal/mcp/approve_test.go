@@ -451,6 +451,34 @@ func TestApprovalShowsTheServiceData(t *testing.T) {
 	}
 }
 
+// Issue #108: a call with a fractional number in Home Assistant units (21.5 degrees) is
+// asked and, once confirmed, executed; it was refused with call_fingerprint before.
+func TestApprovedFractionalTemperatureIsExecuted(t *testing.T) {
+	f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: answeredAt}}
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = append([]any{map[string]any{"id": "r-ask-heating", "resource": map[string]any{"entity_id": "climate.living_room"},
+			"actions": []any{"set_temperature"}, "decision": "ask"}}, d["rules"].([]any)...)
+	})
+	f.journal = h.journal
+	h.approver = f
+	h.url = h.serve(h.log)
+	_, errText := h.call(h.session(), "perform_action", map[string]any{"entity_id": "climate.living_room", "action": "set_temperature",
+		"params": map[string]any{"temperature": 21.5}})
+	if errText != "" {
+		t.Fatalf("perform_action = %q", errText)
+	}
+	if reqs := f.requests(); len(reqs) != 1 {
+		t.Errorf("asked = %+v", reqs)
+	}
+	if calls := h.ha.recorded(); len(calls) != 1 || calls[0].Service != "set_temperature" || calls[0].Data["temperature"] != 21.5 {
+		t.Errorf("calls = %+v", calls)
+	}
+	if e := h.lastEntry(); path(e, "evaluation", "decision") != "ask" || path(e, "approval", "outcome") != "approved" ||
+		path(e, "result", "status") != "executed" {
+		t.Errorf("audit entry = %v", e)
+	}
+}
+
 // Decision F2: the request says whether the action is critical (the UI channel depends
 // on it) and which agent asks; the audit entry records the channel of the answer.
 func TestRequestIsMarkedAndChannelRecorded(t *testing.T) {
