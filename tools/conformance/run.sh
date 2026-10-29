@@ -6,10 +6,13 @@
 set -eu
 
 classes=evaluator,selection,audit,audit-anchored
+# Both reports name the implementation and its release (SPEC-v0 section 10.4); the process
+# binding's harness answers capabilities with the same name and version.
+name=Home-Mandate
+version=${VERSION:-dev}
 tool=github.com/home-mandate/spec/cmd/mandate-conformance
 mkdir -p bin
-# The reports name the release (VERSION, as for make build), not the format.
-go build -ldflags "-X main.version=${VERSION:-dev}" -o bin/hm-conformance ./tools/conformance
+go build -ldflags "-X main.version=$version" -o bin/hm-conformance ./tools/conformance
 go build -o bin/mandate-conformance "$tool"
 
 bin/mandate-conformance -classes "$classes" -report bin/conformance-process.json -exec bin/hm-conformance
@@ -32,4 +35,14 @@ if [ -z "$authzen" ] || [ -z "$control" ]; then
 	exit 1
 fi
 bin/mandate-conformance -report bin/conformance-http.json -authzen "$authzen" -control "$control" \
-	-header "Authorization: Bearer $HM_CONFORMANCE_TOKEN"
+	-header "Authorization: Bearer $HM_CONFORMANCE_TOKEN" -name "$name" -version "$version"
+
+# No report leaves out who made it: each names exactly this implementation and release.
+for report in bin/conformance-process.json bin/conformance-http.json; do
+	implementation=$(sed -n '/^  "implementation": {/,/^  }/p' "$report")
+	if ! printf '%s\n' "$implementation" | grep -qxF "    \"name\": \"$name\"," ||
+		! printf '%s\n' "$implementation" | grep -qxF "    \"version\": \"$version\""; then
+		echo "conformance: $report does not name $name $version" >&2
+		exit 1
+	fi
+done
