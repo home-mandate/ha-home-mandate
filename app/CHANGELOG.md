@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.0-rc.10
+
+Ninth release candidate. Experimental. Implements the Home-Mandate Specification
+v0.1.0-rc.5, which changes no rule, format or conformance case of rc.4.
+
+Conformance
+- Both conformance reports attached to a release name Home-Mandate and the release, for
+  example `0.1.0-rc.10`: before, the process report said `v0` and the HTTP report named
+  nothing. A report without them now fails the check (#117)
+
+Documentation
+- Verifying the image's signature needs cosign 3 or later; cosign 2 does not find it (#117)
+
 ## 0.1.0-rc.9
 
 Eighth release candidate. Experimental. Implements the Home-Mandate Specification
