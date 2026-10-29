@@ -15,7 +15,7 @@ New here? The [guide on home-mandate.org](https://home-mandate.org/implementatio
 explains in a few minutes what it does and how to start; the
 [Home-Mandate Specification](https://home-mandate.org/) it implements is explained there as well.
 
-**Status: experimental.** 0.1.0-rc.9 is the eighth published release candidate. Expect rough edges,
+**Status: experimental.** 0.1.0-rc.10 is the ninth published release candidate. Expect rough edges,
 read the [limits of this version](#limits-of-this-version) and keep backups.
 
 ## Why
@@ -202,8 +202,8 @@ Home-Mandate conforms to the Home-Mandate Specification `v0.1.0-rc.5` (manifest
 `conformance/manifest.json`, SHA-256 `8184b1343c2dcaa179c1cfe73ccf216d139ec6acb10cb8469847af81c0101f9e`)
 in these classes (SPEC-v0 section 8.1), tested with the specification's test tool
 `mandate-conformance` on every pull request and with `make conformance`. This holds for
-the release 0.1.0-rc.9 (tested with `v0.1.0-rc.4`, which has the same cases); 0.1.0-rc.8
-conforms to `v0.1.0-rc.3`.
+the release 0.1.0-rc.10; 0.1.0-rc.9 was tested with `v0.1.0-rc.4`, which has the same
+cases, and 0.1.0-rc.8 conforms to `v0.1.0-rc.3`.
 <br clear="left">
 
 | Class | Cases | Binding |
