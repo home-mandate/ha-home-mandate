@@ -801,6 +801,7 @@
   "mandate_badge_audit": "Audit mode",
   "mandate_badge_audit_pending": "Audit mode waiting",
   "audit_not_enforced": "not enforced (audit mode)",
+  "audit_confirm_why": "In audit mode the matching rule would have denied the request. Because another rule asks, approval was requested before it was carried out.",
   "audit_filter_not_enforced": "Not enforced",
   "audit_field_values": "Values",
   "limits_mixed_actions": "Limits (for example for the mode or the temperature) exist only for a rule whose actions all carry that value. Add a separate allowing rule with just that action.",

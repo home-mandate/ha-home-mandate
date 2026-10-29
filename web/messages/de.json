@@ -801,6 +801,7 @@
   "mandate_badge_audit": "Probebetrieb",
   "mandate_badge_audit_pending": "Probebetrieb wartet",
   "audit_not_enforced": "nicht durchgesetzt (Probebetrieb)",
+  "audit_confirm_why": "Im Probebetrieb hätte die greifende Regel die Anfrage abgelehnt. Weil eine andere Regel nachfragt, wurde vor der Ausführung um Freigabe gebeten.",
   "audit_filter_not_enforced": "Nicht durchgesetzt",
   "audit_field_values": "Werte",
   "limits_mixed_actions": "Grenzen (z. B. für Modus oder Temperatur) gibt es nur für eine Regel, deren Aktionen alle diesen Wert haben. Lege dafür eine eigene erlaubende Regel nur mit dieser Aktion an.",

@@ -103,7 +103,7 @@
   {/if}
   {#if entry.evaluation}
     <dt>{m.audit_reason_label()}</dt>
-    <dd>{reasonText(entry.evaluation.reason)}</dd>
+    <dd>{reasonText(entry.evaluation.reason)}{#if entry.evaluation.confirm}<span>{m.audit_confirm_why()}</span>{/if}</dd>
     {#if entry.evaluation.rule_id}
       <dt>{m.audit_rule()}</dt>
       <dd><code>{cleanUntrusted(entry.evaluation.rule_id)}</code></dd>
