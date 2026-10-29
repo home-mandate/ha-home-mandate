@@ -320,7 +320,8 @@ Released images are `ghcr.io/home-mandate/ha-home-mandate:<version>` for `linux/
 `linux/arm64`, for example `0.1.0-rc.9`. There is no `latest` tag; you choose the version.
 
 1. Read the [changelog](../app/CHANGELOG.md) and the release notes.
-2. Optionally verify the image's signature (the release notes show the exact command):
+2. Optionally verify the image's signature with cosign 3 or later (cosign 2 does not find
+   the signature; the release notes show the exact command):
 
    ```sh
    cosign verify ghcr.io/home-mandate/ha-home-mandate:0.1.0-rc.9 \

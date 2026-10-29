@@ -55,7 +55,7 @@ jobs:
 
       - name: Run mandate-conformance
         run: |
-          make conformance
+          make conformance VERSION="${TAG#v}"
           cp bin/conformance-process.json conformance-report-process.json
           cp bin/conformance-http.json conformance-report-http.json
 

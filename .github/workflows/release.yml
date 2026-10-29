@@ -239,7 +239,7 @@ jobs:
               ${IMAGE}:${VERSION}
               ${IMAGE}@${DIGEST}
 
-          Check the signature before you run it:
+          Check the signature before you run it (cosign 3 or later):
 
               cosign verify ${IMAGE}@${DIGEST} \\
                 --certificate-identity ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF} \\

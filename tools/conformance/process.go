@@ -90,7 +90,7 @@ func serveProcess(ctx context.Context, r io.Reader, w io.Writer) error {
 func answer(ctx context.Context, req request) response {
 	switch req.Op {
 	case "capabilities":
-		return response{Name: "Home-Mandate", Version: "v0", Ops: ops}
+		return response{Name: "Home-Mandate", Version: version, Ops: ops}
 	case "validate":
 		if req.Mandate == nil {
 			return response{Error: "missing mandate"}
