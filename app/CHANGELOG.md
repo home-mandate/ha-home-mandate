@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.1.0-rc.9
+
+Eighth release candidate. Experimental. Implements the Home-Mandate Specification
+v0.1.0-rc.4.
+
+Audit mode
+- A deny rule in a mandate in audit mode no longer takes a confirmation away: if a
+  matching rule asks, the request is not carried out at once but asked for, with the
+  approval settings of that rule. The notification and the approval page say that the
+  mandate would deny the request and by which rule; the agent sees only that approval
+  is needed. Right before it is carried out the request is evaluated again, and anything
+  stricter than before stops it. The audit log records such requests with `confirm`, and
+  the entry says why approval was requested. A deny without a matching rule that asks is
+  still carried out without asking, as before (#114)
+
+Approvals
+- Approval requests with a fractional value, for example 21.5 °C or a volume of 40 %, no
+  longer fail before anyone is asked (#108)
+
+Design
+- New logo, a house with a key, in the UI, on the sign-in and consent pages, as favicon
+  and as the app's icon and logo in Home Assistant. The name and the logo are not covered
+  by the AGPL (#101)
+
+Maintenance
+- Every parser of input from agents, browsers, Home Assistant events and fetched metadata
+  is fuzzed, briefly in every pull request and for an hour twice a month (#107)
+- Dependencies of the CI and the container image are updated weekly in groups (#111)
+
 ## 0.1.0-rc.8
 
 Seventh release candidate. Experimental. Implements the Home-Mandate Specification
