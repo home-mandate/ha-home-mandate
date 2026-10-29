@@ -47,6 +47,7 @@ interface ConformanceCase {
   rule_id?: string | null;
   approval_timeout?: string;
   enforced?: boolean;
+  confirm?: boolean;
 }
 
 const casesFile = exactCases;
@@ -60,7 +61,7 @@ function mandateOf(c: ConformanceCase): MandateDraft {
 
 describe('evaluate: conformance cases of the specification', () => {
   it('has all cases of the pinned version', () => {
-    expect(casesFile.cases.length).toBeGreaterThanOrEqual(132);
+    expect(casesFile.cases.length).toBeGreaterThanOrEqual(223);
   });
 
   it.each(casesFile.cases.map((c) => [c.id, c] as const))('%s', (_id, c) => {
@@ -77,6 +78,7 @@ describe('evaluate: conformance cases of the specification', () => {
     if (c.rule_id !== undefined) expect(result.rule_id).toBe(c.rule_id);
     if (c.approval_timeout !== undefined) expect(result.approval?.timeout).toBe(c.approval_timeout);
     expect(result.enforced).toBe(c.enforced === false ? false : undefined);
+    expect(result.confirm).toBe(c.confirm === true ? true : undefined);
   });
 });
 
@@ -160,5 +162,53 @@ describe('evaluate: own edge cases', () => {
   it('never matches inherited object keys as categories', () => {
     const req: EvalRequest = { resource: { entity_id: 'light.flur', category: 'constructor' }, action: 'read', time: '2026-10-12T12:00:00Z' };
     expect(evaluate(base, req).reason).toBe('unknown_category');
+  });
+});
+
+describe('evaluate: audit mode and ask (SPEC-v0 sections 4.1 and 4.6)', () => {
+  const trial: MandateDraft = {
+    ...base,
+    enforce: false,
+    rules: [
+      { id: 'ask-lights', resource: { category: 'light' }, actions: ['turn_on'], decision: 'ask' },
+      {
+        id: 'ask-kitchen',
+        resource: { entity_id: 'light.kitchen' },
+        actions: ['turn_on'],
+        decision: 'ask',
+        approval: { timeout: 'PT5M', approvers: ['user-2'] },
+      },
+      { id: 'no-kitchen', resource: { entity_id: 'light.kitchen' }, actions: ['turn_on'], decision: 'deny' },
+      { id: 'no-hall', resource: { entity_id: 'light.hall' }, actions: ['turn_off'], decision: 'deny' },
+    ],
+  };
+  const at = (entity: string, action: string): EvalRequest => ({ resource: { entity_id: entity, category: 'light' }, action, time: '2026-10-12T12:00:00Z' });
+
+  it('requires a confirmation with the settings of the first ask rule that has its own', () => {
+    const result = evaluate(trial, at('light.kitchen', 'turn_on'));
+    expect(result).toEqual({
+      decision: 'deny',
+      reason: 'rule',
+      rule_id: 'no-kitchen',
+      enforced: false,
+      confirm: true,
+      approval: { timeout: 'PT5M', approvers: ['user-2'] },
+    });
+    expect(result.approval).not.toBe(trial.rules[1]!.approval);
+  });
+
+  it('falls back to the settings of the mandate', () => {
+    const withoutOwn: MandateDraft = { ...trial, rules: trial.rules.filter((r) => r.id !== 'ask-kitchen') };
+    expect(evaluate(withoutOwn, at('light.kitchen', 'turn_on')).approval).toEqual(base.approval);
+  });
+
+  it('requires none for a deny without a matching ask rule', () => {
+    expect(evaluate(trial, at('light.hall', 'turn_off'))).toEqual({ decision: 'deny', reason: 'rule', rule_id: 'no-hall', enforced: false });
+  });
+
+  it('requires none while the mandate enforces', () => {
+    const enforcing: MandateDraft = { ...trial };
+    delete enforcing.enforce;
+    expect(evaluate(enforcing, at('light.kitchen', 'turn_on'))).toEqual({ decision: 'deny', reason: 'rule', rule_id: 'no-kitchen' });
   });
 });

@@ -235,18 +235,25 @@ type Evaluation struct {
 	// NotEnforced: a deny by the rules of a mandate in audit mode that was executed
 	// (SPEC-v0 section 4.6); written as enforced: false.
 	NotEnforced bool `json:"-"`
+	// Confirm: such a deny that required a confirmation because a matching rule decides
+	// ask (SPEC-v0 sections 4.1 and 9.1); written as confirm: true, only with NotEnforced.
+	Confirm bool `json:"-"`
 }
 
-// MarshalJSON writes enforced: false for a deny that was not enforced and nothing for
-// every other result.
+// MarshalJSON writes enforced: false for a deny that was not enforced, with confirm: true
+// if it required a confirmation, and nothing for every other result.
 func (e Evaluation) MarshalJSON() ([]byte, error) {
 	type plain Evaluation
 	w := struct {
 		plain
 		Enforced *bool `json:"enforced,omitempty"`
+		Confirm  *bool `json:"confirm,omitempty"`
 	}{plain: plain(e)}
 	if e.NotEnforced {
 		w.Enforced = new(bool)
+		if e.Confirm {
+			w.Confirm = new(true)
+		}
 	}
 	return json.Marshal(w)
 }
@@ -257,12 +264,14 @@ func (e *Evaluation) UnmarshalJSON(data []byte) error {
 	var w struct {
 		plain
 		Enforced *bool `json:"enforced"`
+		Confirm  *bool `json:"confirm"`
 	}
 	if err := json.Unmarshal(data, &w); err != nil {
 		return err
 	}
 	*e = Evaluation(w.plain)
 	e.NotEnforced = w.Enforced != nil && !*w.Enforced
+	e.Confirm = e.NotEnforced && w.Confirm != nil && *w.Confirm
 	return nil
 }
 

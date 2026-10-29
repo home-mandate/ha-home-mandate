@@ -136,7 +136,7 @@ func (s *Snapshot) Decide(entityID, action string, parameters map[string]evaluat
 			_, r := evaluator.SelectAndEvaluate(s.stored, s.clientID, s.p.cfg.Principal, evaluator.Request{
 				Resource: formerResource, Action: action, Parameters: parameters, Time: d.Time, TimeZone: d.TimeZone,
 			})
-			if strictness[r.Decision] > strictness[d.Result.Decision] {
+			if strictness(r) > strictness(d.Result) {
 				d.Result, d.Former = r, former
 			}
 		}
@@ -197,8 +197,25 @@ func (s *Snapshot) RateKey() string {
 	return RateKey(s.clientID, "")
 }
 
-// strictness orders decisions: the higher wins between two evaluations of one request.
-var strictness = map[evaluator.Decision]int{evaluator.Allow: 0, evaluator.Ask: 1, evaluator.Deny: 2}
+// strictness orders results by what the PEP does with them: the higher wins between two
+// evaluations of one request. A deny that a mandate in audit mode does not enforce is
+// executed without asking anyone (SPEC-v0 section 4.6), so it weighs less than an ask;
+// one that requires a confirmation asks a human as well, and is checked more strictly
+// after the confirmation (section 11.1 item 6).
+func strictness(r evaluator.Result) int {
+	switch {
+	case r.Decision == evaluator.Allow:
+		return 0
+	case r.Decision == evaluator.Deny && r.NotEnforced && !r.Confirm:
+		return 1
+	case r.Decision == evaluator.Ask:
+		return 2
+	case r.Decision == evaluator.Deny && r.Confirm:
+		return 3
+	default:
+		return 4
+	}
+}
 
 // names tells whether a candidate's rules name entityID.
 func (s *Snapshot) names(entityID string) bool {
@@ -276,6 +293,9 @@ type (
 		// Enforced is present, and false, only for a deny the PEP does not enforce
 		// (audit mode, SPEC-v0 sections 4.6 and 6).
 		Enforced *bool `json:"enforced,omitempty"`
+		// Confirm is present, and true, only for such a deny that requires a confirmation:
+		// the PEP executes it only after a human confirmed it, as an ask (SPEC-v0 section 6).
+		Confirm bool `json:"confirm,omitempty"`
 	}
 )
 
@@ -326,8 +346,10 @@ func response(r evaluator.Result) Response {
 	if r.NotEnforced {
 		enforced := false
 		out.Context.Enforced = &enforced
+		out.Context.Confirm = r.Confirm
 	}
-	if r.Decision == evaluator.Ask && r.Approval != nil {
+	// The approval settings for an ask and for a deny that requires a confirmation.
+	if (r.Decision == evaluator.Ask || out.Context.Confirm) && r.Approval != nil {
 		out.Context.ApprovalTimeout, out.Context.Approvers = r.Approval.Timeout, r.Approval.Approvers
 	}
 	return out

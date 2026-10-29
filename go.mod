@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/google/jsonschema-go v0.4.3
-	github.com/home-mandate/spec v0.1.0-rc.3
+	github.com/home-mandate/spec v0.1.0-rc.4
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3

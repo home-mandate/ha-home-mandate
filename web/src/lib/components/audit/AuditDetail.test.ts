@@ -27,6 +27,8 @@ const entry = (parameters?: Record<string, number | string>): AuditEntry => ({
   prev: null,
 });
 
+const CONFIRM_WHY = 'In audit mode the matching rule would have denied the request. Because another rule asks, approval was requested before it was carried out.';
+
 const props = (e: AuditEntry) => ({ entry: e, catalog: null, ctx: { locale: 'en', timeZone: 'UTC' }, broken: false, headingId: 'h' });
 
 describe('AuditDetail', () => {
@@ -39,5 +41,25 @@ describe('AuditDetail', () => {
   it('has no values row for an action without parameters', () => {
     render(AuditDetail, props(entry()));
     expect(screen.queryByText('Values')).toBeNull();
+  });
+
+  it('says why approval was requested for a deny that audit mode did not enforce', () => {
+    const confirmed: AuditEntry = {
+      ...entry(),
+      evaluation: { decision: 'deny', reason: 'rule', rule_id: 'no-office', approval_timeout: 'PT2M', enforced: false, confirm: true },
+      approval: { outcome: 'approved', by_name: 'Markus', via: 'ui', at: '2026-10-21T18:00:30.000Z' },
+    };
+    render(AuditDetail, props(confirmed));
+    expect(screen.getByText(CONFIRM_WHY)).toBeTruthy();
+  });
+
+  it('has no such note for a deny that was not enforced without confirmation', () => {
+    const plain: AuditEntry = {
+      ...entry(),
+      evaluation: { decision: 'deny', reason: 'rule', rule_id: 'no-office', enforced: false },
+    };
+    render(AuditDetail, props(plain));
+    expect(screen.getByText('not enforced (audit mode)')).toBeTruthy();
+    expect(screen.queryByText(CONFIRM_WHY)).toBeNull();
   });
 });

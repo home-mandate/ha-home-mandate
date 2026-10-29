@@ -67,6 +67,7 @@ type conformanceCase struct {
 	RuleID          *string                    `json:"rule_id"`
 	ApprovalTimeout string                     `json:"approval_timeout"`
 	Enforced        *bool                      `json:"enforced"`
+	Confirm         bool                       `json:"confirm"`
 	Why             string                     `json:"why"`
 }
 
@@ -178,6 +179,7 @@ func TestConformanceCasesOverHTTP(t *testing.T) {
 			if notEnforced := c.Enforced != nil && !*c.Enforced; notEnforced != (got.Context.Enforced != nil && !*got.Context.Enforced) {
 				t.Errorf("%s: enforced %v, want not enforced %t", c.ID, got.Context.Enforced, notEnforced)
 			}
+			checkConfirm(t, c.ID, c.Confirm, got.Context)
 			if c.Reason != "invalid_mandate" && !strings.HasPrefix(got.Context.MandateDigest, "sha256:") {
 				t.Errorf("%s: mandate_digest missing", c.ID)
 			}
@@ -461,7 +463,23 @@ func TestSelectionCasesOverHTTP(t *testing.T) {
 			if resp.StatusCode != http.StatusOK || got.Decision != (c.Expected == "allow") || got.Context.Outcome != c.Expected || got.Context.Reason != c.Reason {
 				t.Errorf("%s (%s): got %+v, want %s/%s", c.ID, c.Why, got, c.Expected, c.Reason)
 			}
+			if got.Context.ApprovalTimeout != c.ApprovalTimeout {
+				t.Errorf("%s: approval_timeout %q, want %q", c.ID, got.Context.ApprovalTimeout, c.ApprovalTimeout)
+			}
+			checkConfirm(t, c.ID, c.Confirm, got.Context)
 		})
+	}
+}
+
+// checkConfirm checks confirm of an AuthZEN response (SPEC-v0 section 6): true, with the
+// approval settings, exactly for a deny that is not enforced and requires a confirmation.
+func checkConfirm(t *testing.T, id string, want bool, got ResponseContext) {
+	t.Helper()
+	if got.Confirm != want {
+		t.Errorf("%s: confirm %t, want %t", id, got.Confirm, want)
+	}
+	if want && (got.ApprovalTimeout == "" || len(got.Approvers) == 0 || got.Enforced == nil || *got.Enforced) {
+		t.Errorf("%s: confirm without approval settings or enforced: false: %+v", id, got)
 	}
 }
 
@@ -541,6 +559,49 @@ func TestRulesOnAFormerIDKeepApplying(t *testing.T) {
 			got, err := New(cfg).Decide(context.Background(), clientID, "switch.garage_opener", "turn_on", nil)
 			if err != nil || got.Result.Decision != tc.want || got.Former != tc.former || got.Resource.EntityID != "switch.garage_opener" {
 				t.Errorf("Decide = %+v, %v; want %s by former %q", got, err, tc.want, tc.former)
+			}
+		})
+	}
+}
+
+// In audit mode a deny that is not enforced weighs less than an ask: it is executed
+// without asking anyone. An ask on a former ID wins over it, and a deny that requires a
+// confirmation over a plain one (fail closed).
+func TestRulesOnAFormerIDInAuditMode(t *testing.T) {
+	rule := func(id string, resource map[string]any, decision string) map[string]any {
+		return map[string]any{"id": id, "resource": resource, "actions": []any{"turn_on"}, "decision": decision}
+	}
+	current := map[string]any{"entity_id": "switch.garage_opener"}
+	former := map[string]any{"entity_id": "switch.gate_opener"}
+	for name, tc := range map[string]struct {
+		rules       []map[string]any
+		want        evaluator.Decision
+		notEnforced bool
+		confirm     bool
+		former      string
+	}{
+		"ask on the former ID wins over a deny that is not enforced": {[]map[string]any{rule("r-deny", current, "deny"), rule("r-ask", former, "ask")},
+			evaluator.Ask, false, false, "switch.gate_opener"},
+		"a deny that requires a confirmation wins over a plain one": {[]map[string]any{rule("r-deny", current, "deny"), rule("r-ask", former, "ask"), rule("r-no", former, "deny")},
+			evaluator.Deny, true, true, "switch.gate_opener"},
+		"a deny that requires a confirmation wins over an ask": {[]map[string]any{rule("r-ask", current, "ask"), rule("r-ask-2", former, "ask"), rule("r-no", former, "deny")},
+			evaluator.Deny, true, true, "switch.gate_opener"},
+		"a plain deny does not win over an ask": {[]map[string]any{rule("r-ask", current, "ask"), rule("r-no", former, "deny")},
+			evaluator.Ask, false, false, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, clientID := voice(t)
+			var doc map[string]any
+			_ = json.Unmarshal(voiceWithRules(tc.rules...), &doc)
+			doc["enforce"] = false
+			d, _ := json.Marshal(doc)
+			c := stored(d, mandate.Info{ID: "m-voice-assistant"})
+			c.Entities = mandate.NamedEntities(d)
+			cfg.Mandates = fakeMandates{candidates: []mandate.Candidate{c}}
+			cfg.Catalog = fakeCatalog{"switch.garage_opener": {EntityID: "switch.garage_opener", Category: "switch", Formers: []string{"switch.gate_opener"}}}
+			got, err := New(cfg).Decide(context.Background(), clientID, "switch.garage_opener", "turn_on", nil)
+			if err != nil || got.Result.Decision != tc.want || got.Result.NotEnforced != tc.notEnforced || got.Result.Confirm != tc.confirm || got.Former != tc.former {
+				t.Errorf("Decide = %+v, %v; want %s (not enforced %t, confirm %t) by former %q", got, err, tc.want, tc.notEnforced, tc.confirm, tc.former)
 			}
 		})
 	}

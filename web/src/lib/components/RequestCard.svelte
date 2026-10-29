@@ -48,6 +48,8 @@
   const where = $derived(areaName ? cleanUntrusted(areaName) + SEPARATOR + time : time);
   const total = $derived(Math.max(1, Math.round((Date.parse(request.expires_at) - Date.parse(request.created_at)) / 1000)));
   const recipients = $derived(formatList(request.recipients.map((r) => cleanUntrusted(r)), ctx));
+  // Audit mode: the mandate would deny, by this rule (SPEC-v0 section 11.1 item 2).
+  const wouldDeny = $derived(request.would_deny_rule ? pieces(m.request_would_deny({ rule: MARK })) : null);
 </script>
 
 <article class="card" aria-labelledby={titleId}>
@@ -74,6 +76,12 @@
     {/if}
     {#if request.state}
       <p class="values"><span>{m.request_state()}</span> <bdi>{cleanUntrusted(request.state)}</bdi></p>
+    {/if}
+    {#if wouldDeny}
+      <p class="would-deny">
+        {#each wouldDeny as piece, i (i)}{#if 'text' in piece}{piece.text}{:else}<bdi>{cleanUntrusted(request.would_deny_rule ?? '')}</bdi
+            >{/if}{/each}
+      </p>
     {/if}
     {#if request.reason}<ReasonBox reason={request.reason} />{/if}
     {#if request.recipients.length > 0}<span class="sent">{m.request_sent_to({ names: recipients })}</span>{/if}
@@ -134,6 +142,15 @@
   }
   .tag {
     font-size: var(--hm-font-size-xs);
+  }
+  .would-deny {
+    margin: 0;
+    padding: var(--hm-space-2) var(--hm-space-3);
+    border: var(--hm-border-width) solid var(--hm-color-deny-border);
+    border-radius: var(--hm-radius-md);
+    background: var(--hm-color-deny-bg);
+    font-size: var(--hm-font-size-sm);
+    overflow-wrap: anywhere;
   }
   .actions {
     display: flex;

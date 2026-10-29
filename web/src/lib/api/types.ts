@@ -807,6 +807,12 @@ export interface ApprovalRequest {
    * 10); the action is executed only while it holds. Null or absent when unknown. Untrusted.
    */
   state?: string | null;
+  /**
+   * The mandate is in audit mode and would deny the request by this rule, but a matching
+   * rule asks, so a human confirms first (SPEC-v0 sections 4.6 and 11.1 item 2). The
+   * agent is never told. Null or absent for every other request. Cleaned by the server.
+   */
+  would_deny_rule?: string | null;
   created_at: string;
   expires_at: string;
   /**
@@ -923,8 +929,11 @@ export interface AuditEntry {
    * name, also of a removed one (both added by the API, not part of the chain; F4).
    */
   mandate?: { id: string; digest: string; previous_digest?: string; version?: number; name?: string };
-  /** enforced: false only for a deny of a mandate in audit mode that was executed (SPEC-v0 section 4.6). */
-  evaluation?: { decision: Decision; reason: Reason; rule_id: string | null; approval_timeout?: string; enforced?: false };
+  /**
+   * enforced: false only for a deny of a mandate in audit mode that was not enforced (SPEC-v0 section 4.6);
+   * confirm: true only with it, when a matching ask rule required a confirmation first (section 9.1).
+   */
+  evaluation?: { decision: Decision; reason: Reason; rule_id: string | null; approval_timeout?: string; enforced?: false; confirm?: true };
   /** via: the channel the answer came through, push or ui (decision F2). */
   approval?: { outcome: ApprovalOutcome; cause?: ApprovalCause; by?: string; by_name?: string; via?: 'push' | 'ui'; at: string };
   result?: { status: ResultStatus; denied_by?: DeniedBy; error?: string; duration_ms?: number };
