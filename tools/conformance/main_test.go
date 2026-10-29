@@ -100,7 +100,7 @@ func TestProcessBindingAnswersEveryOperation(t *testing.T) {
 		name string
 		want map[string]any
 	}{
-		{"capabilities", map[string]any{"name": "Home-Mandate"}},
+		{"capabilities", map[string]any{"name": "Home-Mandate", "version": "dev"}},
 		{"valid mandate", map[string]any{"valid": true}},
 		{"invalid mandate", map[string]any{"valid": false}},
 		{"evaluate through the PDP", map[string]any{"decision": "ask", "reason": "rule", "rule_id": "r-locks"}},

@@ -34,6 +34,10 @@ const (
 	minTokenLength = 32
 )
 
+// version is the release the conformance report names (SPEC-v0 section 10.4), set at build
+// time with -ldflags "-X main.version=0.1.0" (tools/conformance/run.sh).
+var version = "dev"
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()

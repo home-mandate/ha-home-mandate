@@ -8,7 +8,8 @@ set -eu
 classes=evaluator,selection,audit,audit-anchored
 tool=github.com/home-mandate/spec/cmd/mandate-conformance
 mkdir -p bin
-go build -o bin/hm-conformance ./tools/conformance
+# The reports name the release (VERSION, as for make build), not the format.
+go build -ldflags "-X main.version=${VERSION:-dev}" -o bin/hm-conformance ./tools/conformance
 go build -o bin/mandate-conformance "$tool"
 
 bin/mandate-conformance -classes "$classes" -report bin/conformance-process.json -exec bin/hm-conformance
