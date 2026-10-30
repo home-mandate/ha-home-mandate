@@ -231,14 +231,17 @@ func (g *Gateway) listPermissions(ctx context.Context, req *sdk.CallToolRequest,
 		// Only what the device can carry out (issue #89): a well-behaved agent then picks
 		// unlock, not open, for a lock without OPEN.
 		for _, action := range actionsItCanDo(dev.Category, dev.Attributes) {
-			d := snap.Decide(dev.EntityID, action, nil)
+			// Probed with its required parameters (a request without them is invalid, SPEC-v0
+			// section 4 step 0); only an allow rule's constraints depend on their values.
+			d := snap.Decide(dev.EntityID, action, probeParameters(dev.Category, action, unit))
 			if decision := effective(d.Result); decision != evaluator.Deny {
 				actions[action] = string(decision)
 				continue
 			}
-			// Evaluated without values, an action allowed only within limits does not
-			// match: it is allowed with the values its limits name.
-			if d.Result.Reason != evaluator.ReasonNoMatch {
+			// Evaluated with sample values, an action allowed only within limits may not
+			// match: it is allowed with the values its limits name. So may one whose
+			// required temperature cannot be given while the household's unit is unknown.
+			if d.Result.Reason != evaluator.ReasonNoMatch && d.Result.Reason != evaluator.ReasonInvalidRequest {
 				continue
 			}
 			lims := agentLimits(snap.Limits(dev.EntityID, action), dev.Category, action, unit)

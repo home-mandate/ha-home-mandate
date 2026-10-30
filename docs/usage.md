@@ -53,11 +53,11 @@ Home-Mandate takes a device's category from Home Assistant, never from the agent
 |---|---|---|
 | Lights | `light.*` | read, turn on, turn off, set (brightness, colour temperature) |
 | Switch | `switch.*` | read, turn on, turn off |
-| Climate | `climate.*` | read, set temperature, set mode |
+| Climate | `climate.*` | read, set temperature (a setpoint or a range), set mode |
 | Blinds | `cover.*` of other classes (blind, shade, shutter, curtain, awning, window …) | read, open, close, stop, set position |
 | Gate/garage | `cover.*` of the class garage, gate or door, **and covers without a class** | read, **open**, close |
 | Lock | `lock.*` | read, lock, **unlock**, **open** |
-| Alarm | `alarm_control_panel.*` | read, arm (home, away, night), **disarm** |
+| Alarm | `alarm_control_panel.*` | read, arm (home, away, night, vacation, custom bypass), **disarm** |
 | Camera | `camera.*` | read, **get snapshot** |
 | Media | `media_player.*` | read, on, off, play, pause, volume |
 | Sensor | `sensor.*`, `binary_sensor.*` | read |

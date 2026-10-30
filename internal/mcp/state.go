@@ -115,6 +115,10 @@ func reached(category, action string, rule stateRule, call ha.ServiceCall, dev c
 	switch {
 	case category == "alarm" && action == "arm":
 		return dev.State == "armed_"+strings.TrimPrefix(call.Service, vocabulary["alarm"]["arm"].service)
+	case category == "climate" && action == "set_temperature" && isRange(call):
+		// Both ends of the range are reached (attributes target_temp_low and target_temp_high).
+		return attributeEquals(dev, "target_temp_low", call.Data["target_temp_low"]) &&
+			attributeEquals(dev, "target_temp_high", call.Data["target_temp_high"])
 	case rule.attr != "":
 		want, ok1 := number(call.Data[rule.param])
 		have, ok2 := number(dev.Attributes[rule.attr])
@@ -129,6 +133,13 @@ func reached(category, action string, rule stateRule, call ha.ServiceCall, dev c
 		}
 	}
 	return slices.Contains(rule.targets, dev.State)
+}
+
+// attributeEquals tells whether the numeric attribute attr of dev is the requested value.
+func attributeEquals(dev catalog.Device, attr string, requested any) bool {
+	want, ok1 := number(requested)
+	have, ok2 := number(dev.Attributes[attr])
+	return ok1 && ok2 && math.Abs(want-have) < valueTolerance
 }
 
 // hasStateCheck tells whether the action has a state check (a row of targetStates).

@@ -11,6 +11,8 @@ import {
   lookupAction,
   needsCriticalConfirmation,
   newRule,
+  parametersAdmitted,
+  validParameterName,
 } from './vocabulary.ts';
 
 const draft = (rules: Rule[]): MandateDraft => ({
@@ -147,5 +149,53 @@ describe('needsCriticalConfirmation (decision U9)', () => {
 
   it('lists the granting rules for the confirmation dialog', () => {
     expect(grantsCritical(draft([newRule('light', []), unlockAllowed]))).toEqual([unlockAllowed]);
+  });
+});
+
+// SPEC-v0 section 4 step 0 (spec #78): a request carries exactly the parameters its action
+// declares, every required one, and exactly one alternative of required_one_of.
+describe('parametersAdmitted', () => {
+  it('admits the declared parameters within their range or values', () => {
+    expect(parametersAdmitted('light', 'set', { brightness: 40 })).toBe(true);
+    expect(parametersAdmitted('light', 'set', {})).toBe(true);
+    expect(parametersAdmitted('light', 'set', { brightness: 101 })).toBe(false);
+    expect(parametersAdmitted('climate', 'set_mode', { mode: 'heat' })).toBe(true);
+    expect(parametersAdmitted('climate', 'set_mode', { mode: 'sauna' })).toBe(false);
+  });
+
+  it('refuses a parameter the action does not declare', () => {
+    expect(parametersAdmitted('light', 'set', { brightness: 40, color: 3000 })).toBe(false);
+    expect(parametersAdmitted('light', 'turn_on', { brightness: 40 })).toBe(false);
+  });
+
+  it('demands every required parameter', () => {
+    expect(parametersAdmitted('alarm', 'arm', { mode: 'vacation' })).toBe(true);
+    expect(parametersAdmitted('alarm', 'arm', {})).toBe(false);
+    expect(parametersAdmitted('cover', 'set_position', {})).toBe(false);
+    expect(parametersAdmitted('media', 'set_volume', { volume: 30 })).toBe(true);
+  });
+
+  it('demands exactly one alternative of required_one_of, completely', () => {
+    expect(parametersAdmitted('climate', 'set_temperature', { temperature: 2100 })).toBe(true);
+    expect(parametersAdmitted('climate', 'set_temperature', { temperature_low_f: 6500, temperature_high_f: 7200 })).toBe(true);
+    expect(parametersAdmitted('climate', 'set_temperature', {})).toBe(false);
+    expect(parametersAdmitted('climate', 'set_temperature', { temperature_low: 1800 })).toBe(false);
+    expect(parametersAdmitted('climate', 'set_temperature', { temperature: 2100, temperature_f: 7000 })).toBe(false);
+    expect(parametersAdmitted('climate', 'set_temperature', { temperature: 2100, temperature_low: 1800, temperature_high: 2200 })).toBe(false);
+  });
+
+  it('leaves an unknown category or action to the later steps', () => {
+    expect(parametersAdmitted('toaster', 'set', { heat: 3 })).toBe(true);
+    expect(parametersAdmitted('light', 'explode', { force: 3 })).toBe(true);
+    expect(parametersAdmitted(undefined, 'set', { x: 1 })).toBe(true);
+  });
+});
+
+describe('validParameterName', () => {
+  it.each(['mode', 'temperature_low_f', 'a', 'x'.repeat(64)])('accepts %s', (name) => {
+    expect(validParameterName(name)).toBe(true);
+  });
+  it.each(['', 'Mode', '_mode', '1mode', 'mode-x', 'mode x', 'x'.repeat(65), 'tempé'])('refuses %j', (name) => {
+    expect(validParameterName(name)).toBe(false);
   });
 });

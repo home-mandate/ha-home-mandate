@@ -233,7 +233,8 @@ Every line is at least one test. New attack ideas are added here before they are
 - "Yes" and "No" at the same time → first valid answer counts, second discarded, both logged
 - Very long or manipulated "reason" from the agent (control characters, Markdown, links) → truncated, sanitized, marked as the agent's claim
 - Invalid action parameters → rejected before a human is asked
-- Arming the alarm (`alarm_arm_<mode>`, no service data) → the request shows the mode, `away` when the agent names none
+- Arming the alarm (`alarm_arm_<mode>`, no service data) → the request shows the mode; an agent that names none is refused (`invalid_params`) before anyone is asked
+- A range setpoint (`target_temp_low` with `target_temp_high`) → the request shows both ends with their unit; half a range, or a range with a `temperature`, is refused before anyone is asked
 - Emergency stop, revoked token or changed mandate while the human decides → not executed
 - More than 2 pending approval requests of one agent → refused
 - The same agent asks again for the same device after a rejection, an invalid answer or a second timeout in a row → `denied: approval_cooldown` without notifying anyone, logged; the wait doubles from 1 minute to at most 1 hour and ends with an approval or a quiet hour; other devices and agents are not affected; no reachable approver starts no wait
