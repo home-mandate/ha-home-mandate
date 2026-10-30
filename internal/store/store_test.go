@@ -351,3 +351,13 @@ func TestBusyTimeoutCoversTheCallToHomeAssistant(t *testing.T) {
 		t.Errorf("busy_timeout = %d ms", ms)
 	}
 }
+
+// Temporary files of SQLite stay in memory: the container image has no temporary
+// directory, and a statement journal on disk would fail there.
+func TestTemporaryFilesStayInMemory(t *testing.T) {
+	s, _ := openTemp(t)
+	var tempStore int
+	if err := s.DB().QueryRowContext(context.Background(), `PRAGMA temp_store`).Scan(&tempStore); err != nil || tempStore != 2 {
+		t.Errorf("temp_store = %d, %v; want 2 (memory)", tempStore, err)
+	}
+}

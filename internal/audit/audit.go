@@ -800,40 +800,48 @@ func (l *Log) Truncate(ctx context.Context, cutoff time.Time, actor Actor) (int6
 func (l *Log) truncate(ctx context.Context, cutoff time.Time, limit int64, actor Actor) (int64, error) {
 	var removed int64
 	err := l.inTx(ctx, func(tx *sql.Tx) error {
-		// n: the newest old entry, but never the newest entry of the log, nor more than
-		// limit entries.
-		var n sql.NullInt64
-		var lastDigest sql.NullString
-		err := tx.QueryRowContext(ctx, `WITH bounds AS (
-				SELECT min((SELECT max(seq) FROM audit_log WHERE recorded_at < ?), (SELECT max(seq) FROM audit_log) - 1,
-					(SELECT min(seq) FROM audit_log) - 1 + ?) AS n)
-			SELECT n, (SELECT digest FROM audit_log WHERE seq = n) FROM bounds`,
-			cutoff.UTC().Format(timeFormat), limit).Scan(&n, &lastDigest)
-		if err != nil {
-			return fmt.Errorf("audit: find old entries: %w", err)
-		}
-		if !n.Valid || !lastDigest.Valid {
-			return nil
-		}
-		if _, err := l.AppendTx(ctx, tx, Entry{Event: EventLogTruncated, Actor: &actor,
-			Truncated: &Truncated{UpToSeq: n.Int64, LastDigest: lastDigest.String}}); err != nil {
-			return err
-		}
-		res, err := tx.ExecContext(ctx, `DELETE FROM audit_log WHERE seq <= ?`, n.Int64)
-		if err != nil {
-			return fmt.Errorf("audit: delete: %w", err)
-		}
-		removed, _ = res.RowsAffected()
-		// The entry that accounts for the removed beginning must itself be anchored.
-		if l.signer() != nil {
-			if _, err := l.AppendTx(ctx, tx, Entry{Event: EventLogCheckpoint, checkpoint: true}); err != nil {
-				return err
-			}
-		}
-		return nil
+		var err error
+		removed, err = l.truncateTx(ctx, tx, cutoff, limit, actor)
+		return err
 	})
 	if err != nil {
 		return 0, err // rolled back: nothing was deleted
+	}
+	return removed, nil
+}
+
+// truncateTx is truncate within tx, so that a caller can combine it with other changes
+// that must commit together or not at all.
+func (l *Log) truncateTx(ctx context.Context, tx *sql.Tx, cutoff time.Time, limit int64, actor Actor) (int64, error) {
+	// n: the newest old entry, but never the newest entry of the log, nor more than
+	// limit entries.
+	var n sql.NullInt64
+	var lastDigest sql.NullString
+	err := tx.QueryRowContext(ctx, `WITH bounds AS (
+			SELECT min((SELECT max(seq) FROM audit_log WHERE recorded_at < ?), (SELECT max(seq) FROM audit_log) - 1,
+				(SELECT min(seq) FROM audit_log) - 1 + ?) AS n)
+		SELECT n, (SELECT digest FROM audit_log WHERE seq = n) FROM bounds`,
+		cutoff.UTC().Format(timeFormat), limit).Scan(&n, &lastDigest)
+	if err != nil {
+		return 0, fmt.Errorf("audit: find old entries: %w", err)
+	}
+	if !n.Valid || !lastDigest.Valid {
+		return 0, nil
+	}
+	if _, err := l.AppendTx(ctx, tx, Entry{Event: EventLogTruncated, Actor: &actor,
+		Truncated: &Truncated{UpToSeq: n.Int64, LastDigest: lastDigest.String}}); err != nil {
+		return 0, err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM audit_log WHERE seq <= ?`, n.Int64)
+	if err != nil {
+		return 0, fmt.Errorf("audit: delete: %w", err)
+	}
+	removed, _ := res.RowsAffected()
+	// The entry that accounts for the removed beginning must itself be anchored.
+	if l.signer() != nil {
+		if _, err := l.AppendTx(ctx, tx, Entry{Event: EventLogCheckpoint, checkpoint: true}); err != nil {
+			return 0, err
+		}
 	}
 	return removed, nil
 }

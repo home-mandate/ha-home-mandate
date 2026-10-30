@@ -4,10 +4,12 @@ package audit
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"time"
 
 	specaudit "github.com/home-mandate/spec/audit"
@@ -83,12 +85,17 @@ func (l *Log) ArchiveLegacy(ctx context.Context, archive func() (io.WriteCloser,
 		return 0, err
 	}
 	// The newest entry stays when a log is truncated: a checkpoint of this version, also
-	// when the last entry is a checkpoint of the earlier version. The start-up check that
-	// follows verifies the result.
-	if _, err := l.checkpoint(ctx, true); err != nil {
-		return 0, err
-	}
-	if _, err := l.Truncate(ctx, endOfTime, actor); err != nil {
+	// when the last entry is a checkpoint of the earlier version. Checkpoint and truncation
+	// commit together: a log with a new checkpoint but the old entries would verify with
+	// neither version. The start-up check that follows verifies the result.
+	err = l.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := l.checkpointTx(ctx, tx, true); err != nil {
+			return err
+		}
+		_, err := l.truncateTx(ctx, tx, endOfTime, math.MaxInt32, actor)
+		return err
+	})
+	if err != nil {
 		return 0, err
 	}
 	return len(entries), nil

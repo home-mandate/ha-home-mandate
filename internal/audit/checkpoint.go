@@ -89,29 +89,39 @@ func (l *Log) Checkpoint(ctx context.Context) (Position, error) {
 // checkpoint is Checkpoint; with force it also follows a checkpoint, for a log whose last
 // checkpoint no longer verifies (ArchiveLegacy).
 func (l *Log) checkpoint(ctx context.Context, force bool) (Position, error) {
-	s := l.signer()
-	if s == nil {
+	if l.signer() == nil {
 		return Position{}, ErrNoSigner
 	}
 	var pos Position
 	err := l.inTx(ctx, func(tx *sql.Tx) error {
-		var seq int64
-		var digest, event string
-		err := tx.QueryRowContext(ctx, `SELECT seq, digest, event FROM audit_log ORDER BY seq DESC LIMIT 1`).Scan(&seq, &digest, &event)
-		if errors.Is(err, sql.ErrNoRows) || err == nil && event == EventLogCheckpoint && !force {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("audit: read chain head: %w", err)
-		}
-		if _, err := l.AppendTx(ctx, tx, Entry{Event: EventLogCheckpoint, checkpoint: true}); err != nil {
-			return err
-		}
-		pos = Position{LogID: s.LogID, Seq: seq, Digest: digest}
-		return nil
+		var err error
+		pos, err = l.checkpointTx(ctx, tx, force)
+		return err
 	})
 	if err != nil {
 		return Position{}, err
 	}
 	return pos, nil
+}
+
+// checkpointTx is checkpoint within tx, so that a caller can combine it with other
+// changes that must commit together or not at all.
+func (l *Log) checkpointTx(ctx context.Context, tx *sql.Tx, force bool) (Position, error) {
+	s := l.signer()
+	if s == nil {
+		return Position{}, ErrNoSigner
+	}
+	var seq int64
+	var digest, event string
+	err := tx.QueryRowContext(ctx, `SELECT seq, digest, event FROM audit_log ORDER BY seq DESC LIMIT 1`).Scan(&seq, &digest, &event)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && event == EventLogCheckpoint && !force {
+		return Position{}, nil
+	}
+	if err != nil {
+		return Position{}, fmt.Errorf("audit: read chain head: %w", err)
+	}
+	if _, err := l.AppendTx(ctx, tx, Entry{Event: EventLogCheckpoint, checkpoint: true}); err != nil {
+		return Position{}, err
+	}
+	return Position{LogID: s.LogID, Seq: seq, Digest: digest}, nil
 }
