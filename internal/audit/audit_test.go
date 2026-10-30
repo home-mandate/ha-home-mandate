@@ -10,6 +10,7 @@ import (
 	"errors"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -63,7 +64,7 @@ func samples() []audit.Entry {
 		{Event: audit.EventDecision, Agent: agent, Request: req, Mandate: mandate,
 			Evaluation: &audit.Evaluation{Decision: "allow", Reason: "rule", RuleID: str("r-lights")},
 			Result:     &audit.Result{Status: audit.StatusFailed, Error: "ha_unavailable"}},
-		{Event: audit.EventMandateUpdated, Actor: user, Mandate: &audit.Mandate{ID: "m-voice", Digest: mandate.Digest, PreviousDigest: mandate.Digest}},
+		{Event: audit.EventMandateUpdated, Actor: user, Mandate: &audit.Mandate{ID: "m-voice", Digest: mandate.Digest, PreviousDigest: "sha256:" + strings.Repeat("b", 64)}},
 		{Event: audit.EventMandateRevoked, Actor: user, Mandate: mandate},
 		{Event: audit.EventAgentRevoked, Actor: user, Agent: agent},
 		{Event: audit.EventAuthRejected, Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication}},

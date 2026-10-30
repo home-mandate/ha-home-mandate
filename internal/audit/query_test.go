@@ -43,8 +43,16 @@ func areasOf(area string) []string {
 func decision(client, name, entity, area, decision, reason string) audit.Entry {
 	return audit.Entry{Event: audit.EventDecision, Agent: &audit.Agent{ClientID: client, DisplayName: name},
 		Request:    &audit.Request{Time: time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC), Resource: audit.Resource{EntityID: entity, Areas: areasOf(area)}, Action: "turn_on"},
-		Evaluation: &audit.Evaluation{Decision: decision, Reason: reason},
+		Evaluation: &audit.Evaluation{Decision: decision, Reason: reason, ApprovalTimeout: timeoutOf(decision)},
 		Result:     &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate}}
+}
+
+// timeoutOf gives an ask the approval timeout the audit schema requires with it.
+func timeoutOf(decision string) string {
+	if decision == "ask" {
+		return "PT2M"
+	}
+	return ""
 }
 
 var start = time.Date(2026, 10, 3, 6, 0, 0, 0, time.UTC)

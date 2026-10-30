@@ -205,7 +205,7 @@ func TestApprovalHistory(t *testing.T) {
 		e := audit.Entry{Event: audit.EventDecision, Agent: &audit.Agent{ClientID: "hm-client:voice-1", DisplayName: "Voice"},
 			Request:    &audit.Request{Time: at.Add(-30 * time.Second), Resource: audit.Resource{EntityID: "lock.front_door"}, Action: "unlock"},
 			Mandate:    &audit.Mandate{ID: "m-voice", Digest: "sha256:" + strings.Repeat("a", 64)},
-			Evaluation: &audit.Evaluation{Decision: "ask", Reason: "rule", RuleID: ptr("r-locks")}, Result: &result, Approval: appr}
+			Evaluation: &audit.Evaluation{Decision: "ask", Reason: "rule", RuleID: ptr("r-locks"), ApprovalTimeout: "PT2M"}, Result: &result, Approval: appr}
 		if _, err := h.log.Append(ctx, e); err != nil {
 			t.Fatal(err)
 		}

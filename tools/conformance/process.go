@@ -36,13 +36,15 @@ type request struct {
 		Timezone   string                     `json:"timezone"`
 		Revoked    bool                       `json:"revoked"`
 	} `json:"request"`
-	Stored  *string         `json:"stored"`
-	Offered *string         `json:"offered"`
-	Keys    json.RawMessage `json:"keys"`
-	JSONL   *string         `json:"jsonl"`
-	Entries []string        `json:"entries"`
-	LogID   string          `json:"log_id"`
-	Entry   *string         `json:"entry"`
+	Stored *string `json:"stored"`
+	// StoredRevoked is true if the stored mandate is revoked (succession).
+	StoredRevoked bool            `json:"stored_revoked,omitempty"`
+	Offered       *string         `json:"offered"`
+	Keys          json.RawMessage `json:"keys"`
+	JSONL         *string         `json:"jsonl"`
+	Entries       []string        `json:"entries"`
+	LogID         string          `json:"log_id"`
+	Entry         *string         `json:"entry"`
 }
 
 type response struct {
@@ -163,7 +165,9 @@ func selectMandate(ctx context.Context, req request) response {
 	return response{outcome: decide(ctx, p, req.Subject.ClientID, req.Subject.Principal, req.Request.Resource, req.Request.Action, req.Request.Parameters)}
 }
 
-// succession is the check the mandate store makes before it stores a new version.
+// succession is the check the mandate store makes before it stores a new version, and
+// whether the accepted version takes effect only after a human confirmed it (SPEC-v0
+// section 3.5): audit mode switched on, a weakening, or a revoked predecessor.
 func succession(req request) response {
 	if req.Stored == nil || req.Offered == nil {
 		return response{Error: "missing stored and offered"}
@@ -173,7 +177,14 @@ func succession(req request) response {
 		return response{Error: "stored mandate is invalid"}
 	}
 	offered, _ := evaluator.Parse([]byte(*req.Offered))
-	return response{Accept: ptr(evaluator.CheckSuccessor(stored, offered) == nil)}
+	if evaluator.CheckSuccessor(stored, offered) != nil {
+		return response{Accept: ptr(false)}
+	}
+	status := evaluator.StatusActive
+	if req.StoredRevoked {
+		status = evaluator.StatusRevoked
+	}
+	return response{Accept: ptr(true), outcome: outcome{Confirm: evaluator.NeedsConfirmation(stored, status, time.Time{}, offered)}}
 }
 
 // verifyAudit checks a log as internal/audit checks the stored one and its export.

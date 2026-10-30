@@ -38,7 +38,8 @@ type state struct {
 }
 
 // candidates is the mandate store of a state: like mandate.Store.Candidates it returns
-// the mandates that are not revoked, for every agent; the PDP selects among them.
+// the stored mandates with their status, for every agent; the PDP selects among them and
+// answers revoked for an agent whose only mandates are revoked.
 type candidates []mandate.Candidate
 
 func (c candidates) Candidates(context.Context, string) ([]mandate.Candidate, error) {
@@ -48,14 +49,14 @@ func (c candidates) Candidates(context.Context, string) ([]mandate.Candidate, er
 func newCandidates(stored []storedMandate) candidates {
 	out := candidates{}
 	for _, s := range stored {
+		info, status := mandate.Info{Status: mandate.StatusActive}, evaluator.StatusActive
 		if s.Revoked {
-			continue
+			info.Status, status = mandate.StatusRevoked, evaluator.StatusRevoked
 		}
-		info := mandate.Info{Status: mandate.StatusActive}
 		if m, err := evaluator.Parse([]byte(s.Mandate)); err == nil {
 			info.ID, info.ClientID, info.Digest = m.ID(), m.ClientID(), m.Digest()
 		}
-		out = append(out, mandate.Candidate{Info: info, Stored: evaluator.NewStored([]byte(s.Mandate), evaluator.StatusActive)})
+		out = append(out, mandate.Candidate{Info: info, Stored: evaluator.NewStored([]byte(s.Mandate), status)})
 	}
 	return out
 }
@@ -116,9 +117,10 @@ func decide(ctx context.Context, p *pdp.PDP, clientID, principal string, r resou
 	if resp.Context.RuleID != "" {
 		out.RuleID = &resp.Context.RuleID
 	}
-	// The mandate it was decided on; AuthZEN does not report it.
-	if d, err := p.Decide(ctx, clientID, r.EntityID, action, nil); err == nil && d.MandateID != "" && d.Result.MandateDigest == out.MandateDigest {
-		out.Selected = &d.MandateID
+	// The mandate it was decided on, or the revoked one the selection names (SPEC-v0
+	// section 4.3): AuthZEN reports it as mandate_id.
+	if resp.Context.MandateID != "" {
+		out.Selected = &resp.Context.MandateID
 	}
 	return out
 }

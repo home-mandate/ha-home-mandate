@@ -88,6 +88,10 @@ func dataSourceName(path string) string {
 		"&_pragma=journal_mode(WAL)" +
 		"&_pragma=synchronous(FULL)" +
 		"&_pragma=trusted_schema(0)" +
+		// Statement journals and other temporary files stay in memory: the container image
+		// has no temporary directory, and a DELETE of many rows would otherwise fail with
+		// an I/O error. The database is small.
+		"&_pragma=temp_store(2)" +
 		fmt.Sprintf("&_pragma=busy_timeout(%d)", busyTimeoutMillis)
 }
 

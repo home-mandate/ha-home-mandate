@@ -108,7 +108,7 @@ func TestProcessBindingAnswersEveryOperation(t *testing.T) {
 		{"time that is no RFC 3339", map[string]any{"decision": "deny", "reason": "invalid_request"}},
 		{"invalid mandate first", map[string]any{"decision": "deny", "reason": "invalid_mandate"}},
 		{"select", map[string]any{"decision": "ask", "selected": "m-voice-assistant"}},
-		{"only a revoked mandate", map[string]any{"decision": "deny", "reason": "no_mandate"}},
+		{"only a revoked mandate", map[string]any{"decision": "deny", "reason": "revoked", "selected": "m-voice-assistant"}},
 		{"same version is no successor of a mandate with version", map[string]any{"accept": true}},
 		{"empty log", map[string]any{"valid": true}},
 		{"entry digest", map[string]any{"valid": true}},

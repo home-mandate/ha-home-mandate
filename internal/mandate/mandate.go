@@ -443,7 +443,8 @@ func (s *Store) ForAgent(ctx context.Context, clientID string) (Loaded, error) {
 	return Loaded{Info: info, Mandate: m, Status: status}, nil
 }
 
-// Candidate is a stored mandate that the selection of SPEC-v0 section 4.3 considers.
+// Candidate is a stored mandate that the selection of SPEC-v0 section 4.3 considers; a
+// revoked one (Info.Status) only to answer revoked instead of no_mandate.
 type Candidate struct {
 	Info   Info
 	Stored evaluator.Stored
@@ -463,11 +464,11 @@ type cached struct {
 // no mandate. A current version that no longer parses, or whose content no longer has
 // its digest, stays a candidate and denies with invalid_mandate.
 func (s *Store) Candidates(ctx context.Context, clientID string) ([]Candidate, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.client_id, m.status, m.current_digest, m.max_actions_per_hour, m.updated_at, v.document
+	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.client_id, m.status, a.status, m.current_digest, m.max_actions_per_hour, m.updated_at, v.document
 		FROM mandates m JOIN agents a ON a.client_id = m.client_id
 		LEFT JOIN mandate_versions v ON v.mandate_id = m.id AND v.version = (SELECT max(version) FROM mandate_versions
 			WHERE mandate_id = m.id AND digest = m.current_digest)
-		WHERE m.client_id = ? AND m.status = 'active' AND a.status = 'active' ORDER BY m.rowid`, clientID)
+		WHERE m.client_id = ? ORDER BY m.rowid`, clientID)
 	if err != nil {
 		return nil, fmt.Errorf("mandate: read: %w", err)
 	}
@@ -475,16 +476,25 @@ func (s *Store) Candidates(ctx context.Context, clientID string) ([]Candidate, e
 	var out []Candidate
 	for rows.Next() {
 		var c Candidate
-		var updatedAt string
+		var agentStatus, updatedAt string
 		var document sql.NullString // NULL: the row of the current version is missing
-		if err := rows.Scan(&c.Info.ID, &c.Info.ClientID, &c.Info.Status, &c.Info.Digest, &c.Info.MaxActionsPerHour, &updatedAt, &document); err != nil {
+		if err := rows.Scan(&c.Info.ID, &c.Info.ClientID, &c.Info.Status, &agentStatus, &c.Info.Digest, &c.Info.MaxActionsPerHour, &updatedAt, &document); err != nil {
 			return nil, fmt.Errorf("mandate: read: %w", err)
 		}
 		c.Info.UpdatedAt, _ = time.Parse(timeFormat, updatedAt)
+		// A revoked agent revokes its mandates for the selection, as for Load. The selection
+		// never evaluates a revoked mandate, but names it (SPEC-v0 section 4.3 step 2).
+		status := evaluator.StatusActive
+		if c.Info.Status != StatusActive || agentStatus != StatusActive {
+			status, c.Info.Status = evaluator.StatusRevoked, StatusRevoked
+		}
 		if document.Valid {
 			c.Stored, c.Entities = s.candidate(c.Info.Digest, document.String)
+			if status == evaluator.StatusRevoked {
+				c.Stored = evaluator.NewStored([]byte(document.String), status)
+			}
 		} else {
-			c.Stored = evaluator.NewStored(nil, evaluator.StatusActive) // denies with invalid_mandate
+			c.Stored = evaluator.NewStored(nil, status) // denies with invalid_mandate
 		}
 		out = append(out, c)
 	}

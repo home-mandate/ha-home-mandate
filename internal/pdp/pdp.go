@@ -141,20 +141,35 @@ func (s *Snapshot) Decide(entityID, action string, parameters map[string]evaluat
 			}
 		}
 	}
-	// A selected mandate is never revoked: revoked ones are no candidates.
+	// A selected mandate is never revoked; a revoked result comes from the selection
+	// without an evaluation and names the revoked mandate (SPEC-v0 section 4.3 step 2).
 	d.Status = evaluator.StatusActive
+	if d.Result.Reason == evaluator.ReasonRevoked {
+		d.Status = evaluator.StatusRevoked
+	}
 	for _, c := range s.candidates {
 		if d.Result.MandateDigest != "" && c.Info.Digest == d.Result.MandateDigest {
 			d.MandateID, d.MaxActionsPerHour = c.Info.ID, c.Info.MaxActionsPerHour
 		}
 	}
-	// An invalid mandate has no digest from the evaluation; with a single candidate the
-	// audit entry still names which mandate denied.
-	if d.MandateID == "" && len(s.candidates) == 1 && d.Result.Reason == evaluator.ReasonInvalidMandate {
-		c := s.candidates[0]
+	// An invalid mandate has no digest from the evaluation; with a single active candidate
+	// the audit entry still names which mandate denied.
+	if active := s.active(); d.MandateID == "" && len(active) == 1 && d.Result.Reason == evaluator.ReasonInvalidMandate {
+		c := active[0]
 		d.MandateID, d.StoredDigest, d.MaxActionsPerHour = c.Info.ID, c.Info.Digest, c.Info.MaxActionsPerHour
 	}
 	return d
+}
+
+// active are the candidates that are not revoked: the mandates the agent can act under.
+func (s *Snapshot) active() []mandate.Candidate {
+	var out []mandate.Candidate
+	for _, c := range s.candidates {
+		if c.Info.Status != mandate.StatusRevoked {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // Limits tells what values the action on the entity could be allowed with now: the
@@ -189,10 +204,10 @@ func RateKey(clientID, mandateID string) string {
 }
 
 // RateKey is the key of the rate limit for this request: the mandate if the agent has
-// exactly one candidate (at most one is active), otherwise the agent.
+// exactly one candidate that is not revoked (at most one is active), otherwise the agent.
 func (s *Snapshot) RateKey() string {
-	if len(s.candidates) == 1 {
-		return RateKey(s.clientID, s.candidates[0].Info.ID)
+	if active := s.active(); len(active) == 1 {
+		return RateKey(s.clientID, active[0].Info.ID)
 	}
 	return RateKey(s.clientID, "")
 }
@@ -217,9 +232,9 @@ func strictness(r evaluator.Result) int {
 	}
 }
 
-// names tells whether a candidate's rules name entityID.
+// names tells whether the rules of a candidate that is not revoked name entityID.
 func (s *Snapshot) names(entityID string) bool {
-	for _, c := range s.candidates {
+	for _, c := range s.active() {
 		if c.Entities[entityID] {
 			return true
 		}
@@ -228,10 +243,10 @@ func (s *Snapshot) names(entityID string) bool {
 }
 
 // MaxActionsPerHour is the agent's rate limit, known before a mandate is selected: the
-// strictest limit among its candidates; 0 without one.
+// strictest limit among its candidates that are not revoked; 0 without one.
 func (s *Snapshot) MaxActionsPerHour() int {
 	limit := 0
-	for _, c := range s.candidates {
+	for _, c := range s.active() {
 		if n := c.Info.MaxActionsPerHour; n > 0 && (limit == 0 || n < limit) {
 			limit = n
 		}
@@ -289,7 +304,10 @@ type (
 		RuleID          string   `json:"rule_id,omitempty"`
 		ApprovalTimeout string   `json:"approval_timeout,omitempty"`
 		Approvers       []string `json:"approvers,omitempty"`
-		MandateDigest   string   `json:"mandate_digest,omitempty"`
+		// MandateID names the mandate of mandate_digest (SPEC-v0 section 6): the evaluated
+		// one, or the revoked one the selection names.
+		MandateID     string `json:"mandate_id,omitempty"`
+		MandateDigest string `json:"mandate_digest,omitempty"`
 		// Enforced is present, and false, only for a deny the PEP does not enforce
 		// (audit mode, SPEC-v0 sections 4.6 and 6).
 		Enforced *bool `json:"enforced,omitempty"`
@@ -299,27 +317,29 @@ type (
 	}
 )
 
-// Evaluate answers an AuthZEN request. resource.type, resource.properties.areas and
-// context.time are not used (SPEC-v0 section 6). A subject that is no agent is an invalid
-// request; an agent without a mandate for this household is deny with no_mandate.
+// Evaluate answers an AuthZEN request. resource.type, resource.properties and context
+// are not used: this PDP holds the directory, the clock and the household configuration
+// itself (SPEC-v0 section 6). A subject that is no agent, names no agent or no principal
+// of the form a mandate could name is an invalid request, before any mandate is selected;
+// an agent without a mandate for this household is deny with no_mandate.
 func (p *PDP) Evaluate(ctx context.Context, req Request) Response {
-	if req.Subject.Type != "agent" {
-		return response(evaluator.Result{Decision: evaluator.Deny, Reason: evaluator.ReasonInvalidRequest})
+	if req.Subject.Type != "agent" || !evaluator.ValidSubject(req.Subject.ID, req.Subject.Properties.Principal) {
+		return response(evaluator.Result{Decision: evaluator.Deny, Reason: evaluator.ReasonInvalidRequest}, "")
 	}
-	if req.Subject.ID == "" || req.Subject.Properties.Principal != p.cfg.Principal {
-		return response(evaluator.Result{Decision: evaluator.Deny, Reason: evaluator.ReasonNoMandate})
+	if req.Subject.Properties.Principal != p.cfg.Principal {
+		return response(evaluator.Result{Decision: evaluator.Deny, Reason: evaluator.ReasonNoMandate}, "")
 	}
 	parameters, ok := values(req.Action.Properties)
 	d, _ := p.Decide(ctx, req.Subject.ID, req.Resource.ID, req.Action.Name, parameters) // an error is a deny already
 	if !ok && d.Result.MandateDigest != "" {
 		// A parameter that is no integer or string cannot be passed to the evaluation. The request is
-		// invalid; only a missing or invalid mandate comes before that (SPEC-v0 section 4.1).
-		return response(evaluator.Result{Decision: evaluator.Deny, Reason: evaluator.ReasonInvalidRequest, MandateDigest: d.Result.MandateDigest})
+		// invalid; only a missing, invalid or revoked mandate comes before that (SPEC-v0 section 4.1).
+		return response(evaluator.Result{Decision: evaluator.Deny, Reason: evaluator.ReasonInvalidRequest, MandateDigest: d.Result.MandateDigest}, d.MandateID)
 	}
 	if !ok {
-		return response(evaluator.Result{Decision: evaluator.Deny, Reason: d.Result.Reason})
+		return response(evaluator.Result{Decision: evaluator.Deny, Reason: d.Result.Reason}, "")
 	}
-	return response(d.Result)
+	return response(d.Result, d.MandateID)
 }
 
 // values reads the parameters of a request; ok is false if one of them is no integer
@@ -339,10 +359,15 @@ func values(raw map[string]json.RawMessage) (map[string]evaluator.Value, bool) {
 	return out, true
 }
 
-func response(r evaluator.Result) Response {
+// response renders a result; mandateID names the mandate of its digest and is left out
+// without a digest (SPEC-v0 section 6).
+func response(r evaluator.Result, mandateID string) Response {
 	out := Response{Decision: r.Decision == evaluator.Allow, Context: ResponseContext{
 		Outcome: string(r.Decision), Reason: string(r.Reason), RuleID: r.RuleID, MandateDigest: r.MandateDigest,
 	}}
+	if r.MandateDigest != "" {
+		out.Context.MandateID = mandateID
+	}
 	if r.NotEnforced {
 		enforced := false
 		out.Context.Enforced = &enforced

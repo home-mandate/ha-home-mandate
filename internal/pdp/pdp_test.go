@@ -33,9 +33,16 @@ func (f fakeMandates) Candidates(context.Context, string) ([]mandate.Candidate, 
 }
 
 // stored is a candidate of the document with its digest (empty if it does not parse).
+// stored is a candidate as the store returns it: with the id and digest of the mandate,
+// as the store records them next to the document.
 func stored(doc []byte, info mandate.Info) mandate.Candidate {
-	if m, err := evaluator.Parse(doc); err == nil && info.Digest == "" {
-		info.Digest = m.Digest()
+	if m, err := evaluator.Parse(doc); err == nil {
+		if info.Digest == "" {
+			info.Digest = m.Digest()
+		}
+		if info.ID == "" {
+			info.ID = m.ID()
+		}
 	}
 	return mandate.Candidate{Info: info, Stored: evaluator.NewStored(doc, evaluator.StatusActive)}
 }
@@ -62,6 +69,7 @@ type conformanceCase struct {
 	Time            string                     `json:"time"`
 	Timezone        string                     `json:"timezone"`
 	Revoked         bool                       `json:"revoked"`
+	Selected        *string                    `json:"selected"`
 	Expected        string                     `json:"expected"`
 	Reason          string                     `json:"reason"`
 	RuleID          *string                    `json:"rule_id"`
@@ -180,8 +188,8 @@ func TestConformanceCasesOverHTTP(t *testing.T) {
 				t.Errorf("%s: enforced %v, want not enforced %t", c.ID, got.Context.Enforced, notEnforced)
 			}
 			checkConfirm(t, c.ID, c.Confirm, got.Context)
-			if c.Reason != "invalid_mandate" && !strings.HasPrefix(got.Context.MandateDigest, "sha256:") {
-				t.Errorf("%s: mandate_digest missing", c.ID)
+			if c.Reason != "invalid_mandate" && (!strings.HasPrefix(got.Context.MandateDigest, "sha256:") || got.Context.MandateID == "") {
+				t.Errorf("%s: mandate_digest or mandate_id missing: %+v", c.ID, got.Context)
 			}
 		})
 	}
@@ -276,12 +284,13 @@ func TestEvaluateChecksSubject(t *testing.T) {
 		subject Subject
 		reason  string
 	}{
-		"other household": {Subject{Type: "agent", ID: clientID, Properties: SubjectProperties{Principal: "household:other"}}, "no_mandate"},
-		"no id":           {Subject{Type: "agent", Properties: SubjectProperties{Principal: cfg.Principal}}, "no_mandate"},
-		"not an agent":    {Subject{Type: "user", ID: clientID, Properties: SubjectProperties{Principal: cfg.Principal}}, "invalid_request"},
+		"other household":      {Subject{Type: "agent", ID: clientID, Properties: SubjectProperties{Principal: "household:other"}}, "no_mandate"},
+		"no id":                {Subject{Type: "agent", Properties: SubjectProperties{Principal: cfg.Principal}}, "invalid_request"},
+		"principal no pattern": {Subject{Type: "agent", ID: clientID, Properties: SubjectProperties{Principal: "home"}}, "invalid_request"},
+		"not an agent":         {Subject{Type: "user", ID: clientID, Properties: SubjectProperties{Principal: cfg.Principal}}, "invalid_request"},
 	} {
 		got := p.Evaluate(context.Background(), Request{Subject: tt.subject, Action: Action{Name: "turn_on"}, Resource: Resource{ID: "light.kitchen"}})
-		if got.Decision || got.Context.Outcome != "deny" || got.Context.Reason != tt.reason || got.Context.MandateDigest != "" {
+		if got.Decision || got.Context.Outcome != "deny" || got.Context.Reason != tt.reason || got.Context.MandateDigest != "" || got.Context.MandateID != "" {
 			t.Errorf("%s: %+v", name, got)
 		}
 	}
@@ -414,8 +423,9 @@ func TestCriticalEntityNeedsConfirmation(t *testing.T) {
 }
 
 // Every selection case of the specification (SPEC-v0 section 4.3) runs against the AuthZEN
-// endpoint: the store returns all mandates of the case, revoked ones included, and the
-// PDP selects. A revoked mandate alone is no_mandate, two current ones are ambiguous.
+// endpoint: the store returns all mandates of the case, revoked ones included with their
+// status, and the PDP selects. A revoked mandate alone is revoked and named in mandate_id,
+// two current ones are ambiguous.
 func TestSelectionCasesOverHTTP(t *testing.T) {
 	data, err := fs.ReadFile(spec.FS(), spec.SelectionCasesPath)
 	if err != nil {
@@ -441,9 +451,12 @@ func TestSelectionCasesOverHTTP(t *testing.T) {
 		t.Run(c.ID, func(t *testing.T) {
 			var candidates []mandate.Candidate
 			for _, m := range c.Mandates {
-				if !m.Revoked { // the store returns only active mandates
-					candidates = append(candidates, stored(m.MandateInline, mandate.Info{}))
+				cand := stored(m.MandateInline, mandate.Info{})
+				if m.Revoked {
+					cand.Info.Status = mandate.StatusRevoked
+					cand.Stored = evaluator.NewStored(m.MandateInline, evaluator.StatusRevoked)
 				}
+				candidates = append(candidates, cand)
 			}
 			at, err := time.Parse(time.RFC3339, c.Time)
 			if err != nil {
@@ -465,6 +478,14 @@ func TestSelectionCasesOverHTTP(t *testing.T) {
 			}
 			if got.Context.ApprovalTimeout != c.ApprovalTimeout {
 				t.Errorf("%s: approval_timeout %q, want %q", c.ID, got.Context.ApprovalTimeout, c.ApprovalTimeout)
+			}
+			// mandate_id names the selected mandate, or the revoked one the result names (SPEC-v0 section 6).
+			wantID := ""
+			if c.Selected != nil {
+				wantID = *c.Selected
+			}
+			if got.Context.MandateID != wantID {
+				t.Errorf("%s: mandate_id %q, want %q", c.ID, got.Context.MandateID, wantID)
 			}
 			checkConfirm(t, c.ID, c.Confirm, got.Context)
 		})
