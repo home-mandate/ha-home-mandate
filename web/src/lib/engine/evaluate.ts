@@ -7,7 +7,7 @@
 
 import type { Approval, Decision, MandateDraft, Reason, Rule, Weekday } from '../api/types.ts';
 import { checkDraft, parseDateTime, windowMinutes } from './check.ts';
-import { lookupAction, opaque, parametersAdmitted, type ParameterValue, validValue } from './vocabulary.ts';
+import { lookupAction, MAX_PARAMETERS, opaque, parametersAdmitted, type ParameterValue, validParameterName, validValue } from './vocabulary.ts';
 
 export interface EvalRequest {
   /** areas: the set of areas of the resource (SPEC-v0 section 3.4); absent or empty: none. */
@@ -170,7 +170,11 @@ function precheck(mandate: MandateDraft, req: EvalRequest): { local: LocalTime; 
   const res = req.resource;
   const parameters = req.parameters ?? {};
   const validParameters =
-    typeof parameters === 'object' && parameters !== null && Object.values(parameters).every(validValue) && parametersAdmitted(res.category, req.action, parameters);
+    typeof parameters === 'object' &&
+    parameters !== null &&
+    Object.keys(parameters).length <= MAX_PARAMETERS &&
+    Object.entries(parameters).every(([name, value]) => validParameterName(name) && validValue(value)) &&
+    parametersAdmitted(res.category, req.action, parameters);
   const validRequest = opaque(res.entity_id, 255) && validAreas(res.areas) && validParameters;
   if (!local || !validRequest) return deny('invalid_request');
   // A resource without category is not in the directory of the PEP.

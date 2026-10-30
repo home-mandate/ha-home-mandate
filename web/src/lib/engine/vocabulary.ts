@@ -16,7 +16,12 @@ export interface ParameterSpec {
   maximum?: number;
   /** The permitted values of a string parameter; absent: any string. */
   values?: readonly string[];
+  /** A request of the action carries the parameter (SPEC-v0 section 4 step 0). */
+  required?: boolean;
 }
+
+/** Alternatives of which a request carries exactly one, completely (vocabulary required_one_of). */
+type Alternatives = readonly (readonly string[])[];
 
 /** The value of a parameter: an integer in the unit of the vocabulary, or a string. */
 export type ParameterValue = number | string;
@@ -26,10 +31,15 @@ interface CategorySpec {
   critical: readonly string[];
   /** action → its parameters (SPEC-v0 section 4.5). */
   parameters: Readonly<Record<string, Readonly<Record<string, ParameterSpec>>>>;
+  /** action → the alternatives of which a request carries exactly one. */
+  requiredOneOf: Readonly<Record<string, Alternatives>>;
 }
 
 interface VocabularyFile {
-  categories: Record<string, { actions: Record<string, { critical?: boolean; parameters?: Record<string, ParameterSpec> }> }>;
+  categories: Record<
+    string,
+    { actions: Record<string, { critical?: boolean; parameters?: Record<string, ParameterSpec>; required_one_of?: Alternatives }> }
+  >;
 }
 
 // The normative vocabulary of the pinned version of the specification, copied by
@@ -41,6 +51,7 @@ const VOCABULARY = Object.fromEntries(
       actions: Object.keys(actions),
       critical: Object.keys(actions).filter((a) => actions[a]?.critical === true),
       parameters: Object.fromEntries(Object.entries(actions).map(([a, spec]) => [a, spec.parameters ?? {}])),
+      requiredOneOf: Object.fromEntries(Object.entries(actions).map(([a, spec]) => [a, spec.required_one_of ?? []])),
     },
   ]),
 ) as unknown as Readonly<Record<Category, CategorySpec>>;
@@ -65,6 +76,16 @@ export function parameterSpec(category: string | undefined, action: string, para
 }
 
 const MAX_TEXT = 64;
+
+/** A request carries at most this many parameters (SPEC-v0 section 4.5). */
+export const MAX_PARAMETERS = 16;
+
+/** The name of a parameter: lower-case ASCII letters, digits and underscores, at most 64 (SPEC-v0 section 4.5). */
+const PARAMETER_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+
+export function validParameterName(name: string): boolean {
+  return PARAMETER_NAME.test(name);
+}
 
 /** An identifier of 1 to limit printable ASCII characters without space (SPEC-v0 section 3.4). */
 export function opaque(s: unknown, limit: number): s is string {
@@ -94,14 +115,27 @@ function admits(p: ParameterSpec, v: ParameterValue): boolean {
 }
 
 /**
- * parametersAdmitted: every parameter of a request that the action declares has its type
- * and lies within its range or is one of its permitted values. Others are not checked here.
+ * parametersAdmitted: a request of a known action carries exactly the parameters the
+ * action declares (SPEC-v0 section 4 step 0, spec #78): no other, each with its type and
+ * within its range or permitted values, every required one, and exactly one alternative
+ * of required_one_of, completely. An unknown category or action is left to the later
+ * steps, which refuse it by name.
  */
 export function parametersAdmitted(category: string | undefined, action: string, parameters: Readonly<Record<string, ParameterValue>>): boolean {
-  return Object.entries(parameters).every(([name, value]) => {
-    const p = parameterSpec(category, action, name);
-    return p === undefined || admits(p, value);
-  });
+  if (category === undefined || !isKnown(category) || !Object.hasOwn(VOCABULARY[category].parameters, action)) return true;
+  const declared = VOCABULARY[category].parameters[action] ?? {};
+  const present = (name: string) => Object.hasOwn(parameters, name);
+  if (!Object.entries(parameters).every(([name, value]) => Object.hasOwn(declared, name) && admits(declared[name]!, value))) return false;
+  if (!Object.entries(declared).every(([name, p]) => p.required !== true || present(name))) return false;
+  const alternatives = VOCABULARY[category].requiredOneOf[action] ?? [];
+  if (alternatives.length === 0) return true;
+  let complete = 0;
+  for (const alternative of alternatives) {
+    const count = alternative.filter(present).length;
+    if (count === alternative.length) complete++;
+    else if (count !== 0) return false;
+  }
+  return complete === 1;
 }
 
 export function criticalActionsOf(category: Category): readonly string[] {

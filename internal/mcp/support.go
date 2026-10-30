@@ -21,15 +21,21 @@ import (
 // values of Home Assistant's LockEntityFeature, CoverEntityFeature, ClimateEntityFeature,
 // MediaPlayerEntityFeature and AlarmControlPanelEntityFeature.
 var featureBits = map[string]map[string]uint64{
-	"lock":    {"open": 1},
-	"cover":   {"open": 1, "close": 2, "set_position": 4, "stop": 8},
-	"gate":    {"open": 1, "close": 2},
-	"climate": {"set_temperature": 1},
-	"media":   {"pause": 1, "set_volume": 4, "turn_on": 128, "turn_off": 256, "play": 16384},
+	"lock":  {"open": 1},
+	"cover": {"open": 1, "close": 2, "set_position": 4, "stop": 8},
+	"gate":  {"open": 1, "close": 2},
+	"media": {"pause": 1, "set_volume": 4, "turn_on": 128, "turn_off": 256, "play": 16384},
 }
 
-// armBits are the features of the alarm's arm modes, by the suffix of the service.
-var armBits = map[string]uint64{"home": 1, "away": 2, "night": 4}
+// armBits are the features of the alarm's arm modes, by the suffix of the service
+// (AlarmControlPanelEntityFeature; 8 is TRIGGER).
+var armBits = map[string]uint64{"home": 1, "away": 2, "night": 4, "custom_bypass": 16, "vacation": 32}
+
+// ClimateEntityFeature: a single target temperature, and a range of two.
+const (
+	targetTemperature      uint64 = 1
+	targetTemperatureRange uint64 = 2
+)
 
 // brightnessModes are the color modes of a light that have a brightness.
 var brightnessModes = []string{"brightness", "color_temp", "hs", "xy", "rgb", "rgbw", "rgbww", "white"}
@@ -57,6 +63,12 @@ func canDo(category, action string, call ha.ServiceCall, attrs map[string]any) b
 	case category == "alarm" && action == "arm":
 		bit, ok := armBits[strings.TrimPrefix(call.Service, "alarm_arm_")]
 		return !ok || has(attrs, bit)
+	case category == "climate" && action == "set_temperature":
+		// A range setpoint needs the range feature, a single one the other (spec #84).
+		if isRange(call) {
+			return has(attrs, targetTemperatureRange)
+		}
+		return has(attrs, targetTemperature)
 	}
 	bit, ok := featureBits[category][action]
 	return !ok || has(attrs, bit)
@@ -77,6 +89,8 @@ func canDoSome(category, action string, attrs map[string]any) bool {
 	case category == "climate" && action == "set_mode":
 		modes, known := stringList(attrs["hvac_modes"])
 		return !known || len(modes) > 0
+	case category == "climate" && action == "set_temperature":
+		return has(attrs, targetTemperature) || has(attrs, targetTemperatureRange)
 	case category == "alarm" && action == "arm":
 		for mode := range armBits {
 			if canDo(category, action, ha.ServiceCall{Service: "alarm_arm_" + mode}, attrs) {
@@ -86,6 +100,12 @@ func canDoSome(category, action string, attrs map[string]any) bool {
 		return false
 	}
 	return canDo(category, action, ha.ServiceCall{}, attrs)
+}
+
+// isRange tells whether a set_temperature call sets a range of two temperatures.
+func isRange(call ha.ServiceCall) bool {
+	_, ok := call.Data["target_temp_low"]
+	return ok
 }
 
 // has tells whether supported_features has bit; true when it is missing or no whole

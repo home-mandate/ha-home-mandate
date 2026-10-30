@@ -29,8 +29,8 @@
     limitsNeedOwnRule,
     otherUnitLimits,
     chosen,
-    CHOICES,
     choiceLabel,
+    choicesOf,
     isChoice,
     parameterLabel,
     rangeOf,
@@ -146,9 +146,9 @@
 
   /** Checks or unchecks one permitted value of a choice parameter. */
   function toggleChoice(name: string, value: string, on: boolean) {
-    const current = chosen(rule, name);
+    const current = chosen(rule, category, name);
     const next = on ? [...current, value] : current.filter((v) => v !== value);
-    change(withChoices(rule, name, next), false);
+    change(withChoices(rule, category, name, next), false);
   }
 
   function removeLimits() {
@@ -283,11 +283,11 @@
         {#if isChoice(name)}
           <div class="limit choices" role="group" aria-label={parameterLabel(name)}>
             <span class="limit-name">{parameterLabel(name)}</span>
-            {#each CHOICES[name] ?? [] as value (value)}
+            {#each choicesOf(category, name) as value (value)}
               <label class="choice">
                 <input
                   type="checkbox"
-                  checked={chosen(rule, name).includes(value)}
+                  checked={chosen(rule, category, name).includes(value)}
                   aria-describedby="{id}-limits"
                   onchange={(e) => toggleChoice(name, value, e.currentTarget.checked)}
                 />
