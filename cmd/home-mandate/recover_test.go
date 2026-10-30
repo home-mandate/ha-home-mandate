@@ -38,7 +38,7 @@ func TestRequestsEndedByARestartAreRecordedAndAnnounced(t *testing.T) {
 			Agent:      &audit.Agent{ClientID: "hm-client:voice", DisplayName: "Voice assistant"},
 			Request:    &audit.Request{Time: now, Timezone: "Europe/Berlin", Resource: audit.Resource{EntityID: "lock.front_door", Category: "lock"}, Action: "unlock"},
 			Mandate:    &audit.Mandate{ID: "m-voice", Digest: "sha256:" + strings.Repeat("a", 64)},
-			Evaluation: &audit.Evaluation{Decision: "ask", Reason: "rule", RuleID: ptr("r-locks")},
+			Evaluation: &audit.Evaluation{Decision: "ask", Reason: "rule", RuleID: ptr("r-locks"), ApprovalTimeout: "PT2M"},
 		}}}
 	if err := s.journal.Open(ctx, approval.Opened{ID: strings.Repeat("1", 32), Tag: "hm_request_1", Request: req, Created: now, Expires: now.Add(time.Minute),
 		Notified: []approval.Notified{{UserID: ownerID, Service: "mobile_app_markus", Lang: "de"}}}); err != nil {

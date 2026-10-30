@@ -749,18 +749,24 @@ func TestCandidatesAreTheActiveMandatesOfAnActiveAgent(t *testing.T) {
 		t.Errorf("evaluation = %+v", res)
 	}
 
-	// A revoked mandate is no candidate: the agent has no mandate (not "revoked").
+	// A revoked mandate stays a candidate with the status revoked: the selection does not
+	// evaluate it, but answers revoked instead of no_mandate (SPEC-v0 section 4.3).
 	if err := e.mandates.Revoke(ctx, info.ID, admin); err != nil {
 		t.Fatal(err)
 	}
-	if list, err := e.mandates.Candidates(ctx, a.ClientID); err != nil || len(list) != 0 {
-		t.Errorf("revoked mandate: %+v, %v", list, err)
+	list, err = e.mandates.Candidates(ctx, a.ClientID)
+	if err != nil || len(list) != 1 || list[0].Info.Status != mandate.StatusRevoked {
+		t.Fatalf("revoked mandate: %+v, %v", list, err)
 	}
-	// Neither is the mandate of a revoked agent, even if the mandate itself were active.
+	if m, res := evaluator.SelectAndEvaluate([]evaluator.Stored{list[0].Stored}, a.ClientID, household, req); res.Reason != evaluator.ReasonRevoked ||
+		res.MandateDigest != info.Digest || m.ID() != info.ID {
+		t.Errorf("selection with a revoked mandate = %+v, %v", res, m.ID())
+	}
+	// The mandate of a revoked agent counts as revoked too, even if the mandate itself is active.
 	if err := e.agents.Revoke(ctx, b.ClientID, admin); err != nil {
 		t.Fatal(err)
 	}
-	if list, err := e.mandates.Candidates(ctx, b.ClientID); err != nil || len(list) != 0 {
+	if list, err := e.mandates.Candidates(ctx, b.ClientID); err != nil || len(list) != 1 || list[0].Info.Status != mandate.StatusRevoked {
 		t.Errorf("revoked agent: %+v, %v", list, err)
 	}
 }

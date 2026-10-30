@@ -8,12 +8,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
 
 	specaudit "github.com/home-mandate/spec/audit"
 	"github.com/home-mandate/spec/jcs"
+	"github.com/home-mandate/spec/jws"
 
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 )
@@ -43,6 +45,29 @@ func legacyLog(t *testing.T) (*audit.Log, *sql.DB) {
 // installation did. forge changes an entry before it is chained.
 func rewrite(t *testing.T, db *sql.DB, resign bool, forge func(seq int64, e map[string]any)) {
 	t.Helper()
+	rewriteEntries(t, db, true, resign, forge, func(e map[string]any, prev string) string {
+		k := signer()
+		seq, _ := e["seq"].(json.Number).Int64()
+		sig, err := specaudit.SignCheckpoint(k.LogID, seq-1, prev, e["recorded_at"].(string), k.KeyID, k.Key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sig
+	})
+}
+
+// rewriteWith chains the log again and signs every checkpoint with sign, which gets the
+// entry (with its seq as a json.Number) and the digest of the entry before it.
+func rewriteWith(t *testing.T, db *sql.DB, sign func(e map[string]any, prev string) string) {
+	t.Helper()
+	rewriteEntries(t, db, false, true, nil, sign)
+}
+
+// rewriteEntries chains the log again; legacyAreas turns every decision entry into the
+// earlier format (single area), forge changes an entry before it is chained, resign signs
+// every checkpoint again with sign.
+func rewriteEntries(t *testing.T, db *sql.DB, legacyAreas, resign bool, forge func(seq int64, e map[string]any), sign func(e map[string]any, prev string) string) {
+	t.Helper()
 	rows, err := db.Query(`SELECT seq, entry FROM audit_log ORDER BY seq`)
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +91,7 @@ func rewrite(t *testing.T, db *sql.DB, resign bool, forge func(seq int64, e map[
 	_ = rows.Close()
 	var prev any
 	for i, e := range entries {
-		if request, ok := e["request"].(map[string]any); ok {
+		if request, ok := e["request"].(map[string]any); ok && legacyAreas {
 			resource := request["resource"].(map[string]any)
 			if areas, ok := resource["areas"].([]any); ok {
 				resource["area"] = areas[0]
@@ -80,12 +105,7 @@ func rewrite(t *testing.T, db *sql.DB, resign bool, forge func(seq int64, e map[
 			forge(seqs[i], e)
 		}
 		if cp, ok := e["checkpoint"].(map[string]any); ok && resign {
-			k := signer()
-			sig, err := specaudit.SignCheckpoint(k.LogID, seqs[i]-1, prev.(string), k.KeyID, k.Key)
-			if err != nil {
-				t.Fatal(err)
-			}
-			cp["signature"] = sig
+			cp["signature"] = sign(e, prev.(string))
 		}
 		canonical, err := jcs.Canonicalize(e)
 		if err != nil {
@@ -134,6 +154,84 @@ func TestALegacyLogIsArchivedAndTruncated(t *testing.T) {
 	// Once archived, nothing is left to do.
 	if n, err := l.ArchiveLegacy(ctx, func() (io.WriteCloser, error) { t.Fatal("archived twice"); return nil, nil }, audit.Actor{Kind: audit.ActorSystem, ID: "upgrade"}); n != 0 || err != nil {
 		t.Errorf("second ArchiveLegacy = %d, %v", n, err)
+	}
+}
+
+// earlierCheckpoints signs every checkpoint of the log again over the earlier payload,
+// without the time of the entry, as the versions before this one did.
+func earlierCheckpoints(t *testing.T, db *sql.DB) {
+	t.Helper()
+	rewriteWith(t, db, func(e map[string]any, prev string) string {
+		k := signer()
+		seq, _ := e["seq"].(json.Number).Int64()
+		payload, err := jcs.Canonicalize(map[string]any{"type": "https://home-mandate.org/audit-checkpoint/v0",
+			"log_id": k.LogID, "seq": json.Number(fmt.Sprint(seq - 1)), "digest": prev})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sig, err := jws.SignDetached(payload, k.KeyID, k.Key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sig
+	})
+}
+
+// A log whose checkpoints were signed over the earlier payload is a log of an earlier
+// version: archived, truncated, anchored again (SPEC-v0 section 9.5).
+func TestALogWithCheckpointsOfTheEarlierPayloadIsArchived(t *testing.T) {
+	l, db := newLog(t)
+	l.SetSigner(signer())
+	ctx := context.Background()
+	appendAll(t, l, []audit.Entry{
+		{Event: audit.EventAgentRegistered, Actor: &audit.Actor{Kind: audit.ActorUser, ID: "u1"}, Agent: &audit.Agent{ClientID: "hm-client:voice-1"}},
+		decision("hm-client:voice-1", "Voice", "light.kitchen", "kitchen", "allow", "rule"),
+	})
+	if _, err := l.Checkpoint(ctx); err != nil {
+		t.Fatal(err)
+	}
+	appendAll(t, l, []audit.Entry{decision("hm-client:voice-1", "Voice", "light.hall", "hall", "allow", "rule")})
+	if r, _ := l.Verify(ctx); !r.Valid {
+		t.Fatal("the log does not verify before the rewrite")
+	}
+	earlierCheckpoints(t, db)
+	if r, _ := l.Verify(ctx); r.Valid {
+		t.Fatal("a checkpoint over the earlier payload verifies; the test does not test anything")
+	}
+	var archive bytes.Buffer
+	n, err := l.ArchiveLegacy(ctx, func() (io.WriteCloser, error) { return closer{&archive}, nil }, audit.Actor{Kind: audit.ActorSystem, ID: "upgrade"})
+	if err != nil || n != 4 {
+		t.Fatalf("ArchiveLegacy = %d, %v", n, err)
+	}
+	if r, err := l.Verify(ctx); err != nil || !r.Valid || r.Truncation != audit.TruncationAnchored {
+		t.Errorf("after archiving: %+v, %v", r, err)
+	}
+	if strings.Count(archive.String(), "\n") != 4 {
+		t.Errorf("archive has %d lines, want 4", strings.Count(archive.String(), "\n"))
+	}
+}
+
+// The last entry of the earlier log can be a checkpoint; the archive still ends with a
+// checkpoint of this version, so that the truncated log verifies.
+func TestALogThatEndsWithAnEarlierCheckpointIsArchived(t *testing.T) {
+	l, db := newLog(t)
+	l.SetSigner(signer())
+	ctx := context.Background()
+	appendAll(t, l, []audit.Entry{
+		{Event: audit.EventAgentRegistered, Actor: &audit.Actor{Kind: audit.ActorUser, ID: "u1"}, Agent: &audit.Agent{ClientID: "hm-client:voice-1"}},
+		decision("hm-client:voice-1", "Voice", "light.kitchen", "kitchen", "allow", "rule"),
+	})
+	if _, err := l.Checkpoint(ctx); err != nil {
+		t.Fatal(err)
+	}
+	earlierCheckpoints(t, db)
+	var archive bytes.Buffer
+	n, err := l.ArchiveLegacy(ctx, func() (io.WriteCloser, error) { return closer{&archive}, nil }, audit.Actor{Kind: audit.ActorSystem, ID: "upgrade"})
+	if err != nil || n != 3 {
+		t.Fatalf("ArchiveLegacy = %d, %v", n, err)
+	}
+	if r, err := l.Verify(ctx); err != nil || !r.Valid || r.Truncation != audit.TruncationAnchored {
+		t.Errorf("after archiving: %+v, %v", r, err)
 	}
 }
 

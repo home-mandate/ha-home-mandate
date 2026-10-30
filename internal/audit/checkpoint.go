@@ -65,13 +65,14 @@ func (l *Log) HasCheckpoints(ctx context.Context) (bool, error) {
 	return found, nil
 }
 
-// sign returns the checkpoint over the log up to the entry seq with the digest.
-func (l *Log) sign(seq int64, digest string) (*checkpoint, error) {
+// sign returns the checkpoint over the log up to the entry seq with the digest; at is
+// the recorded_at of the checkpoint entry, which the signature covers (SPEC-v0 section 9.5).
+func (l *Log) sign(seq int64, digest, at string) (*checkpoint, error) {
 	s := l.signer()
 	if s == nil {
 		return nil, ErrNoSigner
 	}
-	signature, err := specaudit.SignCheckpoint(s.LogID, seq, digest, s.KeyID, s.Key)
+	signature, err := specaudit.SignCheckpoint(s.LogID, seq, digest, at, s.KeyID, s.Key)
 	if err != nil {
 		return nil, fmt.Errorf("audit: sign checkpoint: %w", err)
 	}
@@ -82,6 +83,12 @@ func (l *Log) sign(seq int64, digest string) (*checkpoint, error) {
 // position it covers. It writes nothing and returns the zero Position if the log is
 // empty or its last entry is a checkpoint already.
 func (l *Log) Checkpoint(ctx context.Context) (Position, error) {
+	return l.checkpoint(ctx, false)
+}
+
+// checkpoint is Checkpoint; with force it also follows a checkpoint, for a log whose last
+// checkpoint no longer verifies (ArchiveLegacy).
+func (l *Log) checkpoint(ctx context.Context, force bool) (Position, error) {
 	s := l.signer()
 	if s == nil {
 		return Position{}, ErrNoSigner
@@ -91,7 +98,7 @@ func (l *Log) Checkpoint(ctx context.Context) (Position, error) {
 		var seq int64
 		var digest, event string
 		err := tx.QueryRowContext(ctx, `SELECT seq, digest, event FROM audit_log ORDER BY seq DESC LIMIT 1`).Scan(&seq, &digest, &event)
-		if errors.Is(err, sql.ErrNoRows) || err == nil && event == EventLogCheckpoint {
+		if errors.Is(err, sql.ErrNoRows) || err == nil && event == EventLogCheckpoint && !force {
 			return nil
 		}
 		if err != nil {

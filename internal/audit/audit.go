@@ -540,7 +540,7 @@ func (l *Log) AppendTx(ctx context.Context, tx *sql.Tx, e Entry) (int64, error) 
 		w.Prev = &lastDigest
 	}
 	if e.checkpoint {
-		if w.Checkpoint, err = l.sign(lastSeq, lastDigest); err != nil {
+		if w.Checkpoint, err = l.sign(lastSeq, lastDigest, w.RecordedAt); err != nil {
 			return 0, err
 		}
 	}
@@ -616,8 +616,15 @@ func canonicalJSON(v any) ([]byte, error) {
 func validate(w wire) error {
 	entries := [][]byte{}
 	w.Seq, w.Prev = 1, nil
-	if w.Checkpoint != nil {
-		// A checkpoint is never the first entry: check it behind a placeholder.
+	if w.Truncated != nil {
+		// up_to_seq is smaller than the entry's own seq (SPEC-v0 section 9.4); Truncate
+		// guarantees that, so the structural check runs with the smallest value behind a
+		// placeholder instead of the real one.
+		w.Truncated = &Truncated{UpToSeq: 1, LastDigest: w.Truncated.LastDigest}
+	}
+	if w.Checkpoint != nil || w.Truncated != nil {
+		// A checkpoint is never the first entry, a truncation covers nothing as the first:
+		// check them behind a placeholder.
 		first := wire{Type: entryType, ID: w.ID, Seq: 1, RecordedAt: w.RecordedAt, Event: EventEmergencyStopActivated,
 			Principal: w.Principal, Actor: &Actor{Kind: ActorSystem, ID: "placeholder"}}
 		data, err := canonicalJSON(first)

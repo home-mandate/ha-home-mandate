@@ -482,7 +482,7 @@ func (h *harness) ask(req approval.Request) (string, chan approval.Result) {
 		e := audit.Entry{Event: audit.EventDecision, Agent: &audit.Agent{ClientID: req.ClientID, DisplayName: req.Agent},
 			Request:    &audit.Request{Time: testStart, Resource: audit.Resource{EntityID: req.EntityID, Areas: []string{req.Area}}, Action: req.Action},
 			Mandate:    &audit.Mandate{ID: "m-voice", Digest: "sha256:" + strings.Repeat("a", 64)},
-			Evaluation: &audit.Evaluation{Decision: "ask", Reason: "rule", RuleID: ptr("r-locks")}, ApprovalID: res.ID,
+			Evaluation: &audit.Evaluation{Decision: "ask", Reason: "rule", RuleID: ptr("r-locks"), ApprovalTimeout: "PT2M"}, ApprovalID: res.ID,
 			Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByApproval}}
 		e.Approval = &audit.Approval{Outcome: res.Outcome, By: res.By, Via: res.Via, At: res.At, Cause: res.Cause}
 		switch res.Outcome {
