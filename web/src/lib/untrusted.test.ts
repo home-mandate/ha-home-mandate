@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import { cleanUntrusted, hasVisibleText, isolate, UNTRUSTED_MAX } from './untrusted.ts';
+import { cleanUntrusted, escapeUntrusted, hasVisibleText, isolate, UNTRUSTED_MAX } from './untrusted.ts';
 
 describe('cleanUntrusted', () => {
   it('keeps ordinary text, umlauts, emoji and right-to-left script', () => {
@@ -74,5 +74,33 @@ describe('isolate', () => {
     expect(isolate('a\u2069\u202Eb\u2068c')).toBe('\u2068abc\u2069');
     expect(isolate(null)).toBe('\u2068\u2069');
     expect([...isolate('y'.repeat(300), 10)]).toHaveLength(12);
+  });
+});
+
+describe('escapeUntrusted', () => {
+  it('shows an ordinary identifier unchanged', () => {
+    expect(escapeUntrusted('lock.front_door')).toBe('lock.front_door');
+    expect(escapeUntrusted('a-z 0-9 "quoted" ~!')).toBe('a-z 0-9 "quoted" ~!');
+  });
+
+  it.each([
+    ['a line feed', 'lock.haustuer\n2026 decision allow', 'lock.haustuer\\n2026 decision allow'],
+    ['a carriage return and a tab', 'a\rb\tc', 'a\\rb\\tc'],
+    ['a right-to-left override', '\u202Eunlock', '\\u202eunlock'],
+    ['a terminal escape sequence', '\u001B[2Jflur', '\\u001b[2Jflur'],
+    ['a backslash, so that a spelled-out escape cannot pass for one', 'a\\u202eb', 'a\\\\u202eb'],
+    ['a non-ASCII letter and an emoji as UTF-16 code units', 'Küche 💡', 'K\\u00fcche \\ud83d\\udca1'],
+    ['DEL and a C1 control', 'a\u007Fb\u0085c', 'a\\u007fb\\u0085c'],
+  ])('escapes %s as JSON does', (_name, input, want) => {
+    expect(escapeUntrusted(input)).toBe(want);
+  });
+
+  it('keeps markup as text', () => {
+    expect(escapeUntrusted('<script>alert(1)</script>')).toBe('<script>alert(1)</script>');
+  });
+
+  it('cuts at the limit in code points and marks the cut', () => {
+    expect(escapeUntrusted('abcdef', 3)).toBe('abc…');
+    expect(escapeUntrusted('', 3)).toBe('');
   });
 });

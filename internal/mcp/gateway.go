@@ -35,6 +35,7 @@ import (
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/catalog"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/intent"
 	"github.com/home-mandate/ha-home-mandate/internal/pdp"
 )
 
@@ -48,6 +49,12 @@ const (
 	errClockBehind = "clock_behind"
 	// errJournal is the error of a request the approval journal could not follow.
 	errJournal = "journal_unavailable"
+	// errLogUnwritable is the error of a request that was not executed because its intent
+	// or its entry could not be written (SPEC-v0 section 9, RECOMMENDED code).
+	errLogUnwritable = "log_unwritable"
+	// maxDeferred is how many denials the audit log could not record are kept until it
+	// can be written again (SPEC-v0 section 9: at least the newest 64).
+	maxDeferred = 64
 	// journalTimeout bounds marking a confirmed request as executing: below the
 	// database's lock wait (15 s), above the longest call to Home Assistant that may hold
 	// the lock (defaultCallTimeout), so a locked database fails closed in bounded time.
@@ -139,6 +146,14 @@ type (
 		Replay(ctx context.Context, clientID, entityID, digest string, now time.Time) (approval.Replayed, bool, error)
 		ByKey(ctx context.Context, clientID, key string) (approval.Keyed, bool, error)
 	}
+	// Intents keeps the intent of a direct execution (intent.Store, SPEC-v0 section 9):
+	// stored before Home Assistant is called, ended together with the audit entry that
+	// records the result (End), or on its own when that failed (EndNow).
+	Intents interface {
+		Begin(ctx context.Context, e audit.Entry) (string, error)
+		End(id string) func(context.Context, *sql.Tx) error
+		EndNow(ctx context.Context, id string) error
+	}
 )
 
 // Config wires the gateway.
@@ -161,6 +176,9 @@ type Config struct {
 	Approvals Approver
 	// Journal, if set, follows the requests Approvals made (ARCHITECTURE section 7).
 	Journal Journal
+	// Intents, if set, keeps the intent of every direct execution before Home Assistant is
+	// called (SPEC-v0 section 9); nil only in tests.
+	Intents Intents
 	Logger  *slog.Logger
 	Version string
 	// TimeZone returns the household's time zone and ServiceUser Home-Mandate's own Home
@@ -202,6 +220,20 @@ type Gateway struct {
 	statusLimiter *ratelimit.Limiter
 	// closing: after Close, requests that end are left to the next start.
 	closing bool
+	// deferred are denials by the audit log that could not be recorded yet (SPEC-v0
+	// section 9), oldest first; they are written before the next entry that succeeds, by
+	// one flusher at a time, outside the mutex.
+	deferMu  sync.Mutex
+	deferred []deferredDenial
+	flushing bool
+}
+
+// deferredDenial is a denial by the audit log waiting to be written, with what ends its
+// journal row or intent if the entry's own attempt to do so fails.
+type deferredDenial struct {
+	entry  audit.Entry
+	appr   approvalRef
+	result audit.Result
 }
 
 // New registers the tools.
@@ -684,11 +716,16 @@ func exactParams(req *sdk.CallToolRequest) (map[string]any, error) {
 func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, call ha.ServiceCall, appr approvalRef, expires time.Time) (*sdk.CallToolResult, actionOut, error) {
 	start := g.cfg.Now()
 	executed := false
-	if err := g.executing(ctx, appr); err != nil {
-		g.cfg.Logger.Error("approval journal unavailable, confirmed action not executed", "error", err)
-		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: errJournal}, appr)
+	// Recording before executing (SPEC-v0 section 9): a confirmed action is marked
+	// executing in the journal, a direct one enters the intent store, both committed before
+	// Home Assistant is called. Without that, nothing is dispatched and the request is
+	// denied by the audit log.
+	if err := g.intend(ctx, a, d, &appr); err != nil {
+		g.cfg.Logger.Error("intent not stored, action not executed", "error", err)
+		g.denyUnrecorded(ctx, a, d, appr, causeOf(err))
 		return nil, actionOut{}, errors.New(codeUnavailable)
 	}
+	g.flushDeferred(ctx)
 	e := g.approvalEntry(a, d, audit.Result{Status: audit.StatusExecuted}, appr)
 	err := g.cfg.Audit.WithEntry(context.WithoutCancel(ctx), e, func() error {
 		cctx, cancel := context.WithTimeout(ctx, g.cfg.CallTimeout)
@@ -709,17 +746,17 @@ func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, ca
 	case err == nil:
 		return nil, actionOut{Status: "executed"}, nil
 	case executed:
-		// Executed, but the entry could not be committed: report the truth, log loudly.
-		g.cfg.Logger.Error("action executed but its audit entry was lost", "entity_id", call.EntityID, "error", err)
+		// Executed, but the entry could not be committed: report the truth, log loudly. The
+		// intent or journal row stays and is recorded at the next start as outcome_unknown.
+		g.cfg.Logger.Error("action executed but its audit entry was lost; recorded as outcome_unknown at the next start", "entity_id", call.EntityID, "error", err)
 		return nil, actionOut{Status: "executed"}, nil
-	case !errors.As(err, &actionErr) && errors.Is(err, approval.ErrJournal):
-		// Fail closed: not executed. The refusal is recorded (without the journal if need
-		// be), so the request does not look like an execution under way after a restart.
-		g.cfg.Logger.Error("approval journal unavailable, confirmed action not executed", "error", err)
-		_ = g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusFailed, Error: errJournal}, appr)
-		return nil, actionOut{}, errors.New(codeUnavailable)
 	case !errors.As(err, &actionErr):
+		// The entry could not be written before the call: not executed, denied by the
+		// audit log (SPEC-v0 section 9). The denial is recorded, with the journal or the
+		// intent ended if that works, so the request does not look like an execution under
+		// way after a restart; a denial the log cannot take yet is kept (denyUnrecorded).
 		g.cfg.Logger.Error("audit log unavailable, action not executed", "error", err)
+		g.denyUnrecorded(ctx, a, d, appr, causeOf(err))
 		return nil, actionOut{}, errors.New(codeUnavailable)
 	}
 	code := "ha_error"
@@ -853,13 +890,14 @@ func (g *Gateway) record(ctx context.Context, a agent.Agent, d pdp.Decision, wit
 func (g *Gateway) recordApproval(ctx context.Context, a agent.Agent, d pdp.Decision, result audit.Result, appr approvalRef) error {
 	ctx = context.WithoutCancel(ctx)
 	e := g.approvalEntry(a, d, result, appr)
+	g.flushDeferred(ctx)
 	_, err := g.cfg.Audit.Append(ctx, e)
-	if err != nil && e.Also != nil && errors.Is(err, approval.ErrJournal) {
-		g.cfg.Logger.Error("approval journal not ended with the audit entry, entry written without it", "error", err)
+	if err != nil && e.Also != nil && (errors.Is(err, approval.ErrJournal) || errors.Is(err, intent.ErrStore)) {
+		g.cfg.Logger.Error("request not ended with the audit entry, entry written without it", "error", err)
 		e.Also = nil
 		if _, err = g.cfg.Audit.Append(ctx, e); err == nil {
-			if endErr := g.cfg.Journal.EndNow(ctx, appr.row, appr.approval, result); endErr != nil {
-				g.cfg.Logger.Error("approval journal not ended; the next start records the request again", "error", endErr)
+			if endErr := g.endNow(ctx, appr, result); endErr != nil {
+				g.cfg.Logger.Error("request not ended; the next start records it again", "error", endErr)
 			}
 		}
 	}
@@ -870,14 +908,162 @@ func (g *Gateway) recordApproval(ctx context.Context, a agent.Agent, d pdp.Decis
 	return nil
 }
 
-// approvalEntry is the decision entry of an approval request that ends it in the journal.
+// approvalEntry is the decision entry of an approval request that ends it in the
+// journal, or of a direct execution that ends its intent (SPEC-v0 section 9).
 func (g *Gateway) approvalEntry(a agent.Agent, d pdp.Decision, result audit.Result, appr approvalRef) audit.Entry {
 	e := g.entry(a, d, true, result)
 	e.Approval, e.ApprovalID = appr.approval, appr.id
-	if g.cfg.Journal != nil && appr.row != "" {
+	switch {
+	case g.cfg.Journal != nil && appr.row != "":
 		e.Also = g.cfg.Journal.End(appr.row, appr.approval, result)
+	case g.cfg.Intents != nil && appr.intent != "":
+		e.Also = g.cfg.Intents.End(appr.intent)
 	}
 	return e
+}
+
+// endNow ends the journal row or the intent of appr on its own, for when ending it with
+// the audit entry failed.
+func (g *Gateway) endNow(ctx context.Context, appr approvalRef, result audit.Result) error {
+	switch {
+	case g.cfg.Journal != nil && appr.row != "":
+		return g.cfg.Journal.EndNow(ctx, appr.row, appr.approval, result)
+	case g.cfg.Intents != nil && appr.intent != "":
+		return g.cfg.Intents.EndNow(ctx, appr.intent)
+	}
+	return nil
+}
+
+// intend stores what is about to be executed before anything is dispatched (SPEC-v0
+// section 9): a confirmed request is marked executing in the journal, a direct action
+// enters the intent store and appr learns its ID. Without an intent store (tests), a
+// direct action has no intent.
+func (g *Gateway) intend(ctx context.Context, a agent.Agent, d pdp.Decision, appr *approvalRef) error {
+	if appr.row != "" {
+		return g.executing(ctx, *appr)
+	}
+	if g.cfg.Intents == nil {
+		return nil
+	}
+	// The write waits behind the audit log's write lock, which an execution under way
+	// holds for the whole call to Home Assistant (WithEntry): the bound covers that call.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), max(journalTimeout, g.cfg.CallTimeout+2*time.Second))
+	defer cancel()
+	id, err := g.cfg.Intents.Begin(ctx, g.entry(a, d, true, audit.Result{}))
+	if err != nil {
+		return err
+	}
+	appr.intent = id
+	return nil
+}
+
+// causeOf names what could not be written, for result.error: the approval journal, or
+// the audit log (the intent store is part of it).
+func causeOf(err error) string {
+	if errors.Is(err, approval.ErrJournal) {
+		return errJournal
+	}
+	return errLogUnwritable
+}
+
+// denyUnrecorded records a request that was not executed because its intent or its entry
+// could not be written: denied by the audit log (SPEC-v0 section 9), with cause as the
+// error. The entry ends the journal row or the intent with it. While denials wait for the
+// log, a new one waits behind them, so that they are written in order; if the log cannot
+// take it, it is kept, at most the newest maxDeferred, and written before the next entry
+// that succeeds. The oldest denial beyond the bound is lost; its intent is ended if that
+// still works, else the next start records it as outcome_unknown.
+func (g *Gateway) denyUnrecorded(ctx context.Context, a agent.Agent, d pdp.Decision, appr approvalRef, cause string) {
+	result := audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAudit, Error: cause}
+	g.flushDeferred(ctx)
+	g.deferMu.Lock()
+	waiting := len(g.deferred) > 0
+	g.deferMu.Unlock()
+	if !waiting {
+		if err := g.recordApproval(ctx, a, d, result, appr); err == nil {
+			return
+		}
+	}
+	den := deferredDenial{entry: g.approvalEntry(a, d, result, appr), appr: appr, result: result}
+	var dropped *deferredDenial
+	g.deferMu.Lock()
+	if len(g.deferred) >= maxDeferred {
+		dropped, g.deferred = &g.deferred[0], g.deferred[1:]
+	}
+	g.deferred = append(g.deferred, den)
+	kept := len(g.deferred)
+	g.deferMu.Unlock()
+	if dropped != nil {
+		g.cfg.Logger.Error("audit log unavailable; the oldest denial kept for it is lost (recorded as outcome_unknown at the next start unless its intent ends now)",
+			"entity_id", dropped.entry.Request.Resource.EntityID)
+		_ = g.endNow(context.WithoutCancel(ctx), dropped.appr, dropped.result)
+	}
+	g.cfg.Logger.Error("audit log unavailable; denial kept until it can be written", "kept", kept, "since", g.cfg.Now().UTC().Format(time.RFC3339))
+}
+
+// flushDeferred writes the denials kept by denyUnrecorded, oldest first, and stops at the
+// first that still cannot be written. One flusher runs at a time; it holds the mutex only
+// to take and remove entries, never while writing, so that a slow write blocks no other
+// request.
+func (g *Gateway) flushDeferred(ctx context.Context) {
+	g.deferMu.Lock()
+	if g.flushing || len(g.deferred) == 0 {
+		g.deferMu.Unlock()
+		return
+	}
+	g.flushing = true
+	g.deferMu.Unlock()
+	defer func() {
+		g.deferMu.Lock()
+		g.flushing = false
+		g.deferMu.Unlock()
+	}()
+	for {
+		g.deferMu.Lock()
+		if len(g.deferred) == 0 {
+			g.deferMu.Unlock()
+			return
+		}
+		den := g.deferred[0]
+		g.deferMu.Unlock()
+		if !g.writeDeferred(ctx, den) {
+			return
+		}
+		g.deferMu.Lock()
+		g.deferred = g.deferred[1:] // only the flusher removes, so the head is still den
+		kept := len(g.deferred)
+		g.deferMu.Unlock()
+		g.cfg.Logger.Warn("denial recorded late: the audit log was unavailable", "entity_id", den.entry.Request.Resource.EntityID, "kept", kept)
+	}
+}
+
+// writeDeferred writes one kept denial, in bounded time: with its journal row or intent
+// ended in the same transaction; if only that part fails, without it, and the row or
+// intent is ended on its own; an entry the log refuses as invalid is dropped and logged,
+// so that it cannot block the ones behind it. It reports whether the next may follow.
+func (g *Gateway) writeDeferred(ctx context.Context, den deferredDenial) bool {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), journalTimeout)
+	defer cancel()
+	_, err := g.cfg.Audit.Append(ctx, den.entry)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, audit.ErrInvalidEntry):
+		g.cfg.Logger.Error("kept denial refused by the audit log, dropped", "error", err)
+		_ = g.endNow(ctx, den.appr, den.result)
+		return true
+	case den.entry.Also != nil && (errors.Is(err, approval.ErrJournal) || errors.Is(err, intent.ErrStore)):
+		e := den.entry
+		e.Also = nil
+		if _, err := g.cfg.Audit.Append(ctx, e); err != nil {
+			return false
+		}
+		if endErr := g.endNow(ctx, den.appr, den.result); endErr != nil {
+			g.cfg.Logger.Error("kept denial written, its request not ended; the next start records it again", "error", endErr)
+		}
+		return true
+	}
+	return false
 }
 
 // executing marks a confirmed request as executing in the journal; nothing to do for an
@@ -892,6 +1078,7 @@ func (g *Gateway) executing(ctx context.Context, appr approvalRef) error {
 }
 
 func (g *Gateway) append(ctx context.Context, e audit.Entry) error {
+	g.flushDeferred(ctx)
 	if _, err := g.cfg.Audit.Append(context.WithoutCancel(ctx), e); err != nil {
 		g.cfg.Logger.Error("audit log write failed", "error", err)
 		return err

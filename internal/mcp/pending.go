@@ -220,6 +220,8 @@ func (g *Gateway) Close(timeout time.Duration) bool {
 	if g.cfg.Approvals != nil {
 		g.cfg.Approvals.StopAnswers()
 	}
+	// Denials the audit log could not take yet get one more chance before the process ends.
+	g.flushDeferred(context.Background())
 	deadline := time.Now().Add(timeout)
 	for g.unsettled() {
 		if !time.Now().Before(deadline) {

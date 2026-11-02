@@ -23,6 +23,7 @@ import (
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/config"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/intent"
 	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 	"github.com/home-mandate/ha-home-mandate/internal/removal"
 	"github.com/home-mandate/ha-home-mandate/internal/store"
@@ -55,6 +56,7 @@ type state struct {
 	approvers *approval.Approvers
 	// journal is the approval journal; serve gives it its logger.
 	journal *approval.Journal
+	intents *intent.Store
 }
 
 // openState opens the database for the administration commands; they need the data

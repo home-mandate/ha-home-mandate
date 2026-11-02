@@ -8,7 +8,7 @@
 import type { ApproverChange, AuditEntry, Category, DecisionFilter, DeviceCatalog, DirectoryChange, TemplateChange } from '../api/types.ts';
 import { isCritical } from '../engine/vocabulary.ts';
 import { m } from '../i18n.ts';
-import { cleanUntrusted, isolate } from '../untrusted.ts';
+import { cleanUntrusted, escapeUntrusted, isolate } from '../untrusted.ts';
 
 /** decisionOf returns the decision of a request, or null for anything that is no decision. */
 export function decisionOf(entry: AuditEntry): Exclude<DecisionFilter, 'not_enforced'> | null {
@@ -86,5 +86,7 @@ export function approverText(entry: AuditEntry): string {
 /** deviceName is the device's name from Home Assistant, else its entity ID, both cleaned. */
 export function deviceName(entityId: string, catalog: DeviceCatalog | null): string {
   const device = catalog?.devices.find((d) => d.entity_id === entityId);
-  return cleanUntrusted(device?.name || entityId);
+  // A name the catalog knows is Home Assistant's; an identifier the catalog does not know
+  // is shown as the entry holds it, escaped (SPEC-v0 section 9.1).
+  return device?.name ? cleanUntrusted(device.name) : escapeUntrusted(entityId);
 }

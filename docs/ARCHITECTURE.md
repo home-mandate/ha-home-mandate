@@ -504,6 +504,33 @@ checked on every request.
     recorded at the next start as `cancelled`/`interrupted`, which then is true: nobody's
     answer was accepted (SPEC-v0 11.1 item 8). An execution still under way when the
     process ends becomes `outcome_unknown` at the next start.
+  - **Recording before executing (SPEC-v0 section 9):** nothing is dispatched to Home
+    Assistant before its intent is durable. For a confirmed action the journal row in state
+    `executing` is the intent; a direct action (an `allow`) enters `execution_intents`
+    (`internal/intent`) and is committed before the call. The entry that records the result,
+    `executed` or `failed`, deletes the row in its transaction (`audit.Entry.Also`). At
+    start, before the gateway exists, every row left by a previous process is recorded as
+    `failed`/`outcome_unknown` and deleted, each with its entry in one transaction, so a
+    crash during the start leaves no duplicate. A `read` has no intent: it changes nothing
+    and its entry is written in the transaction that returns the state, as before.
+  - **Denied by the audit log:** when the intent or the entry cannot be written (disk full,
+    read-only storage), the action is not executed and the request is recorded as `denied`
+    with `denied_by: audit` and the cause as `error`: `log_unwritable`, or
+    `journal_unavailable` when the journal row of a confirmed action could not be marked
+    `executing` or ended (the row is its intent); the agent gets `unavailable`. A denial the
+    log cannot take yet is kept in memory, at most the newest 64, oldest first; a new denial
+    waits behind the kept ones, so that they are written in order, and one flusher writes
+    them before the next entry that succeeds, outside the queue's mutex, so a slow write
+    blocks no other request. A kept denial whose row or intent cannot be ended in its
+    transaction is written without that and the row or intent ended on its own; one the log
+    refuses as invalid is dropped and logged, so nothing blocks the ones behind it. The
+    oldest denial beyond the bound is lost, its intent ended if that still works; a denial
+    still kept when the process ends gets one more attempt in `Close`, and whatever is lost
+    is recorded at the next start as `outcome_unknown` from its intent, conservative but
+    not an execution. Denials by authentication, the emergency stop and the rate limit come
+    first and keep their `denied_by`. Only the journal of a request that reached nobody or
+    could not be read before the decision still answers `failed`/`journal_unavailable`:
+    that is not the log.
   - The HTTP write timeout of the MCP listener is the agent's wait plus 10 seconds of grace
     plus 30 seconds (85 s by default), no longer derived from the approval timeout.
   - **MCP Tasks:** a client that declares the extension would get a task bound to the

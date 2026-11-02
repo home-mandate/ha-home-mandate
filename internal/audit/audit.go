@@ -100,6 +100,9 @@ const (
 	DeniedByRateLimit      = "rate_limit"
 	DeniedByEmergencyStop  = "emergency_stop"
 	DeniedByAuthentication = "authentication"
+	// DeniedByAudit: the request was not executed because it could not be recorded
+	// (SPEC-v0 section 9).
+	DeniedByAudit = "audit"
 )
 
 // OutcomeCancelled is the outcome of an approval request that ended before anyone

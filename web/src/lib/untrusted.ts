@@ -48,3 +48,30 @@ export function isolate(text: string | null | undefined, max = UNTRUSTED_MAX): s
 export function hasVisibleText(text: string | null | undefined): boolean {
   return VISIBLE.test(cleanUntrusted(text));
 }
+
+/**
+ * escapeUntrusted shows a value of an audit entry's request (entity ID, action, category,
+ * area) the way the specification requires (SPEC-v0 section 9.1): as a JSON string shows
+ * it, with every character outside printable ASCII and every backslash in the escaped
+ * form of JSON, so that a line feed, a bidi override or a terminal escape sequence an
+ * agent put into a name is visible instead of acting. A legitimate identifier (ASCII,
+ * SPEC-v0 section 3.4) shows unchanged. Nothing is removed: the log shows what was sent.
+ */
+export function escapeUntrusted(text: string | null | undefined, max = UNTRUSTED_MAX): string {
+  if (!text) return '';
+  let out = '';
+  let count = 0;
+  for (const ch of text) {
+    if (count++ >= max) return `${out}…`;
+    const code = ch.codePointAt(0) ?? 0;
+    if (ch === '\\') out += '\\\\';
+    else if (ch === '\n') out += '\\n';
+    else if (ch === '\r') out += '\\r';
+    else if (ch === '\t') out += '\\t';
+    else if (code < 0x20 || code > 0x7e) {
+      // UTF-16 code units, as JSON escapes them.
+      for (let i = 0; i < ch.length; i++) out += `\\u${ch.charCodeAt(i).toString(16).padStart(4, '0')}`;
+    } else out += ch;
+  }
+  return out;
+}

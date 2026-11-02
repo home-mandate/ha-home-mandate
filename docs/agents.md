@@ -247,7 +247,8 @@ and checked against limits in °F; rc.3 refused them.
 armed `away`. `mode` also takes `vacation` and `custom_bypass`. `set_temperature` takes a
 range, `target_temp_low` with `target_temp_high`, on a thermostat that supports one; a
 mandate limits the ends as `temperature_low` and `temperature_high` (`_f` in a °F
-household).
+household). `unavailable` also answers a request Home-Mandate could not record: nothing is
+executed before its audit entry can be written (SPEC-v0 section 9).
 
 ## Actions that need a confirmation
 
@@ -334,7 +335,7 @@ Tool errors are short codes without internal details. Every refusal is in the au
 | `denied: unauthorized` | The agent's access was revoked while it waited. | – |
 | `failed: result_gone` (from `approval_status`) | A read was confirmed, but its state was read more than 15 minutes ago or before a restart; Home-Mandate keeps it only in memory, never in its database. | Call `get_state` again; it asks again. |
 | `rate_limited` | The mandate's requests per hour are used up (60 per hour for an agent without a usable mandate); for `approval_status` and `approval_cancel`, their own limit of 120 per hour. | Wait; raise the rate limit of the mandate. |
-| `unavailable` | Home-Mandate cannot decide right now: Home Assistant disconnected, its configuration (time zone, temperature unit) not read yet, the device directory refreshing, or the host clock behind the audit log. From `approval_status` more than 15 minutes after the end or after a restart, it can also stand for Home Assistant dropping during the execution (the call itself said `failed` then). | Usually passes within seconds; see [troubleshooting.md](troubleshooting.md#agents-get-unavailable). |
+| `unavailable` | Home-Mandate cannot decide right now: Home Assistant disconnected, its configuration (time zone, temperature unit) not read yet, the device directory refreshing, the host clock behind the audit log, or the audit log cannot be written (the request is then recorded as denied by the audit log once it can, and nothing was executed). From `approval_status` more than 15 minutes after the end or after a restart, it can also stand for Home Assistant dropping during the execution (the call itself said `failed` then). | Usually passes within seconds; see [troubleshooting.md](troubleshooting.md#agents-get-unavailable). |
 | `invalid_params` (with the parameter) | Malformed entity ID or action, unknown or out-of-range parameter, or a value that is no whole step of its parameter, for example `invalid_params: volume_level must be a whole percent, 0 to 1 in steps of 0.01 (e.g. 0.33)`, `invalid_params: temperature must be a number between -50 and 100 in steps of 0.01 degrees`, `invalid_params: brightness_pct must be an integer between 0 and 100`. | Fix the call. |
 | `not_supported` | The action is evaluated but cannot be executed in this version (camera snapshot, `set` on `other`). | – |
 | `failed` | Home Assistant reported an error or did not answer when executing. | Look at the audit entry ("Home Assistant reports: …"). |

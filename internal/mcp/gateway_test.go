@@ -31,6 +31,7 @@ import (
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/catalog"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/intent"
 	"github.com/home-mandate/ha-home-mandate/internal/mandate"
 	"github.com/home-mandate/ha-home-mandate/internal/pdp"
 	"github.com/home-mandate/ha-home-mandate/internal/store"
@@ -196,6 +197,9 @@ type harness struct {
 	journal  *approval.Journal
 	// journalOverride replaces journal in the gateway when set.
 	journalOverride Journal
+	intents         *intent.Store
+	// intentsOverride replaces intents in the gateway when set.
+	intentsOverride Intents
 	logger          *slog.Logger
 	approvalWait    time.Duration    // the gateway's ApprovalWait; zero: the default
 	limiterNow      func() time.Time // the clock of the agent's hourly limit; nil: the real one
@@ -260,7 +264,7 @@ func newHarness(t testing.TB, edit func(map[string]any)) *harness {
 	}
 
 	h := &harness{t: t, token: tokens.AccessToken, agent: a, agents: agents, log: log, db: st.DB(), mandates: mandates, tz: "Europe/Berlin", self: "hm-service-user", unit: "°C", clock: &fakeClock{}, now: &fakeNow{t: time.Now()},
-		ha: &fakeHA{connected: true}, journal: approval.NewJournal(st.DB(), nil),
+		ha: &fakeHA{connected: true}, journal: approval.NewJournal(st.DB(), nil), intents: intent.New(st.DB(), nil),
 		catalog: &fakeCatalog{ready: true, areas: []catalog.Area{{ID: "garden", Name: "Garden"}, {ID: "hallway", Name: "Hallway"}, {ID: "kitchen", Name: "Kitchen", FloorID: "floor:ground"}, {ID: "porch", Name: "Porch"},
 			{ID: "floor:ground", Name: "Ground floor", Floor: true}},
 			devices: map[string]catalog.Device{
@@ -284,13 +288,20 @@ func (h *harness) serve(auditor Auditor) string {
 	if h.decider != nil {
 		decider = h.decider
 	}
-	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Journal: h.gatewayJournal(), Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(h.limiterNow), Audit: auditor, Version: "test",
+	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Journal: h.gatewayJournal(), Intents: h.gatewayIntents(), Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(h.limiterNow), Audit: auditor, Version: "test",
 		TimeZone: h.timeZone, ServiceUser: h.serviceUser, TemperatureUnit: h.temperatureUnit, Now: h.now.Now, Logger: h.logger, ApprovalWait: h.approvalWait})
 	g.cfg.Clock = h.clock
 	h.gw = g
 	srv := httptest.NewServer(g.Handler())
 	h.t.Cleanup(srv.Close)
 	return srv.URL + Path
+}
+
+func (h *harness) gatewayIntents() Intents {
+	if h.intentsOverride != nil {
+		return h.intentsOverride
+	}
+	return h.intents
 }
 
 func (h *harness) gatewayJournal() Journal {
