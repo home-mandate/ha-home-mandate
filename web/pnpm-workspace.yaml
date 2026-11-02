@@ -12,9 +12,15 @@ saveExact: true
 # source-map-js < 1.2.2: GHSA-68fv-2mgg-jv7q (build and test tooling only).
 overrides:
   source-map-js: 1.2.2
-# Advisories without a fixed version (re-check when the parent updates):
+# Advisories that do not apply here (re-check when the parent updates):
 # deepmerge <= 4.3.1: GHSA-gcqx-w48m-w2h4, low. Only @sveltejs/vite-plugin-svelte uses it,
 # at build time, to merge our own Svelte config; no untrusted input reaches it.
+# minimatch < 11.0.1: GHSA-g3hv-75wg-m249, moderate: denial of service via globparts
+# amplification in crafted patterns. Only eslint, @eslint/config-array and
+# @typescript-eslint/typescript-estree use it, at lint time, with the patterns of our own
+# ESLint config; no untrusted input reaches it. The fix exists only in 11.x, which the
+# parents do not accept yet (they require ^10); remove once they require >= 11.0.1.
 auditConfig:
   ignoreGhsas:
     - GHSA-gcqx-w48m-w2h4
+    - GHSA-g3hv-75wg-m249
