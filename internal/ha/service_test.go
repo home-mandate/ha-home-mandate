@@ -94,3 +94,13 @@ func TestConnectedBeforeRun(t *testing.T) {
 		t.Errorf("CallService before Run = %v, want ErrDisconnected", err)
 	}
 }
+
+// Every arming mode of the vocabulary is an allowed service: the PEP's action table and
+// this second line of defence name the same five (spec #84).
+func TestEveryArmingModeIsAllowed(t *testing.T) {
+	for _, mode := range []string{"home", "away", "night", "vacation", "custom_bypass"} {
+		if !allowedServices["alarm_control_panel"]["alarm_arm_"+mode] {
+			t.Errorf("alarm_arm_%s is not an allowed service", mode)
+		}
+	}
+}

@@ -51,6 +51,13 @@ http:
   ssl_certificate: /config/certs/cert.pem
   ssl_key: /config/certs/key.pem
 demo:
+# A manual alarm with every arming mode and no code: the demo panel asks for one.
+alarm_control_panel:
+  - platform: manual
+    name: E2E Alarm
+    code_arm_required: false
+    arming_time: 0
+    delay_time: 0
 command_line:
   - notify:
       name: ` + approverDevice + `

@@ -107,6 +107,32 @@ func (h *harness) setAttrs(entityID string, attrs map[string]any) {
 	h.catalog.devices[entityID] = dev
 }
 
+// Spec #84: a thermostat that takes only a range is not asked for a single setpoint, and
+// the other way round; the agent learns which form the device takes (of what its mandate
+// does not deny: set_mode is not in the voice assistant's).
+func TestSetpointFormTheThermostatCannotTake(t *testing.T) {
+	for name, tc := range map[string]struct {
+		features float64
+		params   map[string]any
+		want     string
+	}{
+		"single setpoint on a range-only thermostat": {2, map[string]any{"temperature": 21.0},
+			"not_supported: climate.living_room cannot set_temperature with temperature; it can: set_temperature with target_temp_low and target_temp_high"},
+		"range on a single-setpoint thermostat": {1, map[string]any{"target_temp_low": 18.0, "target_temp_high": 22.0},
+			"not_supported: climate.living_room cannot set_temperature with target_temp_low and target_temp_high; it can: set_temperature with temperature"},
+	} {
+		h, f := pendingHarness(t)
+		h.setAttrs("climate.living_room", map[string]any{"supported_features": tc.features})
+		_, errText := h.call(h.session(), "perform_action", map[string]any{"entity_id": "climate.living_room", "action": "set_temperature", "params": tc.params})
+		if errText != tc.want {
+			t.Errorf("%s = %q, want %q", name, errText, tc.want)
+		}
+		if len(f.requests()) != 0 {
+			t.Errorf("%s: a human was asked", name)
+		}
+	}
+}
+
 // Issue #89: a lock without OPEN is not opened on a confirmation; nobody is asked, the
 // agent learns what the lock can do, and the entry is failed/not_supported without an
 // approval. Once the lock reports OPEN again, the human is asked as before.

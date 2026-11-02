@@ -102,6 +102,40 @@ func canDoSome(category, action string, attrs map[string]any) bool {
 	return canDo(category, action, ha.ServiceCall{}, attrs)
 }
 
+// Parameter forms of set_temperature as the agent names them.
+const (
+	singleSetpoint = "set_temperature with temperature"
+	rangeSetpoint  = "set_temperature with target_temp_low and target_temp_high"
+)
+
+// requestedForm names the action as requested: for set_temperature with the form of the
+// setpoint, which decides whether the thermostat can carry it out.
+func requestedForm(category, action string, call ha.ServiceCall) string {
+	switch {
+	case category != "climate" || action != "set_temperature":
+		return action
+	case isRange(call):
+		return rangeSetpoint
+	}
+	return singleSetpoint
+}
+
+// supportedForm names the action an entity can carry out: for set_temperature the one
+// form of the setpoint the thermostat takes, or the bare action when it takes both.
+func supportedForm(category, action string, attrs map[string]any) string {
+	if category != "climate" || action != "set_temperature" {
+		return action
+	}
+	single, ranged := has(attrs, targetTemperature), has(attrs, targetTemperatureRange)
+	switch {
+	case single && !ranged:
+		return singleSetpoint
+	case ranged && !single:
+		return rangeSetpoint
+	}
+	return action
+}
+
 // isRange tells whether a set_temperature call sets a range of two temperatures.
 func isRange(call ha.ServiceCall) bool {
 	_, ok := call.Data["target_temp_low"]
