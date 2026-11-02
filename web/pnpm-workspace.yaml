@@ -15,6 +15,11 @@ overrides:
 # Advisories without a fixed version (re-check when the parent updates):
 # deepmerge <= 4.3.1: GHSA-gcqx-w48m-w2h4, low. Only @sveltejs/vite-plugin-svelte uses it,
 # at build time, to merge our own Svelte config; no untrusted input reaches it.
+# minimatch 10.2.6: GHSA-g3hv-75wg-m249, moderate (denial of service through a crafted
+# pattern). Only the ESLint stack uses it, at lint time, on our own glob patterns; no
+# untrusted input reaches it. The fix is minimatch 11, a major the ESLint packages do not
+# require yet; re-check when they do.
 auditConfig:
   ignoreGhsas:
     - GHSA-gcqx-w48m-w2h4
+    - GHSA-g3hv-75wg-m249
