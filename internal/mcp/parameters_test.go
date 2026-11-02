@@ -23,6 +23,7 @@ func TestRequestParameters(t *testing.T) {
 		volumeRule       = "invalid_params: volume_level must be a whole percent, 0 to 1 in steps of 0.01 (e.g. 0.33)"
 		temperatureRule  = "invalid_params: temperature must be a number between -50 and 100 in steps of 0.01 degrees"
 		fahrenheitRule   = "invalid_params: temperature must be a number between -58 and 212 in steps of 0.01 degrees"
+		setpointRule     = "invalid_params: temperature, or target_temp_low with target_temp_high, is required"
 		unexpectedUnitIn = "invalid_params: temperature cannot be checked in a household that uses K"
 	)
 	tests := []struct {
@@ -51,7 +52,22 @@ func TestRequestParameters(t *testing.T) {
 		{name: "Fahrenheit out of range", category: "climate", action: "set_temperature", params: map[string]any{"temperature": 250.0}, unit: "°F", wantErr: fahrenheitRule},
 		{name: "unexpected unit: refused", category: "climate", action: "set_temperature", params: map[string]any{"temperature": 21.0}, unit: "K", wantErr: unexpectedUnitIn},
 		{name: "unknown unit: not the agent's fault", category: "climate", action: "set_temperature", params: map[string]any{"temperature": 21.0}, unit: "", unitUnknown: true},
-		{name: "unknown unit, temperature missing", category: "climate", action: "set_temperature", params: nil, unit: "", wantErr: "invalid_params: temperature is required"},
+		{name: "unknown unit, temperature missing", category: "climate", action: "set_temperature", params: nil, unit: "", wantErr: setpointRule},
+		// Spec #84: a range setpoint is temperature_low with temperature_high, in the household's unit.
+		{name: "range setpoint", category: "climate", action: "set_temperature", params: map[string]any{"target_temp_low": 18.0, "target_temp_high": 22.5}, unit: "°C",
+			want: map[string]int64{"temperature_low": 1800, "temperature_high": 2250}},
+		{name: "range setpoint in Fahrenheit", category: "climate", action: "set_temperature", params: map[string]any{"target_temp_low": 65.0, "target_temp_high": 72.0}, unit: "°F",
+			want: map[string]int64{"temperature_low_f": 6500, "temperature_high_f": 7200}},
+		{name: "range end finer than the unit", category: "climate", action: "set_temperature", params: map[string]any{"target_temp_low": 18.005, "target_temp_high": 22.0}, unit: "°C",
+			wantErr: "invalid_params: target_temp_low must be a number between -50 and 100 in steps of 0.01 degrees"},
+		{name: "half a range", category: "climate", action: "set_temperature", params: map[string]any{"target_temp_low": 18.0}, unit: "°C",
+			wantErr: "invalid_params: target_temp_low and target_temp_high go together"},
+		{name: "a temperature and a range", category: "climate", action: "set_temperature", params: map[string]any{"temperature": 21.0, "target_temp_low": 18.0, "target_temp_high": 22.0}, unit: "°C",
+			wantErr: "invalid_params: temperature or target_temp_low with target_temp_high, not both"},
+		{name: "range while the unit is unknown", category: "climate", action: "set_temperature", params: map[string]any{"target_temp_low": 18.0, "target_temp_high": 22.0}, unit: "", unitUnknown: true},
+		{name: "arm without a mode", category: "alarm", action: "arm", params: nil, unit: "°C", wantErr: "invalid_params: mode is required"},
+		{name: "arm with an unknown mode", category: "alarm", action: "arm", params: map[string]any{"mode": "panic"}, unit: "°C",
+			wantErr: "invalid_params: mode must be one of home, away, night, vacation, custom_bypass"},
 		{name: "position", category: "cover", action: "set_position", params: map[string]any{"position": 30.0}, unit: "°C", want: map[string]int64{"position": 30}},
 		{name: "position as text", category: "cover", action: "set_position", params: map[string]any{"position": "30"}, unit: "°C",
 			wantErr: "invalid_params: position must be an integer between 0 and 100"},
@@ -311,5 +327,80 @@ func TestExactStepsEdges(t *testing.T) {
 		if _, ok := exactSteps(value, 1); ok != want {
 			t.Errorf("exactSteps(%v) = %t, want %t", value, ok, want)
 		}
+	}
+}
+
+// Spec #84: the arming mode is a parameter of the evaluation, as the agent names it; the
+// vocabulary's five modes are Home Assistant's five arming services.
+func TestArmModeIsEvaluated(t *testing.T) {
+	for _, mode := range []string{"home", "away", "night", "vacation", "custom_bypass"} {
+		got, err := requestParameters("alarm", "arm", map[string]any{"mode": mode}, "°C")
+		if err != nil || len(got) != 1 || got["mode"] != evaluator.StringValue(mode) {
+			t.Errorf("%s: parameters = %v, %v", mode, got, err)
+		}
+		call, err := buildCall("alarm_control_panel.home", "alarm", "arm", map[string]any{"mode": mode}, "°C")
+		if err != nil || call.Service != "alarm_arm_"+mode || call.Data != nil {
+			t.Errorf("%s: call = %+v, %v", mode, call, err)
+		}
+	}
+}
+
+// A range setpoint is executed as Home Assistant's target_temp_low and target_temp_high,
+// in the household's unit and its range: 101 °F is a valid upper end.
+func TestRangeSetpointIsExecutedInTheHouseholdsUnit(t *testing.T) {
+	params := map[string]any{"target_temp_low": 60.0, "target_temp_high": 101.0}
+	call, err := buildCall("climate.living_room", "climate", "set_temperature", params, "°F")
+	if err != nil || call.Service != "set_temperature" || call.Data["target_temp_low"] != 60.0 || call.Data["target_temp_high"] != 101.0 {
+		t.Fatalf("°F: call = %+v, %v", call, err)
+	}
+	if _, err := buildCall("climate.living_room", "climate", "set_temperature", params, "°C"); !errors.Is(err, errInvalidParams) {
+		t.Fatalf("°C: error = %v, want invalid_params", err)
+	}
+}
+
+// Spec #84: a range setpoint goes through like a single one: the human sees both ends with
+// their unit, Home Assistant gets target_temp_low and target_temp_high, the audit entry
+// has temperature_low and temperature_high; a limit on one end is named in the agent's
+// terms.
+func TestRangeSetpointEndToEnd(t *testing.T) {
+	f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: answeredAt}}
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+			map[string]any{"id": "r-heating", "resource": map[string]any{"category": "climate"}, "actions": []any{"set_temperature"}, "decision": "ask"},
+		}
+	})
+	f.journal, h.approver = h.journal, f
+	h.url = h.serve(h.log)
+	s := h.session()
+	_, errText := h.call(s, "perform_action", map[string]any{"entity_id": "climate.living_room", "action": "set_temperature",
+		"params": map[string]any{"target_temp_low": 18.0, "target_temp_high": 22.5}})
+	if errText != "" {
+		t.Fatalf("perform_action = %q", errText)
+	}
+	if reqs := f.requests(); len(reqs) != 1 || reqs[0].Params["target_temp_low"] != "18 °C" || reqs[0].Params["target_temp_high"] != "22.5 °C" {
+		t.Errorf("shown = %v", reqs)
+	}
+	if calls := h.ha.recorded(); len(calls) != 1 || calls[0].Service != "set_temperature" || calls[0].Data["target_temp_low"] != 18.0 || calls[0].Data["target_temp_high"] != 22.5 {
+		t.Errorf("calls = %+v", calls)
+	}
+	if e := h.lastEntry(); path(e, "request", "parameters", "temperature_low") != float64(1800) || path(e, "request", "parameters", "temperature_high") != float64(2250) {
+		t.Errorf("audit entry = %v", e)
+	}
+}
+
+// A limit on one end of a range setpoint is named in the agent's terms.
+func TestRangeSetpointLimitIsNamed(t *testing.T) {
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+			map[string]any{"id": "r-heating", "resource": map[string]any{"category": "climate"}, "actions": []any{"set_temperature"}, "decision": "allow",
+				"constraints": map[string]any{"temperature_high": map[string]any{"max": 2400}}},
+		}
+	})
+	_, errText := h.call(h.session(), "perform_action", map[string]any{"entity_id": "climate.living_room", "action": "set_temperature",
+		"params": map[string]any{"target_temp_low": 18.0, "target_temp_high": 25.0}})
+	if errText != "denied: no_match: allowed only with target_temp_high up to 24 °C" {
+		t.Errorf("above the limit: %q", errText)
 	}
 }

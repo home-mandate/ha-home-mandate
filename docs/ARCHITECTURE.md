@@ -421,7 +421,7 @@ checked on every request.
   Companion App on a Mac have no such step: whoever has the unlocked device can answer.
 - The "reason" supplied by the agent is explicitly marked in the message as the agent's claim,
   not as a fact. The message also shows the service data that will be executed, and when
-  the alarm is armed the mode (`mode=night`; `away` when the agent names none), which is
+  the alarm is armed the mode (`mode=night`; the agent must name one), which is
   part of the service, not of the data; the UI shows the same.
 - Timeout: the mandate's `approval.timeout`, capped by `HM_APPROVAL_TIMEOUT` (default
   2 minutes, at most 10) → `deny`; the agent's call waits only `HM_APPROVAL_WAIT` of it
@@ -569,7 +569,7 @@ checked on every request.
      | light, switch | `turn_on` / `turn_off` | state `on` / `off` |
      | light | `set` | no check: brightness and colour temperature are converted and rounded by Home Assistant |
      | climate | `set_mode` | state equals `hvac_mode` |
-     | climate | `set_temperature` | attribute `temperature` equals the value |
+     | climate | `set_temperature` | attribute `temperature` equals the value; for a range, `target_temp_low` and `target_temp_high` both equal theirs |
      | cover, gate | `open` / `close` | `open` (a cover with `current_position` only at 100), `opening` / `closed`, `closing` |
      | cover | `set_position` | attribute `current_position` equals the value |
      | cover | `stop` | no check (acts on every call) |
@@ -592,8 +592,8 @@ checked on every request.
   4. **What the device can do (SPEC-v0 11.1 item 11, issue #89):** before anyone is asked,
      and also for an allowed action, the entity's current state tells whether it can
      carry out the call: `supported_features` per domain (lock `open`; cover open, close,
-     stop, position; climate target temperature; media player on, off, play, pause,
-     volume; alarm arm modes), `supported_color_modes` for a light's brightness and colour
+     stop, position; climate target temperature, single or range; media player on, off,
+     play, pause, volume; alarm arm modes), `supported_color_modes` for a light's brightness and colour
      temperature, `hvac_modes` for a climate mode (`mcp/support.go`, profile Home
      Assistant). If it cannot: nothing is executed and nobody asked, `failed`,
      `not_supported`, no `approval`; the agent learns what the device can do instead, an

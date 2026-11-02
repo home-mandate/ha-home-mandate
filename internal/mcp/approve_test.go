@@ -833,9 +833,10 @@ func TestTheWaitGrowsUpToAnHour(t *testing.T) {
 }
 
 // Arming the alarm sends no service data: the mode is part of the service. The human
-// sees it all the same, also the default mode when the agent names none.
+// sees it all the same. An agent that names no mode is refused before anyone is asked
+// (spec #84: mode is required).
 func TestApprovalShowsTheAlarmMode(t *testing.T) {
-	for mode, want := range map[string]string{"night": "night", "home": "home", "": "away"} {
+	for mode, want := range map[string]string{"night": "night", "home": "home", "vacation": "vacation", "": ""} {
 		f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: answeredAt}}
 		h := newHarness(t, func(d map[string]any) {
 			d["rules"] = append([]any{map[string]any{"id": "r-ask-arm", "resource": map[string]any{"category": "alarm"},
@@ -851,7 +852,14 @@ func TestApprovalShowsTheAlarmMode(t *testing.T) {
 		if mode != "" {
 			args["params"] = map[string]any{"mode": mode}
 		}
-		if _, errText := h.call(h.session(), "perform_action", args); errText != "" {
+		_, errText := h.call(h.session(), "perform_action", args)
+		if want == "" {
+			if errText != "invalid_params: mode is required" || len(f.requests()) != 0 || len(h.ha.recorded()) != 0 {
+				t.Errorf("without a mode: %q, asked %d, calls %d", errText, len(f.requests()), len(h.ha.recorded()))
+			}
+			continue
+		}
+		if errText != "" {
 			t.Fatalf("%q: perform_action = %q", mode, errText)
 		}
 		if reqs := f.requests(); len(reqs) != 1 || len(reqs[0].Params) != 1 || reqs[0].Params["mode"] != want {

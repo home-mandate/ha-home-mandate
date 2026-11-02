@@ -208,14 +208,17 @@ func shownParams(d pdp.Decision, call ha.ServiceCall) map[string]any {
 	if d.Resource.Category == "alarm" && d.Action == "arm" {
 		return map[string]any{"mode": strings.TrimPrefix(call.Service, vocabulary["alarm"]["arm"].service)}
 	}
-	if t, ok := call.Data["temperature"]; ok {
-		if unit := unitOf(d.Parameters); unit != "" {
-			data := maps.Clone(call.Data)
-			data["temperature"] = fmt.Sprintf("%v %s", t, unit)
-			return data
+	unit := unitOf(d.Parameters)
+	if unit == "" {
+		return call.Data
+	}
+	data := maps.Clone(call.Data)
+	for name := range temperatureCallParams() {
+		if t, ok := data[name]; ok {
+			data[name] = fmt.Sprintf("%v %s", t, unit)
 		}
 	}
-	return call.Data
+	return data
 }
 
 // approvalRef is the outcome of an approval request for its audit entry: the approval

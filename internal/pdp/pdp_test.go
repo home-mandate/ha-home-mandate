@@ -399,12 +399,17 @@ func TestEvaluatePassesParametersAndApprovers(t *testing.T) {
 		"no number": {"brightness": json.RawMessage(`true`)},
 		"null":      {"brightness": json.RawMessage(`null`)},
 	} {
-		got := p.Evaluate(context.Background(), Request{Subject: subject, Action: Action{Name: "turn_on", Properties: properties}, Resource: Resource{ID: "light.kitchen"}})
+		got := p.Evaluate(context.Background(), Request{Subject: subject, Action: Action{Name: "set", Properties: properties}, Resource: Resource{ID: "light.kitchen"}})
 		if got.Decision || got.Context.Reason != "invalid_request" {
 			t.Errorf("%s: %+v, want invalid_request", name, got)
 		}
 	}
-	got = p.Evaluate(context.Background(), Request{Subject: subject, Action: Action{Name: "turn_on", Properties: map[string]json.RawMessage{"brightness": json.RawMessage(`5e1`)}}, Resource: Resource{ID: "light.kitchen"}})
+	// A parameter the action does not declare makes the request invalid (SPEC-v0 section 4 step 0).
+	got = p.Evaluate(context.Background(), Request{Subject: subject, Action: Action{Name: "turn_on", Properties: map[string]json.RawMessage{"brightness": json.RawMessage(`50`)}}, Resource: Resource{ID: "light.kitchen"}})
+	if got.Decision || got.Context.Reason != "invalid_request" {
+		t.Errorf("undeclared parameter: %+v, want invalid_request", got)
+	}
+	got = p.Evaluate(context.Background(), Request{Subject: subject, Action: Action{Name: "set", Properties: map[string]json.RawMessage{"brightness": json.RawMessage(`5e1`)}}, Resource: Resource{ID: "light.kitchen"}})
 	if !got.Decision {
 		t.Errorf("integer parameter written as 5e1: %+v", got)
 	}

@@ -68,7 +68,7 @@ func TestAuditModeExecutesDeniesSilently(t *testing.T) {
 	// No rule decides turn_off: executed; a deny rule on arming: executed as well.
 	for _, args := range []map[string]any{
 		{"entity_id": "light.kitchen", "action": "turn_off"},
-		{"entity_id": "alarm_control_panel.home", "action": "arm"},
+		{"entity_id": "alarm_control_panel.home", "action": "arm", "params": map[string]any{"mode": "away"}},
 	} {
 		out, errText := h.call(s, "perform_action", args)
 		if errText != "" || out["status"] != "executed" {

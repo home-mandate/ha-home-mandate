@@ -61,7 +61,7 @@ function mandateOf(c: ConformanceCase): MandateDraft {
 
 describe('evaluate: conformance cases of the specification', () => {
   it('has all cases of the pinned version', () => {
-    expect(casesFile.cases.length).toBeGreaterThanOrEqual(223);
+    expect(casesFile.cases.length).toBeGreaterThanOrEqual(242);
   });
 
   it.each(casesFile.cases.map((c) => [c.id, c] as const))('%s', (_id, c) => {
@@ -157,6 +157,20 @@ describe('evaluate: own edge cases', () => {
   it('refuses an invalid draft as a whole', () => {
     const broken: MandateDraft = { ...base, rules: [{ ...base.rules[0]!, conditions: { time_window: '08:00-08:00' } }] };
     expect(evaluate(broken, light('2026-10-12T12:00:00Z'))).toEqual({ decision: 'deny', reason: 'invalid_mandate', rule_id: null });
+  });
+
+  it('refuses more than 16 parameters and a parameter with an invalid name (SPEC-v0 section 4 step 0)', () => {
+    const req = (parameters: Record<string, number | string>): EvalRequest => ({
+      resource: { entity_id: 'light.flur', category: 'light' },
+      action: 'set',
+      time: '2026-10-12T12:00:00Z',
+      parameters,
+    });
+    expect(evaluate(base, req({ brightness: 40 })).reason).not.toBe('invalid_request');
+    expect(evaluate(base, req({ Brightness: 40 })).reason).toBe('invalid_request');
+    const many = Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`p${i}`, i]));
+    expect(evaluate(base, { ...req(many), action: 'explode' }).reason).toBe('invalid_request');
+    expect(evaluate(base, { ...req({ brightness: 40, extra: 1 }), action: 'explode' }).reason).toBe('unknown_action');
   });
 
   it('never matches inherited object keys as categories', () => {

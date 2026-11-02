@@ -215,11 +215,11 @@ Actions and their parameters (`params`):
 |---|---|---|
 | `light` | `turn_on`, `turn_off`, `set` | `set`: `brightness_pct` 0–100 and/or `color_temp_kelvin` 1000–12000 (integers) |
 | `switch` | `turn_on`, `turn_off` | – |
-| `climate` | `set_temperature`, `set_mode` | `temperature` in the household's unit: °C, −50 to 100, or °F, −58 to 212, in steps of 0.01 (required); `hvac_mode`: `off`, `heat`, `cool`, `heat_cool`, `auto`, `dry`, `fan_only` (required; a mandate names `heat_cool` and `auto` together as `auto`) |
+| `climate` | `set_temperature`, `set_mode` | `temperature`, or `target_temp_low` with `target_temp_high` for a range (exactly one of the two forms): in the household's unit, °C, −50 to 100, or °F, −58 to 212, in steps of 0.01; `hvac_mode`: `off`, `heat`, `cool`, `heat_cool`, `auto`, `dry`, `fan_only` (required; a mandate names `heat_cool` and `auto` together as `auto`) |
 | `cover` | `open`, `close`, `stop`, `set_position` | `position` 0–100, an integer (required) |
 | `gate` | `open`, `close` | – |
 | `lock` | `lock`, `unlock`, `open` | – |
-| `alarm` | `arm`, `disarm` | `arm`: `mode` `home`, `away` or `night` (default `away`) |
+| `alarm` | `arm`, `disarm` | `arm`: `mode` `home`, `away`, `night`, `vacation` or `custom_bypass` (required) |
 | `camera` | `snapshot` (evaluated and logged, not executed) | – |
 | `media` | `turn_on`, `turn_off`, `play`, `pause`, `set_volume` | `volume_level` 0–1 in steps of 0.01, a whole percent (required) |
 | `scene` | `activate` | – |
@@ -242,6 +242,12 @@ without a limit (`volume_level` 0.335) got it executed until rc.2; it now gets
 
 **Changed in v0.1.0-rc.4:** temperatures in a household that uses °F are accepted in °F
 and checked against limits in °F; rc.3 refused them.
+
+**Changed after v0.1.0-rc.10:** `arm` requires `mode`; until rc.10 an agent that named none
+armed `away`. `mode` also takes `vacation` and `custom_bypass`. `set_temperature` takes a
+range, `target_temp_low` with `target_temp_high`, on a thermostat that supports one; a
+mandate limits the ends as `temperature_low` and `temperature_high` (`_f` in a °F
+household).
 
 ## Actions that need a confirmation
 

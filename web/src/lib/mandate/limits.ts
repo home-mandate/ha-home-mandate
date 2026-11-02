@@ -4,7 +4,7 @@
 // values within them; everything outside is denied. The vocabulary names the parameters
 // and their units; the form shows temperatures in degrees and stores hundredths.
 
-import type { Device, Rule } from '../api/types.ts';
+import type { Category, Device, Rule } from '../api/types.ts';
 import { MAX_LIMIT } from '../engine/check.ts';
 import { parametersOf } from '../engine/vocabulary.ts';
 import { m } from '../i18n.ts';
@@ -21,28 +21,45 @@ interface Unit {
 }
 
 const PERCENT: Unit = { scale: 1, unit: 'percent', min: 0, max: 100 };
+const CELSIUS: Unit = { scale: 100, unit: 'celsius' };
+const FAHRENHEIT: Unit = { scale: 100, unit: 'fahrenheit' };
 const UNITS: Readonly<Record<string, Unit>> = {
   brightness: PERCENT,
   position: PERCENT,
   volume: PERCENT,
-  temperature: { scale: 100, unit: 'celsius' },
-  temperature_f: { scale: 100, unit: 'fahrenheit' },
+  temperature: CELSIUS,
+  temperature_low: CELSIUS,
+  temperature_high: CELSIUS,
+  temperature_f: FAHRENHEIT,
+  temperature_low_f: FAHRENHEIT,
+  temperature_high_f: FAHRENHEIT,
 };
 
 /**
- * The temperature parameter per unit of Home Assistant (spec #21 part B): the gateway
- * evaluates a temperature as exactly one of them, in the household's unit.
+ * The temperature parameters per unit of Home Assistant (spec #21 part B, spec #84): a
+ * setpoint and the two ends of a range; the gateway evaluates a temperature in the
+ * household's unit only.
  */
-const TEMPERATURE_OF: Readonly<Record<string, string>> = { '°C': 'temperature', '°F': 'temperature_f' };
-const TEMPERATURES: readonly string[] = Object.values(TEMPERATURE_OF);
+const TEMPERATURES_OF: Readonly<Record<string, readonly string[]>> = {
+  '°C': ['temperature', 'temperature_low', 'temperature_high'],
+  '°F': ['temperature_f', 'temperature_low_f', 'temperature_high_f'],
+};
+const TEMPERATURES: readonly string[] = Object.values(TEMPERATURES_OF).flat();
 
 /**
- * Parameters limited by a list of permitted values (SPEC-v0 section 4.5): the values the
- * editor offers, those Home Assistant has an HVAC mode for (Home Assistant profile).
+ * Parameters limited by a list of permitted values (SPEC-v0 section 4.5), per category:
+ * the values the editor offers, those Home Assistant has an HVAC mode for and its five
+ * arming modes (Home Assistant profile).
  */
-export const CHOICES: Readonly<Record<string, readonly string[]>> = {
-  mode: ['off', 'heat', 'cool', 'auto', 'dry', 'fan_only'],
+const CHOICES: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>> = {
+  climate: { mode: ['off', 'heat', 'cool', 'auto', 'dry', 'fan_only'] },
+  alarm: { mode: ['home', 'away', 'night', 'vacation', 'custom_bypass'] },
 };
+
+/** choicesOf lists the values the editor offers for a choice parameter of a category; none for other parameters. */
+export function choicesOf(category: Category | undefined, name: string): readonly string[] {
+  return category === undefined ? [] : (CHOICES[category]?.[name] ?? []);
+}
 
 const CHOICE_LABELS: Readonly<Record<string, () => string>> = {
   off: () => m.mode_off(),
@@ -54,6 +71,11 @@ const CHOICE_LABELS: Readonly<Record<string, () => string>> = {
   emergency_heat: () => m.mode_emergency_heat(),
   precooling: () => m.mode_precooling(),
   sleep: () => m.mode_sleep(),
+  home: () => m.mode_home(),
+  away: () => m.mode_away(),
+  night: () => m.mode_night(),
+  vacation: () => m.mode_vacation(),
+  custom_bypass: () => m.mode_custom_bypass(),
 };
 
 /** choiceLabel names a permitted value; an unknown one is shown as it is. */
@@ -63,13 +85,13 @@ export function choiceLabel(value: number | string): string {
 
 /** isChoice tells whether the editor limits the parameter by a list of values. */
 export function isChoice(name: string): boolean {
-  return Object.hasOwn(CHOICES, name);
+  return Object.values(CHOICES).some((names) => Object.hasOwn(names, name));
 }
 
 /** chosen returns the values a rule permits for a choice parameter; every offered one without a limit. */
-export function chosen(rule: Rule, name: string): readonly (number | string)[] {
+export function chosen(rule: Rule, category: Category | undefined, name: string): readonly (number | string)[] {
   const c = rule.constraints?.[name];
-  return c !== undefined && 'one_of' in c ? c.one_of : (CHOICES[name] ?? []);
+  return c !== undefined && 'one_of' in c ? c.one_of : choicesOf(category, name);
 }
 
 /**
@@ -78,10 +100,10 @@ export function chosen(rule: Rule, name: string): readonly (number | string)[] {
  * section 4.5). Values the editor does not offer are kept. Like any change of the rule's
  * form it takes back allow_critical (decision U9).
  */
-export function withChoices(rule: Rule, name: string, values: readonly (number | string)[]): Rule {
+export function withChoices(rule: Rule, category: Category | undefined, name: string, values: readonly (number | string)[]): Rule {
   const { constraints, allow_critical: _confirmed, ...rest } = rule;
   void _confirmed;
-  const offered = CHOICES[name] ?? [];
+  const offered = choicesOf(category, name);
   const others = Object.fromEntries(Object.entries(constraints ?? {}).filter(([key]) => key !== name));
   const all = offered.every((v) => values.includes(v)) && values.every((v) => offered.includes(v as string));
   const next = all ? others : { ...others, [name]: { one_of: [...values] } };
@@ -93,6 +115,10 @@ const NAMES: Readonly<Record<string, () => string>> = {
   brightness: () => m.limit_brightness(),
   temperature: () => m.limit_temperature(),
   temperature_f: () => m.limit_temperature(),
+  temperature_low: () => m.limit_temperature_low(),
+  temperature_low_f: () => m.limit_temperature_low(),
+  temperature_high: () => m.limit_temperature_high(),
+  temperature_high_f: () => m.limit_temperature_high(),
   position: () => m.limit_position(),
   volume: () => m.limit_volume(),
 };
@@ -125,10 +151,10 @@ export function limitableParameters(rule: Rule, devices: readonly Device[], temp
   if (rule.decision !== 'allow' || rule.actions.length === 0 || rule.actions.includes('*')) return [];
   const category = categoryOf(rule, devices);
   if (category === undefined) return [];
-  const own = temperatureUnit === null ? undefined : TEMPERATURE_OF[temperatureUnit];
+  const own = temperatureUnit === null ? [] : (TEMPERATURES_OF[temperatureUnit] ?? []);
   const [first, ...rest] = rule.actions.map((a) => parametersOf(category, a));
   return (first ?? []).filter(
-    (name) => rest.every((names) => names.includes(name)) && (name in UNITS || isChoice(name)) && (!TEMPERATURES.includes(name) || name === own),
+    (name) => rest.every((names) => names.includes(name)) && (name in UNITS || isChoice(name)) && (!TEMPERATURES.includes(name) || own.includes(name)),
   );
 }
 
@@ -145,9 +171,9 @@ export function limitsNeedOwnRule(rule: Rule, devices: readonly Device[], temper
 
 /** otherUnitLimits names the rule's limits on a temperature in a unit the household does not use: they never apply. */
 export function otherUnitLimits(rule: Rule, temperatureUnit: string | null): string[] {
-  const own = temperatureUnit === null ? undefined : TEMPERATURE_OF[temperatureUnit];
+  const own = temperatureUnit === null ? undefined : TEMPERATURES_OF[temperatureUnit];
   if (own === undefined) return [];
-  return Object.keys(rule.constraints ?? {}).filter((name) => TEMPERATURES.includes(name) && name !== own);
+  return Object.keys(rule.constraints ?? {}).filter((name) => TEMPERATURES.includes(name) && !own.includes(name));
 }
 
 /** toInput shows a stored limit in the unit of the form; nothing for an invalid one. */

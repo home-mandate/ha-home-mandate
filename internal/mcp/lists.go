@@ -231,18 +231,22 @@ func (g *Gateway) listPermissions(ctx context.Context, req *sdk.CallToolRequest,
 		// Only what the device can carry out (issue #89): a well-behaved agent then picks
 		// unlock, not open, for a lock without OPEN.
 		for _, action := range actionsItCanDo(dev.Category, dev.Attributes) {
-			d := snap.Decide(dev.EntityID, action, nil)
-			if decision := effective(d.Result); decision != evaluator.Deny {
-				actions[action] = string(decision)
-				continue
+			// Probed with its required parameters (a request without them is invalid, SPEC-v0
+			// section 4 step 0). An action with parameters is allowed with the values the
+			// limits of its allow rules name: a sample value may miss them (no_match) or
+			// happen to meet them (allow); a required temperature cannot be given while the
+			// household's unit is unknown (invalid_request).
+			probe := probeParameters(dev.Category, action, unit)
+			d := snap.Decide(dev.EntityID, action, probe)
+			decision, reason := effective(d.Result), d.Result.Reason
+			var lims []map[string]limitOut
+			if decision == evaluator.Allow && probe != nil || decision == evaluator.Deny && (reason == evaluator.ReasonNoMatch || probe != nil && reason == evaluator.ReasonInvalidRequest) {
+				lims = agentLimits(snap.Limits(dev.EntityID, action), dev.Category, action, unit)
 			}
-			// Evaluated without values, an action allowed only within limits does not
-			// match: it is allowed with the values its limits name.
-			if d.Result.Reason != evaluator.ReasonNoMatch {
-				continue
-			}
-			lims := agentLimits(snap.Limits(dev.EntityID, action), dev.Category, action, unit)
 			if len(lims) == 0 {
+				if decision != evaluator.Deny {
+					actions[action] = string(decision)
+				}
 				continue
 			}
 			actions[action] = string(evaluator.Allow)

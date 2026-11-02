@@ -62,6 +62,8 @@ func TestProcessBindingAnswersEveryOperation(t *testing.T) {
 		"action": "unlock", "time": "2026-10-06T12:00:00Z", "timezone": "Europe/Berlin"}
 	revoked := map[string]any{"resource": req["resource"], "action": "unlock", "time": "2026-10-06T12:00:00Z", "revoked": true}
 	badTime := map[string]any{"resource": req["resource"], "action": "unlock", "time": "yesterday"}
+	// An action with a parameter: a request carries only what its action declares.
+	light := map[string]any{"entity_id": "light.kitchen", "category": "light"}
 	got := exchange(t,
 		map[string]any{"op": "capabilities"},
 		map[string]any{"op": "validate", "mandate": m},
@@ -91,10 +93,10 @@ func TestProcessBindingAnswersEveryOperation(t *testing.T) {
 		map[string]any{"op": "verify_audit", "keys": "nonsense"},
 		map[string]any{"op": "verify_audit", "entries": []string{"{}"}},
 		map[string]any{"op": "select", "mandates": []any{}, "subject": map[string]any{"client_id": "a:b", "principal": "household:x"}, "request": badTime},
-		map[string]any{"op": "evaluate", "mandate": m, "request": map[string]any{"resource": req["resource"], "action": "unlock",
-			"time": "2026-10-06T12:00:00Z", "revoked": true, "parameters": map[string]any{"position": 1.5}}},
-		map[string]any{"op": "evaluate", "mandate": m, "request": map[string]any{"resource": req["resource"], "action": "unlock",
-			"time": "2026-10-06T12:00:00Z", "revoked": true, "parameters": map[string]any{"position": 2.0, "volume": 3}}},
+		map[string]any{"op": "evaluate", "mandate": m, "request": map[string]any{"resource": light, "action": "set",
+			"time": "2026-10-06T12:00:00Z", "revoked": true, "parameters": map[string]any{"brightness": 1.5}}},
+		map[string]any{"op": "evaluate", "mandate": m, "request": map[string]any{"resource": light, "action": "set",
+			"time": "2026-10-06T12:00:00Z", "revoked": true, "parameters": map[string]any{"brightness": 2.0}}},
 	)
 	checks := []struct {
 		name string

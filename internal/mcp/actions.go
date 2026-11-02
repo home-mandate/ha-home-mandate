@@ -39,7 +39,26 @@ type param struct {
 type actionSpec struct {
 	service string
 	params  map[string]param
+	// oneOf: the call carries exactly one of these alternatives, each completely
+	// (vocabulary required_one_of): a temperature, or both ends of a range.
+	oneOf [][]string
 }
+
+// celsiusTemperature is a temperature of set_temperature in a household that uses
+// degrees Celsius: a setpoint or one end of a range.
+var celsiusTemperature = param{kind: "number", min: -50, max: 100, steps: 100,
+	rule: "must be a number between -50 and 100 in steps of 0.01 degrees"}
+
+// temperatureParams are the parameters of set_temperature: a single setpoint, or the two
+// ends of a range (Home Assistant profile, spec #84).
+var temperatureParams = []string{"temperature", "target_temp_low", "target_temp_high"}
+
+// setpointAlternatives: a setpoint is temperature, or target_temp_low with target_temp_high.
+var setpointAlternatives = [][]string{{"temperature"}, {"target_temp_low", "target_temp_high"}}
+
+// armModes are the arming modes of the vocabulary; each is an arming service of Home
+// Assistant (alarm_arm_<mode>).
+var armModes = []string{"home", "away", "night", "vacation", "custom_bypass"}
 
 // vocabulary is SPEC-v0 section 5 with the services of the reference implementation.
 // "read" is answered by get_state and needs no service.
@@ -54,8 +73,9 @@ var vocabulary = map[string]map[string]actionSpec{
 	"switch": {"read": {}, "turn_on": {service: "turn_on"}, "turn_off": {service: "turn_off"}},
 	"climate": {
 		"read": {},
-		"set_temperature": {service: "set_temperature", params: map[string]param{"temperature": {kind: "number", min: -50, max: 100, steps: 100, required: true,
-			rule: "must be a number between -50 and 100 in steps of 0.01 degrees"}}},
+		"set_temperature": {service: "set_temperature", params: map[string]param{
+			"temperature": celsiusTemperature, "target_temp_low": celsiusTemperature, "target_temp_high": celsiusTemperature,
+		}, oneOf: setpointAlternatives},
 		"set_mode": {service: "set_hvac_mode", params: map[string]param{"hvac_mode": {kind: "enum", required: true,
 			values: []string{"off", "heat", "cool", "heat_cool", "auto", "dry", "fan_only"}}}},
 	},
@@ -67,7 +87,7 @@ var vocabulary = map[string]map[string]actionSpec{
 	"lock": {"read": {}, "lock": {service: "lock"}, "unlock": {service: "unlock"}, "open": {service: "open"}},
 	"alarm": {
 		"read":   {},
-		"arm":    {service: "alarm_arm_", params: map[string]param{"mode": {kind: "enum", values: []string{"home", "away", "night"}}}},
+		"arm":    {service: "alarm_arm_", params: map[string]param{"mode": {kind: "enum", values: armModes, required: true}}},
 		"disarm": {service: "alarm_disarm"},
 	},
 	"camera": {"read": {}, "snapshot": {}}, // the image is only available over the HTTP API
@@ -99,9 +119,9 @@ func actionsOf(category string) []string {
 	return actions
 }
 
-// fahrenheitTemperature is the temperature of set_temperature in a household that uses
+// fahrenheitTemperature is a temperature of set_temperature in a household that uses
 // degrees Fahrenheit: the same range as in degrees Celsius, in its own unit.
-var fahrenheitTemperature = param{kind: "number", min: -58, max: 212, steps: 100, required: true,
+var fahrenheitTemperature = param{kind: "number", min: -58, max: 212, steps: 100,
 	rule: "must be a number between -58 and 212 in steps of 0.01 degrees"}
 
 // specFor is the vocabulary entry of an action with its parameters in the household's
@@ -115,7 +135,9 @@ func specFor(category, action, temperatureUnit string) (actionSpec, bool) {
 		return spec, ok
 	}
 	params := maps.Clone(spec.params)
-	params["temperature"] = fahrenheitTemperature
+	for _, name := range temperatureParams {
+		params[name] = fahrenheitTemperature
+	}
 	spec.params = params
 	return spec, ok
 }
@@ -137,10 +159,8 @@ func buildCall(entityID, category, action string, params map[string]any, tempera
 	domain, _, _ := strings.Cut(entityID, ".")
 	service := spec.service
 	if category == "alarm" && action == "arm" {
+		// The mode is required and checked; it is part of the service, not of the data.
 		mode, _ := data["mode"].(string)
-		if mode == "" {
-			mode = "away"
-		}
 		service += mode
 		data = nil
 	}
@@ -152,6 +172,9 @@ func buildCall(entityID, category, action string, params map[string]any, tempera
 func callData(category, action string, spec actionSpec, params map[string]any) (map[string]any, error) {
 	data, err := checkParams(spec.params, params)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkOneOf(spec.oneOf, params); err != nil {
 		return nil, err
 	}
 	if category == "light" && action == "set" && len(data) == 0 {
@@ -181,6 +204,41 @@ func checkParams(spec map[string]param, params map[string]any) (map[string]any, 
 		}
 	}
 	return data, nil
+}
+
+// checkOneOf demands exactly one of the alternatives, completely: none, half of one or
+// two of them are refused with a message that names them.
+func checkOneOf(alternatives [][]string, params map[string]any) error {
+	if len(alternatives) == 0 {
+		return nil
+	}
+	complete := 0
+	for _, alternative := range alternatives {
+		present := 0
+		for _, name := range alternative {
+			if _, ok := params[name]; ok {
+				present++
+			}
+		}
+		switch present {
+		case 0:
+		case len(alternative):
+			complete++
+		default:
+			return fmt.Errorf("%w: %s go together", errInvalidParams, strings.Join(alternative, " and "))
+		}
+	}
+	names := make([]string, len(alternatives))
+	for i, alternative := range alternatives {
+		names[i] = strings.Join(alternative, " with ")
+	}
+	switch complete {
+	case 1:
+		return nil
+	case 0:
+		return fmt.Errorf("%w: %s, is required", errInvalidParams, strings.Join(names, ", or "))
+	}
+	return fmt.Errorf("%w: %s, not both", errInvalidParams, strings.Join(names, " or "))
 }
 
 func (p param) check(value any) (any, error) {

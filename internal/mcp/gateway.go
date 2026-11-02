@@ -622,7 +622,7 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 		return nil, actionOut{}, errors.New(code)
 	}
 	if known && !canDo(dev.Category, in.Action, call, dev.Attributes) {
-		return g.refuseUnsupported(ctx, a, d, dev)
+		return g.refuseUnsupported(ctx, a, d, dev, call)
 	}
 	if ask {
 		return g.askHuman(ctx, a, tokenOf(req), d, call, in.Reason, in.IdempotencyKey)
@@ -634,16 +634,20 @@ func (g *Gateway) performAction(ctx context.Context, req *sdk.CallToolRequest, i
 // (issue #89, SPEC-v0 section 11.1 item 11): failed/not_supported, without an approval.
 // An agent that may read the device learns what it can do instead, of what its mandate
 // does not deny; any other gets the bare code.
-func (g *Gateway) refuseUnsupported(ctx context.Context, a agent.Agent, d pdp.Decision, dev catalog.Device) (*sdk.CallToolResult, actionOut, error) {
+func (g *Gateway) refuseUnsupported(ctx context.Context, a agent.Agent, d pdp.Decision, dev catalog.Device, call ha.ServiceCall) (*sdk.CallToolResult, actionOut, error) {
 	_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusFailed, Error: codeNotSupported})
 	snap, err := g.cfg.PDP.Snapshot(ctx, a.ClientID)
 	if err != nil || effective(snap.Decide(dev.EntityID, "read", nil).Result) != evaluator.Allow {
 		return nil, actionOut{}, errors.New(codeNotSupported)
 	}
+	unit := g.temperatureUnit()
 	can := slices.DeleteFunc(actionsItCanDo(dev.Category, dev.Attributes), func(action string) bool {
-		return action == "read" || effective(snap.Decide(dev.EntityID, action, nil).Result) == evaluator.Deny
+		return action == "read" || effective(snap.Decide(dev.EntityID, action, probeParameters(dev.Category, action, unit)).Result) == evaluator.Deny
 	})
-	return nil, actionOut{}, errors.New(codeNotSupported + ": " + dev.EntityID + " cannot " + d.Action + "; it can: " + strings.Join(can, ", "))
+	for i, action := range can {
+		can[i] = supportedForm(dev.Category, action, dev.Attributes)
+	}
+	return nil, actionOut{}, errors.New(codeNotSupported + ": " + dev.EntityID + " cannot " + requestedForm(dev.Category, d.Action, call) + "; it can: " + strings.Join(can, ", "))
 }
 
 // exactParams reads the params of perform_action from the arguments as the agent sent

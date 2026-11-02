@@ -26,12 +26,25 @@ const errTemperatureUnitChanged = "temperature_unit_changed"
 // unitOf is the unit a temperature among the parameters of an evaluation is in: "" if
 // there is none.
 func unitOf(parameters map[string]evaluator.Value) string {
-	for unit, name := range evaluationParameterOf["climate"]["set_temperature"]["temperature"].perUnit {
-		if _, ok := parameters[name]; ok {
-			return unit
+	for _, p := range evaluationParameterOf["climate"]["set_temperature"] {
+		for unit, name := range p.perUnit {
+			if _, ok := parameters[name]; ok {
+				return unit
+			}
 		}
 	}
 	return ""
+}
+
+// temperatureCallParams are the parameters of a service call that carry a temperature.
+func temperatureCallParams() map[string]bool {
+	out := map[string]bool{}
+	for callName, p := range evaluationParameterOf["climate"]["set_temperature"] {
+		if p.perUnit != nil {
+			out[callName] = true
+		}
+	}
+	return out
 }
 
 // evaluationParameter maps a parameter of a Home Assistant service call to the
@@ -55,16 +68,31 @@ var hvacModes = map[string]string{
 	"off": "off", "heat": "heat", "cool": "cool", "heat_cool": "auto", "auto": "auto", "dry": "dry", "fan_only": "fan_only",
 }
 
+// identity maps every value to itself: the agent names the vocabulary's values.
+func identity(values []string) map[string]string {
+	out := make(map[string]string, len(values))
+	for _, v := range values {
+		out[v] = v
+	}
+	return out
+}
+
 // evaluationParameterOf: category → action → parameter of the service call.
 var evaluationParameterOf = map[string]map[string]map[string]evaluationParameter{
 	"light": {"set": {"brightness_pct": {name: "brightness", scale: 1}}},
 	"climate": {
-		"set_temperature": {"temperature": {scale: 100, perUnit: map[string]string{celsius: "temperature", fahrenheit: "temperature_f"}}},
+		// A setpoint, or the two ends of a range (spec #84), each in the household's unit.
+		"set_temperature": {
+			"temperature":      {scale: 100, perUnit: map[string]string{celsius: "temperature", fahrenheit: "temperature_f"}},
+			"target_temp_low":  {scale: 100, perUnit: map[string]string{celsius: "temperature_low", fahrenheit: "temperature_low_f"}},
+			"target_temp_high": {scale: 100, perUnit: map[string]string{celsius: "temperature_high", fahrenheit: "temperature_high_f"}},
+		},
 		// The HVAC modes of Home Assistant as modes of the vocabulary (Home Assistant
 		// profile): heat_cool and auto both mean Matter's Auto; the requested mode is executed.
 		"set_mode": {"hvac_mode": {name: "mode", values: hvacModes}},
 	},
 	"cover": {"set_position": {"position": {name: "position", scale: 1}}},
+	"alarm": {"arm": {"mode": {name: "mode", values: identity(armModes)}}},
 	"media": {"set_volume": {"volume_level": {name: "volume", scale: 100}}},
 }
 
@@ -109,6 +137,45 @@ func requestParameters(category, action string, params map[string]any, temperatu
 		return nil, err
 	}
 	return evaluationParameters(category, action, data, temperatureUnit)
+}
+
+// probeParameters are sample parameters of an action for a probe of the decision
+// (list_my_permissions): every required parameter and the first alternative of a choice,
+// each with a valid value. Which value does not matter to a deny or ask rule; an allow rule
+// with constraints is asked for its limits after a no_match. Nil if the action has none,
+// or a temperature cannot be expressed while the household's unit is unknown.
+func probeParameters(category, action, temperatureUnit string) map[string]evaluator.Value {
+	spec, ok := specFor(category, action, temperatureUnit)
+	if !ok {
+		return nil
+	}
+	sample := map[string]any{}
+	for name, p := range spec.params {
+		if p.required {
+			sample[name] = p.sample()
+		}
+	}
+	if len(spec.oneOf) > 0 {
+		for _, name := range spec.oneOf[0] {
+			sample[name] = spec.params[name].sample()
+		}
+	}
+	if len(sample) == 0 {
+		return nil
+	}
+	parameters, err := evaluationParameters(category, action, sample, temperatureUnit)
+	if err != nil {
+		return nil
+	}
+	return parameters
+}
+
+// sample is a valid value of the parameter: the first permitted value, or the lower bound.
+func (p param) sample() any {
+	if p.kind == "enum" {
+		return p.values[0]
+	}
+	return p.min
 }
 
 // checkTemperatureUnit refuses a temperature the vocabulary cannot express: one in a unit

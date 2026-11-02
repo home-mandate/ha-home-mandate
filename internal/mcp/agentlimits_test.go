@@ -53,6 +53,31 @@ func TestGetStateNamesTheTemperatureUnit(t *testing.T) {
 	}
 }
 
+// The limit is listed also when the probe's sample value happens to be permitted: a
+// home-only rule on arming lists arm with its limit, not as unlimited.
+func TestLimitIsListedWhenTheSampleValueIsPermitted(t *testing.T) {
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+			map[string]any{"id": "r-arm", "resource": map[string]any{"category": "alarm"}, "actions": []any{"arm"}, "decision": "allow",
+				"constraints": map[string]any{"mode": map[string]any{"one_of": []any{"home"}}}},
+		}
+	})
+	s := h.session()
+	perms, errText := h.call(s, "list_my_permissions", map[string]any{"category": "alarm"})
+	if errText != "" {
+		t.Fatal(errText)
+	}
+	if got := mustJSON(perms["groups"]); got != `[{"actions":{"arm":"allow","read":"allow"},"category":"alarm","entity_ids":["alarm_control_panel.home"],`+
+		`"limits":{"arm":[{"mode":{"one_of":["home"]}}]}}]` {
+		t.Errorf("groups = %s", got)
+	}
+	if _, errText := h.call(s, "perform_action", map[string]any{"entity_id": "alarm_control_panel.home", "action": "arm",
+		"params": map[string]any{"mode": "away"}}); errText != "denied: no_match: allowed only with mode one of home" {
+		t.Errorf("arm away = %q", errText)
+	}
+}
+
 // A list of permitted modes is told in the agent's terms: auto stands for heat_cool and
 // auto of Home Assistant (Home Assistant profile); a refused mode names the allowed ones.
 func TestAgentLearnsItsModes(t *testing.T) {

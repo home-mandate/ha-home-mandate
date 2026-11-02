@@ -37,6 +37,12 @@ func TestCanDo(t *testing.T) {
 		{"gate close without CLOSE", "gate", "close", ha.ServiceCall{}, map[string]any{"supported_features": float64(1)}, false},
 		{"climate temperature without TARGET_TEMPERATURE", "climate", "set_temperature", ha.ServiceCall{}, map[string]any{"supported_features": float64(128)}, false},
 		{"climate temperature with it", "climate", "set_temperature", ha.ServiceCall{}, map[string]any{"supported_features": float64(1 | 128)}, true},
+		{"climate range without TARGET_TEMPERATURE_RANGE", "climate", "set_temperature", ha.ServiceCall{Data: map[string]any{"target_temp_low": 18.0, "target_temp_high": 22.0}},
+			map[string]any{"supported_features": float64(1)}, false},
+		{"climate range with it", "climate", "set_temperature", ha.ServiceCall{Data: map[string]any{"target_temp_low": 18.0, "target_temp_high": 22.0}},
+			map[string]any{"supported_features": float64(2)}, true},
+		{"climate single setpoint on a range-only thermostat", "climate", "set_temperature", ha.ServiceCall{Data: map[string]any{"temperature": 21.0}},
+			map[string]any{"supported_features": float64(2)}, false},
 		{"climate mode not offered", "climate", "set_mode", ha.ServiceCall{Data: map[string]any{"hvac_mode": "cool"}}, map[string]any{"hvac_modes": []any{"off", "heat"}}, false},
 		{"climate mode offered", "climate", "set_mode", ha.ServiceCall{Data: map[string]any{"hvac_mode": "heat"}}, map[string]any{"hvac_modes": []any{"off", "heat"}}, true},
 		{"climate without hvac_modes", "climate", "set_mode", ha.ServiceCall{Data: map[string]any{"hvac_mode": "cool"}}, map[string]any{}, true},
@@ -45,6 +51,9 @@ func TestCanDo(t *testing.T) {
 		{"media turn_off without TURN_OFF", "media", "turn_off", ha.ServiceCall{}, map[string]any{"supported_features": float64(128)}, false},
 		{"alarm arm night without ARM_NIGHT", "alarm", "arm", ha.ServiceCall{Service: "alarm_arm_night"}, map[string]any{"supported_features": float64(1 | 2)}, false},
 		{"alarm arm away with ARM_AWAY", "alarm", "arm", ha.ServiceCall{Service: "alarm_arm_away"}, map[string]any{"supported_features": float64(2)}, true},
+		{"alarm arm custom_bypass with ARM_CUSTOM_BYPASS", "alarm", "arm", ha.ServiceCall{Service: "alarm_arm_custom_bypass"}, map[string]any{"supported_features": float64(16)}, true},
+		{"alarm arm vacation without ARM_VACATION", "alarm", "arm", ha.ServiceCall{Service: "alarm_arm_vacation"}, map[string]any{"supported_features": float64(1 | 2 | 4 | 16)}, false},
+		{"alarm arm vacation with ARM_VACATION", "alarm", "arm", ha.ServiceCall{Service: "alarm_arm_vacation"}, map[string]any{"supported_features": float64(32)}, true},
 		{"alarm disarm needs nothing", "alarm", "disarm", ha.ServiceCall{Service: "alarm_disarm"}, map[string]any{"supported_features": float64(0)}, true},
 		{"light brightness on an on/off light", "light", "set", ha.ServiceCall{Data: map[string]any{"brightness_pct": 50}}, light("onoff"), false},
 		{"light brightness on a dimmable light", "light", "set", ha.ServiceCall{Data: map[string]any{"brightness_pct": 50}}, light("brightness"), true},
@@ -76,6 +85,9 @@ func TestActionsItCanDo(t *testing.T) {
 		{"on/off light", "light", map[string]any{"supported_color_modes": []any{"onoff"}}, []string{"read", "turn_off", "turn_on"}},
 		{"dimmable light", "light", map[string]any{"supported_color_modes": []any{"brightness"}}, []string{"read", "set", "turn_off", "turn_on"}},
 		{"climate without modes", "climate", map[string]any{"supported_features": float64(1), "hvac_modes": []any{}}, []string{"read", "set_temperature"}},
+		{"climate with a range setpoint only", "climate", map[string]any{"supported_features": float64(2), "hvac_modes": []any{}}, []string{"read", "set_temperature"}},
+		{"climate without any setpoint", "climate", map[string]any{"supported_features": float64(128), "hvac_modes": []any{}}, []string{"read"}},
+		{"alarm with vacation only", "alarm", map[string]any{"supported_features": float64(32)}, []string{"arm", "disarm", "read"}},
 		{"alarm without any arm mode", "alarm", map[string]any{"supported_features": float64(0)}, []string{"disarm", "read"}},
 		{"media player that only plays", "media", map[string]any{"supported_features": float64(1 | 16384)}, []string{"pause", "play", "read"}},
 	} {
@@ -93,6 +105,32 @@ func (h *harness) setAttrs(entityID string, attrs map[string]any) {
 	dev := h.catalog.devices[entityID]
 	dev.Attributes = maps.Clone(attrs)
 	h.catalog.devices[entityID] = dev
+}
+
+// Spec #84: a thermostat that takes only a range is not asked for a single setpoint, and
+// the other way round; the agent learns which form the device takes (of what its mandate
+// does not deny: set_mode is not in the voice assistant's).
+func TestSetpointFormTheThermostatCannotTake(t *testing.T) {
+	for name, tc := range map[string]struct {
+		features float64
+		params   map[string]any
+		want     string
+	}{
+		"single setpoint on a range-only thermostat": {2, map[string]any{"temperature": 21.0},
+			"not_supported: climate.living_room cannot set_temperature with temperature; it can: set_temperature with target_temp_low and target_temp_high"},
+		"range on a single-setpoint thermostat": {1, map[string]any{"target_temp_low": 18.0, "target_temp_high": 22.0},
+			"not_supported: climate.living_room cannot set_temperature with target_temp_low and target_temp_high; it can: set_temperature with temperature"},
+	} {
+		h, f := pendingHarness(t)
+		h.setAttrs("climate.living_room", map[string]any{"supported_features": tc.features})
+		_, errText := h.call(h.session(), "perform_action", map[string]any{"entity_id": "climate.living_room", "action": "set_temperature", "params": tc.params})
+		if errText != tc.want {
+			t.Errorf("%s = %q, want %q", name, errText, tc.want)
+		}
+		if len(f.requests()) != 0 {
+			t.Errorf("%s: a human was asked", name)
+		}
+	}
 }
 
 // Issue #89: a lock without OPEN is not opened on a confirmation; nobody is asked, the

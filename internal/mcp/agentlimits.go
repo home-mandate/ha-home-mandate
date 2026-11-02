@@ -110,7 +110,7 @@ func scaled(v *int64, scale float64) *float64 {
 // unitLabel is the unit an agent's parameter is given in; none for a volume level (0 to 1).
 func unitLabel(callName, temperatureUnit string) string {
 	switch callName {
-	case "temperature":
+	case "temperature", "target_temp_low", "target_temp_high":
 		return temperatureUnit
 	case "brightness_pct", "position":
 		return "%"

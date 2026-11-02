@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { devicesFixture } from '../api/fixtures.ts';
 import type { Rule } from '../api/types.ts';
 import { setLocale } from '../paraglide/runtime.js';
-import { chosen, limitsNeedOwnRule, valuesText, fromInput, limitableParameters, limitsText, otherUnitLimits, toInput, withChoices, withConstraint } from './limits.ts';
+import { choicesOf, chosen, limitsNeedOwnRule, valuesText, fromInput, limitableParameters, limitsText, otherUnitLimits, toInput, withChoices, withConstraint } from './limits.ts';
 import { checkDraft } from '../engine/check.ts';
 
 beforeEach(() => setLocale('en', { reload: false }));
@@ -15,8 +15,9 @@ const rule = (patch: Partial<Rule> = {}): Rule => ({ id: 'r', resource: { catego
 describe('which values a rule can limit', () => {
   it('offers the parameter every chosen action carries', () => {
     expect(limitableParameters(rule(), devices, '°C')).toEqual(['brightness']);
-    expect(limitableParameters(rule({ resource: { category: 'climate' }, actions: ['set_temperature'] }), devices, '°C')).toEqual(['temperature']);
-    expect(limitableParameters(rule({ resource: { entity_id: 'climate.hvac' }, actions: ['set_temperature'] }), devices, '°C')).toEqual(['temperature']);
+    expect(limitableParameters(rule({ resource: { category: 'climate' }, actions: ['set_temperature'] }), devices, '°C')).toEqual(['temperature', 'temperature_low', 'temperature_high']);
+    expect(limitableParameters(rule({ resource: { entity_id: 'climate.hvac' }, actions: ['set_temperature'] }), devices, '°C')).toEqual(['temperature', 'temperature_low', 'temperature_high']);
+    expect(limitableParameters(rule({ resource: { category: 'alarm' }, actions: ['arm'] }), devices, '°C')).toEqual(['mode']);
     expect(limitableParameters(rule({ resource: { category: 'cover' }, actions: ['set_position'] }), devices, '°C')).toEqual(['position']);
     expect(limitableParameters(rule({ resource: { category: 'media' }, actions: ['set_volume'] }), devices, '°C')).toEqual(['volume']);
     expect(limitableParameters(rule({ resource: { category: 'climate' }, actions: ['set_mode'] }), devices, '°C')).toEqual(['mode']);
@@ -25,8 +26,8 @@ describe('which values a rule can limit', () => {
   // #42, spec #21 part B: a temperature only in the household's unit; none while it is unknown.
   it('offers the temperature in the unit of the household', () => {
     const heating = rule({ resource: { category: 'climate' }, actions: ['set_temperature'] });
-    expect(limitableParameters(heating, devices, '°F')).toEqual(['temperature_f']);
-    expect(limitableParameters(heating, devices, '°C')).toEqual(['temperature']);
+    expect(limitableParameters(heating, devices, '°F')).toEqual(['temperature_f', 'temperature_low_f', 'temperature_high_f']);
+    expect(limitableParameters(heating, devices, '°C')).toEqual(['temperature', 'temperature_low', 'temperature_high']);
     expect(limitableParameters(heating, devices, null)).toEqual([]);
     expect(limitableParameters(rule(), devices, null)).toEqual(['brightness']);
   });
@@ -37,6 +38,7 @@ describe('which values a rule can limit', () => {
     expect(otherUnitLimits(limited, '°C')).toEqual([]);
     expect(otherUnitLimits(limited, null)).toEqual([]);
     expect(otherUnitLimits({ ...limited, constraints: { temperature_f: { max: 7500 } } }, '°C')).toEqual(['temperature_f']);
+    expect(otherUnitLimits({ ...limited, constraints: { temperature_low_f: { min: 6000 }, temperature_high: { max: 2400 } } }, '°C')).toEqual(['temperature_low_f']);
   });
 
   it('offers nothing when an action has no such value, for "all actions", without a category or for deny and ask', () => {
@@ -109,28 +111,40 @@ describe('permitted modes', () => {
   const modes = (patch: Partial<Rule> = {}) => rule({ resource: { category: 'climate' }, actions: ['set_mode'], ...patch });
 
   it('offers every mode Home Assistant has without a limit, and limits to the checked ones', () => {
-    expect(chosen(modes(), 'mode')).toEqual(['off', 'heat', 'cool', 'auto', 'dry', 'fan_only']);
-    const limited = withChoices(modes(), 'mode', ['heat', 'auto']);
+    expect(chosen(modes(), 'climate', 'mode')).toEqual(['off', 'heat', 'cool', 'auto', 'dry', 'fan_only']);
+    const limited = withChoices(modes(), 'climate', 'mode', ['heat', 'auto']);
     expect(limited.constraints).toEqual({ mode: { one_of: ['heat', 'auto'] } });
-    expect(chosen(limited, 'mode')).toEqual(['heat', 'auto']);
+    expect(chosen(limited, 'climate', 'mode')).toEqual(['heat', 'auto']);
     expect(checkDraft(draftWith(limited))).toEqual([]);
   });
 
   it('removes the limit when every mode is checked again', () => {
-    expect(withChoices(modes(), 'mode', ['off', 'heat', 'cool', 'auto', 'dry', 'fan_only']).constraints).toBeUndefined();
+    expect(withChoices(modes(), 'climate', 'mode', ['off', 'heat', 'cool', 'auto', 'dry', 'fan_only']).constraints).toBeUndefined();
   });
 
   it('never reads "no mode checked" as "every mode": the draft reports it', () => {
-    const none = withChoices(modes(), 'mode', []);
+    const none = withChoices(modes(), 'climate', 'mode', []);
     expect(none.constraints).toEqual({ mode: { one_of: [] } });
     expect(checkDraft(draftWith(none))).toContainEqual({ field: '/rules/0/constraints/mode/one_of', code: 'required' });
   });
 
   it('keeps a value the editor does not offer, and takes back allow_critical', () => {
     const sleeping = modes({ constraints: { mode: { one_of: ['sleep', 'heat'] } }, allow_critical: true });
-    const next = withChoices(sleeping, 'mode', [...chosen(sleeping, 'mode'), 'cool']);
+    const next = withChoices(sleeping, 'climate', 'mode', [...chosen(sleeping, 'climate', 'mode'), 'cool']);
     expect(next.constraints).toEqual({ mode: { one_of: ['sleep', 'heat', 'cool'] } });
     expect(next.allow_critical).toBeUndefined();
+  });
+
+  // Spec #84: the arming mode of an alarm is a choice of its own, not an HVAC mode.
+  it('offers the arming modes for an alarm', () => {
+    const arming = rule({ resource: { category: 'alarm' }, actions: ['arm'] });
+    expect(choicesOf('alarm', 'mode')).toEqual(['home', 'away', 'night', 'vacation', 'custom_bypass']);
+    expect(chosen(arming, 'alarm', 'mode')).toEqual(['home', 'away', 'night', 'vacation', 'custom_bypass']);
+    const limited = withChoices(arming, 'alarm', 'mode', ['home', 'night']);
+    expect(limited.constraints).toEqual({ mode: { one_of: ['home', 'night'] } });
+    expect(checkDraft(draftWith(limited))).toEqual([]);
+    expect(limitsText(limited, 'en')).toBe('Mode: Home or Night');
+    expect(valuesText({ mode: 'custom_bypass' }, 'en')).toBe('Mode: Custom bypass');
   });
 
   it('names the permitted modes', () => {
@@ -160,6 +174,8 @@ describe('evaluated values', () => {
   it('names them in the units of the form', () => {
     expect(valuesText({ mode: 'cool' }, 'en')).toBe('Mode: Cool');
     expect(valuesText({ temperature: 2150 }, 'en')).toMatch(/^Temperature: 21\.5\s?°C$/);
+    expect(valuesText({ temperature_low: 1800, temperature_high_f: 7200 }, 'en')).toMatch(/^Upper temperature: 72\s?°F, Lower temperature: 18\s?°C$/);
+    expect(limitsText(rule({ constraints: { temperature_high: { max: 2400 } } }), 'en')).toMatch(/^Upper temperature up to 24\s?°C$/);
     expect(valuesText({ brightness: 40, x_unknown: 3 }, 'en')).toMatch(/^Brightness: 40\s?%, x_unknown: 3$/);
     expect(valuesText(undefined, 'en')).toBe('');
   });

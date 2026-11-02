@@ -14,15 +14,16 @@ import (
 // services Home-Mandate calls for a device, each on exactly one entity of the same
 // domain. Notifications use their own, separate path.
 var allowedServices = map[string]map[string]bool{
-	"light":               {"turn_on": true, "turn_off": true},
-	"switch":              {"turn_on": true, "turn_off": true},
-	"climate":             {"set_temperature": true, "set_hvac_mode": true},
-	"cover":               {"open_cover": true, "close_cover": true, "stop_cover": true, "set_cover_position": true},
-	"lock":                {"lock": true, "unlock": true, "open": true},
-	"alarm_control_panel": {"alarm_arm_home": true, "alarm_arm_away": true, "alarm_arm_night": true, "alarm_disarm": true},
-	"media_player":        {"turn_on": true, "turn_off": true, "media_play": true, "media_pause": true, "volume_set": true},
-	"scene":               {"turn_on": true},
-	"script":              {"turn_on": true},
+	"light":   {"turn_on": true, "turn_off": true},
+	"switch":  {"turn_on": true, "turn_off": true},
+	"climate": {"set_temperature": true, "set_hvac_mode": true},
+	"cover":   {"open_cover": true, "close_cover": true, "stop_cover": true, "set_cover_position": true},
+	"lock":    {"lock": true, "unlock": true, "open": true},
+	"alarm_control_panel": {"alarm_arm_home": true, "alarm_arm_away": true, "alarm_arm_night": true, "alarm_arm_vacation": true,
+		"alarm_arm_custom_bypass": true, "alarm_disarm": true},
+	"media_player": {"turn_on": true, "turn_off": true, "media_play": true, "media_pause": true, "volume_set": true},
+	"scene":        {"turn_on": true},
+	"script":       {"turn_on": true},
 }
 
 // targetKeys would widen a call beyond its one entity.
