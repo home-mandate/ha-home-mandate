@@ -15,7 +15,7 @@ New here? The [guide on home-mandate.org](https://home-mandate.org/implementatio
 explains in a few minutes what it does and how to start; the
 [Home-Mandate Specification](https://home-mandate.org/) it implements is explained there as well.
 
-**Status: experimental.** 0.1.0-rc.10 is the ninth published release candidate. Expect rough edges,
+**Status: experimental.** 0.1.0-rc.11 is the tenth published release candidate. Expect rough edges,
 read the [limits of this version](#limits-of-this-version) and keep backups.
 
 ## Why
@@ -203,8 +203,9 @@ Home-Mandate conforms to the Home-Mandate Specification `v0.1.0` (manifest
 `aa18f0f0dd534ebe8b9b83692cb58e68a568b018510146e261fccd31f181c40a`) in these classes
 (SPEC-v0 section 8.1), tested with the specification's test tool `mandate-conformance` on
 every pull request and with `make conformance`. The v0 formats are frozen since `v0.1.0`
-(SPEC-v0 section 14). 0.1.0-rc.10 conforms to `v0.1.0-rc.5`; 0.1.0-rc.9 was tested with
-`v0.1.0-rc.4`, which has the same cases, and 0.1.0-rc.8 conforms to `v0.1.0-rc.3`.
+(SPEC-v0 section 14). The reports are attached to the release 0.1.0-rc.11; 0.1.0-rc.10
+conforms to `v0.1.0-rc.5`, 0.1.0-rc.9 was tested with `v0.1.0-rc.4`, which has the same
+cases, and 0.1.0-rc.8 conforms to `v0.1.0-rc.3`.
 <br clear="left">
 
 | Class | Cases | Binding |
