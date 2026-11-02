@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.1.0-rc.11
+
+Tenth release candidate. Experimental. Implements the Home-Mandate Specification
+v0.1.0, the release whose v0 formats are frozen (SPEC-v0 section 14).
+
+Selection
+- An agent whose only mandates are revoked is denied with `revoked` instead of
+  `no_mandate`, and the audit entry names the revoked mandate. The AuthZEN response
+  carries `mandate_id`; a subject without an `id`, or with a `principal` of no valid form,
+  is an `invalid_request` before any mandate is selected (#122)
+
+Parameters
+- A request carries exactly the parameters the vocabulary declares. `set_mode`,
+  `set_position`, `set_volume` and `arm` require their parameter; `arm` takes a `mode`
+  (`home`, `away`, `night`, `vacation`, `custom_bypass`); `set_temperature` takes one
+  temperature or a range (`temperature_low` and `temperature_high`, also in °F).
+  `list_my_permissions` and the `not_supported` answer name the form the device takes (#124)
+
+Recording before executing
+- A direct action is recorded as an intent before Home Assistant is called; what a
+  previous process left behind is recorded at start-up as `failed` with
+  `outcome_unknown`, and nothing is repeated. When the audit log cannot be written (disk
+  full, read-only storage), the action is not executed and is recorded as `denied` by the
+  audit log; the agent is told that Home-Mandate is unavailable (#127)
+
+Audit log
+- The checkpoint signature covers the time of the checkpoint entry. A log whose
+  checkpoints were signed over the earlier payload is archived unchanged at the first
+  start to `data/audit-archive-<time>.jsonl`, and a new anchored chain begins; the archive
+  verifies with the earlier version (#122)
+- SQLite keeps its temporary files in memory: the image has no temporary directory, and
+  the truncation of the log failed there (#122)
+- The audit view shows request values that neither the catalog nor the vocabulary knows
+  as a JSON string shows them, control and format characters escaped, nothing removed (#127)
+
+Conformance
+- Conforms to the specification `v0.1.0`: evaluator 449, selection 28, audit 316 and
+  audit-anchored 15 cases over the process binding, pdp 257 over the HTTP binding (#128)
+
 ## 0.1.0-rc.10
 
 Ninth release candidate. Experimental. Implements the Home-Mandate Specification
