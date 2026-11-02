@@ -221,9 +221,19 @@ type Gateway struct {
 	// closing: after Close, requests that end are left to the next start.
 	closing bool
 	// deferred are denials by the audit log that could not be recorded yet (SPEC-v0
-	// section 9), newest last; they are written before the next entry that succeeds.
+	// section 9), oldest first; they are written before the next entry that succeeds, by
+	// one flusher at a time, outside the mutex.
 	deferMu  sync.Mutex
-	deferred []audit.Entry
+	deferred []deferredDenial
+	flushing bool
+}
+
+// deferredDenial is a denial by the audit log waiting to be written, with what ends its
+// journal row or intent if the entry's own attempt to do so fails.
+type deferredDenial struct {
+	entry  audit.Entry
+	appr   approvalRef
+	result audit.Result
 }
 
 // New registers the tools.
@@ -712,7 +722,7 @@ func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, ca
 	// denied by the audit log.
 	if err := g.intend(ctx, a, d, &appr); err != nil {
 		g.cfg.Logger.Error("intent not stored, action not executed", "error", err)
-		g.denyUnrecorded(ctx, a, d, appr)
+		g.denyUnrecorded(ctx, a, d, appr, causeOf(err))
 		return nil, actionOut{}, errors.New(codeUnavailable)
 	}
 	g.flushDeferred(ctx)
@@ -736,8 +746,9 @@ func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, ca
 	case err == nil:
 		return nil, actionOut{Status: "executed"}, nil
 	case executed:
-		// Executed, but the entry could not be committed: report the truth, log loudly.
-		g.cfg.Logger.Error("action executed but its audit entry was lost", "entity_id", call.EntityID, "error", err)
+		// Executed, but the entry could not be committed: report the truth, log loudly. The
+		// intent or journal row stays and is recorded at the next start as outcome_unknown.
+		g.cfg.Logger.Error("action executed but its audit entry was lost; recorded as outcome_unknown at the next start", "entity_id", call.EntityID, "error", err)
 		return nil, actionOut{Status: "executed"}, nil
 	case !errors.As(err, &actionErr):
 		// The entry could not be written before the call: not executed, denied by the
@@ -745,7 +756,7 @@ func (g *Gateway) execute(ctx context.Context, a agent.Agent, d pdp.Decision, ca
 		// intent ended if that works, so the request does not look like an execution under
 		// way after a restart; a denial the log cannot take yet is kept (denyUnrecorded).
 		g.cfg.Logger.Error("audit log unavailable, action not executed", "error", err)
-		g.denyUnrecorded(ctx, a, d, appr)
+		g.denyUnrecorded(ctx, a, d, appr, causeOf(err))
 		return nil, actionOut{}, errors.New(codeUnavailable)
 	}
 	code := "ha_error"
@@ -934,7 +945,9 @@ func (g *Gateway) intend(ctx context.Context, a agent.Agent, d pdp.Decision, app
 	if g.cfg.Intents == nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), journalTimeout)
+	// The write waits behind the audit log's write lock, which an execution under way
+	// holds for the whole call to Home Assistant (WithEntry): the bound covers that call.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), max(journalTimeout, g.cfg.CallTimeout+2*time.Second))
 	defer cancel()
 	id, err := g.cfg.Intents.Begin(ctx, g.entry(a, d, true, audit.Result{}))
 	if err != nil {
@@ -944,40 +957,113 @@ func (g *Gateway) intend(ctx context.Context, a agent.Agent, d pdp.Decision, app
 	return nil
 }
 
+// causeOf names what could not be written, for result.error: the approval journal, or
+// the audit log (the intent store is part of it).
+func causeOf(err error) string {
+	if errors.Is(err, approval.ErrJournal) {
+		return errJournal
+	}
+	return errLogUnwritable
+}
+
 // denyUnrecorded records a request that was not executed because its intent or its entry
-// could not be written: denied by the audit log (SPEC-v0 section 9). The entry ends the
-// journal row or the intent with it. If the log cannot take the entry now, the denial is
-// kept, bounded, and written before the next entry that succeeds; what is lost beyond the
-// bound or at a restart is logged as such.
-func (g *Gateway) denyUnrecorded(ctx context.Context, a agent.Agent, d pdp.Decision, appr approvalRef) {
-	result := audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAudit, Error: errLogUnwritable}
-	if err := g.recordApproval(ctx, a, d, result, appr); err == nil {
-		return
-	}
-	e := g.approvalEntry(a, d, result, appr)
+// could not be written: denied by the audit log (SPEC-v0 section 9), with cause as the
+// error. The entry ends the journal row or the intent with it. While denials wait for the
+// log, a new one waits behind them, so that they are written in order; if the log cannot
+// take it, it is kept, at most the newest maxDeferred, and written before the next entry
+// that succeeds. The oldest denial beyond the bound is lost; its intent is ended if that
+// still works, else the next start records it as outcome_unknown.
+func (g *Gateway) denyUnrecorded(ctx context.Context, a agent.Agent, d pdp.Decision, appr approvalRef, cause string) {
+	result := audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAudit, Error: cause}
+	g.flushDeferred(ctx)
 	g.deferMu.Lock()
-	defer g.deferMu.Unlock()
-	if len(g.deferred) >= maxDeferred {
-		g.cfg.Logger.Error("audit log unavailable; the oldest denial kept for it is lost", "entity_id", g.deferred[0].Request.Resource.EntityID)
-		g.deferred = g.deferred[1:]
+	waiting := len(g.deferred) > 0
+	g.deferMu.Unlock()
+	if !waiting {
+		if err := g.recordApproval(ctx, a, d, result, appr); err == nil {
+			return
+		}
 	}
-	g.deferred = append(g.deferred, e)
-	g.cfg.Logger.Error("audit log unavailable; denial kept until it can be written", "kept", len(g.deferred), "since", g.cfg.Now().UTC().Format(time.RFC3339))
+	den := deferredDenial{entry: g.approvalEntry(a, d, result, appr), appr: appr, result: result}
+	var dropped *deferredDenial
+	g.deferMu.Lock()
+	if len(g.deferred) >= maxDeferred {
+		dropped, g.deferred = &g.deferred[0], g.deferred[1:]
+	}
+	g.deferred = append(g.deferred, den)
+	kept := len(g.deferred)
+	g.deferMu.Unlock()
+	if dropped != nil {
+		g.cfg.Logger.Error("audit log unavailable; the oldest denial kept for it is lost (recorded as outcome_unknown at the next start unless its intent ends now)",
+			"entity_id", dropped.entry.Request.Resource.EntityID)
+		_ = g.endNow(context.WithoutCancel(ctx), dropped.appr, dropped.result)
+	}
+	g.cfg.Logger.Error("audit log unavailable; denial kept until it can be written", "kept", kept, "since", g.cfg.Now().UTC().Format(time.RFC3339))
 }
 
 // flushDeferred writes the denials kept by denyUnrecorded, oldest first, and stops at the
-// first that still cannot be written.
+// first that still cannot be written. One flusher runs at a time; it holds the mutex only
+// to take and remove entries, never while writing, so that a slow write blocks no other
+// request.
 func (g *Gateway) flushDeferred(ctx context.Context) {
 	g.deferMu.Lock()
-	defer g.deferMu.Unlock()
-	for len(g.deferred) > 0 {
-		e := g.deferred[0]
-		if _, err := g.cfg.Audit.Append(context.WithoutCancel(ctx), e); err != nil {
+	if g.flushing || len(g.deferred) == 0 {
+		g.deferMu.Unlock()
+		return
+	}
+	g.flushing = true
+	g.deferMu.Unlock()
+	defer func() {
+		g.deferMu.Lock()
+		g.flushing = false
+		g.deferMu.Unlock()
+	}()
+	for {
+		g.deferMu.Lock()
+		if len(g.deferred) == 0 {
+			g.deferMu.Unlock()
 			return
 		}
-		g.deferred = g.deferred[1:]
-		g.cfg.Logger.Warn("denial recorded late: the audit log was unavailable", "entity_id", e.Request.Resource.EntityID, "kept", len(g.deferred))
+		den := g.deferred[0]
+		g.deferMu.Unlock()
+		if !g.writeDeferred(ctx, den) {
+			return
+		}
+		g.deferMu.Lock()
+		g.deferred = g.deferred[1:] // only the flusher removes, so the head is still den
+		kept := len(g.deferred)
+		g.deferMu.Unlock()
+		g.cfg.Logger.Warn("denial recorded late: the audit log was unavailable", "entity_id", den.entry.Request.Resource.EntityID, "kept", kept)
 	}
+}
+
+// writeDeferred writes one kept denial, in bounded time: with its journal row or intent
+// ended in the same transaction; if only that part fails, without it, and the row or
+// intent is ended on its own; an entry the log refuses as invalid is dropped and logged,
+// so that it cannot block the ones behind it. It reports whether the next may follow.
+func (g *Gateway) writeDeferred(ctx context.Context, den deferredDenial) bool {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), journalTimeout)
+	defer cancel()
+	_, err := g.cfg.Audit.Append(ctx, den.entry)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, audit.ErrInvalidEntry):
+		g.cfg.Logger.Error("kept denial refused by the audit log, dropped", "error", err)
+		_ = g.endNow(ctx, den.appr, den.result)
+		return true
+	case den.entry.Also != nil && (errors.Is(err, approval.ErrJournal) || errors.Is(err, intent.ErrStore)):
+		e := den.entry
+		e.Also = nil
+		if _, err := g.cfg.Audit.Append(ctx, e); err != nil {
+			return false
+		}
+		if endErr := g.endNow(ctx, den.appr, den.result); endErr != nil {
+			g.cfg.Logger.Error("kept denial written, its request not ended; the next start records it again", "error", endErr)
+		}
+		return true
+	}
+	return false
 }
 
 // executing marks a confirmed request as executing in the journal; nothing to do for an

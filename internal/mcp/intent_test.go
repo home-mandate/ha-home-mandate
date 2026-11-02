@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync/atomic"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/intent"
 )
 
 func (h *harness) intentCount() int {
@@ -151,6 +153,60 @@ func TestDenialsTheLogCouldNotRecordAreWrittenLater(t *testing.T) {
 	}
 	if h.intentCount() != 0 {
 		t.Errorf("intents = %d after the denials were recorded", h.intentCount())
+	}
+	if !strings.Contains(logs.String(), "denial recorded late") {
+		t.Errorf("log = %s", logs.String())
+	}
+}
+
+// brokenEndIntents is the real store whose End within a transaction fails.
+type brokenEndIntents struct{ *intent.Store }
+
+func (b brokenEndIntents) End(string) func(context.Context, *sql.Tx) error {
+	return func(context.Context, *sql.Tx) error { return fmt.Errorf("%w: locked", intent.ErrStore) }
+}
+
+// A kept denial whose intent cannot be ended in the entry's transaction is written
+// without it, its intent ended on its own, and the denials behind it follow (SPEC-v0
+// section 9: the log must not lose the entry).
+func TestAKeptDenialNeverBlocksTheOnesBehindIt(t *testing.T) {
+	h := newHarness(t, nil)
+	var logs safeBuffer
+	h.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	h.intentsOverride = brokenEndIntents{h.intents}
+	auditor := &flakyAuditor{log: h.log}
+	h.url = h.serve(auditor)
+	before := len(h.entries())
+	auditor.down.Store(true)
+	for range 2 {
+		if _, errText := h.call(h.session(), "perform_action", map[string]any{"entity_id": "light.kitchen", "action": "turn_on"}); errText != "unavailable" {
+			t.Fatalf("perform_action with the log down: %q", errText)
+		}
+	}
+	auditor.down.Store(false)
+	// An execution whose intent cannot be ended in the entry's transaction fails closed, as
+	// a confirmed one with a broken journal always has: not executed, denied by the log,
+	// the denial written without the hook and the intent ended on its own.
+	if _, errText := h.call(h.session(), "perform_action", map[string]any{"entity_id": "light.kitchen", "action": "turn_off"}); errText != "unavailable" {
+		t.Fatalf("perform_action with a broken End: %q", errText)
+	}
+	if len(h.ha.recorded()) != 0 {
+		t.Error("Home Assistant was called although the entry could not be committed")
+	}
+	entries := h.entries()[before:]
+	if len(entries) != 3 {
+		t.Fatalf("entries = %d, want the two kept denials and the new one", len(entries))
+	}
+	for i, e := range entries {
+		if path(e, "result", "denied_by") != "audit" {
+			t.Errorf("entry %d = %v", i, e)
+		}
+	}
+	if path(entries[2], "request", "action") != "turn_off" {
+		t.Errorf("order: last entry = %v", entries[2])
+	}
+	if h.intentCount() != 0 {
+		t.Errorf("intents = %d, want every one ended on its own", h.intentCount())
 	}
 	if !strings.Contains(logs.String(), "denial recorded late") {
 		t.Errorf("log = %s", logs.String())

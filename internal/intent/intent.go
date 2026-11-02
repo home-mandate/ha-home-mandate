@@ -103,7 +103,7 @@ func (s *Store) EndNow(ctx context.Context, id string) error {
 	return nil
 }
 
-// Count is the number of intents in the store, for tests and the start.
+// Count is the number of intents in the store, for tests.
 func (s *Store) Count(ctx context.Context) (int, error) {
 	var n int
 	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM execution_intents`).Scan(&n); err != nil {
@@ -119,7 +119,7 @@ type row struct {
 // Recover records every intent a previous process left as failed/outcome_unknown and
 // deletes it, each entry in one transaction with the deletion, so that a crash during
 // Recover leaves no duplicate (SPEC-v0 sections 9 and 11.1 item 9). It returns how many
-// it recorded. A row whose stored decision cannot be read or is refused by the schema is
+// it recorded, also when it stops at an error. A row whose stored decision cannot be read or is refused by the schema is
 // recorded with a minimal entry from what the row still tells; if even that is refused,
 // the row is deleted and the loss logged, so that it cannot block the start.
 func (s *Store) Recover(ctx context.Context, log Appender) (int, error) {
@@ -127,9 +127,9 @@ func (s *Store) Recover(ctx context.Context, log Appender) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	for _, r := range rows {
+	for n, r := range rows {
 		if err := s.recoverOne(ctx, log, r); err != nil {
-			return 0, err
+			return n, err
 		}
 	}
 	return len(rows), nil
