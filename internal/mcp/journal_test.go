@@ -111,7 +111,10 @@ func TestNothingHappensWithoutTheJournal(t *testing.T) {
 	if calls := h.ha.recorded(); len(calls) != 0 {
 		t.Error("Home Assistant called")
 	}
-	if e := h.lastEntry(); path(e, "result", "error") != "journal_unavailable" || path(e, "approval", "outcome") != "approved" {
+	// The journal row is the intent of a confirmed action (SPEC-v0 section 9): without it,
+	// the request is denied by the audit log, with the answer that confirmed it.
+	if e := h.lastEntry(); path(e, "result", "status") != "denied" || path(e, "result", "denied_by") != "audit" ||
+		path(e, "result", "error") != "log_unwritable" || path(e, "approval", "outcome") != "approved" {
 		t.Errorf("audit entry = %v", e)
 	}
 }
@@ -251,7 +254,7 @@ func TestAJournalFailureNeverLosesTheEntry(t *testing.T) {
 		if state, _ := h.journalRow(requestID); state != "ended" {
 			t.Errorf("%s: journal %s", name, state)
 		}
-		if !strings.Contains(logs.String(), "approval journal not ended with the audit entry") {
+		if !strings.Contains(logs.String(), "request not ended with the audit entry") {
 			t.Errorf("%s: log = %s", name, logs.String())
 		}
 	}
@@ -266,7 +269,7 @@ func TestAJournalFailureNeverLosesTheEntry(t *testing.T) {
 	if calls := h.ha.recorded(); len(calls) != 0 {
 		t.Error("Home Assistant called without the journal")
 	}
-	if e := h.lastEntry(); path(e, "result", "status") != "failed" || path(e, "result", "error") != "journal_unavailable" {
+	if e := h.lastEntry(); path(e, "result", "status") != "denied" || path(e, "result", "denied_by") != "audit" || path(e, "result", "error") != "log_unwritable" {
 		t.Errorf("execution: audit entry = %v", e)
 	}
 	if state, _ := h.journalRow(requestID); state != "ended" {

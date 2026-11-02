@@ -22,11 +22,11 @@ describe('actionLabel', () => {
     expect(actionLabel('media', 'set_volume')).toBe('volume');
   });
 
-  it('names "*" and shows unknown actions as they are, without hidden characters', () => {
+  it('names "*" and shows unknown actions as they are, hidden characters escaped (SPEC-v0 section 9.1)', () => {
     expect(actionLabel('light', '*')).toBe('all actions');
     expect(actionLabel('light', 'dim')).toBe('dim');
     expect(actionLabel('light', 'constructor')).toBe('constructor');
-    expect(actionLabel('light', 'a\u202Eb')).toBe('ab');
+    expect(actionLabel('light', 'a\u202Eb')).toBe('a\\u202eb');
   });
 });
 

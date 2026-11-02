@@ -13,7 +13,7 @@
   import { actionLabel } from '../../mandate/labels.ts';
   import { valuesText } from '../../mandate/limits.ts';
   import { href } from '../../router.ts';
-  import { cleanUntrusted } from '../../untrusted.ts';
+  import { cleanUntrusted, escapeUntrusted } from '../../untrusted.ts';
   import AgentName from '../AgentName.svelte';
   import DecisionBadge from '../DecisionBadge.svelte';
   import Icon from '../Icon.svelte';
@@ -93,7 +93,7 @@
   {/if}
   {#if entry.request}
     <dt>{m.audit_field_device()}</dt>
-    <dd><bdi>{deviceName(entry.request.resource.entity_id, catalog)}</bdi><code>{cleanUntrusted(entry.request.resource.entity_id)}</code></dd>
+    <dd><bdi>{deviceName(entry.request.resource.entity_id, catalog)}</bdi><code>{escapeUntrusted(entry.request.resource.entity_id)}</code></dd>
     <dt>{m.audit_field_action()}</dt>
     <dd>{actionLabel(entry.request.resource.category, entry.request.action)}</dd>
     {#if valuesText(entry.request.parameters, ctx.locale)}

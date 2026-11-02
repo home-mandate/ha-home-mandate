@@ -16,6 +16,7 @@ import (
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/config"
+	"github.com/home-mandate/ha-home-mandate/internal/intent"
 )
 
 // SPEC-v0 section 11.1 item 9 at the level of serve: what a previous process left in the
@@ -101,3 +102,42 @@ func waitUntil(t *testing.T, cond func() bool) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// A direct execution a previous process started and did not record is recorded at start
+// as failed/outcome_unknown and nothing of it remains (SPEC-v0 sections 9 and 11.1 item 9).
+func TestExecutionsEndedByARestartAreRecorded(t *testing.T) {
+	ctx := context.Background()
+	c := newCLI(t)
+	s, err := openStore(ctx, c.envVars["HM_DATA_DIR"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.store.Close()
+	intents := intent.New(s.store.DB(), nil)
+	rule := "r-lights"
+	if _, err := intents.Begin(ctx, audit.Entry{
+		Agent:      &audit.Agent{ClientID: "hm-client:voice", DisplayName: "Voice assistant"},
+		Request:    &audit.Request{Time: time.Now(), Timezone: "Europe/Berlin", Resource: audit.Resource{EntityID: "light.kitchen", Category: "light"}, Action: "turn_on"},
+		Mandate:    &audit.Mandate{ID: "m-voice", Digest: "sha256:" + strings.Repeat("a", 64)},
+		Evaluation: &audit.Evaluation{Decision: "allow", Reason: "rule", RuleID: &rule}}); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	if err := recoverIntents(ctx, intent.New(s.store.DB(), logger), s.log, logger); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs.String(), "executions ended by the restart") {
+		t.Errorf("log = %s", logs.String())
+	}
+	var buf bytes.Buffer
+	if err := s.log.Export(ctx, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"error":"outcome_unknown"`) || !strings.Contains(buf.String(), `"entity_id":"light.kitchen"`) {
+		t.Errorf("audit log = %s", buf.String())
+	}
+	if n, err := intents.Count(ctx); err != nil || n != 0 {
+		t.Errorf("intents = %d, %v", n, err)
+	}
+}

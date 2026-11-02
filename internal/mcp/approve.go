@@ -229,6 +229,9 @@ type approvalRef struct {
 	approval *audit.Approval
 	id       string
 	row      string
+	// intent is the ID of a direct execution in the intent store (SPEC-v0 section 9);
+	// empty for a confirmed request, whose journal row is its intent.
+	intent string
 }
 
 // cancelled records a request that ended before anyone answered (SPEC-v0 section 11.1

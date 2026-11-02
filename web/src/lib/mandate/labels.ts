@@ -9,7 +9,7 @@ import type { Area, Weekday } from '../api/types.ts';
 import type { CellDecision } from '../engine/analysis.ts';
 import { isCountryCode } from '../format.ts';
 import { m } from '../i18n.ts';
-import { cleanUntrusted } from '../untrusted.ts';
+import { cleanUntrusted, escapeUntrusted } from '../untrusted.ts';
 
 type Texts = Readonly<Record<string, () => string>>;
 
@@ -75,7 +75,8 @@ const lookup = (texts: Texts, key: string) => (Object.hasOwn(texts, key) ? texts
 export function actionLabel(category: string | undefined, action: string): string {
   if (action === '*') return m.rule_all_actions();
   const text = lookup(ACTIONS_OF_CATEGORY, `${category}.${action}`) ?? lookup(ACTIONS, action);
-  return text ? text() : cleanUntrusted(action, MAX_IDENTIFIER);
+  // An action the vocabulary does not know is shown as sent (SPEC-v0 section 9.1).
+  return text ? text() : escapeUntrusted(action, MAX_IDENTIFIER);
 }
 
 /** categoryLabel names a category; "all" stands for a rule without one. */

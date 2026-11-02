@@ -30,6 +30,7 @@ import (
 	"github.com/home-mandate/ha-home-mandate/internal/config"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 	"github.com/home-mandate/ha-home-mandate/internal/i18n"
+	"github.com/home-mandate/ha-home-mandate/internal/intent"
 	"github.com/home-mandate/ha-home-mandate/internal/mcp"
 	"github.com/home-mandate/ha-home-mandate/internal/oauth"
 	"github.com/home-mandate/ha-home-mandate/internal/pdp"
@@ -167,6 +168,17 @@ func serve(ctx context.Context, e env) int {
 		logger.Error("cannot end the approval requests of the previous run, not starting", "error", err)
 		return exitFailure
 	}
+	// Executions a previous process started without recording their end (SPEC-v0
+	// section 9): recorded as outcome_unknown before any agent can call.
+	s.intents = intent.New(s.store.DB(), logger)
+	err = recoverIntents(ctx, s.intents, s.log, logger)
+	if ctx.Err() != nil {
+		return exitOK
+	}
+	if err != nil {
+		logger.Error("cannot record the executions of the previous run, not starting", "error", err)
+		return exitFailure
+	}
 	g, err := newGateway(ctx, s, logger)
 	if ctx.Err() != nil {
 		return exitOK
@@ -192,6 +204,20 @@ func recoverApprovals(ctx context.Context, journal *approval.Journal, log *audit
 	}
 	if _, err := journal.Expire(ctx); err != nil {
 		logger.Error("deleting ended approval requests failed", "error", err)
+	}
+	return nil
+}
+
+// recoverIntents records every direct execution a previous process started and did not
+// record as failed/outcome_unknown (SPEC-v0 sections 9 and 11.1 item 9); the command may
+// have reached Home Assistant, and nothing is repeated.
+func recoverIntents(ctx context.Context, intents *intent.Store, log *audit.Log, logger *slog.Logger) error {
+	n, err := intents.Recover(ctx, log)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		logger.Warn("executions ended by the restart, outcome unknown", "executions", n)
 	}
 	return nil
 }
@@ -332,7 +358,7 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	}
 	gw := mcp.New(mcp.Config{Resource: resource, ResourceMetadataURL: metadata, Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
 		TemperatureUnit: g.temperatureUnit, TimeZone: g.householdTimeZone, ServiceUser: g.serviceUser,
-		Limiter: restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, ApprovalWait: s.cfg.ApprovalWait, Clock: s.log, Audit: s.log, Approvals: approvals, Journal: s.journal, Logger: logger, Version: version})
+		Limiter: restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, ApprovalWait: s.cfg.ApprovalWait, Clock: s.log, Audit: s.log, Approvals: approvals, Journal: s.journal, Intents: s.intents, Logger: logger, Version: version})
 	g.mcp = gw
 	as, handler, err := withOAuth(s, gw.Handler(), http.HandlerFunc(g.serveDirect), resource, logger)
 	if err != nil {

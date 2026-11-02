@@ -198,9 +198,9 @@ pass all its conformance cases.
   <img src="https://raw.githubusercontent.com/home-mandate/.github/main/marks/compatible-light.svg" alt="Home-Mandate compatible" width="96" align="left">
 </picture>
 
-Home-Mandate conforms to the Home-Mandate Specification at commit `b6fb77d` (the state
+Home-Mandate conforms to the Home-Mandate Specification at commit `116d009` (the state
 after `v0.1.0-rc.5`; manifest `conformance/manifest.json`, SHA-256
-`ecb592043716e096915954c85a4dd20b371757a9bb4fd797f8ced8b7d7515ca2`) in these classes
+`aa18f0f0dd534ebe8b9b83692cb58e68a568b018510146e261fccd31f181c40a`) in these classes
 (SPEC-v0 section 8.1), tested with the specification's test tool `mandate-conformance` on
 every pull request and with `make conformance`. 0.1.0-rc.10 conforms to `v0.1.0-rc.5`;
 0.1.0-rc.9 was tested with `v0.1.0-rc.4`, which has the same cases, and 0.1.0-rc.8
@@ -211,7 +211,7 @@ conforms to `v0.1.0-rc.3`.
 |---|---|---|
 | `evaluator` | 449 | process (the evaluation Home-Mandate uses) |
 | `selection` | 28 | process |
-| `audit` | 306 | process |
+| `audit` | 316 | process |
 | `audit-anchored` | 15 | process |
 | `pdp` | 257 | HTTP (its AuthZEN endpoint) |
 
