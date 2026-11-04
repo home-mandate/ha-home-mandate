@@ -125,11 +125,13 @@ func (s *Server) putSettings(r *request) (any, error) {
 	return s.defaults(ctx)
 }
 
-// putEmergencyStop switches the emergency stop. Switching it on revokes every token
-// and ends every open approval request at once (decision F1).
+// putEmergencyStop switches the emergency stop. Switching it on ends every open approval
+// request at once (decision F1); with revoke_tokens it also revokes every token, for who
+// suspects a stolen one.
 func (s *Server) putEmergencyStop(r *request) (any, error) {
 	var in struct {
-		Active *bool `json:"active"`
+		Active       *bool `json:"active"`
+		RevokeTokens bool  `json:"revoke_tokens"`
 	}
 	if err := r.decode(&in); err != nil {
 		return nil, err
@@ -137,7 +139,19 @@ func (s *Server) putEmergencyStop(r *request) (any, error) {
 	if in.Active == nil {
 		return nil, failField(codeInvalidInput, "/active")
 	}
-	changed, err := s.cfg.Agents.SetEmergencyStop(r.Context(), *in.Active, s.actor(r))
+	if in.RevokeTokens && !*in.Active {
+		return nil, failField(codeInvalidInput, "/revoke_tokens")
+	}
+	var changed bool
+	var err error
+	if in.RevokeTokens {
+		changed, err = s.cfg.Agents.WithdrawAllTokens(r.Context(), s.actor(r))
+		if err == nil {
+			s.cfg.Logger.Warn("all agent tokens withdrawn", "by", r.user)
+		}
+	} else {
+		changed, err = s.cfg.Agents.SetEmergencyStop(r.Context(), *in.Active, s.actor(r))
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -390,8 +390,8 @@ func (g *Gateway) recordRejectedToken(ctx context.Context) {
 }
 
 // stopped reports whether the emergency stop is active; an unreadable stop counts as
-// active. Tokens are revoked when the stop is activated, so this catches requests that
-// were authenticated a moment before.
+// active. This is what blocks the agents: the stop leaves their tokens valid, unless the
+// human withdrew them too.
 func (g *Gateway) stopped(ctx context.Context) bool {
 	on, err := g.cfg.Agents.EmergencyStopActive(ctx)
 	if err != nil {
@@ -819,6 +819,12 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 	if !g.cfg.Limiter.Allow(snap.RateKey(), limitOf(snap)) {
 		g.recordRateLimited(ctx, a, d)
 		return pdp.Decision{}, errors.New(codeRateLimited)
+	}
+	// The same answer for every entity and every parameter, so it says nothing about them
+	// (#123).
+	if d.Result.Reason == evaluator.ReasonRevoked {
+		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate})
+		return pdp.Decision{}, errors.New(codeDenied + ": revoked: a human has to store a new mandate")
 	}
 	if paramErr != nil {
 		return pdp.Decision{}, g.refuseParameters(ctx, a, snap, d, paramErr)

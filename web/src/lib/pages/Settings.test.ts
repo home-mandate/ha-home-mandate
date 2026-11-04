@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { NOW, sessionFixture, usHouseholdFixture } from '../api/fixtures.ts';
 import { ApiError } from '../api/client.ts';
-import { createMockClient, type MockClient, MOCK_APPROVERS_VERSION } from '../api/mock.ts';
+import { createMockClient, type MockClient, type MockOptions, MOCK_APPROVERS_VERSION } from '../api/mock.ts';
 import { BrowserNotifier, type NotifyEnv } from '../app/notifier.svelte.ts';
 import { AppState } from '../app/state.svelte.ts';
 import type { SettingsSection } from '../router.ts';
@@ -23,10 +23,11 @@ interface Options {
   section?: SettingsSection | null;
   prepare?: (api: MockClient) => Promise<void> | void;
   notify?: NotifyEnv;
+  options?: MockOptions;
 }
 
-async function start({ section = null, prepare, notify = { hidden: () => true } }: Options = {}) {
-  const api = createMockClient({ now: () => new Date(NOW) });
+async function start({ section = null, prepare, notify = { hidden: () => true }, options = {} }: Options = {}) {
+  const api = createMockClient({ now: () => new Date(NOW), ...options });
   await prepare?.(api);
   const app = new AppState(api, () => Date.parse(NOW));
   await app.start();
@@ -229,6 +230,7 @@ describe('Settings: approvers', () => {
   it('adds a person with their own device preselected, critical as suggested', async () => {
     const { api } = await start();
     await card('Markus');
+    await fireEvent.change(screen.getByLabelText('Person from Home Assistant'), { target: { value: 'u-partner' } });
     const device = screen.getAllByLabelText('Device').at(-1) as HTMLSelectElement;
     expect(device.value).toBe('mobile_app_iphone'); // Alex's own phone, not Markus's
     expect([...device.options].find((o) => o.value === 'mobile_app_pixel_9')?.textContent).toContain('Device of');
@@ -240,9 +242,41 @@ describe('Settings: approvers', () => {
     expect(screen.getByText('Everyone from Home Assistant is already listed.')).toBeTruthy();
   });
 
+  it('preselects nobody, so that the row to add a person cannot pass for an approver (#38)', async () => {
+    await start();
+    await card('Markus');
+    const person = screen.getByLabelText('Person from Home Assistant') as HTMLSelectElement;
+    expect(person.value).toBe('');
+    expect(person.options[0]?.textContent).toBe('Choose a person …');
+    expect(screen.getByRole('button', { name: 'Add person' }).getAttribute('aria-disabled')).toBe('true');
+    expect(within(region('Approvers')).getAllByLabelText('Device')).toHaveLength(1); // Markus's card only
+  });
+
+  it('says that a person without an administrator role cannot be added when no phone exists', async () => {
+    await start({ options: { noDevices: true } });
+    await card('Markus');
+    await fireEvent.change(screen.getByLabelText('Person from Home Assistant'), { target: { value: 'u-partner' } });
+    expect(await screen.findByText('No phone with the Home Assistant app. Can’t receive approvals.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Add person' })).toBeNull();
+  });
+
+  it('says that there are no approvers yet and offers the signed-in administrator first (#38)', async () => {
+    await start({
+      prepare: async (api) => {
+        const list = await api.approvers();
+        await api.deleteApprover('u-admin', list.version);
+      },
+    });
+    await waitFor(() => expect(screen.getByText('No approvers yet.')).toBeTruthy());
+    const person = screen.getByLabelText('Person from Home Assistant') as HTMLSelectElement;
+    expect(person.value).toBe('');
+    expect(person.options[1]?.value).toBe('u-admin');
+  });
+
   it('says when adding a person fails and keeps the choice', async () => {
     await start({ prepare: (api) => void (api.putApprover = async () => Promise.reject(new ApiError('invalid_input', 400, '/devices'))) });
     await card('Markus');
+    await fireEvent.change(screen.getByLabelText('Person from Home Assistant'), { target: { value: 'u-partner' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add person' }));
     await waitFor(() => expect(within(region('Approvers')).getAllByRole('alert').some((a) => a.textContent?.includes('Check the devices'))).toBe(true));
     expect((screen.getByLabelText('Person from Home Assistant') as HTMLSelectElement).value).toBe('u-partner');

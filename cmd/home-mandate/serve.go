@@ -54,6 +54,8 @@ const (
 	// Assistant's configuration and Home-Mandate's own user; nothing is decided without.
 	configRetryMin = time.Second
 	configRetryMax = time.Minute
+	// catalogPoll is how often a reconnect looks whether the catalog is back.
+	catalogPoll = 500 * time.Millisecond
 )
 
 // registryEvents keep the catalog current (ARCHITECTURE section 11.2).
@@ -696,6 +698,23 @@ func (g *gateway) onConnect(ctx context.Context) {
 	}
 	g.bellClean.Do(func() { go g.clearBells() })
 	g.announce.Do(func() { g.background.Go(g.announceRecovered) })
+	if g.approvals != nil {
+		g.background.Go(func() { g.askAgain(ctx) })
+	}
+}
+
+// askAgain lets open requests ask again (approval.Service.Reconnected) once an answer can
+// be acted on: until the catalog is back, a confirmed request would fail as unavailable.
+// If the connection ends first, the next one asks.
+func (g *gateway) askAgain(ctx context.Context) {
+	for !g.catalog.Ready() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(catalogPoll):
+		}
+	}
+	g.approvals.Reconnected()
 }
 
 // announceRecovered replaces, on the approvers' devices, the notifications of requests

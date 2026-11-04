@@ -285,6 +285,13 @@ for Home-Mandate. See [install-ha-os.md](../install-ha-os.md#reaching-home-manda
    endpoint).
 4. Home-Mandate's port answers nobody but the proxy (way A: empty 403 from any other
    machine).
+5. For agents on the internet (claude.ai, ChatGPT): the public name has an A record that
+   reaches Home-Mandate, not only an AAAA record. `dig +short A hm.example.org` must show
+   an address, and that address must not be your router's WAN address behind carrier-grade
+   NAT or DS-Lite. In our tests, without it no request arrived: claude.ai reports that it
+   cannot connect, and ChatGPT asks for manual OAuth configuration. Agents in your network
+   are not affected. An IPv4 TCP passthrough in front of your home, with TLS still ending
+   at your proxy, works.
 
 ## What is reachable from the internet
 

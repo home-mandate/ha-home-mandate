@@ -11,6 +11,7 @@ import { setLocale } from '../paraglide/runtime.js';
 import MandateList from './MandateList.svelte';
 import { cleanUntrusted } from '../untrusted.ts';
 import { addCriticalTemplate, DOORS } from '../test/critical.ts';
+import { draftOf } from '../mandate/versions.ts';
 
 beforeEach(() => setLocale('en', { reload: false }));
 afterEach(() => {
@@ -447,5 +448,89 @@ describe('removing (#21)', () => {
     const rows = within(screen.getByRole('table', { name: 'Mandates' })).getAllByRole('row');
     expect(rows).toHaveLength(before);
     expect(screen.getByText('Removed')).toBeTruthy();
+  });
+});
+
+describe('MandateList: revoking a mandate (#123)', () => {
+  it('asks first with the focus on Cancel, keeps the agent admitted and offers no second revocation', async () => {
+    const { api } = await start();
+    const mandate = (await api.mandates()).find((x) => x.status === 'active');
+    if (!mandate) throw new Error('no active mandate');
+    const button = await screen.findByRole('button', { name: `Revoke mandate ${cleanUntrusted(mandate.name)}` });
+    await fireEvent.click(button);
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog.textContent).toContain('The agent stays admitted');
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke mandate' }));
+    await waitFor(async () => expect((await api.mandates()).find((x) => x.id === mandate.id)?.status).toBe('revoked'));
+    await waitFor(() => expect(screen.queryByRole('button', { name: `Revoke mandate ${cleanUntrusted(mandate.name)}` })).toBeNull());
+    expect((await api.agents()).find((a) => a.client_id === mandate.client_id)?.status).toBe('active');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1 })));
+  });
+
+  it('says so when the revocation fails and keeps the dialog open', async () => {
+    const { api } = await start();
+    api.revokeMandate = async () => Promise.reject(new ApiError('internal', 500));
+    const mandate = (await api.mandates()).find((x) => x.status === 'active');
+    if (!mandate) throw new Error('no active mandate');
+    await fireEvent.click(await screen.findByRole('button', { name: `Revoke mandate ${cleanUntrusted(mandate.name)}` }));
+    const dialog = await screen.findByRole('alertdialog');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke mandate' }));
+    await waitFor(() => expect(within(dialog).getByRole('alert').textContent).toContain('couldn’t be revoked'));
+  });
+});
+
+describe('status pills', () => {
+  const pill = (name: string) => screen.getByText(name).closest('.pill');
+
+  it('shows Removed as a pill under the status, like the status itself', async () => {
+    await start({}, async (a) => {
+      await a.revokeMandate('mandate-claude');
+      await a.removeMandate('mandate-claude');
+    });
+    await screen.findByRole('table', { name: 'Mandates' });
+    await fireEvent.click(screen.getByRole('switch', { name: /Show removed/ }));
+    expect(pill('Removed')).toBeTruthy();
+    expect(pill('Revoked')).toBeTruthy();
+    expect(pill('Removed')?.parentElement).toBe(pill('Revoked')?.parentElement);
+  });
+
+  it('shows Removed as a pill on the mobile cards too', async () => {
+    mobile();
+    await start({}, async (a) => {
+      await a.revokeMandate('mandate-claude');
+      await a.removeMandate('mandate-claude');
+    });
+    await fireEvent.click(await screen.findByRole('switch', { name: /Show removed/ }));
+    expect(pill('Removed')).toBeTruthy();
+  });
+
+  async function withEdit() {
+    const env = await start();
+    const stored = await env.api.mandate('mandate-claude');
+    env.app.unsaved.set('mandate-claude', { stored, name: 'edited', draft: draftOf(stored.document) });
+    return env;
+  }
+
+  it('shows an unsaved edit of a mandate in the list', async () => {
+    await withEdit();
+    const table = await screen.findByRole('table', { name: 'Mandates' });
+    const row = within(table).getByRole('link', { name: /Claude/ }).closest('tr') as HTMLElement;
+    expect(await within(row).findByText('Unsaved')).toBeTruthy();
+    expect(within(table).getAllByText('Unsaved')).toHaveLength(1);
+  });
+
+  it('shows an unsaved edit on the mobile cards too', async () => {
+    mobile();
+    await withEdit();
+    expect(await screen.findByText('Unsaved')).toBeTruthy();
+  });
+
+  it('forgets the unsaved edit of a mandate that was revoked', async () => {
+    const { app, api } = await withEdit();
+    await screen.findByText('Unsaved');
+    await api.revokeMandate('mandate-claude');
+    await waitFor(() => expect(app.unsaved.has('mandate-claude')).toBe(false));
+    expect(screen.queryByText('Unsaved')).toBeNull();
   });
 });
