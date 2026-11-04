@@ -2,20 +2,38 @@
 
 ## 0.1.0
 
-First version. Implements the Home-Mandate Specification v0.1.0. Changes since 0.1.0-rc.11:
+First version. Implements the Home-Mandate Specification v0.1.1. Changes since 0.1.0-rc.11:
 
 Mandates
 - **Revoke mandate**, in the list and on a mandate's page, takes the permissions away and
   keeps the agent admitted. A new mandate is given on the agent's page (#123)
 - An agent whose mandate is revoked now hears `denied: revoked: a human has to store a new
   mandate` for every device, instead of `not_found` (#123)
+- The mandate list shows "Removed" and, for an edit left unsaved in this browser, "Unsaved"
+  as status pills. Revoking a mandate drops its unsaved edit
 
 Approvals
 - After a reconnect to Home Assistant, each open request asks again once on the devices
   that had it, with the same buttons and a note that an answer may not have arrived. A
-  notification of a request that ended meanwhile is removed then (#34)
+  notification of a request that ended meanwhile is removed then. If Home Assistant's notify
+  service is not up yet, this is tried again for about five minutes (#34)
+- A confirmed command for a light is sent even if Home Assistant reports the light in the
+  target state, as it can wrongly do after a restart. Other devices stay refused with
+  `already_in_state`
 - Settings → Approvers: nobody is preselected in the row to add a person, the signed-in
-  administrator comes first, and an empty list says so (#38)
+  administrator comes first, and an empty list says so (#38). The hint for a person when
+  Home Assistant knows no phone now appears
+
+Emergency stop
+- **The stop no longer signs agents out.** Their tokens stay valid, every request is denied
+  with `denied: emergency_stop`, and after it is lifted they carry on without pairing again
+- If you suspect a stolen token, **Also revoke all access** in the dialog, or
+  `emergency-stop on --revoke-tokens`, revokes every token as well, as the stop did before
+
+Security
+- New audit entries are checked strictly against the I-JSON rules before they are written,
+  and a tool call whose arguments are not I-JSON is refused as `invalid_params`; specification
+  v0.1.1 (#134)
 
 Documentation
 - How to check for an A record when claude.ai or ChatGPT can't reach the gateway (#133)
