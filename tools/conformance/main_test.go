@@ -156,7 +156,6 @@ func TestHTTPBindingNeedsTheToken(t *testing.T) {
 		{"no token", http.MethodPut, controlPath, "", state, http.StatusUnauthorized},
 		{"wrong token", http.MethodPut, controlPath, "Bearer " + strings.Repeat("x", minTokenLength), state, http.StatusUnauthorized},
 		{"invalid state", http.MethodPut, controlPath, "Bearer " + token, "[]", http.StatusBadRequest},
-		{"invalid time", http.MethodPut, controlPath, "Bearer " + token, `{"time":"now"}`, http.StatusBadRequest},
 		{"state", http.MethodPut, controlPath, "Bearer " + token, state, http.StatusNoContent},
 		{"evaluation without token", http.MethodPost, "/access/v1/evaluation", "", evaluation, http.StatusUnauthorized},
 		{"evaluation", http.MethodPost, "/access/v1/evaluation", "Bearer " + token, evaluation, http.StatusOK},
@@ -184,6 +183,70 @@ func TestHTTPBindingNeedsTheToken(t *testing.T) {
 		if tc.name == "evaluation" && out.Context.Outcome != "ask" {
 			t.Errorf("evaluation: outcome %q, want ask", out.Context.Outcome)
 		}
+	}
+}
+
+// A state whose time is no point in time stands for a request the PEP could not express: the
+// mandate is still selected, and the answer is invalid_request (SPEC-v0 sections 4.1, 10.2).
+func TestHTTPBindingAnswersInvalidRequestWithoutAClock(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	srv := httptest.NewServer(&binding{token: token})
+	defer srv.Close()
+	doc := example(t)
+	var meta struct {
+		ID        string `json:"id"`
+		Principal string `json:"principal"`
+		Agent     struct {
+			ClientID string `json:"client_id"`
+		} `json:"agent"`
+	}
+	if err := json.Unmarshal([]byte(doc), &meta); err != nil {
+		t.Fatal(err)
+	}
+	do := func(method, path, body string) *http.Response {
+		req, _ := http.NewRequest(method, srv.URL+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { resp.Body.Close() })
+		return resp
+	}
+	for _, at := range []string{"not-a-time", "2026-10-12T04:30:00+24:00", "2026-10-12T04:30:00,5Z"} {
+		state := `{"mandates":[{"mandate":` + mustJSON(doc) + `}],"directory":[],"time":"` + at + `"}`
+		if resp := do(http.MethodPut, controlPath, state); resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("%s: state: status %d", at, resp.StatusCode)
+		}
+		evaluation := `{"subject":{"type":"agent","id":"` + meta.Agent.ClientID + `","properties":{"principal":"` + meta.Principal + `"}},"action":{"name":"turn_on"},"resource":{"id":"light.living_room_ceiling"}}`
+		var out struct {
+			Decision bool `json:"decision"`
+			Context  struct {
+				Outcome   string `json:"outcome"`
+				Reason    string `json:"reason"`
+				MandateID string `json:"mandate_id"`
+			} `json:"context"`
+		}
+		resp := do(http.MethodPost, "/access/v1/evaluation", evaluation)
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		if out.Decision || out.Context.Outcome != "deny" || out.Context.Reason != "invalid_request" || out.Context.MandateID != meta.ID {
+			t.Errorf("%s: got %+v", at, out)
+		}
+	}
+	// An unknown agent stays no_mandate: nothing is selected, so the time plays no part.
+	bad := `{"subject":{"type":"agent","id":"urn:example:agent:other","properties":{"principal":"` + meta.Principal + `"}},"action":{"name":"turn_on"},"resource":{"id":"light.living_room_ceiling"}}`
+	var out struct {
+		Context struct {
+			Reason string `json:"reason"`
+		} `json:"context"`
+	}
+	if err := json.NewDecoder(do(http.MethodPost, "/access/v1/evaluation", bad).Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Context.Reason != "no_mandate" {
+		t.Errorf("unknown agent: reason %q", out.Context.Reason)
 	}
 }
 

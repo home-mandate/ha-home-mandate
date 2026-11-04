@@ -24,6 +24,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/home-mandate/ha-home-mandate/internal/untrusted"
 )
 
 // ErrInvalidClient means a client ID is neither a usable Client ID Metadata Document
@@ -359,7 +361,9 @@ func displayable(name string) bool {
 	if name == "" || !utf8.ValidString(name) || utf8.RuneCountInString(name) > maxClientName {
 		return false
 	}
-	return !strings.ContainsFunc(name, func(r rune) bool { return unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp) })
+	return !strings.ContainsFunc(name, func(r rune) bool {
+		return unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp) || untrusted.IsNoncharacter(r)
+	})
 }
 
 // redirectAllowed compares a requested redirect URI with the registered ones exactly,

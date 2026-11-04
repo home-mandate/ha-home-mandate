@@ -199,6 +199,7 @@ func TestResolveSanitizesTheName(t *testing.T) {
 	c, r := newCIMDServer(t)
 	for name, doc := range map[string]string{
 		"bidi override": strings.Replace(goodDoc, `"Claude Code"`, `"Claude\u202eedoC"`, 1),
+		"noncharacter":  strings.Replace(goodDoc, `"Claude Code"`, `"Claude\ufffe"`, 1),
 		"too long":      strings.Replace(goodDoc, `"Claude Code"`, `"`+strings.Repeat("n", 81)+`"`, 1),
 		"missing":       strings.Replace(goodDoc, `"client_name":"Claude Code",`, ``, 1),
 	} {

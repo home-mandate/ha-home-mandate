@@ -270,7 +270,7 @@ func validName(name string) (string, error) {
 		return "", ErrInvalidName
 	}
 	for _, r := range name {
-		if unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp) {
+		if unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp) || untrusted.IsNoncharacter(r) {
 			return "", ErrInvalidName
 		}
 	}
