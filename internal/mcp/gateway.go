@@ -390,8 +390,8 @@ func (g *Gateway) recordRejectedToken(ctx context.Context) {
 }
 
 // stopped reports whether the emergency stop is active; an unreadable stop counts as
-// active. Tokens are revoked when the stop is activated, so this catches requests that
-// were authenticated a moment before.
+// active. This is what blocks the agents: the stop leaves their tokens valid, unless the
+// human withdrew them too.
 func (g *Gateway) stopped(ctx context.Context) bool {
 	on, err := g.cfg.Agents.EmergencyStopActive(ctx)
 	if err != nil {

@@ -204,6 +204,15 @@
 
   /** incoming handles a version loaded from the server, at first and while the editor is open. */
   function incoming(detail: MandateDetail) {
+    // A revoked mandate can no longer be saved: what is left of an edit goes, the page shows
+    // what is stored.
+    if (detail.summary.status === 'revoked') {
+      if (stored?.summary.digest !== detail.summary.digest || changes > 0 || app.unsaved.has(id)) {
+        adopt(detail);
+        app.unsaved.delete(id);
+      } else stored = detail;
+      return;
+    }
     let current = stored;
     if (!current) {
       // First load: pick up an edit left behind earlier, if there is one.

@@ -159,7 +159,7 @@ func TestDisconnectedAgentsOfAClient(t *testing.T) {
 	if list, err := s.Disconnected(ctx, cimd); err != nil || len(list) != 0 {
 		t.Fatalf("before the stop = %+v, %v", list, err)
 	}
-	if _, err := s.SetEmergencyStop(ctx, true, admin); err != nil {
+	if _, err := s.WithdrawAllTokens(ctx, admin); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.SetEmergencyStop(ctx, false, admin); err != nil {
@@ -214,7 +214,7 @@ func TestReconnectIssuesNewTokensToTheExistingAgent(t *testing.T) {
 	if _, err := reconnect(a.ClientID, cimd); !errors.Is(err, agent.ErrNotReconnectable) {
 		t.Fatalf("reconnect with valid tokens = %v", err)
 	}
-	if _, err := s.SetEmergencyStop(ctx, true, admin); err != nil {
+	if _, err := s.WithdrawAllTokens(ctx, admin); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := reconnect(a.ClientID, cimd); !errors.Is(err, agent.ErrEmergencyStop) {
@@ -257,7 +257,7 @@ func TestReconnectIssuesNewTokensToTheExistingAgent(t *testing.T) {
 		t.Errorf("agents after reconnect = %+v", list)
 	}
 	// A revoked agent is never reconnected.
-	if _, err := s.SetEmergencyStop(ctx, true, admin); err != nil {
+	if _, err := s.WithdrawAllTokens(ctx, admin); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.SetEmergencyStop(ctx, false, admin); err != nil {

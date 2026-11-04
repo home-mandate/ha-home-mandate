@@ -1242,3 +1242,32 @@ func TestToolsExplainTheClimateState(t *testing.T) {
 		}
 	}
 }
+
+// The emergency stop denies every call that reaches Home Assistant or tells about it, with
+// the agent still signed in: it can say why, and carries on after the release.
+func TestEmergencyStopDeniesEveryToolWithTheTokenStillValid(t *testing.T) {
+	h := newHarness(t, nil)
+	s := h.session()
+	if _, err := h.agents.SetEmergencyStop(context.Background(), true, admin); err != nil {
+		t.Fatal(err)
+	}
+	for tool, args := range map[string]map[string]any{
+		"list_devices":        {},
+		"list_my_permissions": {},
+		"get_state":           {"entity_id": "light.kitchen"},
+		"perform_action":      {"entity_id": "light.kitchen", "action": "turn_on"},
+	} {
+		if _, errText := h.call(s, tool, args); errText != "denied: emergency_stop" {
+			t.Errorf("%s during the stop = %q", tool, errText)
+		}
+	}
+	if calls := h.ha.recorded(); len(calls) != 0 {
+		t.Errorf("Home Assistant called: %v", calls)
+	}
+	if _, err := h.agents.SetEmergencyStop(context.Background(), false, admin); err != nil {
+		t.Fatal(err)
+	}
+	if _, errText := h.call(s, "get_state", map[string]any{"entity_id": "light.kitchen"}); errText != "" {
+		t.Errorf("after the release = %q", errText)
+	}
+}

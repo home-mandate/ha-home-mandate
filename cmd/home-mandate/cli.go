@@ -228,8 +228,17 @@ func listStatus(status string, removedAt time.Time) string {
 // emergencyStopCommand switches the emergency stop. It takes effect in a running gateway
 // at once: the stop and the token revocation are read from the database per request.
 func emergencyStopCommand(ctx context.Context, e env, args []string) int {
+	if len(args) == 2 && args[0] == "on" && args[1] == "--revoke-tokens" {
+		return withState(ctx, e, func(s *state) error {
+			if _, err := s.agents.WithdrawAllTokens(ctx, localAdmin); err != nil {
+				return err
+			}
+			fmt.Fprintln(e.stdout, "emergency stop active: agents blocked, all tokens revoked")
+			return nil
+		})
+	}
 	if len(args) != 1 {
-		return usageError(e, "emergency-stop needs on, off or status")
+		return usageError(e, "emergency-stop needs on [--revoke-tokens], off or status")
 	}
 	switch args[0] {
 	case "status":
@@ -250,9 +259,9 @@ func emergencyStopCommand(ctx context.Context, e env, args []string) int {
 			case !changed:
 				fmt.Fprintln(e.stdout, "emergency stop already", onOff(on))
 			case on:
-				fmt.Fprintln(e.stdout, "emergency stop activated: all tokens revoked, agents blocked")
+				fmt.Fprintln(e.stdout, "emergency stop activated: agents blocked")
 			default:
-				fmt.Fprintln(e.stdout, "emergency stop released: agents need new tokens")
+				fmt.Fprintln(e.stdout, "emergency stop released")
 			}
 			return nil
 		})

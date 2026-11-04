@@ -161,12 +161,12 @@
     openSheet();
   }
 
-  async function fire() {
+  async function fire(revokeTokens: boolean) {
     if (firing) return;
     firing = true;
     estopError = '';
     try {
-      await app.setEmergencyStop(true);
+      await app.setEmergencyStop(true, revokeTokens);
     } catch {
       estopError = m.estop_failed();
       return;

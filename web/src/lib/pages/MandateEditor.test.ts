@@ -1018,6 +1018,22 @@ describe('unsaved changes (issue #20)', () => {
     expect(screen.queryByText('Unsaved changes from earlier')).toBeNull();
   });
 
+  it('drops an edit left earlier once the mandate is revoked, and shows what is stored', async () => {
+    const { app, api, view } = await start();
+    await rulesRegion();
+    await askFirst();
+    await tick();
+    view.unmount();
+    expect(app.unsaved.has(ID)).toBe(true);
+    await api.revokeMandate(ID);
+    render(MandateEditor, { app, id: ID, now: Date.parse(NOW) });
+    await rulesRegion();
+    await tick();
+    expect(screen.queryByText('Unsaved changes from earlier')).toBeNull();
+    expect(bar()).toBeNull();
+    expect(app.unsaved.has(ID)).toBe(false);
+  });
+
   it('never shows the bar for a revoked mandate', async () => {
     await start({}, async (api) => void (await api.revokeMandate(ID)));
     await rulesRegion();

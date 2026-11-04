@@ -207,13 +207,19 @@ do not get critical requests by default.
 
 ### Emergency stop
 
-The emergency stop blocks every agent at once: all tokens are revoked, pending approvals
-are declined, and every request is refused until you lift it. Home Assistant itself keeps
-running normally.
+The emergency stop blocks every agent at once: pending approvals are declined, and every
+request is refused with `denied: emergency_stop` until you lift it. Home Assistant itself
+keeps running normally. Agents stay signed in, and after you lift it they carry on without
+any further step.
 
-Lifting it does not bring access back: the withdrawn tokens stay invalid, so a stolen
-token stays useless. Every agent has to sign in again (agents with a pairing code need a
-new code). Until then, its entry under Agents shows **Not signed in**.
+If you suspect that someone stole an agent's access, tick **Also revoke all access** in
+the dialog (or use `emergency-stop on --revoke-tokens`): every token is revoked as well, and
+lifting the stop does not bring them back, so a stolen token stays useless. To revoke one
+agent only, use **Revoke access** on its page instead. The audit log records the stop, not
+whether access was revoked with it; the service log does.
+
+After revoking all access, every agent has to sign in again (agents with a pairing code
+need a new code). Until then, its entry under Agents shows **Not signed in**.
 
 When an agent signs in again, the sign-in page (browser) or the pairing step (code) offers
 **Reconnect an existing agent**, listing the agents of the same OAuth client that have no
@@ -348,8 +354,7 @@ for you, you can answer there (**Approve** → **Yes, approve**, or **Decline**)
 Choose **Emergency stop** in the header, read the dialog and confirm **Trigger emergency
 stop**. A banner "Emergency stop active" appears, and every agent's next request is
 refused. Lift it with **Lift …** in the banner or **Settings → Emergency stop → Lift
-emergency stop …**, then let the agent sign in again and reconnect it to its entry (see
-[Emergency stop](#emergency-stop)).
+emergency stop …**; the agent carries on (see [Emergency stop](#emergency-stop)).
 
 ### 7. Read the audit log
 
@@ -471,8 +476,8 @@ Where to run them:
 | `home-mandate agent revoke CLIENT_ID` | Revokes an agent and all its tokens; its next request is refused. |
 | `home-mandate agent remove [--with-mandates] CLIENT_ID` | Removes a revoked agent from the lists, with `--with-mandates` its mandates too; refused for an active agent. |
 | `home-mandate agent remove --all-revoked` | Removes every revoked agent with its mandates and every other revoked mandate. |
-| `home-mandate emergency-stop on` | Triggers the emergency stop: all tokens revoked, all agents blocked. |
-| `home-mandate emergency-stop off` | Lifts it; agents need new tokens (reconnect them in the UI when they sign in). |
+| `home-mandate emergency-stop on [--revoke-tokens]` | Triggers the emergency stop: all agents blocked; with `--revoke-tokens` all tokens revoked too. |
+| `home-mandate emergency-stop off` | Lifts it; agents whose tokens were revoked need new ones (reconnect them in the UI when they sign in). |
 | `home-mandate emergency-stop status` | Prints `emergency stop: on` or `off`. |
 | `home-mandate approver add USER_ID SERVICE[:no-critical][,SERVICE…] [de\|en]` | Adds or replaces an approver: their Home Assistant user ID, up to 5 Companion app notify services such as `mobile_app_pixel_9` (without `notify.`), `:no-critical` for devices that should not get critical requests, and optionally the language. Keeps the "answer in the UI" settings, which only the UI changes. |
 | `home-mandate approver list` | Lists approvers: user ID, devices, language, UI channel. |

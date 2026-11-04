@@ -83,8 +83,9 @@ func (s *Service) resend(p *pending, user string) {
 }
 
 // send delivers n to devices while p is open. If the request ended meanwhile, what was
-// sent is removed again: the end's own clearing may have come before it.
-func (s *Service) send(ctx context.Context, p *pending, user string, devices []string, n ha.Notification) {
+// sent is removed again: the end's own clearing may have come before it. It returns the
+// devices the delivery failed for.
+func (s *Service) send(ctx context.Context, p *pending, user string, devices []string, n ha.Notification) (failed []string) {
 	var sent []string
 	for _, device := range devices {
 		if s.ended(p) || s.answersStopped() {
@@ -92,16 +93,18 @@ func (s *Service) send(ctx context.Context, p *pending, user string, devices []s
 		}
 		if err := s.cfg.Notifier.Notify(ctx, device, n); err != nil {
 			s.cfg.Logger.Warn("approval request not sent again", "approver", user, "notify_service", device, "error", err)
+			failed = append(failed, device)
 			continue
 		}
 		sent = append(sent, device)
 	}
 	if !s.ended(p) || s.cfg.Clearer == nil {
-		return
+		return failed
 	}
 	for _, device := range sent {
 		s.remove(ctx, removal{device, p.tag})
 	}
+	return failed
 }
 
 // answersStopped reports whether no answer is taken any more (StopAnswers): buttons sent

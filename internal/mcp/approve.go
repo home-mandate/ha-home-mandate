@@ -91,7 +91,7 @@ func (g *Gateway) askHuman(ctx context.Context, a agent.Agent, token string, d p
 	// unless the agent may not read the device: then it must not learn its state, and the
 	// human, who sees it, is asked.
 	canRead := g.mayRead(ctx, a.ClientID, d.Resource.EntityID)
-	if dev := g.knownState(d.Resource.EntityID); canRead && dev != nil && reachedNow(d.Resource.Category, d.Action, call, *dev) {
+	if dev := g.knownState(d.Resource.EntityID); canRead && dev != nil && !repeatable(d.Resource.Category) && reachedNow(d.Resource.Category, d.Action, call, *dev) {
 		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusFailed, Error: errAlreadyInState})
 		return nil, actionOut{}, errors.New(codeFailed + ": " + errAlreadyInState)
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/home-mandate/ha-home-mandate/internal/approval"
 	"github.com/home-mandate/ha-home-mandate/internal/catalog"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
@@ -34,7 +35,8 @@ func TestStateAtExecution(t *testing.T) {
 		{"closing meanwhile", "cover", "open", call(nil), "open", dev("closing", nil), errStateChanged},
 		{"other state", "cover", "close", call(nil), "open", dev("opening", nil), errStateChanged},
 		{"recorded already reached", "cover", "close", call(nil), "closed", dev("closed", nil), errAlreadyInState},
-		{"light on", "light", "turn_on", call(nil), "off", dev("on", nil), errAlreadyInState},
+		{"light on", "light", "turn_on", call(nil), "off", dev("on", nil), ""},
+		{"light reported off", "light", "turn_off", call(nil), "on", dev("off", nil), ""},
 		{"light off unchanged", "light", "turn_off", call(nil), "on", dev("on", nil), ""},
 		{"switch", "switch", "turn_off", call(nil), "on", dev("off", nil), errAlreadyInState},
 		{"locked", "lock", "lock", call(nil), "unlocked", dev("locking", nil), errAlreadyInState},
@@ -107,5 +109,38 @@ func TestStripedLocks(t *testing.T) {
 	}
 	if len(g.keyLocks) != lockStripes || len(g.deviceLocks) != lockStripes {
 		t.Errorf("%d, %d locks", len(g.keyLocks), len(g.deviceLocks))
+	}
+}
+
+// Home Assistant can report a light wrongly (KNX: "off" after a restart until the actuator
+// answers). A confirmed command for it is sent even if the light is reported in the target
+// state by then, and an agent that may read it is not refused beforehand either.
+func TestLightReportedInItsTargetStateIsSent(t *testing.T) {
+	f := &fakeApprover{result: approval.Result{Outcome: approval.OutcomeApproved, By: approverID, At: answeredAt}}
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+			map[string]any{"id": "r-light", "resource": map[string]any{"category": "light"}, "actions": []any{"turn_on", "turn_off"}, "decision": "ask"},
+		}
+	})
+	f.journal, h.approver = h.journal, f
+	h.url = h.serve(h.log)
+	s := h.session()
+	turnOn := map[string]any{"entity_id": "light.kitchen", "action": "turn_on"}
+
+	f.during = func() { h.setState("light.kitchen", "on") }
+	if out, errText := h.call(s, "perform_action", turnOn); errText != "" || out["status"] != "executed" {
+		t.Fatalf("reported on after the question: %v, %q", out, errText)
+	}
+
+	f.during = nil
+	if out, errText := h.call(s, "perform_action", map[string]any{"entity_id": "light.kitchen", "action": "turn_on", "idempotency_key": "second-time"}); errText != "" || out["status"] != "executed" {
+		t.Fatalf("reported on before the question: %v, %q", out, errText)
+	}
+	if calls := h.ha.recorded(); len(calls) != 2 {
+		t.Errorf("calls = %v", calls)
+	}
+	if asked := f.requests(); len(asked) != 2 {
+		t.Errorf("asked %d times", len(asked))
 	}
 }

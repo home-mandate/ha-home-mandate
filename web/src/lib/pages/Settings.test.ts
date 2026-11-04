@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { NOW, sessionFixture, usHouseholdFixture } from '../api/fixtures.ts';
 import { ApiError } from '../api/client.ts';
-import { createMockClient, type MockClient, MOCK_APPROVERS_VERSION } from '../api/mock.ts';
+import { createMockClient, type MockClient, type MockOptions, MOCK_APPROVERS_VERSION } from '../api/mock.ts';
 import { BrowserNotifier, type NotifyEnv } from '../app/notifier.svelte.ts';
 import { AppState } from '../app/state.svelte.ts';
 import type { SettingsSection } from '../router.ts';
@@ -23,10 +23,11 @@ interface Options {
   section?: SettingsSection | null;
   prepare?: (api: MockClient) => Promise<void> | void;
   notify?: NotifyEnv;
+  options?: MockOptions;
 }
 
-async function start({ section = null, prepare, notify = { hidden: () => true } }: Options = {}) {
-  const api = createMockClient({ now: () => new Date(NOW) });
+async function start({ section = null, prepare, notify = { hidden: () => true }, options = {} }: Options = {}) {
+  const api = createMockClient({ now: () => new Date(NOW), ...options });
   await prepare?.(api);
   const app = new AppState(api, () => Date.parse(NOW));
   await app.start();
@@ -249,6 +250,14 @@ describe('Settings: approvers', () => {
     expect(person.options[0]?.textContent).toBe('Choose a person …');
     expect(screen.getByRole('button', { name: 'Add person' }).getAttribute('aria-disabled')).toBe('true');
     expect(within(region('Approvers')).getAllByLabelText('Device')).toHaveLength(1); // Markus's card only
+  });
+
+  it('says that a person without an administrator role cannot be added when no phone exists', async () => {
+    await start({ options: { noDevices: true } });
+    await card('Markus');
+    await fireEvent.change(screen.getByLabelText('Person from Home Assistant'), { target: { value: 'u-partner' } });
+    expect(await screen.findByText('No phone with the Home Assistant app. Can’t receive approvals.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Add person' })).toBeNull();
   });
 
   it('says that there are no approvers yet and offers the signed-in administrator first (#38)', async () => {

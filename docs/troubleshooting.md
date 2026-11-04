@@ -159,16 +159,16 @@ request is refused (agents get `unavailable`) until the clock is right.
    wait plus 40 seconds (85 s by default) ([reverse-proxy.md](deploy/reverse-proxy.md#what-every-proxy-must-do)). If
    the agent says the action is done although it was pending, its model ignored the
    result's text; answering *Allow* still executes it once.
-9. **After an emergency stop or revocation**, the agent's tokens are gone. After an
-   emergency stop, let the agent sign in again and choose **Reconnect** for its existing
+9. **After an emergency stop with revoked access, or a revocation**, the agent's tokens are
+   gone. After such an emergency stop, let the agent sign in again and choose **Reconnect** for its existing
    entry on the sign-in or pairing page: it keeps its mandate. If no agent is offered there,
    the agent signed in with another OAuth client than before (another `client_id`, or a
    pairing code instead of the browser) or still has valid access; admit it as a new agent
    and revoke and remove the old entry. After a revocation, admit it again. If only its
    mandate was revoked, the agent stays admitted and gets `denied: revoked`; give it a new
    mandate on its page.
-10. **An agent shows "Not signed in"**: it has no valid access, after an emergency stop or
-   because it was not used for 30 days. It works again after it signs in and you reconnect
+10. **An agent shows "Not signed in"**: it has no valid access, after an emergency stop that
+   revoked it or because it was not used for 30 days. It works again after it signs in and you reconnect
    it; if you admitted it anew instead, remove the old entry (**Revoke access** with
    **Also remove the agent and its mandates from the lists**).
 11. **Removed an agent or mandate by mistake**: a removed one stays revoked; **Show removed**
@@ -240,7 +240,9 @@ device without an agent.
     the same call shortly after an execution is not executed again
     ([ARCHITECTURE.md](ARCHITECTURE.md), section 7, repeated requests). A confirmed
     action that ends `already_in_state` or `state_changed` was not executed because the
-    device was no longer in the state shown with the request.
+    device was no longer in the state shown with the request. Home Assistant may report a
+    wrong state, for example right after a restart, until the device answers; compare with
+    the device itself. Lights are not refused for this.
 11. **Home-Mandate was restarted** (app update, crash, reboot) while a request waited: the
     request ended, nothing was executed, and the notification on the phone is replaced by
     "Approval request ended" once Home Assistant is connected again; an answer given in

@@ -128,10 +128,12 @@ func (s *Store) insertPair(ctx context.Context, tx *sql.Tx, clientID, family, re
 }
 
 // Authenticate returns the agent an access token belongs to, if the token is valid for
-// resource. Every failure is ErrUnauthorized, except database errors. The emergency
-// stop, the agent's status and the token's revocation are read on every call.
+// resource. Every failure is ErrUnauthorized, except database errors. The agent's status
+// and the token's revocation are read on every call. The emergency stop does not count
+// here: it blocks the agent's requests (each is denied with emergency_stop), not its
+// sign-in, so that the agent can say why and need not sign in again.
 func (s *Store) Authenticate(ctx context.Context, token, resource string) (Agent, error) {
-	return s.authenticate(ctx, token, resource, true)
+	return s.authenticate(ctx, token, resource, false)
 }
 
 // StillAuthorized is Authenticate without the token's expiry: whether the access token
@@ -139,10 +141,11 @@ func (s *Store) Authenticate(ctx context.Context, token, resource string) (Agent
 // token expired (issue #27). A revocation of the token, its family or the agent, the
 // emergency stop and another resource still fail.
 func (s *Store) StillAuthorized(ctx context.Context, token, resource string) (Agent, error) {
-	return s.authenticate(ctx, token, resource, false)
+	return s.authenticate(ctx, token, resource, true)
 }
 
-func (s *Store) authenticate(ctx context.Context, token, resource string, checkExpiry bool) (Agent, error) {
+// authenticate checks token; for an answer it ignores the expiry and counts the stop.
+func (s *Store) authenticate(ctx context.Context, token, resource string, answer bool) (Agent, error) {
 	if resource == "" || !wellFormed(token, accessPrefix) {
 		return Agent{}, ErrUnauthorized
 	}
@@ -164,7 +167,7 @@ func (s *Store) authenticate(ctx context.Context, token, resource string, checkE
 	}
 	expires, err := time.Parse(timeFormat, expiresAt)
 	if err != nil || kind != kindAccess || tokenResource != resource || revokedAt.Valid || a.Status != StatusActive ||
-		stop != stopOff || checkExpiry && !s.clock().Before(expires) {
+		answer && stop != stopOff || !answer && !s.clock().Before(expires) {
 		return Agent{}, ErrUnauthorized
 	}
 	a.CreatedAt, _ = time.Parse(timeFormat, createdAt)
@@ -215,14 +218,14 @@ func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string
 				rejected = ErrRefreshReused
 				return s.revokeFamily(ctx, tx, r)
 			}
-			if err := s.checkRefresh(ctx, tx, r, resource); err != nil {
+			if err := s.checkRefresh(r, resource); err != nil {
 				return err
 			}
 			p, err = s.insertPair(ctx, tx, r.clientID, r.family, r.resource)
 			p.Repeated = true
 			return err
 		}
-		if err := s.checkRefresh(ctx, tx, r, resource); err != nil {
+		if err := s.checkRefresh(r, resource); err != nil {
 			return err
 		}
 		res, err := tx.ExecContext(ctx, `UPDATE tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL`,
@@ -250,17 +253,10 @@ func (s *Store) withinGrace(usedAt string) bool {
 }
 
 // checkRefresh rejects a refresh token that may not be rotated.
-func (s *Store) checkRefresh(ctx context.Context, tx *sql.Tx, r refreshRow, resource string) error {
+func (s *Store) checkRefresh(r refreshRow, resource string) error {
 	expires, err := time.Parse(timeFormat, r.expiresAt)
 	if err != nil || r.revokedAt.Valid || r.status != StatusActive || !s.clock().Before(expires) ||
 		resource != "" && resource != r.resource {
-		return ErrInvalidGrant
-	}
-	stopped, err := emergencyStop(ctx, tx)
-	if err != nil {
-		return err
-	}
-	if stopped {
 		return ErrInvalidGrant
 	}
 	return nil
@@ -295,22 +291,37 @@ func (s *Store) EmergencyStopActive(ctx context.Context) (bool, error) {
 }
 
 // SetEmergencyStop activates or releases the emergency stop and reports whether that
-// changed anything. Activating revokes every token at once; releasing does not restore
-// them, agents need new tokens.
+// changed anything. While it is active every request of every agent is denied; tokens
+// stay, so that after the release the agents carry on without signing in again. Who
+// suspects a stolen token uses WithdrawAllTokens.
 func (s *Store) SetEmergencyStop(ctx context.Context, on bool, by audit.Actor) (bool, error) {
+	return s.setEmergencyStop(ctx, on, false, by)
+}
+
+// WithdrawAllTokens activates the emergency stop, if it is not active yet, and revokes
+// every token at once, also when it was active already. Releasing the stop does not restore
+// them: agents have to sign in again, and a human reconnects them. It reports whether the
+// stop was switched.
+func (s *Store) WithdrawAllTokens(ctx context.Context, by audit.Actor) (bool, error) {
+	return s.setEmergencyStop(ctx, true, true, by)
+}
+
+func (s *Store) setEmergencyStop(ctx context.Context, on, withdraw bool, by audit.Actor) (bool, error) {
 	changed := false
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		now := s.clock().Format(timeFormat)
+		if withdraw {
+			if _, err := tx.ExecContext(ctx, `UPDATE tokens SET revoked_at = ? WHERE revoked_at IS NULL`, now); err != nil {
+				return fmt.Errorf("agent: revoke all tokens: %w", err)
+			}
+		}
 		stopped, err := emergencyStop(ctx, tx)
 		if err != nil || stopped == on {
 			return err
 		}
-		now := s.clock().Format(timeFormat)
 		value, event := stopOff, audit.EventEmergencyStopReleased
 		if on {
 			value, event = stopOn, audit.EventEmergencyStopActivated
-			if _, err := tx.ExecContext(ctx, `UPDATE tokens SET revoked_at = ? WHERE revoked_at IS NULL`, now); err != nil {
-				return fmt.Errorf("agent: revoke all tokens: %w", err)
-			}
 		}
 		for key, v := range map[string]string{settingEmergencyStop: value, settingEmergencyStopBy: by.ID} {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)

@@ -135,8 +135,8 @@ export class AppState {
   }
 
   /** Switches the emergency stop; the header and banners show the new state at once. */
-  async setEmergencyStop(active: boolean): Promise<void> {
-    const stop = await this.#api.setEmergencyStop(active);
+  async setEmergencyStop(active: boolean, revokeTokens = false): Promise<void> {
+    const stop = await this.#api.setEmergencyStop(active, revokeTokens);
     if (this.system) {
       this.system = { ...this.system, emergency_stop: stop };
       return;

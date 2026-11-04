@@ -137,7 +137,8 @@ export interface ApiClient {
   testApprover(userId: string): Promise<void>;
   deleteApprover(userId: string, baseVersion: string): Promise<void>;
 
-  setEmergencyStop(active: boolean): Promise<EmergencyStop>;
+  /** revokeTokens also withdraws every agent's access, for who suspects a stolen one. */
+  setEmergencyStop(active: boolean, revokeTokens?: boolean): Promise<EmergencyStop>;
 
   /** Opens the live event stream; it reconnects on its own until closed. */
   events(handlers: EventHandlers): EventsConnection;
@@ -423,7 +424,7 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
     testApprover: async (id) => request('POST', `approvers/${segment(id)}/test`),
     deleteApprover: async (id, baseVersion) => request('DELETE', `approvers/${segment(id)}?base_version=${encodeURIComponent(baseVersion)}`),
 
-    setEmergencyStop: (active) => request('PUT', 'emergency-stop', { active }),
+    setEmergencyStop: (active, revokeTokens) => request('PUT', 'emergency-stop', revokeTokens ? { active, revoke_tokens: true } : { active }),
 
     events: (handlers) =>
       connectEvents({

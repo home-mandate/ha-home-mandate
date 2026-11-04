@@ -77,6 +77,8 @@
   ]);
   const deviceOptions = $derived.by(() => {
     if (!data || !chosen) return [];
+    // Nothing to choose from: the row says that this person cannot get requests.
+    if (data.candidates.devices.length === 0 && !chosen.is_admin) return [];
     const own = ownDevices(data.candidates.devices, chosen.user_id);
     const others = data.candidates.devices.filter((d) => !own.includes(d));
     const label = (d: (typeof others)[number]) => cleanUntrusted(d.name, DEVICE_NAME_MAX) || d.service;

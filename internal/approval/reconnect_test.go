@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
@@ -162,5 +163,97 @@ func TestNothingAsksAgainAfterAnswersStopped(t *testing.T) {
 	je.svc.Reconnected()
 	if je.notifier.count() != before {
 		t.Error("asked again after StopAnswers")
+	}
+}
+
+// Home Assistant takes connections before its integrations are up: right after a restart
+// notify.mobile_app_… does not exist yet. A removal that fails then is tried again without
+// waiting for another connection.
+func TestRemovalIsRetriedWhileTheNotifyServiceIsNotThereYet(t *testing.T) {
+	je := newJournalEnv(t)
+	je.svc.cfg.ReconnectRetry = 5 * time.Millisecond
+	je.clearer.err = errors.New("disconnected")
+	ch := je.ask(journaled())
+	s := je.notifier.next(t)
+	je.svc.HandleEvent(event("HM_DENY_"+nonceOf(t, s), u1))
+	wait(t, ch)
+	je.svc.background.Wait()
+
+	before := len(je.clearer.list())
+	je.svc.Reconnected()
+	waitUntil(t, func() bool { return len(je.clearer.list()) > before+3 }, "the removal is tried again")
+
+	je.clearer.mu.Lock()
+	je.clearer.err = nil
+	je.clearer.mu.Unlock()
+	waitUntil(t, func() bool {
+		je.svc.mu.Lock()
+		defer je.svc.mu.Unlock()
+		return len(je.svc.missed) == 0
+	}, "the removal goes through")
+}
+
+// The same for asking again: the person must not lose the one time to a service that is not
+// up yet.
+func TestAskingAgainIsRetriedWhileTheNotifyServiceIsNotThereYet(t *testing.T) {
+	je := newJournalEnv(t)
+	je.svc.cfg.ReconnectRetry = 5 * time.Millisecond
+	ch := je.ask(journaled())
+	s := je.notifier.next(t)
+	for range 2 {
+		je.notifier.next(t)
+	}
+	je.notifier.setFail(s.service, true)
+
+	je.svc.Reconnected()
+	for range 2 {
+		if got := je.notifier.next(t); got.service == s.service {
+			t.Fatalf("%s should have failed", s.service)
+		}
+	}
+	je.notifier.setFail(s.service, false)
+	again := je.notifier.next(t)
+	if again.service != s.service || !strings.HasSuffix(again.n.Message, "\n"+s.n.Message) {
+		t.Errorf("asked again = %+v", again)
+	}
+	je.svc.HandleEvent(event("HM_APPROVE_"+nonceOf(t, again), u1))
+	if a := wait(t, ch); a.res.Outcome != OutcomeApproved {
+		t.Errorf("answer = %s", a.res.Outcome)
+	}
+}
+
+// A request that ended while the retries run is not asked again.
+func TestRetryDoesNotAskForAnEndedRequest(t *testing.T) {
+	je := newJournalEnv(t)
+	je.svc.cfg.ReconnectRetry = 20 * time.Millisecond
+	ch := je.ask(journaled())
+	s := je.notifier.next(t)
+	for range 2 {
+		je.notifier.next(t)
+	}
+	je.notifier.setFail(s.service, true)
+	je.svc.Reconnected()
+	for range 2 {
+		je.notifier.next(t)
+	}
+	je.svc.HandleEvent(event("HM_DENY_"+nonceOf(t, s), u1))
+	wait(t, ch)
+	je.svc.background.Wait()
+	je.notifier.setFail(s.service, false)
+	before := je.notifier.count()
+	time.Sleep(100 * time.Millisecond)
+	if je.notifier.count() != before {
+		t.Error("an ended request asked again")
+	}
+}
+
+func waitUntil(t *testing.T, ok func() bool, what string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !ok() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out: %s", what)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

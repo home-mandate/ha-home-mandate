@@ -295,7 +295,8 @@ For agent builders:
   `failed: state_changed` (something else changed it). Read the state and ask again if
   still needed. An action whose result is already there (unlock an unlocked door) asks
   nobody and gets `failed: already_in_state` at once. An agent that may not read the
-  device gets `failed: not_executed` instead: it learns nothing about the state.
+  device gets `failed: not_executed` instead: it learns nothing about the state. A light is
+  the exception: turning it on or off is sent even if it is reported in that state already.
 - The action is executed **when the human confirms**, not when you poll. If your agent
   stops polling, a confirmation still executes it once; `approval_status` tells the outcome
   for 24 hours.
