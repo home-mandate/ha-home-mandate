@@ -7,7 +7,7 @@ requests go to your phone through the Companion app, an emergency stop blocks ev
 at once, and every decision is recorded in an audit log that shows if it was changed
 afterwards.
 
-This is an experimental release candidate. Keep backups, and please report what does not
+This is the first version. Keep backups, and please report what does not
 work.
 
 The full documentation is in the repository:
