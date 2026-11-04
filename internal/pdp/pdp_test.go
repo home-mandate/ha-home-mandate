@@ -20,6 +20,7 @@ import (
 
 	"github.com/home-mandate/ha-home-mandate/internal/catalog"
 	"github.com/home-mandate/ha-home-mandate/internal/mandate"
+	"github.com/home-mandate/ha-home-mandate/internal/rfc3339"
 )
 
 // fakeMandates returns the same candidates for every agent.
@@ -116,7 +117,7 @@ func pdpFor(t *testing.T, c conformanceCase) (*PDP, string) {
 		} `json:"agent"`
 	}
 	_ = json.Unmarshal(doc, &meta)
-	at, err := time.Parse(time.RFC3339, c.Time)
+	at, err := rfc3339.Parse(c.Time)
 	if err != nil {
 		t.Fatalf("%s: time %q: %v", c.ID, c.Time, err)
 	}
@@ -158,7 +159,9 @@ func post(t *testing.T, url string, body any) (*http.Response, Response) {
 // cases belong to the evaluator class, the selection cases cover them for the PDP.
 func TestConformanceCasesOverHTTP(t *testing.T) {
 	for _, c := range loadCases(t) {
-		if c.Revoked {
+		// A clock always has a point in time: a case whose time is none concerns the request
+		// a PEP could not express, and tools/conformance runs it through the test interface.
+		if _, err := rfc3339.Parse(c.Time); c.Revoked || err != nil {
 			continue
 		}
 		t.Run(c.ID, func(t *testing.T) {

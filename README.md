@@ -198,13 +198,13 @@ pass all its conformance cases.
   <img src="https://raw.githubusercontent.com/home-mandate/.github/main/marks/compatible-light.svg" alt="Home-Mandate compatible" width="96" align="left">
 </picture>
 
-Home-Mandate conforms to the Home-Mandate Specification `v0.1.0` (manifest
+Home-Mandate conforms to the Home-Mandate Specification `v0.1.1` (manifest
 `conformance/manifest.json`, SHA-256
-`aa18f0f0dd534ebe8b9b83692cb58e68a568b018510146e261fccd31f181c40a`) in these classes
+`07f0f0ecbf9bc52a8e8a53e92b31952099edc4c9d1c56b1366b3ae9abb36ea33`) in these classes
 (SPEC-v0 section 8.1), tested with the specification's test tool `mandate-conformance` on
 every pull request and with `make conformance`. The v0 formats are frozen since `v0.1.0`
-(SPEC-v0 section 14). The reports are attached to the release 0.1.0-rc.11; 0.1.0-rc.10
-conforms to `v0.1.0-rc.5`, 0.1.0-rc.9 was tested with `v0.1.0-rc.4`, which has the same
+(SPEC-v0 section 14). The reports are attached to the release; 0.1.0-rc.11 conforms to
+`v0.1.0`, 0.1.0-rc.10 conforms to `v0.1.0-rc.5`, 0.1.0-rc.9 was tested with `v0.1.0-rc.4`, which has the same
 cases, and 0.1.0-rc.8 conforms to `v0.1.0-rc.3`.
 <br clear="left">
 

@@ -59,6 +59,12 @@ func isBlank(r rune) bool {
 	return false
 }
 
+// IsNoncharacter reports whether r is a Unicode noncharacter, which I-JSON forbids (RFC 7493
+// section 2.1, SPEC-v0 section 3.1 item 1).
+func IsNoncharacter(r rune) bool {
+	return r >= 0xfdd0 && r <= 0xfdef || r&0xfffe == 0xfffe
+}
+
 // Clean is cleanUntrusted: breaks become spaces, hidden and blank characters go, at most
 // two combining marks stay on a character, whitespace runs become one space, and the
 // text is cut to max characters with an ellipsis. Invalid UTF-8 becomes U+FFFD.

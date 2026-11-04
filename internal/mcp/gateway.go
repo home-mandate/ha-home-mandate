@@ -27,6 +27,7 @@ import (
 	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	specaudit "github.com/home-mandate/spec/audit"
 	"github.com/home-mandate/spec/evaluator"
 	"github.com/home-mandate/spec/ratelimit"
 
@@ -299,7 +300,24 @@ func addTool[In, Out any](s *sdk.Server, t *sdk.Tool, h sdk.ToolHandlerFor[In, O
 	}
 	openObjects(schema)
 	t.OutputSchema = schema
-	sdk.AddTool(s, t, h)
+	sdk.AddTool(s, t, func(ctx context.Context, req *sdk.CallToolRequest, in In) (*sdk.CallToolResult, Out, error) {
+		if !argumentsAreIJSON(req) {
+			var none Out
+			return nil, none, errors.New(codeInvalidParams)
+		}
+		return h(ctx, req, in)
+	})
+}
+
+// argumentsAreIJSON checks the arguments as the client sent them, before decoding replaces
+// a lone surrogate and keeps only the last of duplicate names. What is not I-JSON is not a
+// request: it is rejected before any evaluation and leaves no entry (SPEC-v0 section 9.1).
+// The specification offers its check of I-JSON through CheckNew.
+func argumentsAreIJSON(req *sdk.CallToolRequest) bool {
+	if req == nil || req.Params == nil || len(req.Params.Arguments) == 0 {
+		return true
+	}
+	return specaudit.CheckNew(req.Params.Arguments) == nil
 }
 
 // openObjects lets every object with declared properties carry undeclared ones too.
@@ -690,7 +708,7 @@ func exactParams(req *sdk.CallToolRequest) (map[string]any, error) {
 	if req == nil || req.Params == nil || len(req.Params.Arguments) == 0 {
 		return nil, nil
 	}
-	// Exactly the key "params", the last of duplicates, as the SDK validated it.
+	// Exactly the key "params", as the SDK validated it.
 	var args map[string]json.RawMessage
 	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
 		return nil, fmt.Errorf("arguments: %w", err)
