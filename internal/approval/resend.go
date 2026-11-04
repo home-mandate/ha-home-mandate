@@ -67,8 +67,7 @@ func (p *pending) devicesOf(user string) []string {
 }
 
 // resend sends user's notification of p again to the devices that had it, while p is
-// open. If the request ended meanwhile, what was sent is removed again: the end's own
-// clearing may have come before it.
+// open.
 func (s *Service) resend(p *pending, user string) {
 	s.mu.Lock()
 	n, ok := p.notices[user]
@@ -80,9 +79,15 @@ func (s *Service) resend(p *pending, user string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), warnTimeout)
 	defer cancel()
+	s.send(ctx, p, user, devices, n)
+}
+
+// send delivers n to devices while p is open. If the request ended meanwhile, what was
+// sent is removed again: the end's own clearing may have come before it.
+func (s *Service) send(ctx context.Context, p *pending, user string, devices []string, n ha.Notification) {
 	var sent []string
 	for _, device := range devices {
-		if s.ended(p) {
+		if s.ended(p) || s.answersStopped() {
 			break
 		}
 		if err := s.cfg.Notifier.Notify(ctx, device, n); err != nil {
@@ -95,8 +100,14 @@ func (s *Service) resend(p *pending, user string) {
 		return
 	}
 	for _, device := range sent {
-		if err := s.cfg.Clearer.ClearNotification(ctx, device, p.tag); err != nil {
-			s.cfg.Logger.Warn("notification of an ended approval request not removed", "notify_service", device, "error", err)
-		}
+		s.remove(ctx, removal{device, p.tag})
 	}
+}
+
+// answersStopped reports whether no answer is taken any more (StopAnswers): buttons sent
+// now would do nothing.
+func (s *Service) answersStopped() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stopped
 }

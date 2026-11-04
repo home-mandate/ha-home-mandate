@@ -449,3 +449,32 @@ describe('removing (#21)', () => {
     expect(screen.getByText('Removed')).toBeTruthy();
   });
 });
+
+describe('MandateList: revoking a mandate (#123)', () => {
+  it('asks first with the focus on Cancel, keeps the agent admitted and offers no second revocation', async () => {
+    const { api } = await start();
+    const mandate = (await api.mandates()).find((x) => x.status === 'active');
+    if (!mandate) throw new Error('no active mandate');
+    const button = await screen.findByRole('button', { name: `Revoke mandate ${cleanUntrusted(mandate.name)}` });
+    await fireEvent.click(button);
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog.textContent).toContain('The agent stays admitted');
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke mandate' }));
+    await waitFor(async () => expect((await api.mandates()).find((x) => x.id === mandate.id)?.status).toBe('revoked'));
+    await waitFor(() => expect(screen.queryByRole('button', { name: `Revoke mandate ${cleanUntrusted(mandate.name)}` })).toBeNull());
+    expect((await api.agents()).find((a) => a.client_id === mandate.client_id)?.status).toBe('active');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1 })));
+  });
+
+  it('says so when the revocation fails and keeps the dialog open', async () => {
+    const { api } = await start();
+    api.revokeMandate = async () => Promise.reject(new ApiError('internal', 500));
+    const mandate = (await api.mandates()).find((x) => x.status === 'active');
+    if (!mandate) throw new Error('no active mandate');
+    await fireEvent.click(await screen.findByRole('button', { name: `Revoke mandate ${cleanUntrusted(mandate.name)}` }));
+    const dialog = await screen.findByRole('alertdialog');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke mandate' }));
+    await waitFor(() => expect(within(dialog).getByRole('alert').textContent).toContain('couldn’t be revoked'));
+  });
+});

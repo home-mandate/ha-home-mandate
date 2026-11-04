@@ -21,6 +21,7 @@
   import Switch from '../components/Switch.svelte';
   import AreaMovesNotice from '../components/mandate/AreaMovesNotice.svelte';
   import RenamesNotice from '../components/mandate/RenamesNotice.svelte';
+  import RevokeMandate from '../components/mandate/RevokeMandate.svelte';
   import TemplateCard from '../components/mandate/TemplateCard.svelte';
   import { formatDate } from '../format.ts';
   import { m } from '../i18n.ts';
@@ -115,6 +116,13 @@
     heading?.focus();
   }
 
+  /** The button is gone with the active mandate: the focus goes to the heading. */
+  async function revoked() {
+    await list.run();
+    await tick();
+    heading?.focus();
+  }
+
   function start(name: string | null) {
     template = name;
     dialog = true;
@@ -186,6 +194,7 @@
             <th scope="col">{m.mandates_col_rules()}</th>
             <th scope="col">{m.mandates_col_valid_until()}</th>
             <th scope="col">{m.mandates_col_status()}</th>
+            <th scope="col"><span class="hm-visually-hidden">{m.mandates_col_actions()}</span></th>
           </tr>
         </thead>
         <tbody>
@@ -207,6 +216,7 @@
                   <span class="stale"><Icon name="warning" /><span>{m.mandates_stale({ count: mandate.stale_references.length })}</span></span>
                 {/if}
               </td>
+              <td>{#if mandate.status === 'active'}<RevokeMandate api={app.api} id={mandate.id} name={mandate.name} onrevoked={() => void revoked()} />{/if}</td>
             </tr>
           {/each}
         </tbody>
@@ -231,6 +241,7 @@
               <span class="stale"><Icon name="warning" /><span>{m.mandates_stale({ count: mandate.stale_references.length })}</span></span>
             {/if}
           </a>
+          {#if mandate.status === 'active'}<div class="revoke"><RevokeMandate api={app.api} id={mandate.id} name={mandate.name} onrevoked={() => void revoked()} /></div>{/if}
         </li>
       {/each}
     </ul>
@@ -400,6 +411,11 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+  }
+  .revoke {
+    display: flex;
+    justify-content: flex-end;
+    margin-block-start: var(--hm-space-2);
   }
   .mobile a {
     display: flex;

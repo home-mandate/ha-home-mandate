@@ -58,10 +58,18 @@ alarm_control_panel:
     code_arm_required: false
     arming_time: 0
     delay_time: 0
+# Takes a while to switch, so that a test can kill the gateway during the call.
+template:
+  - switch:
+      - name: E2E Slow
+        turn_on:
+          - delay: 8
+        turn_off:
+          - delay: 8
 command_line:
   - notify:
       name: ` + approverDevice + `
-      command: "cat > /dev/null"
+      command: "cat >> /config/notifications.log"
 `
 
 // approverDevice is the notify service of the approvers in the test.
@@ -417,7 +425,7 @@ func startGateway() error {
 		"-e", "HM_TLS_CERT=/certs/cert.pem", "-e", "HM_TLS_KEY=/certs/key.pem",
 		"-e", "HM_LOG_LEVEL=debug",
 		"-e", "HM_PUBLIC_URL="+env.public,
-		"-e", "HM_APPROVAL_TIMEOUT=30",
+		"-e", "HM_APPROVAL_TIMEOUT=180",
 		// Shorter than the mandates' approval timeout (10 s), so that a request without an
 		// answer gives the pending result (issue #27).
 		"-e", "HM_APPROVAL_WAIT=5",

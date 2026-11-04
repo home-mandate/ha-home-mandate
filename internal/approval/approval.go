@@ -238,6 +238,7 @@ type pending struct {
 	// was cleared (resent); in memory only, it carries the nonce.
 	notices    map[string]ha.Notification
 	resent     map[string]bool
+	reasked    bool // asked again after a reconnect (Reconnected)
 	seq        uint64
 	approvers  map[string]bool
 	recipients []recipient
@@ -262,6 +263,9 @@ type Service struct {
 
 	// stopped: no answer is taken any more (StopAnswers).
 	stopped bool
+
+	// missed holds removals that failed, for the next connection (Reconnected).
+	missed []removal
 
 	// background holds the removal of notifications of ended requests.
 	background sync.WaitGroup
@@ -457,9 +461,7 @@ func (s *Service) clearPush(p *pending) {
 		ctx, cancel := context.WithTimeout(context.Background(), warnTimeout)
 		defer cancel()
 		for _, device := range delivered {
-			if err := s.cfg.Clearer.ClearNotification(ctx, device.Service, p.tag); err != nil {
-				s.cfg.Logger.Warn("notification of an ended approval request not removed", "notify_service", device.Service, "error", err)
-			}
+			s.remove(ctx, removal{device.Service, p.tag})
 		}
 	})
 }

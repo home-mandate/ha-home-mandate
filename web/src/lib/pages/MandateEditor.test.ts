@@ -1156,6 +1156,21 @@ describe('states', () => {
 });
 
 describe('removing (#21)', () => {
+  it('revokes the mandate after a confirmation and points to the agent for a new one (#123)', async () => {
+    const { api } = await start();
+    await rulesRegion();
+    await fireEvent.click(screen.getByRole('button', { name: /^Revoke mandate / }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke mandate' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect((await api.mandate(ID)).summary.status).toBe('revoked');
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Go to the agent to give it a new mandate' })).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /^Revoke mandate / })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Remove from the lists …' })).toBeTruthy();
+    await waitFor(() => expect((document.activeElement as HTMLElement).tagName).toBe('H1'));
+  });
+
   it('removes a revoked mandate after a confirmation; it stays readable', async () => {
     const { api } = await start({}, async (a) => void (await a.revokeMandate(ID)));
     await rulesRegion();

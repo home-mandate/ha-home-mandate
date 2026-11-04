@@ -387,6 +387,14 @@ usage and a link to its audit entries.
   30 days without use) shows **Not signed in**; reconnect it when it signs in again.
 - A revoked agent offers **Remove from the lists …** (with or without its mandates).
 
+### Revoking a mandate
+
+**Revoke mandate**, in the list of mandates and on a mandate's page, takes the permissions
+away and keeps the agent: it stays admitted with its access and its history, and every
+request is denied with `revoked` until it has a new mandate. Pending approvals are declined.
+A revoked mandate can be viewed but not used again; give the agent a new one on its page.
+To end the agent's access as well, use **Revoke access** on the agent's page.
+
 ### Removing revoked agents and mandates
 
 Revoked agents and mandates stay in the lists until you remove them. Only revoked ones can

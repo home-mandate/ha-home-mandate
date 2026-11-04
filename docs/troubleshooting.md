@@ -134,8 +134,11 @@ request is refused (agents get `unavailable`) until the clock is right.
 3. **Certificate:** issued for the public URL's host by a certificate authority the agent
    trusts. Self-signed certificates are rejected by most clients.
 4. **Reachability:** from outside your network, check the port forward or proxy route.
-   Home Assistant Cloud does not carry the MCP endpoint. Services on the internet such as
-   claude.ai may need IPv4 ([agents.md](agents.md#claudeai-and-the-claude-apps)).
+   Home Assistant Cloud does not carry the MCP endpoint. claude.ai and ChatGPT need an A
+   record that reaches you: with only an AAAA record (common with DS-Lite and carrier-grade
+   NAT) no request arrives at Home-Mandate, nothing shows in its log, and ChatGPT asks for
+   manual OAuth configuration instead. `dig +short A <your public name>` shows whether
+   there is one; see [reverse-proxy.md](deploy/reverse-proxy.md#check).
 5. **Behind `HM_PROXY`:** every request gets an empty `403` and the log says `request from
    outside the proxy refused` with the address it saw (at most once a minute): `HM_PROXY`
    is not the address the proxy connects from. See
@@ -161,7 +164,9 @@ request is refused (agents get `unavailable`) until the clock is right.
    entry on the sign-in or pairing page: it keeps its mandate. If no agent is offered there,
    the agent signed in with another OAuth client than before (another `client_id`, or a
    pairing code instead of the browser) or still has valid access; admit it as a new agent
-   and revoke and remove the old entry. After a revocation, admit it again.
+   and revoke and remove the old entry. After a revocation, admit it again. If only its
+   mandate was revoked, the agent stays admitted and gets `denied: revoked`; give it a new
+   mandate on its page.
 10. **An agent shows "Not signed in"**: it has no valid access, after an emergency stop or
    because it was not used for 30 days. It works again after it signs in and you reconnect
    it; if you admitted it anew instead, remove the old entry (**Revoke access** with

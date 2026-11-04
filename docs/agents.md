@@ -327,6 +327,7 @@ Tool errors are short codes without internal details. Every refusal is in the au
 | `invalid_params: idempotency_conflict` | The `idempotency_key` was used for another action within 24 hours. | Use a new key for a new action. |
 | `denied: approval_interrupted`, `failed: outcome_unknown` | Home-Mandate was restarted while the request waited (nothing executed), or while the confirmed action was being executed (whether it happened is unknown; it is not repeated). | Ask again, or check the device first. |
 | `denied: revoked` | The agent's mandate was revoked while the request waited. | – |
+| `denied: revoked: a human has to store a new mandate` | The agent is admitted, but its mandate was revoked. The same answer for every device. | Ask a person of the household for a new mandate. |
 | `not_found` (from `approval_status`, `approval_cancel`) | No such request for this agent: unknown, another agent's, or ended more than 24 hours ago. | – |
 | `conflict` (from `approval_cancel`) | The request was answered or has ended; it cannot be withdrawn. | `approval_status` gives the outcome. |
 | `denied: no_approver` | Nobody can be asked: no approver with a device (for critical actions: with **Critical requests too**). | Set up approvers ([troubleshooting.md](troubleshooting.md#approvals-do-not-arrive)). |

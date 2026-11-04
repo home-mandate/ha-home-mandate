@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.0
+
+First version. Implements the Home-Mandate Specification v0.1.0. Changes since 0.1.0-rc.11:
+
+Mandates
+- **Revoke mandate**, in the list and on a mandate's page, takes the permissions away and
+  keeps the agent admitted. A new mandate is given on the agent's page (#123)
+- An agent whose mandate is revoked now hears `denied: revoked: a human has to store a new
+  mandate` for every device, instead of `not_found` (#123)
+
+Approvals
+- After a reconnect to Home Assistant, each open request asks again once on the devices
+  that had it, with the same buttons and a note that an answer may not have arrived. A
+  notification of a request that ended meanwhile is removed then (#34)
+- Settings → Approvers: nobody is preselected in the row to add a person, the signed-in
+  administrator comes first, and an empty list says so (#38)
+
+Documentation
+- How to check for an A record when claude.ai or ChatGPT can't reach the gateway (#133)
+
 ## 0.1.0-rc.11
 
 Tenth release candidate. Experimental. Implements the Home-Mandate Specification

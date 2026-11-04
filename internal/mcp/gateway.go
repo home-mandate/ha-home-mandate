@@ -820,6 +820,12 @@ func (g *Gateway) enforce(ctx context.Context, a agent.Agent, entityID, action s
 		g.recordRateLimited(ctx, a, d)
 		return pdp.Decision{}, errors.New(codeRateLimited)
 	}
+	// The same answer for every entity and every parameter, so it says nothing about them
+	// (#123).
+	if d.Result.Reason == evaluator.ReasonRevoked {
+		_ = g.record(ctx, a, d, true, audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByMandate})
+		return pdp.Decision{}, errors.New(codeDenied + ": revoked: a human has to store a new mandate")
+	}
 	if paramErr != nil {
 		return pdp.Decision{}, g.refuseParameters(ctx, a, snap, d, paramErr)
 	}

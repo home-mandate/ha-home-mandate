@@ -148,10 +148,11 @@ Signing in to admit an agent also sends the browser to Home Assistant at
 `ha_browser_url`, so admitting from outside needs Home Assistant reachable from outside
 as well.
 
-**IPv4 and claude.ai.** Many internet connections have no public IPv4 address of their own
-(carrier-grade NAT, DS-Lite). In our experience, claude.ai and the Claude apps connect to
-custom connectors over IPv4 only, so they cannot reach such a home; agents that run in your
-network or reach you over IPv6 are not affected. See [agents.md](agents.md#claudeai-and-the-claude-apps).
+**IPv4, claude.ai and ChatGPT.** Many internet connections have no public IPv4 address of
+their own (carrier-grade NAT, DS-Lite). In our experience, claude.ai, the Claude apps and
+ChatGPT connect to custom connectors over IPv4 only, so they cannot reach such a home;
+agents that run in your network or reach you over IPv6 are not affected. See
+[agents.md](agents.md#claudeai-and-the-claude-apps).
 
 ## Security of the app
 

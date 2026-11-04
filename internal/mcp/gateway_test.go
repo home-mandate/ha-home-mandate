@@ -769,6 +769,31 @@ func TestAuthentication(t *testing.T) {
 	}
 }
 
+// An agent whose mandate is revoked stays admitted and hears why it is refused, for every
+// device alike, so the answer tells it nothing about the devices (#123).
+func TestRevokedMandateIsNamedToTheAgent(t *testing.T) {
+	h := newHarness(t, nil)
+	s := h.session()
+	if err := h.mandates.Revoke(context.Background(), "m-voice-assistant", admin); err != nil {
+		t.Fatal(err)
+	}
+	const want = "denied: revoked: a human has to store a new mandate"
+	for _, c := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"perform_action", map[string]any{"entity_id": "light.kitchen", "action": "turn_on"}},
+		{"perform_action", map[string]any{"entity_id": "light.nowhere", "action": "turn_on"}},
+		{"perform_action", map[string]any{"entity_id": "light.kitchen", "action": "turn_on", "params": map[string]any{"bogus": 1}}},
+		{"perform_action", map[string]any{"entity_id": "light.nowhere", "action": "turn_on", "params": map[string]any{"bogus": 1}}},
+		{"get_state", map[string]any{"entity_id": "light.kitchen"}},
+	} {
+		if _, errText := h.call(s, c.tool, c.args); errText != want {
+			t.Errorf("%s %v = %q, want %q", c.tool, c.args, errText, want)
+		}
+	}
+}
+
 func TestOversizedRequestIsRejected(t *testing.T) {
 	h := newHarness(t, nil)
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_state","arguments":{"entity_id":"` + strings.Repeat("a", 100000) + `"}}}`

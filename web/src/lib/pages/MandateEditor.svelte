@@ -25,6 +25,7 @@
   import Skeleton from '../components/Skeleton.svelte';
   import BasicsForm from '../components/mandate/BasicsForm.svelte';
   import DraftWorkspace from '../components/mandate/DraftWorkspace.svelte';
+  import RevokeMandate from '../components/mandate/RevokeMandate.svelte';
   import SaveDialog from '../components/mandate/SaveDialog.svelte';
   import UnsavedBar from '../components/mandate/UnsavedBar.svelte';
   import RemoveDialog from '../components/RemoveDialog.svelte';
@@ -105,6 +106,13 @@
   let removing = $state(false);
   let removeBusy = $state(false);
   let removeError = $state('');
+
+  /** The button is gone with the active mandate: the focus goes to the heading. */
+  async function revoked() {
+    await reload();
+    await tick();
+    heading?.focus();
+  }
 
   /** remove takes the revoked mandate off the lists (#21); it stays readable here. */
   async function remove() {
@@ -445,6 +453,7 @@
     <Banner kind="info" body={m.editor_removed_note({ date: formatDateTime(new Date(stored.summary.removed_at), ctx) })} />
   {:else if readonly}
     <Banner kind="info" body={m.editor_revoked_note()} action={{ label: m.remove_more(), onclick: () => (removing = true) }} />
+    <p class="next"><a href={href({ name: 'agent', id: stored.summary.client_id })}>{m.editor_revoked_agent()}</a></p>
   {:else if storedInvalid}
     <Banner kind="critical" body={m.code_invalid_mandate()} />
   {/if}
@@ -510,6 +519,10 @@
     {/snippet}
   </DraftWorkspace>
 
+  {#if !readonly}
+    <div class="revoke"><RevokeMandate api={app.api} {id} name={stored.summary.name} onrevoked={() => void revoked()} /></div>
+  {/if}
+
   {#if !readonly && changes > 0}
     <UnsavedBar count={changes} note={m.unsaved_bar_note_mandate()} saveLabel={m.unsaved_bar_save()} onsave={() => void trySave()} ondiscard={() => void discard()} />
   {/if}
@@ -549,3 +562,13 @@
     onconfirm={() => void save()}
   />
 {/if}
+
+<style>
+  .next {
+    margin: 0;
+  }
+  .revoke {
+    display: flex;
+    justify-content: flex-end;
+  }
+</style>
