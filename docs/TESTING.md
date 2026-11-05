@@ -388,6 +388,7 @@ Every line is at least one test. New attack ideas are added here before they are
 
 **Test interface (SPEC-v0 section 10.1)**
 - The release binary depends on `tools/conformance` or the harness of the specification → a test fails (`go list -deps ./cmd/home-mandate`)
+- A tag on the wrong branch: a minor version off `main`, a patch off its own release branch (`main` included), or no version at all → `release.yml` refuses before anything is built (`tools/releasebase`, a table of tag, branch and result against a real git history). The first real run from a release branch is the first patch's release candidate
 - HTTP binding without or with a wrong bearer token → 401; a token shorter than 32 characters or an address other than loopback → refused at start
 
 **Mandate templates**
