@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 name: Release
 
-# A tag vX.Y.Z or vX.Y.Z-rc.N publishes ghcr.io/home-mandate/ha-home-mandate:X.Y.Z[-rc.N]
+# A tag vX.Y.Z, vX.Y.Z-alpha.N or vX.Y.Z-rc.N publishes ghcr.io/home-mandate/ha-home-mandate:X.Y.Z[-rc.N]
 # for linux/amd64 and linux/arm64: signed with cosign (keyless, Sigstore), with build
 # provenance (SLSA, from BuildKit) and SBOMs (the image's, and one of the sources with the
 # Go modules and the UI's npm packages, which a scan of the static binary cannot see), and a
@@ -53,8 +53,8 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          if ! [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?)$ ]]; then
-            echo "::error::tag $TAG is neither vX.Y.Z nor vX.Y.Z-rc.N"; exit 1
+          if ! [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-(alpha|rc)\.[0-9]+)?)$ ]]; then
+            echo "::error::tag $TAG is neither vX.Y.Z nor vX.Y.Z-alpha.N nor vX.Y.Z-rc.N"; exit 1
           fi
           version="${BASH_REMATCH[1]}"
           base=$(bash .github/scripts/release-base.sh "$TAG" "$GITHUB_SHA")
@@ -67,8 +67,7 @@ jobs:
           { echo "version=$version"; echo "base=$base"; echo "prerelease=$prerelease"; } >> "$GITHUB_OUTPUT"
 
       # The branches take squash-merged pull requests; their checks ran on the pull request's
-      # head. Looked up by merge commit: the API for a commit's pull requests reports merged
-      # ones only for commits on the default branch.
+      # head.
       - name: The pull request's checks passed
         env:
           GH_TOKEN: ${{ github.token }}
