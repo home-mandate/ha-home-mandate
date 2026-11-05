@@ -21,6 +21,7 @@ func TestOpenRequestAsksAgainAfterAReconnect(t *testing.T) {
 	second := je.notifier.next(t)
 	third := je.notifier.next(t)
 
+	je.delivered(t, 3)
 	je.svc.Reconnected()
 
 	got := map[string]sent{}
@@ -53,6 +54,7 @@ func TestAskingAgainUsesTheApproversLanguage(t *testing.T) {
 	for range 3 {
 		je.notifier.next(t)
 	}
+	je.delivered(t, 3)
 	je.svc.Reconnected()
 	want := map[string]string{
 		"mobile_app_markus": i18n.T(i18n.DE, i18n.ApprovalReconnected, nil),
@@ -75,6 +77,7 @@ func TestOnlyOpenRequestsAskAgainOnDevicesThatHadThem(t *testing.T) {
 	_ = je.notifier.next(t)
 	je.notifier.setFail("mobile_app_tablet", false)
 
+	je.delivered(t, 2)
 	je.svc.Reconnected()
 	again := []string{je.notifier.next(t).service, je.notifier.next(t).service}
 	if slices.Contains(again, "mobile_app_tablet") {
@@ -140,6 +143,7 @@ func TestARequestAsksAgainOnce(t *testing.T) {
 	for range 3 {
 		je.notifier.next(t)
 	}
+	je.delivered(t, 3)
 	je.svc.Reconnected()
 	for range 3 {
 		je.notifier.next(t)
@@ -203,6 +207,7 @@ func TestAskingAgainIsRetriedWhileTheNotifyServiceIsNotThereYet(t *testing.T) {
 	for range 2 {
 		je.notifier.next(t)
 	}
+	je.delivered(t, 3)
 	je.notifier.setFail(s.service, true)
 
 	je.svc.Reconnected()
@@ -231,6 +236,7 @@ func TestRetryDoesNotAskForAnEndedRequest(t *testing.T) {
 	for range 2 {
 		je.notifier.next(t)
 	}
+	je.delivered(t, 3)
 	je.notifier.setFail(s.service, true)
 	je.svc.Reconnected()
 	for range 2 {
@@ -245,6 +251,21 @@ func TestRetryDoesNotAskForAnEndedRequest(t *testing.T) {
 	if je.notifier.count() != before {
 		t.Error("an ended request asked again")
 	}
+}
+
+// delivered waits until the open requests have recorded n devices: a device gets its
+// notification before that.
+func (je *journalEnv) delivered(t *testing.T, n int) {
+	t.Helper()
+	waitUntil(t, func() bool {
+		je.svc.mu.Lock()
+		defer je.svc.mu.Unlock()
+		got := 0
+		for _, p := range je.svc.pending {
+			got += len(p.delivered)
+		}
+		return got == n
+	}, "the delivery is recorded")
 }
 
 func waitUntil(t *testing.T, ok func() bool, what string) {
