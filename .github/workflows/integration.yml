@@ -2,12 +2,13 @@
 name: Integration
 
 # Integration stage: mandate-conformance, short fuzzing, container image, Playwright and
-# E2E against Home Assistant, for every push into a pull request against main and manual
-# runs. Never on a plain branch push and never after the merge (see ci.yml). main is
-# protected: squash-merged pull requests only, with the checks of both workflows required.
+# E2E against Home Assistant, for every push into a pull request against main or a release
+# branch and manual runs. Never on a plain branch push and never after the merge (see ci.yml).
+# Both are protected: squash-merged pull requests only, with the checks of both workflows
+# required.
 on:
   pull_request:
-    branches: [main]
+    branches: [main, "release/[0-9]+.[0-9]+"]
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
