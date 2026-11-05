@@ -86,25 +86,16 @@ bug in `0.1.x` is fixed by updating to `0.2.x`.
    its test, a pull request into `release/X.Y` changes only the version and the changelog
    entry. Publish the patch (`v0.1.1`) from its commit and close the milestone.
 5. A pull request to `main` adds the patch's entry to `app/CHANGELOG.md` there too, so the
-   changelog on `main` is complete.
-
-### Until the workflow supports it
-
-`release.yml` accepts only tags on `main` today. Before tags on `release/X.Y` work, it must
-check that:
-
-- the tag points to a commit on `release/X.Y`, where `X.Y` matches the tag,
-- the commit came from a pull request into that branch whose checks all passed,
-- `release/*` is protected by the same rulesets as `main`.
-
-Until then, no function of the next minor version is merged into `main`. Fixes that are
-due in the meantime are released from `main` as before.
+   changelog on `main` is complete, and sets `version` in `app/config.yaml` to the patch.
+   Home Assistant reads the app's version from the default branch: until this is merged, the
+   app does not offer the patch.
 
 ## Publishing
 
-A tag `vX.Y.Z` or `vX.Y.Z-rc.N` on `main` (and, once the workflow supports it, on
-`release/X.Y` for patches) runs `.github/workflows/release.yml`. It checks
-that the tag points to a commit on `main` that came from a pull request whose checks all
+A tag `vX.Y.Z` or `vX.Y.Z-rc.N` runs `.github/workflows/release.yml`, in the version of the
+tagged commit. It checks that the tag points to a commit on `main` or, for a patch, on
+`release/X.Y` (a minor version comes from `main` only, a patch from its own release branch
+only, because `main` may hold functions of the next minor version), that the commit came from a pull request into that branch whose checks all
 passed, and that it matches `version` in `app/config.yaml` (the Supervisor uses that
 version as the image tag). It then builds `ghcr.io/home-mandate/ha-home-mandate:<version>`
 for `linux/amd64` and `linux/arm64`, signs it with cosign (keyless), attaches provenance
@@ -119,10 +110,12 @@ already (it never overwrites one). Tags are immutable, so a failed release needs
 version (`-rc.N+1`).
 
 ```sh
-git switch main && git pull
+git switch main && git pull   # for a patch: release/X.Y
 git tag -a v0.1.0-rc.3 -m "Home-Mandate 0.1.0-rc.3"
 git push origin v0.1.0-rc.3
 ```
+
+`release/*` has the same ruleset as `main`, and only administrators may create such a branch.
 
 ## The specification
 
