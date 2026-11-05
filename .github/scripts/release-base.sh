@@ -3,9 +3,8 @@
 #
 # release-base.sh TAG COMMIT prints the branch the tag may be published from (RELEASING.md),
 # or refuses. A minor version (vX.Y.0, vX.Y.0-rc.N) comes from main only; a patch comes from
-# main or from its own branch release/X.Y. History that main and the branch share counts as
-# main's. Reads the remote-tracking branches of the current repository; tested by
-# tools/releasebase.
+# its own branch release/X.Y only, because main holds functions of the next minor version.
+# Reads the remote-tracking branches of the current repository; tested by tools/releasebase.
 set -euo pipefail
 
 tag=$1
@@ -29,12 +28,10 @@ fi
 minor="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
 patch="${BASH_REMATCH[3]}"
 
-if on main; then
+if [ "$patch" = 0 ]; then
+  on main || refuse "$tag is a minor version and points to a commit that is not on main"
   echo main
-elif [ "$patch" = 0 ]; then
-  refuse "$tag is a minor version and points to a commit that is not on main"
-elif on "release/$minor"; then
-  echo "release/$minor"
 else
-  refuse "$tag points to a commit that is neither on main nor on release/$minor"
+  on "release/$minor" || refuse "$tag is a patch and points to a commit that is not on release/$minor"
+  echo "release/$minor"
 fi

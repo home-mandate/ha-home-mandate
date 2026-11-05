@@ -8,7 +8,7 @@ name: Release
 # GitHub release with the conformance reports (conformance-report.yml).
 #
 # Guards: only admins may create tags and tags are immutable (repository rulesets). Before
-# anything is built, the tag must point to a commit on main, for a patch also on release/X.Y
+# anything is built, the tag must point to a commit on main, for a patch on release/X.Y
 # (.github/scripts/release-base.sh), that came from a pull request into that branch whose
 # checks all passed, match the version in app/config.yaml (Home Assistant's
 # Supervisor uses it as the image tag), and neither the release nor the image tag may exist.

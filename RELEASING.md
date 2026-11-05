@@ -94,8 +94,8 @@ bug in `0.1.x` is fixed by updating to `0.2.x`.
 
 A tag `vX.Y.Z` or `vX.Y.Z-rc.N` runs `.github/workflows/release.yml`, in the version of the
 tagged commit. It checks that the tag points to a commit on `main` or, for a patch, on
-`release/X.Y` (a minor version comes from `main` only, and a patch never from another
-release branch), that the commit came from a pull request into that branch whose checks all
+`release/X.Y` (a minor version comes from `main` only, a patch from its own release branch
+only, because `main` may hold functions of the next minor version), that the commit came from a pull request into that branch whose checks all
 passed, and that it matches `version` in `app/config.yaml` (the Supervisor uses that
 version as the image tag). It then builds `ghcr.io/home-mandate/ha-home-mandate:<version>`
 for `linux/amd64` and `linux/arm64`, signs it with cosign (keyless), attaches provenance

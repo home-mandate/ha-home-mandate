@@ -67,30 +67,32 @@ func TestReleaseBase(t *testing.T) {
 		{"v0.1.0", "onRelease01", ""},
 		{"v0.1.0-rc.2", "onRelease01", ""},
 		{"v0.2.0", "onRelease02", ""},
-		// A patch comes from its own release branch, or from main as before.
+		// A patch comes from its own release branch only: main holds functions of the next
+		// minor version, and a patch must not publish them.
 		{"v0.1.1", "onRelease01", "release/0.1"},
 		{"v0.1.1-rc.1", "onRelease01", "release/0.1"},
 		{"v0.1.10", "onRelease01", "release/0.1"},
 		{"v0.2.3", "onRelease02", "release/0.2"},
-		{"v0.1.1", "onMain", "main"},
-		{"v0.1.1-rc.1", "onMain", "main"},
-		// History both share counts as main's.
-		{"v0.1.1", "root", "main"},
+		{"v0.1.1", "onMain", ""},
+		{"v0.1.1-rc.1", "onMain", ""},
+		// History the branches share: main's for a minor version, the branch's for a patch.
+		{"v0.2.0", "root", "main"},
+		{"v0.1.1", "root", "release/0.1"},
 		// Never from another release branch.
 		{"v0.1.2", "onRelease02", ""},
 		{"v0.2.1", "onRelease01", ""},
 		// A branch that does not exist.
 		{"v0.3.1", "onRelease01", ""},
-		{"v0.3.1", "onMain", "main"},
+		{"v0.3.1", "onMain", ""},
 		// Never from anywhere else.
 		{"v0.1.1", "elsewhere", ""},
 		{"v0.2.0", "elsewhere", ""},
 		// Not a version.
 		{"v0.1", "onMain", ""},
-		{"v0.1.1-beta.1", "onMain", ""},
-		{"0.1.1", "onMain", ""},
-		{"v0.1.1-rc.1;x", "onMain", ""},
-		{"v0.1.1\nv0.1.2", "onMain", ""},
+		{"v0.2.0-beta.1", "onMain", ""},
+		{"0.2.0", "onMain", ""},
+		{"v0.2.0-rc.1;x", "onMain", ""},
+		{"v0.2.0\nv0.2.1", "onMain", ""},
 	} {
 		cmd := exec.Command("bash", script, tc.tag, commits[tc.commit])
 		cmd.Dir = dir
