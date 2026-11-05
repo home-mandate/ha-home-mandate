@@ -154,6 +154,9 @@ type Config struct {
 	// is sent again (default resendDelay): answering clears it too, and the answer must
 	// win.
 	ResendDelay time.Duration
+	// ReconnectRetry is the first wait before what failed after a reconnect is tried again
+	// (default reconnectRetry); it doubles up to reconnectRetryMax.
+	ReconnectRetry time.Duration
 	// RequestAddress returns where the page of the request id opens in a browser outside
 	// Home Assistant, or "" when the UI has no address of its own (the app, or a container
 	// without direct mode). The bell links to it (issue #53): it carries the request's ID,
@@ -238,6 +241,7 @@ type pending struct {
 	// was cleared (resent); in memory only, it carries the nonce.
 	notices    map[string]ha.Notification
 	resent     map[string]bool
+	reasked    bool // asked again after a reconnect (Reconnected)
 	seq        uint64
 	approvers  map[string]bool
 	recipients []recipient
@@ -263,6 +267,13 @@ type Service struct {
 	// stopped: no answer is taken any more (StopAnswers).
 	stopped bool
 
+	// missed holds removals that failed, for the next connection (Reconnected).
+	missed []removal
+	// unasked holds devices that did not get a request again after a reconnect.
+	unasked []missedAsk
+	// retryRun identifies the latest reconnect; retries of an earlier one stop.
+	retryRun uint64
+
 	// background holds the removal of notifications of ended requests.
 	background sync.WaitGroup
 }
@@ -280,6 +291,9 @@ func New(cfg Config) *Service {
 	}
 	if cfg.ResendDelay <= 0 {
 		cfg.ResendDelay = resendDelay
+	}
+	if cfg.ReconnectRetry <= 0 {
+		cfg.ReconnectRetry = reconnectRetry
 	}
 	return &Service{cfg: cfg, pending: map[string]*pending{}, byID: map[string]*pending{}}
 }
@@ -457,9 +471,7 @@ func (s *Service) clearPush(p *pending) {
 		ctx, cancel := context.WithTimeout(context.Background(), warnTimeout)
 		defer cancel()
 		for _, device := range delivered {
-			if err := s.cfg.Clearer.ClearNotification(ctx, device.Service, p.tag); err != nil {
-				s.cfg.Logger.Warn("notification of an ended approval request not removed", "notify_service", device.Service, "error", err)
-			}
+			s.remove(ctx, removal{device.Service, p.tag})
 		}
 	})
 }

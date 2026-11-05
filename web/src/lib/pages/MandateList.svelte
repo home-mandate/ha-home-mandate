@@ -18,9 +18,11 @@
   import MandateStatus from '../components/mandate/MandateStatus.svelte';
   import NewMandateDialog from '../components/mandate/NewMandateDialog.svelte';
   import RemoveRevoked from '../components/RemoveRevoked.svelte';
+  import StatusPill from '../components/StatusPill.svelte';
   import Switch from '../components/Switch.svelte';
   import AreaMovesNotice from '../components/mandate/AreaMovesNotice.svelte';
   import RenamesNotice from '../components/mandate/RenamesNotice.svelte';
+  import RevokeMandate from '../components/mandate/RevokeMandate.svelte';
   import TemplateCard from '../components/mandate/TemplateCard.svelte';
   import { formatDate } from '../format.ts';
   import { m } from '../i18n.ts';
@@ -69,6 +71,8 @@
       api.renames().catch((): Rename[] => []),
       api.areaMoves().catch((): AreaMove[] => []),
     ]);
+    // An edit of a mandate that was revoked can never be saved: it must not stay "unsaved".
+    for (const x of mandates) if (x.status === 'revoked') app.unsaved.delete(x.id);
     return { mandates, templates, agents, catalog, renames, moves };
   });
 
@@ -111,6 +115,13 @@
     await list.run();
     if (text === null) return;
     toasts.show({ kind: 'success', text });
+    await tick();
+    heading?.focus();
+  }
+
+  /** The button is gone with the active mandate: the focus goes to the heading. */
+  async function revoked() {
+    await list.run();
     await tick();
     heading?.focus();
   }
@@ -186,6 +197,7 @@
             <th scope="col">{m.mandates_col_rules()}</th>
             <th scope="col">{m.mandates_col_valid_until()}</th>
             <th scope="col">{m.mandates_col_status()}</th>
+            <th scope="col"><span class="hm-visually-hidden">{m.mandates_col_actions()}</span></th>
           </tr>
         </thead>
         <tbody>
@@ -199,14 +211,18 @@
               <td class="muted">{m.mandates_rules_count({ count: mandate.rule_count })}</td>
               <td class="muted">{until(mandate)}</td>
               <td>
-                <MandateStatus status={effectiveStatus(mandate, serverNow)} />
-                {#if mandate.removed_at !== null}<span class="removed">{m.status_removed()}</span>{/if}
+                <div class="pills">
+                  <MandateStatus status={effectiveStatus(mandate, serverNow)} />
+                  {#if mandate.removed_at !== null}<StatusPill tone="neutral" shape="ring">{m.status_removed()}</StatusPill>{/if}
+                  {#if app.unsaved.has(mandate.id)}<StatusPill tone="warning" shape="ring">{m.mandates_unsaved()}</StatusPill>{/if}
+                </div>
                 {#if mandate.audit_mode}<span class="audit">{m.mandate_badge_audit()}</span>{/if}
                 {#if mandate.audit_mode_pending}<span class="audit">{m.mandate_badge_audit_pending()}</span>{/if}
                 {#if mandate.stale_references.length > 0}
                   <span class="stale"><Icon name="warning" /><span>{m.mandates_stale({ count: mandate.stale_references.length })}</span></span>
                 {/if}
               </td>
+              <td>{#if mandate.status === 'active'}<RevokeMandate api={app.api} id={mandate.id} name={mandate.name} onrevoked={() => void revoked()} />{/if}</td>
             </tr>
           {/each}
         </tbody>
@@ -222,7 +238,8 @@
             {#if mandate.rules_from}<span class="origin">{rulesFromText(mandate.rules_from, data.templates, ctx)}</span>{/if}
             <span class="facts">
               <MandateStatus status={effectiveStatus(mandate, serverNow)} compact />
-              {#if mandate.removed_at !== null}<span>{m.status_removed()}</span>{/if}
+              {#if mandate.removed_at !== null}<StatusPill tone="neutral" shape="ring" compact>{m.status_removed()}</StatusPill>{/if}
+              {#if app.unsaved.has(mandate.id)}<StatusPill tone="warning" shape="ring" compact>{m.mandates_unsaved()}</StatusPill>{/if}
               {#if mandate.audit_mode}<span class="audit">{m.mandate_badge_audit()}</span>{/if}
               {#if mandate.audit_mode_pending}<span class="audit">{m.mandate_badge_audit_pending()}</span>{/if}
               <span>{m.mandates_rules_count({ count: mandate.rule_count })} · {m.mandates_valid_until_date({ date: until(mandate) })}</span>
@@ -231,6 +248,7 @@
               <span class="stale"><Icon name="warning" /><span>{m.mandates_stale({ count: mandate.stale_references.length })}</span></span>
             {/if}
           </a>
+          {#if mandate.status === 'active'}<div class="revoke"><RevokeMandate api={app.api} id={mandate.id} name={mandate.name} onrevoked={() => void revoked()} /></div>{/if}
         </li>
       {/each}
     </ul>
@@ -261,11 +279,11 @@
     font-weight: var(--hm-font-weight-medium);
     color: var(--hm-color-warning-fg);
   }
-  .removed {
-    display: block;
-    margin-block-start: var(--hm-space-1);
-    font-size: var(--hm-font-size-sm);
-    color: var(--hm-color-text-muted);
+  .pills {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--hm-space-1);
   }
   .stale {
     display: flex;
@@ -400,6 +418,11 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+  }
+  .revoke {
+    display: flex;
+    justify-content: flex-end;
+    margin-block-start: var(--hm-space-2);
   }
   .mobile a {
     display: flex;

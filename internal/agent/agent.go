@@ -71,7 +71,7 @@ type Agent struct {
 	RemovedAt time.Time
 	RemovedBy string
 	// Connected says whether the agent holds a token that is still valid: an access
-	// token, or a refresh token not used yet. An emergency stop withdraws all of them.
+	// token, or a refresh token not used yet. An emergency stop can withdraw all of them.
 	Connected bool
 }
 
@@ -270,7 +270,7 @@ func validName(name string) (string, error) {
 		return "", ErrInvalidName
 	}
 	for _, r := range name {
-		if unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp) {
+		if unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp) || untrusted.IsNoncharacter(r) {
 			return "", ErrInvalidName
 		}
 	}

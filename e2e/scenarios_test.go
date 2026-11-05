@@ -147,6 +147,53 @@ func TestScenario08RateLimit(t *testing.T) {
 	}
 }
 
+// startHAAgain starts the stopped Home Assistant, which publishes a new port.
+func startHAAgain(t *testing.T) {
+	t.Helper()
+	if _, err := run("start", env.ha); err != nil {
+		t.Fatal(err)
+	}
+	addr, err := hostPort(env.ha, "8123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.haURL = "https://" + addr
+	if err := waitHTTP(env.haURL+"/api/onboarding", 3*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Issue #34: Home Assistant goes away while a request waits, so an answer could get lost.
+// When it is back, the request asks again, and the answer counts. The phone's notify
+// service writes to a file: a watcher could connect only after the gateway did.
+func TestReconnectAsksAgain(t *testing.T) {
+	// Only this test switches it: a restart of Home Assistant resets the demo lights.
+	const light = "light.entrance_color_white_lights"
+	notes := watchNotifications(t)
+	token := newAgent(t, "Asked again", func(d map[string]any) {
+		askRule(light)(d)
+		d["rules"].([]any)[0].(map[string]any)["approval"] = map[string]any{"timeout": "PT170S", "approvers": []any{env.users[adminApprover].id}}
+	})
+	s := session(t, token)
+	ready(t, s)
+	before := haState(t, light)
+	id, n := pendingRequest(t, s, notes, light, toggle(before))
+
+	if _, err := run("stop", "-t", "10", env.ha); err != nil {
+		t.Fatal(err)
+	}
+	startHAAgain(t)
+	const note = "may not have arrived"
+	eventually(t, "the request asks again", time.Minute, func() bool {
+		out, err := run("exec", env.ha, "cat", "/config/notifications.log")
+		return err == nil && strings.Contains(out, note)
+	})
+	answer(t, adminApprover, n.Actions[0])
+	if r := settled(t, s, toolResult{map[string]any{"status": "pending", "approval_id": id}, ""}); r.errText != "" || r.out["status"] != "executed" {
+		t.Fatalf("after the answer: %v, %q", r.out, r.errText)
+	}
+}
+
 // Scenario 12: Home Assistant unreachable → requests refused with a clear error; nothing
 // is queued and executed later. Runs last because it restarts Home Assistant.
 func TestScenario12UnreachableHomeAssistant(t *testing.T) {
@@ -167,17 +214,7 @@ func TestScenario12UnreachableHomeAssistant(t *testing.T) {
 		t.Errorf("during the outage: %q, want unavailable", errText)
 	}
 
-	if _, err := run("start", env.ha); err != nil {
-		t.Fatal(err)
-	}
-	addr, err := hostPort(env.ha, "8123")
-	if err != nil {
-		t.Fatal(err)
-	}
-	env.haURL = "https://" + addr
-	if err := waitHTTP(env.haURL+"/api/onboarding", 3*time.Minute); err != nil {
-		t.Fatal(err)
-	}
+	startHAAgain(t)
 	ready(t, s)
 	time.Sleep(5 * time.Second) // time for anything queued to surface (there must be nothing)
 	if state := haState(t, "light.bed_light"); state != "off" {

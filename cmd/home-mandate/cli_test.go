@@ -328,6 +328,10 @@ func TestEmergencyStopCommand(t *testing.T) {
 	if out := c.mustRun("", "emergency-stop", "off"); !strings.Contains(out, "released") {
 		t.Errorf("off = %q", out)
 	}
+	if out := c.mustRun("", "emergency-stop", "on", "--revoke-tokens"); !strings.Contains(out, "all tokens revoked") {
+		t.Errorf("on --revoke-tokens = %q", out)
+	}
+	c.mustRun("", "emergency-stop", "off")
 	export := c.mustRun("", "audit", "export")
 	if !strings.Contains(export, `"event":"emergency_stop.activated"`) || !strings.Contains(export, `"event":"emergency_stop.released"`) ||
 		!strings.Contains(export, `"id":"local-admin"`) {

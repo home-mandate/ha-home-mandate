@@ -14,6 +14,8 @@ import (
 	specaudit "github.com/home-mandate/spec/audit"
 	"github.com/home-mandate/spec/evaluator"
 	"github.com/home-mandate/spec/jws"
+
+	"github.com/home-mandate/ha-home-mandate/internal/rfc3339"
 )
 
 // maxLineBytes bounds one request: several mandates of 256 KiB inside JSON strings.
@@ -231,7 +233,7 @@ func texts(entries []string) [][]byte {
 
 // pointInTime parses the clock of a case; the PEP cannot express any other time.
 func pointInTime(text string) (time.Time, bool) {
-	at, err := time.Parse(time.RFC3339, text)
+	at, err := rfc3339.Parse(text)
 	return at, err == nil
 }
 

@@ -297,7 +297,10 @@ Agent, mandate and first tokens are created in one transaction when the agent re
 human's decision; codes, pairings and browser sessions live in memory only.
 
 **Reconnecting after an emergency stop (issue #22, SPEC-v0 section 11.3).** The emergency
-stop withdraws every token, and lifting it restores none. An agent that signs in again
+stop blocks requests and leaves tokens valid, so that agents carry on after it is lifted and
+can tell during it why they are refused (`denied: emergency_stop`; refresh tokens rotate as
+usual). Who suspects a stolen token also revokes all access with it
+(`agent.Store.WithdrawAllTokens`); lifting the stop restores none of those. An agent that signs in again
 brings only its OAuth client ID, which several agents share (every Claude Desktop with
 `mcp-remote`). So the consent page and the pairing step (the `/pair` page and the UI) offer
 "Reconnect an existing agent" only for the active agents admitted with the same OAuth
@@ -363,8 +366,8 @@ old refresh token revokes the whole chain, unless it comes within 10 seconds of 
 then it yields another pair in the chain, for clients that retry or refresh concurrently).
 Tokens are bound to the Home-Mandate resource
 (Resource Indicators, RFC 8707).
-Revoking an agent or the emergency stop takes effect immediately, because every token is
-checked on every request.
+Revoking an agent or the emergency stop takes effect immediately, because the token and
+the stop are checked on every request.
 
 ## 7. Approval requests ("ask")
 
@@ -573,7 +576,10 @@ checked on every request.
      reached → not executed, `failed`, `error: already_in_state`; the state otherwise
      different from the one shown → not executed, `failed`, `state_changed`; unchanged →
      executed. A call whose target state is reached already when the request would be
-     made asks nobody: `failed`, `already_in_state`. **No state oracle:** for an agent that
+     made asks nobody: `failed`, `already_in_state`. A light has no such refusal: Home
+     Assistant can report one wrongly (KNX: "off" after a restart until the actuator
+     answers), and sending the same command once more does no harm; a switch stays strict,
+     as a pulse relay can sit behind one. **No state oracle:** for an agent that
      may not read the device (decision `read` not `allow`) there is no such shortcut (the
      human is asked and sees the state), and a refusal by the check reaches it as the
      generic `failed: not_executed`, also through `approval_status`; the audit entry keeps

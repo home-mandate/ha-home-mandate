@@ -17,13 +17,15 @@ import (
 // These tests write agent.reconnected: they need a specification with that event
 // (home-mandate/spec v0.1.0-alpha.3).
 
-// stopAndRelease switches the emergency stop on and off: every token is withdrawn.
+// stopAndRelease switches the emergency stop on, with every token withdrawn, and off.
 func (h *harness) stopAndRelease() {
 	h.t.Helper()
-	for _, on := range []bool{true, false} {
-		if _, err := h.agents.SetEmergencyStop(context.Background(), on, audit.Actor{Kind: audit.ActorUser, ID: "u-admin"}); err != nil {
-			h.t.Fatal(err)
-		}
+	admin := audit.Actor{Kind: audit.ActorUser, ID: "u-admin"}
+	if _, err := h.agents.WithdrawAllTokens(context.Background(), admin); err != nil {
+		h.t.Fatal(err)
+	}
+	if _, err := h.agents.SetEmergencyStop(context.Background(), false, admin); err != nil {
+		h.t.Fatal(err)
 	}
 }
 

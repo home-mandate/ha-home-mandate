@@ -22,8 +22,8 @@ All names and addresses below are placeholders: `hm.example.org` for Home-Mandat
   from the Let's Encrypt or DuckDNS app. Without it, Home-Mandate's MCP endpoint answers on
   localhost only (see [The certificate](#the-certificate)).
 
-This is an experimental release candidate. The app is first tested on real Home Assistant
-OS installations with this release; please report what does not work.
+This is the first version. The app has seen few real Home Assistant OS installations so far;
+please report what does not work.
 
 ## Install
 
@@ -148,10 +148,11 @@ Signing in to admit an agent also sends the browser to Home Assistant at
 `ha_browser_url`, so admitting from outside needs Home Assistant reachable from outside
 as well.
 
-**IPv4 and claude.ai.** Many internet connections have no public IPv4 address of their own
-(carrier-grade NAT, DS-Lite). In our experience, claude.ai and the Claude apps connect to
-custom connectors over IPv4 only, so they cannot reach such a home; agents that run in your
-network or reach you over IPv6 are not affected. See [agents.md](agents.md#claudeai-and-the-claude-apps).
+**IPv4, claude.ai and ChatGPT.** Many internet connections have no public IPv4 address of
+their own (carrier-grade NAT, DS-Lite). In our experience, claude.ai, the Claude apps and
+ChatGPT connect to custom connectors over IPv4 only, so they cannot reach such a home;
+agents that run in your network or reach you over IPv6 are not affected. See
+[agents.md](agents.md#claudeai-and-the-claude-apps).
 
 ## Security of the app
 

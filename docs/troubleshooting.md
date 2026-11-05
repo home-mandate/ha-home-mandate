@@ -134,8 +134,11 @@ request is refused (agents get `unavailable`) until the clock is right.
 3. **Certificate:** issued for the public URL's host by a certificate authority the agent
    trusts. Self-signed certificates are rejected by most clients.
 4. **Reachability:** from outside your network, check the port forward or proxy route.
-   Home Assistant Cloud does not carry the MCP endpoint. Services on the internet such as
-   claude.ai may need IPv4 ([agents.md](agents.md#claudeai-and-the-claude-apps)).
+   Home Assistant Cloud does not carry the MCP endpoint. claude.ai and ChatGPT need an A
+   record that reaches you: with only an AAAA record (common with DS-Lite and carrier-grade
+   NAT) no request arrives at Home-Mandate, nothing shows in its log, and ChatGPT asks for
+   manual OAuth configuration instead. `dig +short A <your public name>` shows whether
+   there is one; see [reverse-proxy.md](deploy/reverse-proxy.md#check).
 5. **Behind `HM_PROXY`:** every request gets an empty `403` and the log says `request from
    outside the proxy refused` with the address it saw (at most once a minute): `HM_PROXY`
    is not the address the proxy connects from. See
@@ -156,14 +159,16 @@ request is refused (agents get `unavailable`) until the clock is right.
    wait plus 40 seconds (85 s by default) ([reverse-proxy.md](deploy/reverse-proxy.md#what-every-proxy-must-do)). If
    the agent says the action is done although it was pending, its model ignored the
    result's text; answering *Allow* still executes it once.
-9. **After an emergency stop or revocation**, the agent's tokens are gone. After an
-   emergency stop, let the agent sign in again and choose **Reconnect** for its existing
+9. **After an emergency stop with revoked access, or a revocation**, the agent's tokens are
+   gone. After such an emergency stop, let the agent sign in again and choose **Reconnect** for its existing
    entry on the sign-in or pairing page: it keeps its mandate. If no agent is offered there,
    the agent signed in with another OAuth client than before (another `client_id`, or a
    pairing code instead of the browser) or still has valid access; admit it as a new agent
-   and revoke and remove the old entry. After a revocation, admit it again.
-10. **An agent shows "Not signed in"**: it has no valid access, after an emergency stop or
-   because it was not used for 30 days. It works again after it signs in and you reconnect
+   and revoke and remove the old entry. After a revocation, admit it again. If only its
+   mandate was revoked, the agent stays admitted and gets `denied: revoked`; give it a new
+   mandate on its page.
+10. **An agent shows "Not signed in"**: it has no valid access, after an emergency stop that
+   revoked it or because it was not used for 30 days. It works again after it signs in and you reconnect
    it; if you admitted it anew instead, remove the old entry (**Revoke access** with
    **Also remove the agent and its mandates from the lists**).
 11. **Removed an agent or mandate by mistake**: a removed one stays revoked; **Show removed**
@@ -235,7 +240,9 @@ device without an agent.
     the same call shortly after an execution is not executed again
     ([ARCHITECTURE.md](ARCHITECTURE.md), section 7, repeated requests). A confirmed
     action that ends `already_in_state` or `state_changed` was not executed because the
-    device was no longer in the state shown with the request.
+    device was no longer in the state shown with the request. Home Assistant may report a
+    wrong state, for example right after a restart, until the device answers; compare with
+    the device itself. Lights are not refused for this.
 11. **Home-Mandate was restarted** (app update, crash, reboot) while a request waited: the
     request ended, nothing was executed, and the notification on the phone is replaced by
     "Approval request ended" once Home Assistant is connected again; an answer given in

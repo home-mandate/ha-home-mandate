@@ -66,9 +66,19 @@
   const overall = $derived(data ? summary(data.approvers) : null);
   const people = $derived(new Map((data?.candidates.people ?? []).map((p) => [p.user_id, cleanUntrusted(p.name)])));
   const missing = $derived(data ? data.candidates.people.filter((p) => !data.approvers.some((a) => a.user_id === p.user_id)) : []);
-  const chosen = $derived(missing.find((p) => p.user_id === person) ?? missing[0]);
+  // Nobody is preselected: a filled-in row would read like an approver that exists (#38).
+  const chosen = $derived(missing.find((p) => p.user_id === person));
+  const personOptions = $derived([
+    { value: NONE, label: m.set_approver_add_choose() },
+    // The signed-in administrator first: usually the first approver of a household.
+    ...[...missing]
+      .sort((a, b) => Number(b.user_id === app.session?.user.id) - Number(a.user_id === app.session?.user.id))
+      .map((p) => ({ value: p.user_id, label: cleanUntrusted(p.name) })),
+  ]);
   const deviceOptions = $derived.by(() => {
     if (!data || !chosen) return [];
+    // Nothing to choose from: the row says that this person cannot get requests.
+    if (data.candidates.devices.length === 0 && !chosen.is_admin) return [];
     const own = ownDevices(data.candidates.devices, chosen.user_id);
     const others = data.candidates.devices.filter((d) => !own.includes(d));
     const label = (d: (typeof others)[number]) => cleanUntrusted(d.name, DEVICE_NAME_MAX) || d.service;
@@ -195,6 +205,8 @@
     <p class="ok">{m.set_approvers_reach_ok()}</p>
   {/if}
 
+  {#if data.approvers.length === 0}<p class="muted">{m.set_approvers_empty()}</p>{/if}
+
   <div class="cards">
     {#each data.approvers as approver (approver.user_id)}
       <ApproverCard
@@ -220,11 +232,13 @@
       <div class="add-row" bind:this={personSelect}>
         <SelectField
           label={m.set_approver_add_label()}
-          value={chosen?.user_id ?? ''}
-          options={missing.map((p) => ({ value: p.user_id, label: cleanUntrusted(p.name) }))}
+          value={chosen?.user_id ?? NONE}
+          options={personOptions}
           onchange={(v) => (person = v)}
         />
-        {#if deviceOptions.length > 0}
+        {#if !chosen}
+          <Button icon="plus" disabled onclick={add}>{m.set_approver_add()}</Button>
+        {:else if deviceOptions.length > 0}
           <SelectField label={m.set_approver_device_label()} value={chosenDevice} options={deviceOptions} onchange={(v) => (device = v)} />
           <Button icon="plus" busy={adding} disabled={chosenDevice === NONE} onclick={add}>{m.set_approver_add()}</Button>
         {:else}

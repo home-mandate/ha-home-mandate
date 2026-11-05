@@ -16,7 +16,8 @@
   interface Props {
     open: boolean;
     onclose: () => void;
-    onfire: () => void;
+    /** revokeTokens: every agent's access is withdrawn too. */
+    onfire: (revokeTokens: boolean) => void;
     /** The request is on its way. */
     busy?: boolean;
     /** Shown in the sheet as an alert: the app behind a modal sheet is inert, toasts would not be heard. */
@@ -31,11 +32,13 @@
   const id = $props.id();
   let cancel: HTMLButtonElement | undefined = $state();
   let armed = $state(false);
+  let revokeTokens = $state(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   $effect(() => {
     if (!open) return;
     armed = false;
+    revokeTokens = false;
     timer = setTimeout(() => (armed = true), ARM_MS);
     return () => clearTimeout(timer);
   });
@@ -53,10 +56,15 @@
       <button type="button" class="close" aria-label={m.common_close()} onclick={onclose}><Icon name="close" /></button>
     </div>
     <p class="after">{m.estop_sheet_after()}</p>
+    <label class="check">
+      <input type="checkbox" bind:checked={revokeTokens} disabled={busy} aria-describedby="{id}-revoke" />
+      <span>{m.estop_revoke_label()}</span>
+    </label>
+    <p id="{id}-revoke" class="hint">{m.estop_revoke_hint()}</p>
     <p class="error" role="alert">{#if error}<Icon name="warning" size={16} />{error}{/if}</p>
     <div class="actions">
       <Button size="lg" bind:element={cancel} onclick={onclose}>{m.common_cancel()}</Button>
-      <Button size="lg" variant="danger" icon="power" disabled={!armed} {busy} onclick={onfire}>{m.estop_confirm()}</Button>
+      <Button size="lg" variant="danger" icon="power" disabled={!armed} {busy} onclick={() => onfire(revokeTokens)}>{m.estop_confirm()}</Button>
     </div>
   </div>
 </Dialog>
@@ -100,6 +108,25 @@
   }
   .after {
     font-size: 15px;
+    color: var(--hm-color-text-muted);
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: var(--hm-space-2);
+    min-block-size: var(--hm-size-touch);
+    font-weight: var(--hm-font-weight-medium);
+  }
+  .check input {
+    inline-size: 20px;
+    block-size: 20px;
+    margin: 0;
+    flex-shrink: 0;
+    accent-color: var(--hm-color-accent);
+  }
+  .hint {
+    margin-block-start: calc(-1 * var(--hm-space-3));
+    font-size: var(--hm-font-size-sm);
     color: var(--hm-color-text-muted);
   }
   .error {

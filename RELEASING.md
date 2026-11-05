@@ -30,8 +30,16 @@ The board [Roadmap](https://github.com/orgs/home-mandate/projects) shows their s
    (`v0.1.0-rc.3`, `v0.1.0-rc.4`, …) and test it as a whole, as a user would install it.
 3. Findings become issues in the milestone; continue with step 1.
 4. When the milestone has no open issue left and the last release candidate passed its
-   test, publish the version (`v0.1.0`) from the same commit as that release candidate,
-   and close the milestone.
+   test, a pull request sets `version` in `app/config.yaml` and adds the entry to
+   `app/CHANGELOG.md`, and nothing else (the tag has to match that version, so it cannot be
+   the release candidate's commit). Publish the version (`v0.1.0`) from its commit and close
+   the milestone.
+
+A release candidate is the normal way. For small changes after one, it can be skipped: the
+changes, the version and the changelog then go through one pull request, tested on a test
+installation before the merge, and the version is published from its commit. This never
+applies to a release that changes `.github/workflows/release.yml`: that needs a release
+candidate, because a published tag cannot be used twice.
 
 ## Bug fixes
 
@@ -75,7 +83,8 @@ bug in `0.1.x` is fixed by updating to `0.2.x`.
    security fix may shorten this test, never skip it.
 3. Findings become issues in the patch milestone; continue with the branches above.
 4. When the patch milestone has no open issue left and the last release candidate passed
-   its test, publish the patch (`v0.1.1`) from the same commit and close the milestone.
+   its test, a pull request into `release/X.Y` changes only the version and the changelog
+   entry. Publish the patch (`v0.1.1`) from its commit and close the milestone.
 5. A pull request to `main` adds the patch's entry to `app/CHANGELOG.md` there too, so the
    changelog on `main` is complete.
 

@@ -1054,7 +1054,7 @@ export interface ApproverUpdate {
 }
 
 // ---------------------------------------------------------------------------
-// Emergency stop: PUT api/emergency-stop {active} → EmergencyStop (state: api/system)
+// Emergency stop: PUT api/emergency-stop {active, revoke_tokens?} → EmergencyStop (state: api/system)
 
 // ---------------------------------------------------------------------------
 // Live events: WebSocket api/events (decision D6). Server → client only; the client sends

@@ -213,7 +213,7 @@ func TestReconnectInThePairing(t *testing.T) {
 	if len(c.Reconnect) != 0 {
 		t.Errorf("offered while the agent has tokens: %+v", c.Reconnect)
 	}
-	h.ok(http.MethodPut, "/api/emergency-stop", map[string]any{"active": true}, nil)
+	h.ok(http.MethodPut, "/api/emergency-stop", map[string]any{"active": true, "revoke_tokens": true}, nil)
 	h.ok(http.MethodPut, "/api/emergency-stop", map[string]any{"active": false}, nil)
 	deviceCode, code := device()
 	h.ok(http.MethodPost, "/api/pairing/check", map[string]any{"code": code}, &c)
