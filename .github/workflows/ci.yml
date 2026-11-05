@@ -1,14 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 name: CI
 
-# When what runs: a push to a branch runs this unit stage; a pull request against main
-# additionally runs integration.yml (conformance, short fuzzing, image, Playwright, E2E).
-# Everything is checked before the merge: main takes squash-merged pull requests only, up
-# to date with main and with every required check green, so nothing runs after the merge.
+# When what runs: a push to a branch runs this unit stage; a pull request against main or a
+# release branch additionally runs integration.yml (conformance, short fuzzing, image,
+# Playwright, E2E). Everything is checked before the merge: main and the release branches take
+# squash-merged pull requests only, up to date and with every required check green, so
+# nothing runs after the merge.
 # scheduled.yml scans for vulnerabilities every night and fuzzes twice a month.
 on:
   push:
-    branches-ignore: [main]
+    branches-ignore: [main, "release/[0-9]+.[0-9]+"]
   workflow_dispatch:
 
 permissions:

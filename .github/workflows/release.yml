@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 name: Release
 
-# A tag vX.Y.Z or vX.Y.Z-rc.N on main publishes ghcr.io/home-mandate/ha-home-mandate:X.Y.Z[-rc.N]
+# A tag vX.Y.Z or vX.Y.Z-rc.N publishes ghcr.io/home-mandate/ha-home-mandate:X.Y.Z[-rc.N]
 # for linux/amd64 and linux/arm64: signed with cosign (keyless, Sigstore), with build
 # provenance (SLSA, from BuildKit) and SBOMs (the image's, and one of the sources with the
 # Go modules and the UI's npm packages, which a scan of the static binary cannot see), and a
 # GitHub release with the conformance reports (conformance-report.yml).
 #
 # Guards: only admins may create tags and tags are immutable (repository rulesets). Before
-# anything is built, the tag must point to a commit on main that came from a pull request
-# whose checks all passed, match the version in app/config.yaml (Home Assistant's
+# anything is built, the tag must point to a commit on main, for a patch also on release/X.Y
+# (.github/scripts/release-base.sh), that came from a pull request into that branch whose
+# checks all passed, match the version in app/config.yaml (Home Assistant's
 # Supervisor uses it as the image tag), and neither the release nor the image tag may exist.
 # The image is pushed by digest, signed and verified first; the version tag comes last, so no
 # version tag ever points to an unsigned image.
@@ -38,11 +39,12 @@ jobs:
       checks: read # its checks
     outputs:
       version: ${{ steps.version.outputs.version }}
+      base: ${{ steps.version.outputs.base }}
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # main's history, to check where the tag points
+          fetch-depth: 0 # the branches' history, to check where the tag points
           persist-credentials: false
 
       - name: Tag, branch and version
@@ -55,27 +57,29 @@ jobs:
             echo "::error::tag $TAG is neither vX.Y.Z nor vX.Y.Z-rc.N"; exit 1
           fi
           version="${BASH_REMATCH[1]}"
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::$TAG points to a commit that is not on main"; exit 1
-          fi
+          base=$(bash .github/scripts/release-base.sh "$TAG" "$GITHUB_SHA")
           app=$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' app/config.yaml)
           if [ "$app" != "$version" ]; then
             echo "::error::app/config.yaml has version '$app', the tag $version"; exit 1
           fi
           prerelease=false
           if [[ "$version" == *-* ]]; then prerelease=true; fi
-          { echo "version=$version"; echo "prerelease=$prerelease"; } >> "$GITHUB_OUTPUT"
+          { echo "version=$version"; echo "base=$base"; echo "prerelease=$prerelease"; } >> "$GITHUB_OUTPUT"
 
-      # main takes squash-merged pull requests; their checks ran on the pull request's head.
+      # The branches take squash-merged pull requests; their checks ran on the pull request's
+      # head. Looked up by merge commit: the API for a commit's pull requests reports merged
+      # ones only for commits on the default branch.
       - name: The pull request's checks passed
         env:
           GH_TOKEN: ${{ github.token }}
+          BASE: ${{ steps.version.outputs.base }}
         run: |
           set -euo pipefail
-          heads=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
-            --jq '[.[] | select(.merged_at != null and .base.ref == "main") | .head.sha] | unique | .[]')
+          heads=$(gh pr list --repo "$GITHUB_REPOSITORY" --base "$BASE" --state merged --limit 200 \
+            --json headRefOid,mergeCommit \
+            --jq "[.[] | select(.mergeCommit.oid == \"$GITHUB_SHA\") | .headRefOid] | unique | .[]")
           if [ "$(printf '%s\n' "$heads" | grep -c .)" != 1 ]; then
-            echo "::error::$GITHUB_SHA did not come from exactly one merged pull request into main"; exit 1
+            echo "::error::$GITHUB_SHA did not come from exactly one merged pull request into $BASE"; exit 1
           fi
           runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$heads/check-runs?per_page=100" \
             --jq '.check_runs[] | "\(.status)|\(.conclusion)|\(.name)"')
