@@ -22,8 +22,8 @@ All names and addresses below are placeholders: `hm.example.org` for Home-Mandat
   from the Let's Encrypt or DuckDNS app. Without it, Home-Mandate's MCP endpoint answers on
   localhost only (see [The certificate](#the-certificate)).
 
-This is an experimental release candidate. The app is first tested on real Home Assistant
-OS installations with this release; please report what does not work.
+This is the first version. The app has seen few real Home Assistant OS installations so far;
+please report what does not work.
 
 ## Install
 
