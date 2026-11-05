@@ -64,6 +64,7 @@ func TestReleaseBase(t *testing.T) {
 		// A minor version comes from main only.
 		{"v0.2.0", "onMain", "main"},
 		{"v0.2.0-rc.1", "onMain", "main"},
+		{"v0.2.0-alpha.1", "onMain", "main"},
 		{"v0.1.0", "onRelease01", ""},
 		{"v0.1.0-rc.2", "onRelease01", ""},
 		{"v0.2.0", "onRelease02", ""},
@@ -71,6 +72,7 @@ func TestReleaseBase(t *testing.T) {
 		// minor version, and a patch must not publish them.
 		{"v0.1.1", "onRelease01", "release/0.1"},
 		{"v0.1.1-rc.1", "onRelease01", "release/0.1"},
+		{"v0.1.1-alpha.1", "onRelease01", "release/0.1"},
 		{"v0.1.10", "onRelease01", "release/0.1"},
 		{"v0.2.3", "onRelease02", "release/0.2"},
 		{"v0.1.1", "onMain", ""},
