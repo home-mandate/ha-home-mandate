@@ -112,3 +112,15 @@ test('an invalid field keeps the focus ring (review a11y H2)', async ({ page }, 
   });
   expect(ring).toEqual({ style: 'solid', width: 2 });
 });
+
+// Test plan 5.5: Home Assistant knows no phone, the person is no administrator.
+test('says so when a person cannot be added because no phone exists', async ({ page }, info) => {
+  const t = { de: { person: 'Person aus Home Assistant', hint: 'Kein Handy mit Home-Assistant-App' }, en: { person: 'Person from Home Assistant', hint: 'No phone with the Home Assistant app' } }[info.project.name as Lang];
+  await page.addInitScript(() => {
+    (window as unknown as { hmMockOptions: unknown }).hmMockOptions = { noDevices: true };
+  });
+  await page.goto('./#/settings/approvers');
+  await page.getByLabel(t.person).selectOption('u-partner');
+  await expect(page.getByText(t.hint)).toBeVisible();
+  expect(await pageScroll(page)).toBe(0);
+});

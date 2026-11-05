@@ -184,6 +184,8 @@ export interface MockOptions {
   household?: Household;
   /** Starts without any approver set up: nobody but the admitting human, without a channel. */
   noApprovers?: boolean;
+  /** Home Assistant knows no phone with the Companion App. */
+  noDevices?: boolean;
   /**
    * Starts after an emergency stop was lifted: no agent has a token, and the kitchen tablet
    * behind the pairing code was admitted before, so the pairing offers to reconnect it (#22).
@@ -423,7 +425,10 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     templates: templatesFixture.map(storedTemplate),
     audit: options.empty ? [] : auditFixture,
     approvals: options.empty ? { open: [], history: [] } : { open: approvalsOpenFixture, history: approvalsHistoryFixture },
-    approvers: options.noApprovers ? { ...approversFixture, approvers: [] } : approversFixture,
+    approvers: {
+      approvers: options.noApprovers ? [] : approversFixture.approvers,
+      candidates: options.noDevices ? { ...approversFixture.candidates, devices: [] } : approversFixture.candidates,
+    },
     approversVersion: 1,
     pairing: { codes: { [normalizeCode(MOCK_PAIRING_CODE)]: 'open', [normalizeCode(MOCK_EXPIRED_CODE)]: 'expired' }, wrong: 0, lockedUntil: 0 },
   };
@@ -1315,12 +1320,12 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       setSystem({ ...state.system, approvers_configured: approvers.length });
     },
 
-    async setEmergencyStop(active) {
+    async setEmergencyStop(active, revokeTokens) {
+      // Lifting the stop does not bring revoked tokens back.
+      if (revokeTokens) state = { ...state, agents: state.agents.map((a) => ({ ...a, connected: false })) };
       if (active !== state.system.emergency_stop.active) {
         const stop = active ? { active, since: now().toISOString(), by_name: user().name } : { active, since: null, by_name: null };
         if (active) for (const r of state.approvals.open) closeApproval(r.id, 'cancelled', null, undefined, 'emergency_stop');
-        // Every token is withdrawn; lifting the stop does not bring them back.
-        if (active) state = { ...state, agents: state.agents.map((a) => ({ ...a, connected: false })) };
         setSystem({ ...state.system, emergency_stop: stop });
         log(active ? 'emergency_stop.activated' : 'emergency_stop.released');
       }

@@ -505,6 +505,16 @@ func TestSettings(t *testing.T) {
 	}
 }
 
+// connected tells whether the agent holds a valid token.
+func (h *harness) connected(clientID string) bool {
+	h.t.Helper()
+	a, err := h.agents.Get(h.t.Context(), clientID)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return a.Connected
+}
+
 // Switching the emergency stop on ends every open request at once (decision F1).
 func TestEmergencyStop(t *testing.T) {
 	h := newHarness(t)
@@ -528,7 +538,21 @@ func TestEmergencyStop(t *testing.T) {
 	if stop.Active || stop.Since != nil || stop.ByName != nil {
 		t.Errorf("released = %+v", stop)
 	}
-	for _, body := range []any{map[string]any{}, map[string]any{"active": "yes"}} {
+	a := h.admit("Garten")
+	if !h.connected(a.ClientID) {
+		t.Fatal("agent not connected")
+	}
+	h.ok(http.MethodPut, "/api/emergency-stop", map[string]any{"active": true}, &stop)
+	h.ok(http.MethodPut, "/api/emergency-stop", map[string]any{"active": false}, &stop)
+	if !h.connected(a.ClientID) {
+		t.Error("the stop took the agent's tokens")
+	}
+	h.ok(http.MethodPut, "/api/emergency-stop", map[string]any{"active": true, "revoke_tokens": true}, &stop)
+	if !stop.Active || h.connected(a.ClientID) {
+		t.Errorf("stop = %+v, tokens of the agent still valid", stop)
+	}
+	h.ok(http.MethodPut, "/api/emergency-stop", map[string]any{"active": false}, &stop)
+	for _, body := range []any{map[string]any{}, map[string]any{"active": "yes"}, map[string]any{"active": false, "revoke_tokens": true}} {
 		if r := h.do(http.MethodPut, "/api/emergency-stop", body); r.errCode() != codeInvalidInput {
 			t.Errorf("%v = %d", body, r.code)
 		}

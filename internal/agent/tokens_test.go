@@ -391,15 +391,6 @@ func TestRefreshGracePeriodExceptions(t *testing.T) {
 			t.Errorf("got %v", err)
 		}
 	})
-	t.Run("emergency stop", func(t *testing.T) {
-		s, _, p := used(t)
-		if _, err := s.SetEmergencyStop(ctx, true, admin); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
-			t.Errorf("got %v", err)
-		}
-	})
 	t.Run("revoked family", func(t *testing.T) {
 		s, _, p := used(t)
 		clk := withClock(s)
@@ -477,6 +468,9 @@ func TestRevokeRevokesAccessAndRefreshTokens(t *testing.T) {
 
 // E2E scenario 7 at unit level: emergency stop blocks all agents immediately; after
 // lifting it, only newly issued tokens work.
+// The stop blocks requests in the gateway, not the sign-in: tokens stay valid and rotate, so
+// that the agents can say why they are refused and carry on after the release. Nothing new
+// is admitted meanwhile, and an answer to an approval does not count.
 func TestEmergencyStop(t *testing.T) {
 	s, log, _ := newStore(t)
 	ctx := context.Background()
@@ -495,13 +489,15 @@ func TestEmergencyStop(t *testing.T) {
 	if on, _ := s.EmergencyStopActive(ctx); !on {
 		t.Error("not active")
 	}
-	for _, p := range []agent.TokenPair{pa, pb} {
-		if _, err := s.Authenticate(ctx, p.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
-			t.Errorf("access during stop: %v", err)
-		}
-		if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
-			t.Errorf("refresh during stop: %v", err)
-		}
+	if _, err := s.Authenticate(ctx, pa.AccessToken, resource); err != nil {
+		t.Errorf("access during stop: %v", err)
+	}
+	if _, err := s.StillAuthorized(ctx, pa.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
+		t.Errorf("answer during stop: %v", err)
+	}
+	rotated, err := s.Refresh(ctx, pb.RefreshToken, resource, "")
+	if err != nil {
+		t.Fatalf("refresh during stop: %v", err)
 	}
 	if _, err := s.IssueTokens(ctx, a.ClientID, resource); !errors.Is(err, agent.ErrEmergencyStop) {
 		t.Errorf("issue during stop: %v", err)
@@ -510,15 +506,10 @@ func TestEmergencyStop(t *testing.T) {
 	if changed, err := s.SetEmergencyStop(ctx, false, admin); err != nil || !changed {
 		t.Fatalf("release = %v, %v", changed, err)
 	}
-	if _, err := s.Authenticate(ctx, pa.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
-		t.Errorf("old token after release: %v", err)
-	}
-	if _, err := s.Refresh(ctx, pa.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
-		t.Errorf("old refresh token after release: %v", err)
-	}
-	fresh := issue(t, s, a.ClientID)
-	if _, err := s.Authenticate(ctx, fresh.AccessToken, resource); err != nil {
-		t.Errorf("new token after release: %v", err)
+	for _, token := range []string{pa.AccessToken, rotated.AccessToken} {
+		if _, err := s.Authenticate(ctx, token, resource); err != nil {
+			t.Errorf("token after release: %v", err)
+		}
 	}
 	out := exported(t, log)
 	if strings.Count(out, `"event":"emergency_stop.activated"`) != 1 || strings.Count(out, `"event":"emergency_stop.released"`) != 1 {
@@ -529,8 +520,49 @@ func TestEmergencyStop(t *testing.T) {
 	}
 }
 
-// The stop is read from the database on every request, so a stop set through another
-// process (the CLI) is effective without a restart.
+// For who suspects a stolen token: every token goes, also when the stop was on already, and
+// the release brings none back.
+func TestWithdrawAllTokens(t *testing.T) {
+	for name, stoppedBefore := range map[string]bool{"at once": false, "during a stop": true} {
+		t.Run(name, func(t *testing.T) {
+			s, log, _ := newStore(t)
+			ctx := context.Background()
+			a := register(t, s, "A")
+			p := issue(t, s, a.ClientID)
+			if stoppedBefore {
+				if _, err := s.SetEmergencyStop(ctx, true, admin); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if changed, err := s.WithdrawAllTokens(ctx, admin); err != nil || changed == stoppedBefore {
+				t.Fatalf("withdraw = %v, %v", changed, err)
+			}
+			check := func(when string) {
+				t.Helper()
+				if _, err := s.Authenticate(ctx, p.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
+					t.Errorf("access %s: %v", when, err)
+				}
+				if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
+					t.Errorf("refresh %s: %v", when, err)
+				}
+			}
+			check("during the stop")
+			if _, err := s.SetEmergencyStop(ctx, false, admin); err != nil {
+				t.Fatal(err)
+			}
+			check("after the release")
+			fresh := issue(t, s, a.ClientID)
+			if _, err := s.Authenticate(ctx, fresh.AccessToken, resource); err != nil {
+				t.Errorf("new token after release: %v", err)
+			}
+			out := exported(t, log)
+			if strings.Count(out, `"event":"emergency_stop.activated"`) != 1 {
+				t.Errorf("audit log:\n%s", out)
+			}
+		})
+	}
+}
+
 func TestEmergencyStopSetByAnotherStoreTakesEffect(t *testing.T) {
 	s, log, db := newStore(t)
 	ctx := context.Background()
@@ -540,25 +572,14 @@ func TestEmergencyStopSetByAnotherStoreTakesEffect(t *testing.T) {
 	if _, err := cli.SetEmergencyStop(ctx, true, admin); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Authenticate(ctx, p.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
-		t.Errorf("Authenticate = %v", err)
+	if on, err := s.EmergencyStopActive(ctx); err != nil || !on {
+		t.Errorf("active = %v, %v", on, err)
 	}
-}
-
-// Even a token that escaped revocation is refused while the stop is active.
-func TestAuthenticateChecksTheStopItself(t *testing.T) {
-	s, _, db := newStore(t)
-	ctx := context.Background()
-	a := register(t, s, "A")
-	p := issue(t, s, a.ClientID)
-	if _, err := db.Exec(`INSERT INTO settings (key, value, updated_at) VALUES ('emergency_stop', 'on', '2026-10-13T12:00:00Z')`); err != nil {
+	if _, err := cli.WithdrawAllTokens(ctx, admin); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Authenticate(ctx, p.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
 		t.Errorf("Authenticate = %v", err)
-	}
-	if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
-		t.Errorf("Refresh = %v", err)
 	}
 }
 

@@ -275,3 +275,19 @@ func TestAskReadStateNotHandedOutAfterTheMandateChanged(t *testing.T) {
 		t.Errorf("approval_status = %v, %q", status, errText)
 	}
 }
+
+// The same during an emergency stop: the state read before it is not handed out.
+func TestAskReadStateNotHandedOutDuringTheEmergencyStop(t *testing.T) {
+	f := &fakeApprover{hold: true}
+	h := askReadHarness(t, f, 100*time.Millisecond)
+	out, _ := readLock(h)
+	ref, _ := out["approval_id"].(string)
+	f.end(f.heldIDs()[0], approvedNow(h))
+	waitFor(t, func() bool { return path(h.lastEntry(), "result", "status") == "executed" })
+	if _, err := h.agents.SetEmergencyStop(context.Background(), true, admin); err != nil {
+		t.Fatal(err)
+	}
+	if status, errText := h.call(h.session(), "approval_status", map[string]any{"approval_id": ref}); errText != "denied: emergency_stop" {
+		t.Errorf("approval_status = %v, %q", status, errText)
+	}
+}

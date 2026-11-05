@@ -19,6 +19,11 @@ import (
 // keeps two confirmations, for example of two agents or of a request repeated after a
 // client gave up, from acting twice on a device that toggles (a garage door on a pulse
 // relay opens or closes on every open_cover).
+//
+// A light is the exception: Home Assistant can report one wrongly for a while (KNX shows
+// "off" after a restart until the actuator answers), a person who asks for it to be off
+// sees it on, and turning it off once more does no harm. Target already reached does not
+// stop it; a switch stays strict, as a pulse relay can sit behind one.
 
 // RECOMMENDED error codes of SPEC-v0 section 11.1 item 10.
 const (
@@ -102,12 +107,21 @@ func stateCheck(category, action string, call ha.ServiceCall, recorded string, n
 		return errStateChanged
 	}
 	if reached(category, action, rule, call, now) {
+		if repeatable(category) {
+			return ""
+		}
 		return errAlreadyInState
 	}
 	if now.State != recorded {
 		return errStateChanged
 	}
 	return ""
+}
+
+// repeatable tells whether an action of category is sent even if the device is reported
+// in its target state already.
+func repeatable(category string) bool {
+	return category == "light"
 }
 
 // reached tells whether the device is in the state the action leads to.

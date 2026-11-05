@@ -365,6 +365,9 @@ func (g *Gateway) approvalStatus(ctx context.Context, req *sdk.CallToolRequest, 
 	}
 	if w := g.lookup(in.ApprovalID, a.ClientID); w != nil {
 		res, out, err := g.await(ctx, w)
+		if out.Read != nil && g.stopped(ctx) {
+			return nil, actionOut{}, errors.New(codeDenied + ": emergency_stop")
+		}
 		if out.Read != nil && g.readDenied(ctx, a.ClientID, out.Read.EntityID) {
 			// The state was read after a confirmation, but reading is denied now (the
 			// mandate was revoked or changed): it is not handed out any more.

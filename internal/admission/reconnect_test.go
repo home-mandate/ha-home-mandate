@@ -34,10 +34,11 @@ func TestReconnectAfterAnEmergencyStop(t *testing.T) {
 	if list, err := e.adm.Reconnectable(ctx, cimd); err != nil || len(list) != 0 {
 		t.Fatalf("before the stop = %+v, %v", list, err)
 	}
-	for _, on := range []bool{true, false} {
-		if _, err := e.agents.SetEmergencyStop(ctx, on, admin); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := e.agents.WithdrawAllTokens(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.agents.SetEmergencyStop(ctx, false, admin); err != nil {
+		t.Fatal(err)
 	}
 	list, err := e.adm.Reconnectable(ctx, cimd)
 	if err != nil {
@@ -103,7 +104,7 @@ func TestReconnectableWithoutAnActiveMandate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.agents.SetEmergencyStop(ctx, true, admin); err != nil {
+	if _, err := e.agents.WithdrawAllTokens(ctx, admin); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.agents.SetEmergencyStop(ctx, false, admin); err != nil {

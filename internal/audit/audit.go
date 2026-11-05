@@ -614,8 +614,10 @@ func canonicalJSON(v any) ([]byte, error) {
 	return nil, fmt.Errorf("audit: encode: %w", err)
 }
 
-// validate checks the schema with the reference verifier: a copy of the entry as the
-// first entry of a log (seq 1, prev null) must be a valid log on its own.
+// validate checks the rules for a new entry, which are stricter than what a verifier accepts
+// in an existing log (SPEC-v0 section 9.1), and the schema with the reference verifier: a
+// copy of the entry as the first entry of a log (seq 1, prev null) must be a valid log on
+// its own.
 func validate(w wire) error {
 	entries := [][]byte{}
 	w.Seq, w.Prev = 1, nil
@@ -641,6 +643,9 @@ func validate(w wire) error {
 	data, err := canonicalJSON(w)
 	if err != nil {
 		return err
+	}
+	if err := specaudit.CheckNew(data); err != nil {
+		return fmt.Errorf("%w: event %q: %w", ErrInvalidEntry, w.Event, err)
 	}
 	if r, err := specaudit.Verify(append(entries, data)); err != nil || !r.Valid {
 		return fmt.Errorf("%w: event %q", ErrInvalidEntry, w.Event)

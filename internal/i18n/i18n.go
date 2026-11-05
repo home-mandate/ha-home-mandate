@@ -49,6 +49,7 @@ const (
 	// How to answer, right after the first line so that the collapsed notification shows
 	// it (issue #49).
 	ApprovalExpand         Key = "approval_expand"
+	ApprovalReconnected    Key = "approval_reconnected"
 	ApprovalApprove        Key = "approval_approve"
 	ApprovalDeny           Key = "approval_deny"
 	ApprovalInvalidTitle   Key = "approval_invalid_title"
@@ -164,7 +165,7 @@ var actions = []string{"read", "turn_on", "turn_off", "set", "set_temperature", 
 
 // Keys lists every message key.
 var Keys = append([]Key{
-	ApprovalTitle, ApprovalMessage, ApprovalMessageState, ApprovalMessageRead, ApprovalReason, ApprovalParams, ApprovalIdentity, ApprovalNoAnswer, ApprovalWouldDeny, ApprovalExpand, ApprovalApprove, ApprovalDeny,
+	ApprovalTitle, ApprovalMessage, ApprovalMessageState, ApprovalMessageRead, ApprovalReason, ApprovalParams, ApprovalIdentity, ApprovalNoAnswer, ApprovalWouldDeny, ApprovalExpand, ApprovalReconnected, ApprovalApprove, ApprovalDeny,
 	ApprovalInvalidTitle, ApprovalInvalidMessage, ApprovalBellTitle, ApprovalBellMessage, ApprovalBellMessageLink, ApprovalBellMessageUI, ApprovalBellMessageAppLink, ApprovalTestTitle, ApprovalTestMessage,
 	ApprovalInterruptedTitle, ApprovalInterruptedMessage, ApprovalUnknownTitle, ApprovalUnknownMessage,
 	CheckpointTitle, CheckpointMessage, RenameFloodTitle, RenameFloodMessage,

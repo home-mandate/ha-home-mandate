@@ -125,6 +125,38 @@ describe('App frame', () => {
     expect(screen.getByRole('button', { name: 'Emergency stop on' })).toBeTruthy();
   });
 
+  it('blocks the agents without revoking their access, unless asked to', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { api } = await start();
+      const stop = vi.spyOn(api, 'setEmergencyStop');
+      const before = (await api.agents()).map((a) => a.connected);
+      await fireEvent.click(screen.getByRole('button', { name: 'Emergency stop' }));
+      let sheet = within(await screen.findByRole('alertdialog'));
+      expect((sheet.getByRole('checkbox', { name: 'Also revoke all access' }) as HTMLInputElement).checked).toBe(false);
+      vi.advanceTimersByTime(700);
+      await tick();
+      await fireEvent.click(sheet.getByRole('button', { name: 'Trigger emergency stop' }));
+      await vi.waitFor(() => expect(stop).toHaveBeenCalledWith(true, false));
+      await api.setEmergencyStop(false);
+      expect((await api.agents()).map((a) => a.connected)).toEqual(before);
+      await vi.waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+
+      stop.mockClear();
+      await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Emergency stop' })).toBeTruthy());
+      await fireEvent.click(screen.getByRole('button', { name: 'Emergency stop' }));
+      sheet = within(await screen.findByRole('alertdialog'));
+      await fireEvent.click(sheet.getByRole('checkbox', { name: 'Also revoke all access' }));
+      vi.advanceTimersByTime(700);
+      await tick();
+      await fireEvent.click(sheet.getByRole('button', { name: 'Trigger emergency stop' }));
+      await vi.waitFor(() => expect(stop).toHaveBeenCalledWith(true, true));
+      expect((await api.agents()).every((a) => !a.connected)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('cancels with a click beside the sheet, Escape or Cancel, but not when the window loses focus', async () => {
     const { api } = await start();
     const stop = vi.spyOn(api, 'setEmergencyStop');

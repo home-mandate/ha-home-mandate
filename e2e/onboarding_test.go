@@ -168,8 +168,9 @@ func TestScenario06RevokedAgentIsLockedOut(t *testing.T) {
 	}
 }
 
-// Scenario 7: emergency stop → all agents blocked immediately; lifting it → only newly
-// issued tokens work.
+// Scenario 7: emergency stop → all agents blocked immediately, every call denied with
+// emergency_stop; lifting it → they carry on with their tokens. With revoked tokens they
+// are out, also after lifting it, and only newly issued tokens work.
 func TestScenario07EmergencyStop(t *testing.T) {
 	a, b := newAgent(t, "Stop A", nil), newAgent(t, "Stop B", nil)
 	stopped := false
@@ -181,8 +182,11 @@ func TestScenario07EmergencyStop(t *testing.T) {
 	cli(t, "", "emergency-stop", "on")
 	stopped = true
 	for name, token := range map[string]string{"A": a, "B": b} {
-		if status := statusWith(t, token); status != http.StatusUnauthorized {
+		if status := statusWith(t, token); status != http.StatusOK {
 			t.Errorf("agent %s during the stop: %d", name, status)
+		}
+		if _, msg := call(t, session(t, token), "list_devices", map[string]any{}); !strings.Contains(msg, "emergency_stop") {
+			t.Errorf("agent %s during the stop: %q", name, msg)
 		}
 	}
 	// Admission is refused during the stop, even when a human agrees: the approval admits
@@ -200,8 +204,19 @@ func TestScenario07EmergencyStop(t *testing.T) {
 
 	cli(t, "", "emergency-stop", "off")
 	stopped = false
+	if _, msg := call(t, session(t, a), "list_devices", map[string]any{}); msg != "" {
+		t.Errorf("agent after the stop: %q", msg)
+	}
+
+	cli(t, "", "emergency-stop", "on", "--revoke-tokens")
+	stopped = true
 	if status := statusWith(t, a); status != http.StatusUnauthorized {
-		t.Errorf("old token after the stop: %d", status)
+		t.Errorf("revoked token during the stop: %d", status)
+	}
+	cli(t, "", "emergency-stop", "off")
+	stopped = false
+	if status := statusWith(t, a); status != http.StatusUnauthorized {
+		t.Errorf("revoked token after the stop: %d", status)
 	}
 	if status := statusWith(t, newAgent(t, "Stop C", nil)); status != http.StatusOK {
 		t.Errorf("new token after the stop: %d", status)

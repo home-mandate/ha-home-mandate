@@ -14,6 +14,10 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/home-mandate/spec/evaluator"
+
+	"github.com/home-mandate/ha-home-mandate/internal/pdp"
 )
 
 const (
@@ -30,6 +34,9 @@ type binding struct {
 	mu    sync.Mutex
 	state state
 	at    time.Time
+	// clockless: the time of the state is no point in time. The tool asks this way about
+	// a request whose time the PEP could not express (SPEC-v0 section 10.2).
+	clockless bool
 }
 
 func (b *binding) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -64,12 +71,8 @@ func (b *binding) setState(w http.ResponseWriter, body []byte) {
 		return
 	}
 	at, ok := pointInTime(s.Time)
-	if !ok {
-		http.Error(w, "invalid time", http.StatusBadRequest)
-		return
-	}
 	b.mu.Lock()
-	b.state, b.at = s, at
+	b.state, b.at, b.clockless = s, at, !ok
 	b.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -87,10 +90,34 @@ func (b *binding) evaluate(w http.ResponseWriter, r *http.Request, body []byte) 
 	}
 	_ = json.Unmarshal(body, &peek) // the PDP rejects a malformed request itself
 	b.mu.Lock()
-	s, at := b.state, b.at
+	s, at, clockless := b.state, b.at, b.clockless
 	b.mu.Unlock()
+	p := newPDP(s, peek.Subject.Properties.Principal, at)
+	if clockless {
+		evaluateClockless(w, r, p, body)
+		return
+	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
-	newPDP(s, peek.Subject.Properties.Principal, at).Handler().ServeHTTP(w, r)
+	p.Handler().ServeHTTP(w, r)
+}
+
+// evaluateClockless answers without a point in time: what comes before the request in the
+// order of the reasons stays (SPEC-v0 section 4.1), everything else is invalid_request. The
+// mandate is selected at the zero time; the time plays no part in the answer. Several
+// candidates without a clock are open (home-mandate/spec#112), and no case asks for them.
+func evaluateClockless(w http.ResponseWriter, r *http.Request, p *pdp.PDP, body []byte) {
+	var req pdp.Request
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	resp := p.Evaluate(r.Context(), req)
+	if resp.Context.MandateDigest != "" && resp.Context.Reason != string(evaluator.ReasonRevoked) {
+		resp = pdp.Response{Context: pdp.ResponseContext{Outcome: string(evaluator.Deny), Reason: string(evaluator.ReasonInvalidRequest),
+			MandateID: resp.Context.MandateID, MandateDigest: resp.Context.MandateDigest}}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // serveHTTP serves the binding on a loopback address until ctx ends; listening is told

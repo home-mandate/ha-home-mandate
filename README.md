@@ -15,8 +15,8 @@ New here? The [guide on home-mandate.org](https://home-mandate.org/implementatio
 explains in a few minutes what it does and how to start; the
 [Home-Mandate Specification](https://home-mandate.org/) it implements is explained there as well.
 
-**Status: experimental.** 0.1.0-rc.11 is the tenth published release candidate. Expect rough edges,
-read the [limits of this version](#limits-of-this-version) and keep backups.
+**Status: first version (0.1.0).** Expect rough edges, read the
+[limits of this version](#limits-of-this-version) and keep backups.
 
 ## Why
 
@@ -143,9 +143,8 @@ The threat model and how to report vulnerabilities: [SECURITY.md](SECURITY.md).
 
 ## Limits of this version
 
-- Experimental release candidate. The Home Assistant OS app is first tested on real
-  installations with this release candidate; container mode is covered by the end-to-end
-  tests against a real Home Assistant.
+- First version. The Home Assistant OS app has seen few real installations so far; container
+  mode is covered by the end-to-end tests against a real Home Assistant.
 - Camera snapshots and `set` on devices of the category `other` are evaluated and logged but
   not executed: Home Assistant offers no safe way to perform them for one entity.
 - An approval waits at most 10 minutes (the approval timeout setting, 30 to 600 seconds),
@@ -198,13 +197,13 @@ pass all its conformance cases.
   <img src="https://raw.githubusercontent.com/home-mandate/.github/main/marks/compatible-light.svg" alt="Home-Mandate compatible" width="96" align="left">
 </picture>
 
-Home-Mandate conforms to the Home-Mandate Specification `v0.1.0` (manifest
+Home-Mandate conforms to the Home-Mandate Specification `v0.1.1` (manifest
 `conformance/manifest.json`, SHA-256
-`aa18f0f0dd534ebe8b9b83692cb58e68a568b018510146e261fccd31f181c40a`) in these classes
+`07f0f0ecbf9bc52a8e8a53e92b31952099edc4c9d1c56b1366b3ae9abb36ea33`) in these classes
 (SPEC-v0 section 8.1), tested with the specification's test tool `mandate-conformance` on
 every pull request and with `make conformance`. The v0 formats are frozen since `v0.1.0`
-(SPEC-v0 section 14). The reports are attached to the release 0.1.0-rc.11; 0.1.0-rc.10
-conforms to `v0.1.0-rc.5`, 0.1.0-rc.9 was tested with `v0.1.0-rc.4`, which has the same
+(SPEC-v0 section 14). The reports are attached to the release; 0.1.0 conforms to `v0.1.1`,
+0.1.0-rc.11 conforms to `v0.1.0`, 0.1.0-rc.10 conforms to `v0.1.0-rc.5`, 0.1.0-rc.9 was tested with `v0.1.0-rc.4`, which has the same
 cases, and 0.1.0-rc.8 conforms to `v0.1.0-rc.3`.
 <br clear="left">
 

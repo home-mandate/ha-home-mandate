@@ -244,11 +244,14 @@ describe('createMockClient: removing and reconnecting (#21, #22)', () => {
     await expect(api.pairingCheck(MOCK_PAIRING_CODE)).rejects.toMatchObject({ code: 'pairing_code_expired' });
   });
 
-  it('offers nothing to reconnect while the agents have tokens; the emergency stop withdraws them', async () => {
+  it('offers nothing to reconnect while the agents have tokens; an emergency stop that revokes them does', async () => {
     const api = createMockClient();
     expect((await api.pairingCheck(MOCK_PAIRING_CODE)).reconnect).toEqual([]);
     expect((await api.agents()).find((a) => a.client_id === VOICE)?.connected).toBe(true);
     await api.setEmergencyStop(true);
+    await api.setEmergencyStop(false);
+    expect((await api.agents()).find((a) => a.client_id === VOICE)?.connected).toBe(true);
+    await api.setEmergencyStop(true, true);
     await api.setEmergencyStop(false);
     expect((await api.agents()).every((a) => !a.connected)).toBe(true);
   });
