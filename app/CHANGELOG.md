@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1
+
+Patch of 0.1.0. Implements the Home-Mandate Specification v0.1.1. Changes since 0.1.0:
+
+Security
+- Built with Go 1.27.4, which fixes GO-2026-6859: a race between `MaxBytesReader` and the
+  header handling could crash Go's HTTP/1 server. Home-Mandate reaches it through its MCP
+  endpoint and its web UI (#148)
+
 ## 0.1.1-rc.1
 
 First release candidate of the patch 0.1.1. Experimental. Implements the Home-Mandate
