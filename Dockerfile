@@ -11,7 +11,7 @@ COPY web/ ./
 RUN pnpm run build            # produces /web/dist with relative paths (base: './')
 
 # 2) Gateway: static Go binary with the embedded UI
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS build
 WORKDIR /src
 # Build against the version of the specification pinned in go.mod, never a workspace.
 ENV GOWORK=off
