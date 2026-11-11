@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 name: Release
 
-# A tag vX.Y.Z or vX.Y.Z-rc.N publishes ghcr.io/home-mandate/ha-home-mandate:X.Y.Z[-rc.N]
+# A tag vX.Y.Z, vX.Y.Z-alpha.N or vX.Y.Z-rc.N publishes ghcr.io/home-mandate/ha-home-mandate:X.Y.Z[-rc.N]
 # for linux/amd64 and linux/arm64: signed with cosign (keyless, Sigstore), with build
 # provenance (SLSA, from BuildKit) and SBOMs (the image's, and one of the sources with the
 # Go modules and the UI's npm packages, which a scan of the static binary cannot see), and a
-# GitHub release with the conformance reports (conformance-report.yml).
+# GitHub release with the conformance reports (conformance-report.yml). The release is created
+# as a draft, the reports are attached to the draft, and only a draft with the attested reports
+# and the source SBOM is published. A published release is immutable (repository setting), so
+# nothing can be added or replaced afterwards; a failed run leaves a draft and needs a new
+# version.
 #
 # Guards: only admins may create tags and tags are immutable (repository rulesets). Before
 # anything is built, the tag must point to a commit on main, for a patch on release/X.Y
@@ -53,8 +57,8 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          if ! [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?)$ ]]; then
-            echo "::error::tag $TAG is neither vX.Y.Z nor vX.Y.Z-rc.N"; exit 1
+          if ! [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-(alpha|rc)\.[0-9]+)?)$ ]]; then
+            echo "::error::tag $TAG is neither vX.Y.Z nor vX.Y.Z-alpha.N nor vX.Y.Z-rc.N"; exit 1
           fi
           version="${BASH_REMATCH[1]}"
           base=$(bash .github/scripts/release-base.sh "$TAG" "$GITHUB_SHA")
@@ -67,8 +71,7 @@ jobs:
           { echo "version=$version"; echo "base=$base"; echo "prerelease=$prerelease"; } >> "$GITHUB_OUTPUT"
 
       # The branches take squash-merged pull requests; their checks ran on the pull request's
-      # head. Looked up by merge commit: the API for a commit's pull requests reports merged
-      # ones only for commits on the default branch.
+      # head.
       - name: The pull request's checks passed
         env:
           GH_TOKEN: ${{ github.token }}
@@ -217,7 +220,7 @@ jobs:
           retention-days: 7
 
   release:
-    name: GitHub release
+    name: Draft of the GitHub release
     needs: [verify, image]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -228,7 +231,9 @@ jobs:
         with:
           name: sbom-source
 
-      - name: Create the release
+      # A re-run of failed jobs finds the draft of the first attempt, keeps it and adds the
+      # SBOM if it is missing.
+      - name: Create the draft
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -237,6 +242,13 @@ jobs:
           DIGEST: ${{ needs.image.outputs.digest }}
         run: |
           set -euo pipefail
+          if draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft 2> /dev/null); then
+            [ "$draft" = true ] || { echo "::error::release $TAG is published already"; exit 1; }
+            echo "The draft of $TAG exists from an earlier attempt"
+            assets=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')
+            grep -qxF sbom-source.spdx.json <<< "$assets" || gh release upload "$TAG" sbom-source.spdx.json --repo "$GITHUB_REPOSITORY"
+            exit 0
+          fi
           cat > release-notes.md <<EOF
           Container image for linux/amd64 and linux/arm64:
 
@@ -255,7 +267,7 @@ jobs:
           flags=()
           if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
           # GitHub's list of merged pull requests follows the notes above.
-          gh release create "$TAG" sbom-source.spdx.json --repo "$GITHUB_REPOSITORY" --verify-tag \
+          gh release create "$TAG" sbom-source.spdx.json --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
             --title "Home-Mandate $VERSION" --notes-file release-notes.md --generate-notes "${flags[@]}"
 
   conformance-report:
@@ -268,3 +280,31 @@ jobs:
     uses: ./.github/workflows/conformance-report.yml
     with:
       tag: ${{ github.ref_name }}
+
+  # The gate: the draft becomes the release only with the attested reports and the SBOM attached.
+  publish:
+    name: Publish the release
+    needs: conformance-report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # the release
+      attestations: read # the reports' provenance
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: The reports and the SBOM are attached, the reports attested
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/assets"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$dir"
+          for file in sbom-source.spdx.json conformance-report-process.json conformance-report-http.json; do
+            [ -f "$dir/$file" ] || { echo "::error::$file is not attached to the draft of $TAG"; exit 1; }
+          done
+          for file in conformance-report-process.json conformance-report-http.json; do
+            gh attestation verify "$dir/$file" --repo "$GITHUB_REPOSITORY"
+          done
+
+      - name: Publish the draft
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false

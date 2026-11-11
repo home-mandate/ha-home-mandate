@@ -59,7 +59,7 @@ and the key in `/ssl` for root ([ARCHITECTURE.md](ARCHITECTURE.md), section 11, 
 
 ## Releases
 
-Planning, release candidates, bug fixes, patch releases and publishing: [RELEASING.md](../RELEASING.md).
+What is published and how it is tested: [RELEASING.md](../RELEASING.md), which links the rules of the organization.
 
 ## Contributing
 

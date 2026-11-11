@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # release-base.sh TAG COMMIT prints the branch the tag may be published from (RELEASING.md),
-# or refuses. A minor version (vX.Y.0, vX.Y.0-rc.N) comes from main only; a patch comes from
+# or refuses. A minor version (vX.Y.0 and its pre-releases) comes from main only; a patch comes from
 # its own branch release/X.Y only, because main holds functions of the next minor version.
 # Reads the remote-tracking branches of the current repository; tested by tools/releasebase.
 set -euo pipefail
@@ -22,8 +22,8 @@ on() {
     git merge-base --is-ancestor "$commit" "refs/remotes/origin/$1"
 }
 
-if ! [[ "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-rc\.[0-9]+)?$ ]]; then
-  refuse "tag $tag is neither vX.Y.Z nor vX.Y.Z-rc.N"
+if ! [[ "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-(alpha|rc)\.[0-9]+)?$ ]]; then
+  refuse "tag $tag is neither vX.Y.Z nor vX.Y.Z-alpha.N nor vX.Y.Z-rc.N"
 fi
 minor="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
 patch="${BASH_REMATCH[3]}"
