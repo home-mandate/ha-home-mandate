@@ -12,8 +12,9 @@ where the tag stands (`.github/scripts/release-base.sh`, tested by `tools/releas
 that it matches `version` in `app/config.yaml`, which the Supervisor uses as the image tag. It
 then builds `ghcr.io/home-mandate/ha-home-mandate:<version>` for `linux/amd64` and
 `linux/arm64`, signs it with cosign (keyless), attaches provenance and SBOMs, verifies all of
-that, tags the image and creates the GitHub release (a pre-release for `-rc.N`).
-`conformance-report.yml` attaches both conformance reports.
+that, tags the image and creates the GitHub release as a draft (a pre-release for `-rc.N`)
+with the SBOM of the sources. `conformance-report.yml` attaches both conformance reports to
+the draft, and the draft is published only with the attested reports and the SBOM attached.
 
 Before tagging: update `app/config.yaml` (`version`) and `app/CHANGELOG.md`.
 
@@ -23,7 +24,9 @@ git tag -a v0.1.0-rc.3 -m "Home-Mandate 0.1.0-rc.3"
 git push origin v0.1.0-rc.3
 ```
 
-Tags are immutable, so a failed release needs a new version (`-rc.N+1`).
+Tags and published releases are immutable, so a failed release needs a new version
+(`-rc.N+1`). A run that fails before the release is published leaves a draft; the image tag of
+that version exists already.
 
 ## How a version is tested
 
