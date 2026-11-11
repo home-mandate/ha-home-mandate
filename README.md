@@ -15,7 +15,7 @@ New here? The [guide on home-mandate.org](https://home-mandate.org/implementatio
 explains in a few minutes what it does and how to start; the
 [Home-Mandate Specification](https://home-mandate.org/) it implements is explained there as well.
 
-**Status: first version (0.1.0).** Expect rough edges, read the
+**Status: first version (0.1.1).** Expect rough edges, read the
 [limits of this version](#limits-of-this-version) and keep backups.
 
 ## Why
@@ -202,7 +202,7 @@ Home-Mandate conforms to the Home-Mandate Specification `v0.1.1` (manifest
 `07f0f0ecbf9bc52a8e8a53e92b31952099edc4c9d1c56b1366b3ae9abb36ea33`) in these classes
 (SPEC-v0 section 8.1), tested with the specification's test tool `mandate-conformance` on
 every pull request and with `make conformance`. The v0 formats are frozen since `v0.1.0`
-(SPEC-v0 section 14). The reports are attached to the release; 0.1.0 conforms to `v0.1.1`,
+(SPEC-v0 section 14). The reports are attached to the release; 0.1.1 and 0.1.0 conform to `v0.1.1`,
 0.1.0-rc.11 conforms to `v0.1.0`, 0.1.0-rc.10 conforms to `v0.1.0-rc.5`, 0.1.0-rc.9 was tested with `v0.1.0-rc.4`, which has the same
 cases, and 0.1.0-rc.8 conforms to `v0.1.0-rc.3`.
 <br clear="left">
