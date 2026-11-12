@@ -98,6 +98,30 @@ func (c *haConn) command(ctx context.Context, cmd map[string]any) (any, error) {
 	}
 }
 
+// confirmHTTPConfig confirms Home Assistant's HTTP configuration, as a human does after
+// changing it. Home Assistant 2026.9 takes the http section of configuration.yaml (TLS) as
+// a pending configuration on its first start and, unless it is confirmed within five
+// minutes, reverts to the stable one without TLS and restarts: every scenario that runs
+// after that mark would find Home Assistant gone, then speaking plain HTTP.
+func confirmHTTPConfig() error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	c, err := dialHA(ctx, env.haToken)
+	if err != nil {
+		return err
+	}
+	defer c.conn.CloseNow()
+	conf, err := c.command(ctx, map[string]any{"type": "http/config"})
+	if err != nil {
+		return err
+	}
+	if m, ok := conf.(map[string]any); !ok || m["pending"] == nil {
+		return nil // nothing to confirm (an older Home Assistant, or already stable)
+	}
+	_, err = c.command(ctx, map[string]any{"type": "http/config/promote"})
+	return err
+}
+
 // createUsers adds admin-approver, admin-other and user-plain with access tokens.
 func createUsers() error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)

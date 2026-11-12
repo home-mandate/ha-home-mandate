@@ -38,6 +38,7 @@ Fuzz targets (`FUZZ_TARGETS` in the Makefile; a new parser of input from outside
 | `internal/pdp:FuzzEvaluationEndpoint` | AuthZEN requests to the PDP endpoint | 400 or a well-formed decision; other subjects, households and unknown devices are `deny`; deterministic |
 | `internal/oauth:FuzzEndpoints` | Queries and forms of authorize, callback, consent, token, device authorization and pairing | No 5xx; OAuth JSON errors; redirects only to the sign-in, a registered redirect URI or the server itself; no agent admitted |
 | `internal/oauth:FuzzClientMetadata` | Client ID Metadata Documents (fetched from the internet) | `invalid_client` or a client with safe redirect URIs and a showable name |
+| `internal/dpop:FuzzParseProof` | `DPoP` proof headers at the token endpoint and `/mcp` | `ErrNoProof` or `ErrInvalidProof`; accepted only if signed by a test key |
 | `internal/agent:FuzzTokens` | Bearer and refresh tokens | Only the issued token authenticates, only for its resource; a wrong refresh token changes nothing |
 | `internal/mandate:FuzzPut` | Mandate documents (editor, import) | Defined errors; a refusal writes nothing; what is stored is what decisions use |
 | `internal/config:FuzzAppOptions` | The app's `options.json` | `ErrInvalid`, or certificate paths in `/ssl` and URLs that are origins |
@@ -49,7 +50,7 @@ Inputs that once failed stay in the package's `testdata/fuzz` and run with every
 
 | Scope | Line coverage |
 |---|---|
-| `home-mandate/spec/evaluator`, `internal/pdp`, `internal/oauth`, `internal/approval`, `internal/audit`, `internal/api` | ≥ 95 % |
+| `home-mandate/spec/evaluator`, `internal/pdp`, `internal/oauth`, `internal/approval`, `internal/audit`, `internal/api`, `internal/dpop` | ≥ 95 % |
 | Other Go packages | ≥ 85 % |
 | `web/src/lib` (logic, excluding pure presentation) | ≥ 85 % |
 | Mutation score `home-mandate/spec/evaluator` | ≥ 90 % killed mutants |
@@ -225,6 +226,10 @@ Every line is at least one test. New attack ideas are added here before they are
 - Bare `GET /pair`, any number of times → no session; its signed state is bound to the cookie, which a failed attempt clears (a client that keeps the cookie can try again, bounded by the request limits), expires after 10 minutes and is worthless after a restart; the session is created only for an administrator Home Assistant signed in
 - Client metadata fetch that failed → not repeated for a minute (at most 100 remembered); not remembered when the caller gave up or all fetch slots were busy, so nobody can block another client's document
 - Refused authorization requests, failed sign-ins, refused admissions, reused refresh tokens, requests over the rate limit → logged at most once a minute per kind
+- DPoP proof (`dpop.TestProofMutations`, `dpop.TestMalformedProofs`, `FuzzParseProof`): `typ` not `dpop+jwt`, `alg` `none`, `HS256`, `RS256` or not fitting the key, `jwk` missing, private (`d`, `k`), off the curve, small-order or non-canonical Ed25519, `crit`, member named twice at any level, signature of another key or changed claims, `htm`/`htu` of another request (host, path, scheme, port; query and fragment ignored), `iat` beyond ±60 s, `jti` missing or longer than 256 bytes, `ath` missing or of another token, two `DPoP` headers, more than 4 KiB → refused; a used `jti` → refused, per key; replay cache full → refused, never an old entry forgotten
+- DPoP at the token endpoint (`oauth.TestCodeFlowWithDPoP` and the tests beside it): a proof without a valid nonce → `use_dpop_nonce` with a fresh `DPoP-Nonce`, the code survives; an invalid proof → `invalid_dpop_proof` before the grant is looked at; a bound family refreshed without a proof or with another key → `invalid_dpop_proof`, logged, nothing rotated or revoked; `dpop_jkt` of the code not matched → refused; mode `required` or a client whose metadata say `dpop_bound_access_tokens` without a proof → refused before anybody is admitted; a pairing fetched without a proof where binding is required → its tokens revoked, `dpop_required` logged
+- DPoP binding (`agent.TestABoundAgentGetsNoBearerTokens`, `agent.TestABearerAgentBecomesBoundAtRefresh`, `agent.TestAnUnboundFamilyOfABoundAgentCannotBeBoundAtRefresh`): a bound agent gets no Bearer tokens (new family, reconnect, refresh of an older family, DPoP switched off); an older unbound family of a bound agent is withdrawn and cannot be bound to a new key at a refresh, only at a hand-out after a human's approval; a code bound by `dpop_jkt` stays bound when DPoP is switched off; changing `agents.binding` back or `tokens.dpop_jkt` → refused by the database; after the answer to an approval only the token counts, not the proof of the original request (`agent.TestStillAuthorizedChecksOnlyTheToken`)
+- DPoP at `/mcp` (`mcp.TestBoundTokensNeedAProofOfTheirKey`): a bound token as Bearer, without a proof, with a proof without `ath`, of another key, URL or method, or replayed → 401 with both challenges; an unbound token with the DPoP scheme → 401; Bearer in mode `required` or with an MCP protocol version that requires DPoP → 401; an expired bound token → 401 with `DPoP error="invalid_token"`, which makes the client refresh
 
 **Approval requests**
 - Approver device that is not a notify service of the Companion App (`notify.notify`, a group, a messenger, `mobile_app_` alone) → refused by `approver add`, the API (`approvers` Put) and the Home Assistant client; one stored earlier → not sent, the delivery is logged with the reason

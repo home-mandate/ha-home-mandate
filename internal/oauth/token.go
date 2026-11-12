@@ -43,21 +43,28 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusBadRequest, "invalid_client")
 		return
 	}
-	switch form["grant_type"] {
-	case "authorization_code":
-		s.exchangeCode(w, r, form)
-	case "refresh_token":
-		s.refresh(w, r, form)
-	case deviceGrantID:
-		s.pollDevice(w, r, form)
-	default:
+	grant := form["grant_type"]
+	if grant != "authorization_code" && grant != "refresh_token" && grant != deviceGrantID {
 		oauthError(w, http.StatusBadRequest, "unsupported_grant_type")
+		return
+	}
+	h, ok := s.holder(w, r)
+	if !ok {
+		return
+	}
+	switch grant {
+	case "authorization_code":
+		s.exchangeCode(w, r, form, h)
+	case "refresh_token":
+		s.refresh(w, r, form, h)
+	default:
+		s.pollDevice(w, r, form, h)
 	}
 }
 
 // exchangeCode redeems an authorization code once, for the client and redirect URI it
 // was issued to and with the PKCE verifier of its challenge; then the agent is admitted.
-func (s *Server) exchangeCode(w http.ResponseWriter, r *http.Request, form map[string]string) {
+func (s *Server) exchangeCode(w http.ResponseWriter, r *http.Request, form map[string]string, h agent.Holder) {
 	verifier := form["code_verifier"]
 	if form["code"] == "" || form["client_id"] == "" || form["redirect_uri"] == "" || verifier == "" {
 		oauthError(w, http.StatusBadRequest, "invalid_request")
@@ -70,7 +77,18 @@ func (s *Server) exchangeCode(w http.ResponseWriter, r *http.Request, form map[s
 		oauthError(w, http.StatusBadRequest, "invalid_grant")
 		return
 	}
-	s.admit(w, r, c.authz.client, c.authz.resource, c.decision)
+	// RFC 9449 section 10: a code bound by dpop_jkt is exchanged only with a proof of that
+	// key. Refused before the admission, so that nobody is admitted without the tokens.
+	h = requireFor(h, c.authz.client)
+	if c.authz.dpopJKT != "" {
+		h.Bind = true // the code was bound while DPoP was offered; switching off since changes nothing
+	}
+	if c.authz.dpopJKT != "" && h.JKT != c.authz.dpopJKT || h.Require && h.JKT == "" {
+		s.warn("code exchange refused: DPoP proof missing or of another key", "oauth_client", c.authz.client.ID)
+		oauthError(w, http.StatusBadRequest, errInvalidDPoPProof)
+		return
+	}
+	s.admit(w, r, c.authz.client, c.authz.resource, c.decision, h)
 }
 
 func pkceMatches(verifier, challenge string) bool {
@@ -81,11 +99,11 @@ func pkceMatches(verifier, challenge string) bool {
 // admit carries out the human's decision and returns the agent's first tokens. It
 // reports whether the failure was on the server side, so that a pairing can be retried;
 // the admission is not cancelled when the agent disconnects.
-func (s *Server) admit(w http.ResponseWriter, r *http.Request, client Client, resource string, d decision) (serverError bool) {
+func (s *Server) admit(w http.ResponseWriter, r *http.Request, client Client, resource string, d decision, h agent.Holder) (serverError bool) {
 	_, tokens, err := s.carryOut(r.Context(), client, resource, d)
 	switch {
 	case err == nil:
-		writeTokens(w, tokens)
+		s.handOut(w, r, tokens, h, client)
 	case refused(err):
 		s.warn("admission refused", "oauth_client", client.ID, "error", err)
 		oauthError(w, http.StatusBadRequest, "invalid_grant")
@@ -97,7 +115,7 @@ func (s *Server) admit(w http.ResponseWriter, r *http.Request, client Client, re
 	return false
 }
 
-func (s *Server) refresh(w http.ResponseWriter, r *http.Request, form map[string]string) {
+func (s *Server) refresh(w http.ResponseWriter, r *http.Request, form map[string]string, h agent.Holder) {
 	if form["refresh_token"] == "" || form["client_id"] == "" {
 		oauthError(w, http.StatusBadRequest, "invalid_request")
 		return
@@ -106,13 +124,16 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request, form map[string
 		oauthError(w, http.StatusBadRequest, "invalid_target")
 		return
 	}
-	tokens, err := s.cfg.Tokens.Refresh(r.Context(), form["refresh_token"], form["resource"], form["client_id"])
+	tokens, err := s.cfg.Tokens.Refresh(r.Context(), form["refresh_token"], form["resource"], form["client_id"], h)
 	switch {
 	case err == nil:
 		if tokens.Repeated {
 			s.warn("refresh token presented again within the grace period", "oauth_client", form["client_id"])
 		}
 		writeTokens(w, tokens)
+	case errors.Is(err, agent.ErrDPoP):
+		s.warn("refresh refused: DPoP proof missing or of another key", "oauth_client", form["client_id"])
+		oauthError(w, http.StatusBadRequest, errInvalidDPoPProof)
 	case errors.Is(err, agent.ErrInvalidGrant):
 		switch {
 		case errors.Is(err, agent.ErrRefreshReused):
@@ -127,7 +148,12 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request, form map[string
 	}
 }
 
+// writeTokens writes a pair; bound tokens have token_type DPoP (RFC 9449 section 5).
 func writeTokens(w http.ResponseWriter, p agent.TokenPair) {
-	writeJSON(w, http.StatusOK, tokenResponse{AccessToken: p.AccessToken, TokenType: "Bearer",
+	tokenType := "Bearer"
+	if p.JKT != "" {
+		tokenType = "DPoP"
+	}
+	writeJSON(w, http.StatusOK, tokenResponse{AccessToken: p.AccessToken, TokenType: tokenType,
 		ExpiresIn: int(agent.AccessTokenTTL.Seconds()), RefreshToken: p.RefreshToken})
 }

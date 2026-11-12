@@ -1003,6 +1003,36 @@ Decided by the maintainer on 2026-10-01.
    user. **Result:** the language of `get_config`, overridable per approver
    (`home-mandate approver add USER_ID SERVICE de|en`).
 
+6. **DPoP-bound tokens (2026-11-10, issues #61–#65).** A stolen access or refresh token
+   works anywhere until it expires or is revoked. **Decision: DPoP (RFC 9449), off by
+   default.** The app option `dpop` (`HM_DPOP`) is `off`, `optional` or `required`.
+   - **Binding per agent.** The first token an agent gets with a valid proof binds its token
+     family to the key's thumbprint (`tokens.dpop_jkt`), and the agent becomes `dpop`
+     (`agents.binding`). Database triggers keep both from changing back. A bound agent gets
+     no Bearer token any more, also after switching DPoP off; the only way back is removing
+     the agent and pairing anew. Becoming bound withdraws the agent's other unbound token
+     families, and such a family is never bound at a refresh: its stolen refresh token must
+     not bind it to the thief's key. A client that lost its key reconnects with the
+     household's consent, with a new key and only with DPoP.
+   - **One rule, one place.** `agent.Store` decides the key of every family (`decideKey`)
+     and checks it on every request (`Authenticate`). The token endpoint and `/mcp` only
+     pass on the thumbprint that `internal/dpop` verified.
+   - **Token endpoint.** A proof needs a server nonce (stateless HMAC over a timestamp, key in
+     memory, rotating every 5 minutes); `dpop_jkt` binds a code (section 10). A pairing gets
+     its tokens at the human's approval, so they are bound when the agent fetches them.
+   - **`/mcp`.** Our middleware runs before the SDK's Bearer middleware: `DPoP <token>`
+     needs a proof with `ath`; the token then goes on as Bearer, and the store compares the
+     key. A bound token as Bearer gets 401 (no downgrade). Every 401 carries a `DPoP`
+     challenge besides the `Bearer` one while DPoP is offered. No nonce at `/mcp`: the
+     ±60 s window and the `jti` cache cover replay without an extra round trip. The `jti`
+     is recorded only after the token fitted, so nobody without a token fills the cache.
+   - **End of the transition.** Bearer clients (claude.ai, ChatGPT, mcp-remote in #61) keep
+     working; short access tokens, rotation and the "unbound" badge are their protection. A
+     constant lists the MCP protocol versions that require DPoP (empty today); a release
+     adds one once MCP makes DPoP mandatory.
+   - **Limits.** DPoP stops the later use of a stolen token, not a live man-in-the-middle
+     who relays requests as they happen.
+
 **Toolchain (2026-10-01):**
 - Go 1.27.4 for `home-mandate`; build image `golang:1.27.4-alpine` pinned
   by digest (Dockerfile).

@@ -30,6 +30,7 @@ import (
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/dpop"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 	"github.com/home-mandate/ha-home-mandate/internal/intent"
 	"github.com/home-mandate/ha-home-mandate/internal/mandate"
@@ -181,6 +182,8 @@ func (f *fakeNow) advance(d time.Duration) {
 type harness struct {
 	clock    *fakeClock
 	now      *fakeNow // the gateway's clock
+	dpopMode dpop.Mode
+	proofs   *dpop.Verifier
 	t        testing.TB
 	url      string
 	token    string
@@ -289,9 +292,11 @@ func (h *harness) serve(auditor Auditor) string {
 		decider = h.decider
 	}
 	g := New(Config{Resource: testResource, ResourceMetadataURL: testMetadataURL, Agents: h.agents, PDP: decider, Approvals: h.approver, Journal: h.gatewayJournal(), Intents: h.gatewayIntents(), Catalog: h.catalog, HA: h.ha, Limiter: ratelimit.New(h.limiterNow), Audit: auditor, Version: "test",
-		TimeZone: h.timeZone, ServiceUser: h.serviceUser, TemperatureUnit: h.temperatureUnit, Now: h.now.Now, Logger: h.logger, ApprovalWait: h.approvalWait})
+		TimeZone: h.timeZone, ServiceUser: h.serviceUser, TemperatureUnit: h.temperatureUnit, Now: h.now.Now, Logger: h.logger, ApprovalWait: h.approvalWait,
+		DPoPMode: h.dpopMode})
 	g.cfg.Clock = h.clock
 	h.gw = g
+	h.proofs = g.cfg.DPoP
 	srv := httptest.NewServer(g.Handler())
 	h.t.Cleanup(srv.Close)
 	return srv.URL + Path

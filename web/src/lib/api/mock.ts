@@ -651,6 +651,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
       removed_at: null,
       removed_by_name: null,
       connected: true,
+      binding: 'none',
       requests_today: 0,
       actions_last_hour: 0,
       mandate: null,

@@ -28,6 +28,7 @@ import (
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/catalog"
 	"github.com/home-mandate/ha-home-mandate/internal/config"
+	"github.com/home-mandate/ha-home-mandate/internal/dpop"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 	"github.com/home-mandate/ha-home-mandate/internal/intent"
@@ -358,11 +359,14 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	if s.cfg.PublicURL != "" {
 		resource, metadata = s.cfg.PublicURL+mcp.Path, s.cfg.PublicURL+"/.well-known/oauth-protected-resource"+mcp.Path
 	}
+	// One verifier for the token endpoint and the MCP endpoint: one nonce key, one replay cache.
+	proofs := dpop.NewVerifier(time.Now)
 	gw := mcp.New(mcp.Config{Resource: resource, ResourceMetadataURL: metadata, Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
 		TemperatureUnit: g.temperatureUnit, TimeZone: g.householdTimeZone, ServiceUser: g.serviceUser,
-		Limiter: restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, ApprovalWait: s.cfg.ApprovalWait, Clock: s.log, Audit: s.log, Approvals: approvals, Journal: s.journal, Intents: s.intents, Logger: logger, Version: version})
+		Limiter: restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, ApprovalWait: s.cfg.ApprovalWait, Clock: s.log, Audit: s.log, Approvals: approvals, Journal: s.journal, Intents: s.intents, Logger: logger, Version: version,
+		DPoPMode: s.cfg.DPoP, DPoP: proofs})
 	g.mcp = gw
-	as, handler, err := withOAuth(s, gw.Handler(), http.HandlerFunc(g.serveDirect), resource, logger)
+	as, handler, err := withOAuth(s, gw.Handler(), http.HandlerFunc(g.serveDirect), resource, proofs, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -546,7 +550,7 @@ func (g *gateway) serveDirect(w http.ResponseWriter, r *http.Request) {
 // withOAuth adds the authorization server next to the MCP endpoint when a public URL is
 // configured; without one, OAuth is off, every token is refused and nobody can pair. The
 // UI of direct mode is served under /ui/ next to them.
-func withOAuth(s *state, mcpHandler, ui http.Handler, resource string, logger *slog.Logger) (*oauth.Server, http.Handler, error) {
+func withOAuth(s *state, mcpHandler, ui http.Handler, resource string, proofs *dpop.Verifier, logger *slog.Logger) (*oauth.Server, http.Handler, error) {
 	if s.cfg.PublicURL == "" {
 		logger.Warn("no public URL configured: OAuth is off, agents cannot be admitted")
 		return nil, mcpHandler, nil
@@ -557,7 +561,8 @@ func withOAuth(s *state, mcpHandler, ui http.Handler, resource string, logger *s
 		return nil, nil, err
 	}
 	as := oauth.New(oauth.Config{PublicURL: s.cfg.PublicURL, Resource: resource, SignIn: signIn,
-		Clients: oauth.NewCIMDResolver(nil), Admission: s.admission, Tokens: s.agents, Audit: s.log, Logger: logger})
+		Clients: oauth.NewCIMDResolver(nil), Admission: s.admission, Tokens: s.agents, Audit: s.log, Logger: logger,
+		DPoPMode: s.cfg.DPoP, DPoP: proofs})
 	mux := http.NewServeMux()
 	mux.Handle(mcp.Path, mcpHandler)
 	mux.Handle(api.DirectPrefix, ui)

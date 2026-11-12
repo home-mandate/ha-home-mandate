@@ -37,5 +37,13 @@ configuration:
       Home Assistant, wie dein Browser es erreicht, z. B. https://ha.example.org:8123. Nötig
       zusammen mit der öffentlichen URL: Die Anmeldung zum Zulassen eines Agenten läuft über
       Home Assistant.
+  dpop:
+    name: DPoP-gebundene Tokens
+    description: >-
+      off (Standard), optional oder required. Mit DPoP funktionieren die Tokens eines Agenten
+      nur zusammen mit einem Schlüssel, der bei seinem Client bleibt; ein gestohlenes Token
+      nützt anderswo nichts. optional bindet die Tokens der Agenten, die es können; required
+      lässt nur solche Agenten zu. Ein einmal gebundener Agent bleibt gebunden, auch wenn
+      DPoP wieder ausgeschaltet wird.
 network:
   8765/tcp: MCP-Endpunkt für KI-Agenten (HTTPS)

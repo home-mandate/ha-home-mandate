@@ -254,6 +254,7 @@ optional.
 | `HM_HA_BROWSER_URL` | origin of `HM_HA_URL` (`ws` → `http`, `wss` → `https`) | Home Assistant as the human's browser reaches it, for signing in. The default (`http://127.0.0.1:8123` in the example) works only for a browser on the same host, so set it. |
 | `HM_APPROVAL_TIMEOUT` | `120` | Upper limit in seconds for waiting for an answer to an approval request, 30 to 600. A mandate may only shorten it. |
 | `HM_LOG_LEVEL` | `info` | `debug`, `info`, `warning` or `error`. |
+| `HM_DPOP` | `off` | `off`, `optional` or `required`; see [DPoP-bound tokens](agents.md#dpop-bound-tokens). An agent bound once stays bound, also after switching back to `off`. |
 | `HM_PDP_ADDR` | – | Advanced. Loopback address (for example `127.0.0.1:8181`) for the AuthZEN evaluation endpoint (`POST /access/v1/evaluation`), for other gateways on the same host. Leave it unset otherwise. |
 | `HM_INGRESS_ADDR` | – | Advanced, not needed for the UI. Opens the UI's Ingress listener (for example `:8099`) for a proxy of your own that does what Home Assistant's Supervisor does: signs people in, sets `X-Remote-User-Id` and removes client copies of it. Used by the end-to-end tests. |
 | `HM_INGRESS_PROXY` | – | Required with `HM_INGRESS_ADDR`: the one IP address of that proxy. Requests from any other address get nothing, and the user must be a Home Assistant administrator. |

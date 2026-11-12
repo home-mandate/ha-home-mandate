@@ -10,13 +10,15 @@
     tone: 'positive' | 'neutral' | 'danger' | 'warning' | 'info';
     shape?: 'dot' | 'ring' | 'square';
     compact?: boolean;
+    /** Lets a long text wrap inside the pill, which then never gets wider than its column. */
+    wrap?: boolean;
     children: Snippet;
   }
 
-  let { tone, shape = 'dot', compact = false, children }: Props = $props();
+  let { tone, shape = 'dot', compact = false, wrap = false, children }: Props = $props();
 </script>
 
-<span class="pill {tone}" class:compact><span class="mark {shape}" aria-hidden="true"></span>{@render children()}</span>
+<span class="pill {tone}" class:compact class:wrap><span class="mark {shape}" aria-hidden="true"></span>{@render children()}</span>
 
 <style>
   .pill {
@@ -30,6 +32,12 @@
     font-size: var(--hm-font-size-xs);
     font-weight: var(--hm-font-weight-medium);
     white-space: nowrap;
+  }
+  .wrap {
+    max-inline-size: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    padding-block: 2px;
   }
   .compact {
     min-block-size: 24px;

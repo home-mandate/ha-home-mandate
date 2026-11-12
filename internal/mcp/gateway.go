@@ -35,6 +35,7 @@ import (
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/catalog"
+	"github.com/home-mandate/ha-home-mandate/internal/dpop"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 	"github.com/home-mandate/ha-home-mandate/internal/intent"
 	"github.com/home-mandate/ha-home-mandate/internal/pdp"
@@ -92,7 +93,7 @@ var (
 // Interfaces to the rest of the gateway.
 type (
 	Authenticator interface {
-		Authenticate(ctx context.Context, token, resource string) (agent.Agent, error)
+		Authenticate(ctx context.Context, token, resource, jkt string) (agent.Agent, error)
 		// StillAuthorized is Authenticate without the token's expiry, for the check after
 		// a late answer to an approval request.
 		StillAuthorized(ctx context.Context, token, resource string) (agent.Agent, error)
@@ -200,6 +201,10 @@ type Config struct {
 	// ApprovalWait is how long a tool call waits for the answer to an approval request
 	// before it returns the pending result (HM_APPROVAL_WAIT, default 45 s).
 	ApprovalWait time.Duration
+	// DPoPMode is whether DPoP is offered; DPoP checks proofs, shared with the
+	// authorization server (one nonce key, one replay cache). Nil makes one on Now.
+	DPoPMode dpop.Mode
+	DPoP     *dpop.Verifier
 }
 
 // Gateway serves the MCP tools.
@@ -215,8 +220,8 @@ type Gateway struct {
 	byKey        map[string]*waiting     // open requests by agent and idempotency key
 	keyLocks     [lockStripes]sync.Mutex // dedup.go
 	deviceLocks  [lockStripes]sync.Mutex
-	cooldowns    map[string]cooldown // waits after requests not approved, per agent and device
-	rejectedLog  time.Time           // last auth.rejected entry for an invalid token
+	cooldowns    map[string]cooldown  // waits after requests not approved, per agent and device
+	rejectedLog  map[string]time.Time // last auth.rejected entry per error code (invalid token or proof)
 	// statusLimiter bounds approval_status and approval_cancel per agent.
 	statusLimiter *ratelimit.Limiter
 	// closing: after Close, requests that end are left to the next start.
@@ -245,6 +250,12 @@ func New(cfg Config) *Gateway {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.DPoPMode == "" {
+		cfg.DPoPMode = dpop.ModeOff
+	}
+	if cfg.DPoP == nil {
+		cfg.DPoP = dpop.NewVerifier(cfg.Now)
+	}
 	if cfg.ApprovalLimit <= 0 {
 		cfg.ApprovalLimit = defaultApprovalLimit
 	}
@@ -254,7 +265,7 @@ func New(cfg Config) *Gateway {
 	if cfg.ApprovalWait <= 0 {
 		cfg.ApprovalWait = defaultApprovalWait
 	}
-	g := &Gateway{cfg: cfg, rateLimitLog: map[string]time.Time{}, pendingAsks: map[string]int{}, waits: map[string]*waiting{}, open: map[string]*waiting{},
+	g := &Gateway{cfg: cfg, rateLimitLog: map[string]time.Time{}, rejectedLog: map[string]time.Time{}, pendingAsks: map[string]int{}, waits: map[string]*waiting{}, open: map[string]*waiting{},
 		byKey:         map[string]*waiting{},
 		statusLimiter: ratelimit.New(cfg.Now), cooldowns: map[string]cooldown{}, server: sdk.NewServer(&sdk.Implementation{Name: "home-mandate", Version: cfg.Version}, nil)}
 	addTool(g.server, &sdk.Tool{Name: "list_devices",
@@ -343,20 +354,34 @@ func (g *Gateway) Handler() http.Handler {
 	h := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return g.server }, &sdk.StreamableHTTPOptions{
 		Stateless: true, JSONResponse: true, MaxRequestBodyBytes: maxRequestBytes, Logger: g.cfg.Logger,
 	})
-	protected := sdkauth.RequireBearerToken(g.verify, &sdkauth.RequireBearerTokenOptions{
-		ResourceMetadataURL: g.cfg.ResourceMetadataURL, AllowMissingExpiration: true})(h)
+	protected := g.withDPoP(sdkauth.RequireBearerToken(g.verify, &sdkauth.RequireBearerTokenOptions{
+		ResourceMetadataURL: g.cfg.ResourceMetadataURL, AllowMissingExpiration: true})(h))
 	mux := http.NewServeMux()
 	mux.Handle(Path, protected)
 	return mux
 }
 
-func (g *Gateway) verify(ctx context.Context, token string, _ *http.Request) (*sdkauth.TokenInfo, error) {
-	a, err := g.cfg.Agents.Authenticate(ctx, token, g.cfg.Resource)
+// verify checks the token with the key withDPoP found proved, if any; then the proof's
+// jti is recorded, so that only the holder of a valid token can fill the replay cache.
+func (g *Gateway) verify(ctx context.Context, token string, r *http.Request) (*sdkauth.TokenInfo, error) {
+	st := proofOf(r)
+	jkt := ""
+	if st != nil {
+		jkt = st.proof.JKT
+	}
+	a, err := g.cfg.Agents.Authenticate(ctx, token, g.cfg.Resource, jkt)
+	if err == nil && st != nil {
+		if err := g.cfg.DPoP.Accept(st.proof); err != nil {
+			st.replayed = true
+			g.recordRejectedCode(ctx, errInvalidDPoPProof)
+			return nil, sdkauth.ErrInvalidToken
+		}
+	}
 	if err != nil {
 		if !errors.Is(err, agent.ErrUnauthorized) {
 			g.cfg.Logger.Error("token check failed", "error", err)
 		}
-		g.recordRejectedToken(ctx)
+		g.recordRejectedCode(ctx, errInvalidToken)
 		return nil, sdkauth.ErrInvalidToken
 	}
 	// The token stays with the request so that it can be checked again after a human
@@ -372,19 +397,21 @@ func tokenOf(req *sdk.CallToolRequest) string {
 	return token
 }
 
-// recordRejectedToken logs at most one auth.rejected entry per interval: an invalid
-// token names no agent, and anyone on the network could otherwise fill the audit log.
-func (g *Gateway) recordRejectedToken(ctx context.Context) {
+// recordRejectedCode logs at most one auth.rejected entry per interval and code: an
+// invalid token or proof names no agent, and anyone on the network could otherwise fill
+// the audit log; per code, so that a flood of one kind hides no other. code is
+// errInvalidToken, errInvalidDPoPProof or errDPoPRequired.
+func (g *Gateway) recordRejectedCode(ctx context.Context, code string) {
 	now := g.cfg.Now()
 	g.mu.Lock()
-	if !g.rejectedLog.IsZero() && now.Sub(g.rejectedLog) < rateLimitLogInterval {
+	if last, ok := g.rejectedLog[code]; ok && now.Sub(last) < rateLimitLogInterval {
 		g.mu.Unlock()
 		return
 	}
-	g.rejectedLog = now
+	g.rejectedLog[code] = now
 	g.mu.Unlock()
 	if _, err := g.cfg.Audit.Append(context.WithoutCancel(ctx), audit.Entry{Event: audit.EventAuthRejected,
-		Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication, Error: "invalid_token"}}); err != nil {
+		Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication, Error: code}}); err != nil {
 		g.cfg.Logger.Error("audit log write failed", "error", err)
 	}
 }

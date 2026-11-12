@@ -135,6 +135,7 @@ func newHarness(t testing.TB) *harness {
 		Clients: fakeClients{
 			testClient:    {ID: testClient, Name: "Claude <b>Code</b>", RedirectURIs: []string{testRedirect, "https://app.example.org/cb"}, Verified: true},
 			"n8n-kitchen": {ID: "n8n-kitchen", Name: "n8n-kitchen"},
+			dpopClient:    {ID: dpopClient, Name: "Bound client", RedirectURIs: []string{testRedirect}, Verified: true, DPoPBound: true},
 		},
 		Admission: adm, Tokens: agents, Audit: log, Now: clock.Now})
 	h.srv = httptest.NewTLSServer(h.server.Handler())
@@ -358,7 +359,7 @@ func TestAuthorizationCodeFlow(t *testing.T) {
 		header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("token = %d %v", status, tokens)
 	}
-	a, err := h.agents.Authenticate(context.Background(), tokens["access_token"].(string), testResource)
+	a, err := h.agents.Authenticate(context.Background(), tokens["access_token"].(string), testResource, "")
 	if err != nil || a.DisplayName != "Claude" || a.OAuthClient != testClient || !a.ClientVerified || a.CreatedBy != "u-admin" {
 		t.Errorf("agent = %+v, %v", a, err)
 	}
@@ -377,7 +378,7 @@ func TestAuthorizationCodeFlow(t *testing.T) {
 	if status, out, _ := h.tokenRequest(refresh); status != http.StatusBadRequest || out["error"] != "invalid_grant" {
 		t.Errorf("reused refresh token = %d %v", status, out)
 	}
-	if _, err := h.agents.Authenticate(context.Background(), next["access_token"].(string), testResource); err == nil {
+	if _, err := h.agents.Authenticate(context.Background(), next["access_token"].(string), testResource, ""); err == nil {
 		t.Error("token of the reused family still valid")
 	}
 	out := h.auditLog()
@@ -811,7 +812,11 @@ func TestErrorsReachTheAgentWithoutDetails(t *testing.T) {
 
 type failingTokens struct{}
 
-func (failingTokens) Refresh(context.Context, string, string, string) (agent.TokenPair, error) {
+func (failingTokens) Refresh(context.Context, string, string, string, agent.Holder) (agent.TokenPair, error) {
+	return agent.TokenPair{}, errors.New("database is locked")
+}
+
+func (failingTokens) Bind(context.Context, agent.TokenPair, agent.Holder) (agent.TokenPair, error) {
 	return agent.TokenPair{}, errors.New("database is locked")
 }
 

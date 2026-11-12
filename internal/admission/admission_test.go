@@ -173,7 +173,7 @@ func TestAdmit(t *testing.T) {
 	if a.DisplayName != "Claude" || a.OAuthClient != client || !a.ClientVerified || a.CreatedBy != admin.ID {
 		t.Errorf("agent = %+v", a)
 	}
-	if got, err := e.agents.Authenticate(ctx, tokens.AccessToken, resource); err != nil || got.ClientID != a.ClientID {
+	if got, err := e.agents.Authenticate(ctx, tokens.AccessToken, resource, ""); err != nil || got.ClientID != a.ClientID {
 		t.Errorf("Authenticate = %+v, %v", got, err)
 	}
 	loaded, err := e.mandates.ForAgent(ctx, a.ClientID)

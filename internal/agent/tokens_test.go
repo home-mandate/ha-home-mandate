@@ -74,7 +74,7 @@ func TestIssueTokens(t *testing.T) {
 		agent.RefreshTokenTTL != 30*24*time.Hour {
 		t.Errorf("expires %v", p.ExpiresAt)
 	}
-	got, err := s.Authenticate(context.Background(), p.AccessToken, resource)
+	got, err := s.Authenticate(context.Background(), p.AccessToken, resource, "")
 	if err != nil || got.ClientID != a.ClientID {
 		t.Errorf("Authenticate = %+v, %v", got, err)
 	}
@@ -105,7 +105,7 @@ func TestTokensAreStoredOnlyAsHashes(t *testing.T) {
 	s, _, db := newStore(t)
 	a := register(t, s, "Voice assistant")
 	p := issue(t, s, a.ClientID)
-	refreshed, err := s.Refresh(context.Background(), p.RefreshToken, resource, "")
+	refreshed, err := s.Refresh(context.Background(), p.RefreshToken, resource, "", agent.Holder{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestAuthenticateRejects(t *testing.T) {
 		"resource with slash": {valid, resource + "/"},
 		"no resource":         {valid, ""},
 	} {
-		if _, err := s.Authenticate(ctx, tc.token, tc.resource); !errors.Is(err, agent.ErrUnauthorized) {
+		if _, err := s.Authenticate(ctx, tc.token, tc.resource, ""); !errors.Is(err, agent.ErrUnauthorized) {
 			t.Errorf("%s: Authenticate = %v, want ErrUnauthorized", name, err)
 		}
 	}
@@ -203,11 +203,11 @@ func TestAccessTokenExpiresAfterTenMinutes(t *testing.T) {
 	a := register(t, s, "A")
 	p := issue(t, s, a.ClientID)
 	c.Set(t0.Add(10*time.Minute - time.Second))
-	if _, err := s.Authenticate(ctx, p.AccessToken, resource); err != nil {
+	if _, err := s.Authenticate(ctx, p.AccessToken, resource, ""); err != nil {
 		t.Errorf("just before expiry: %v", err)
 	}
 	c.Set(t0.Add(10 * time.Minute))
-	if _, err := s.Authenticate(ctx, p.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
+	if _, err := s.Authenticate(ctx, p.AccessToken, resource, ""); !errors.Is(err, agent.ErrUnauthorized) {
 		t.Errorf("at expiry: %v", err)
 	}
 }
@@ -220,21 +220,21 @@ func TestRefreshRotates(t *testing.T) {
 	p := issue(t, s, a.ClientID)
 
 	c.Set(t0.Add(time.Hour))
-	next, err := s.Refresh(ctx, p.RefreshToken, "", "")
+	next, err := s.Refresh(ctx, p.RefreshToken, "", "", agent.Holder{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if next.RefreshToken == p.RefreshToken || next.AccessToken == p.AccessToken || !next.ExpiresAt.Equal(t0.Add(time.Hour+10*time.Minute)) {
 		t.Errorf("refreshed = %+v", next)
 	}
-	if got, err := s.Authenticate(ctx, next.AccessToken, resource); err != nil || got.ClientID != a.ClientID {
+	if got, err := s.Authenticate(ctx, next.AccessToken, resource, ""); err != nil || got.ClientID != a.ClientID {
 		t.Errorf("new access token: %+v, %v", got, err)
 	}
 	// The resource of a refresh request must match the original one.
-	if _, err := s.Refresh(ctx, next.RefreshToken, "https://other.example.org/mcp", ""); !errors.Is(err, agent.ErrInvalidGrant) {
+	if _, err := s.Refresh(ctx, next.RefreshToken, "https://other.example.org/mcp", "", agent.Holder{}); !errors.Is(err, agent.ErrInvalidGrant) {
 		t.Errorf("other resource: %v", err)
 	}
-	if _, err := s.Refresh(ctx, next.RefreshToken, resource, ""); err != nil {
+	if _, err := s.Refresh(ctx, next.RefreshToken, resource, "", agent.Holder{}); err != nil {
 		t.Errorf("same resource after a refused attempt: %v", err)
 	}
 }
@@ -245,7 +245,7 @@ func TestRefreshTokenExpiresAfterThirtyDays(t *testing.T) {
 	a := register(t, s, "A")
 	p := issue(t, s, a.ClientID)
 	c.Set(t0.Add(30 * 24 * time.Hour))
-	if _, err := s.Refresh(context.Background(), p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
+	if _, err := s.Refresh(context.Background(), p.RefreshToken, resource, "", agent.Holder{}); !errors.Is(err, agent.ErrInvalidGrant) {
 		t.Errorf("expired refresh token: %v", err)
 	}
 }
@@ -257,11 +257,11 @@ func TestRefreshTokenReuseRevokesTheWholeChain(t *testing.T) {
 	ctx := context.Background()
 	a := register(t, s, "A")
 	first := issue(t, s, a.ClientID)
-	second, err := s.Refresh(ctx, first.RefreshToken, resource, "")
+	second, err := s.Refresh(ctx, first.RefreshToken, resource, "", agent.Holder{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	third, err := s.Refresh(ctx, second.RefreshToken, resource, "")
+	third, err := s.Refresh(ctx, second.RefreshToken, resource, "", agent.Holder{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,18 +269,18 @@ func TestRefreshTokenReuseRevokesTheWholeChain(t *testing.T) {
 
 	// An attacker replays the first refresh token after the grace period.
 	clk.Set(t0.Add(agent.RefreshGracePeriod + time.Second))
-	if _, err := s.Refresh(ctx, first.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) || !errors.Is(err, agent.ErrRefreshReused) {
+	if _, err := s.Refresh(ctx, first.RefreshToken, resource, "", agent.Holder{}); !errors.Is(err, agent.ErrInvalidGrant) || !errors.Is(err, agent.ErrRefreshReused) {
 		t.Fatalf("reuse = %v", err)
 	}
 	for name, token := range map[string]string{"first access": first.AccessToken, "second access": second.AccessToken, "third access": third.AccessToken} {
-		if _, err := s.Authenticate(ctx, token, resource); !errors.Is(err, agent.ErrUnauthorized) {
+		if _, err := s.Authenticate(ctx, token, resource, ""); !errors.Is(err, agent.ErrUnauthorized) {
 			t.Errorf("%s after reuse: %v", name, err)
 		}
 	}
-	if _, err := s.Refresh(ctx, third.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
+	if _, err := s.Refresh(ctx, third.RefreshToken, resource, "", agent.Holder{}); !errors.Is(err, agent.ErrInvalidGrant) {
 		t.Errorf("latest refresh token after reuse: %v", err)
 	}
-	if _, err := s.Authenticate(ctx, unrelated.AccessToken, resource); err != nil {
+	if _, err := s.Authenticate(ctx, unrelated.AccessToken, resource, ""); err != nil {
 		t.Errorf("other family affected: %v", err)
 	}
 	out := exported(t, log)
@@ -305,7 +305,9 @@ func TestConcurrentRefreshesWithinTheGracePeriodAllSucceed(t *testing.T) {
 	pairs := make([]agent.TokenPair, 8)
 	errs := make([]error, len(pairs))
 	for i := range errs {
-		wg.Go(func() { pairs[i], errs[i] = s.Refresh(context.Background(), p.RefreshToken, resource, "") })
+		wg.Go(func() {
+			pairs[i], errs[i] = s.Refresh(context.Background(), p.RefreshToken, resource, "", agent.Holder{})
+		})
 	}
 	wg.Wait()
 	repeated := 0
@@ -316,7 +318,7 @@ func TestConcurrentRefreshesWithinTheGracePeriodAllSucceed(t *testing.T) {
 		if pairs[i].Repeated {
 			repeated++
 		}
-		if _, err := s.Authenticate(context.Background(), pairs[i].AccessToken, resource); err != nil {
+		if _, err := s.Authenticate(context.Background(), pairs[i].AccessToken, resource, ""); err != nil {
 			t.Errorf("access token %d: %v", i, err)
 		}
 	}
@@ -336,28 +338,28 @@ func TestRefreshAgainWithinTheGracePeriod(t *testing.T) {
 	ctx := context.Background()
 	a := register(t, s, "A")
 	first := issue(t, s, a.ClientID)
-	second, err := s.Refresh(ctx, first.RefreshToken, resource, "")
+	second, err := s.Refresh(ctx, first.RefreshToken, resource, "", agent.Holder{})
 	if err != nil || second.Repeated {
 		t.Fatalf("rotation: %+v %v", second, err)
 	}
 	clk.Set(t0.Add(agent.RefreshGracePeriod))
-	again, err := s.Refresh(ctx, first.RefreshToken, resource, "")
+	again, err := s.Refresh(ctx, first.RefreshToken, resource, "", agent.Holder{})
 	if err != nil || !again.Repeated {
 		t.Fatalf("within the grace period: %+v %v", again, err)
 	}
 	for name, p := range map[string]agent.TokenPair{"second": second, "again": again} {
-		if _, err := s.Authenticate(ctx, p.AccessToken, resource); err != nil {
+		if _, err := s.Authenticate(ctx, p.AccessToken, resource, ""); err != nil {
 			t.Errorf("%s access token: %v", name, err)
 		}
 	}
-	if _, err := s.Refresh(ctx, again.RefreshToken, resource, ""); err != nil {
+	if _, err := s.Refresh(ctx, again.RefreshToken, resource, "", agent.Holder{}); err != nil {
 		t.Errorf("refresh token of the repeated pair: %v", err)
 	}
 	clk.Set(t0.Add(agent.RefreshGracePeriod + time.Second))
-	if _, err := s.Refresh(ctx, first.RefreshToken, resource, ""); !errors.Is(err, agent.ErrRefreshReused) {
+	if _, err := s.Refresh(ctx, first.RefreshToken, resource, "", agent.Holder{}); !errors.Is(err, agent.ErrRefreshReused) {
 		t.Fatalf("after the grace period: %v", err)
 	}
-	if _, err := s.Authenticate(ctx, second.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
+	if _, err := s.Authenticate(ctx, second.AccessToken, resource, ""); !errors.Is(err, agent.ErrUnauthorized) {
 		t.Errorf("family not revoked: %v", err)
 	}
 }
@@ -371,14 +373,14 @@ func TestRefreshGracePeriodExceptions(t *testing.T) {
 		withClock(s)
 		a := register(t, s, "A")
 		p := issue(t, s, a.ClientID)
-		if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); err != nil {
+		if _, err := s.Refresh(ctx, p.RefreshToken, resource, "", agent.Holder{}); err != nil {
 			t.Fatal(err)
 		}
 		return s, a, p
 	}
 	t.Run("another client", func(t *testing.T) {
 		s, _, p := used(t)
-		if _, err := s.Refresh(ctx, p.RefreshToken, resource, "https://evil.example.org/c.json"); !errors.Is(err, agent.ErrRefreshWrongClient) {
+		if _, err := s.Refresh(ctx, p.RefreshToken, resource, "https://evil.example.org/c.json", agent.Holder{}); !errors.Is(err, agent.ErrRefreshWrongClient) {
 			t.Errorf("got %v", err)
 		}
 	})
@@ -387,7 +389,7 @@ func TestRefreshGracePeriodExceptions(t *testing.T) {
 		if err := s.Revoke(ctx, a.ClientID, admin); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
+		if _, err := s.Refresh(ctx, p.RefreshToken, resource, "", agent.Holder{}); !errors.Is(err, agent.ErrInvalidGrant) {
 			t.Errorf("got %v", err)
 		}
 	})
@@ -395,11 +397,11 @@ func TestRefreshGracePeriodExceptions(t *testing.T) {
 		s, _, p := used(t)
 		clk := withClock(s)
 		clk.Set(t0.Add(agent.RefreshGracePeriod + time.Second))
-		if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrRefreshReused) {
+		if _, err := s.Refresh(ctx, p.RefreshToken, resource, "", agent.Holder{}); !errors.Is(err, agent.ErrRefreshReused) {
 			t.Fatalf("reuse: %v", err)
 		}
 		clk.Set(t0) // back inside the grace period: the revoked family stays revoked
-		if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
+		if _, err := s.Refresh(ctx, p.RefreshToken, resource, "", agent.Holder{}); !errors.Is(err, agent.ErrInvalidGrant) {
 			t.Errorf("got %v", err)
 		}
 	})
@@ -410,17 +412,17 @@ func TestRefreshGracePeriodExceptions(t *testing.T) {
 		clk.Set(t0.Add(-agent.RefreshTokenTTL))
 		p := issue(t, s, a.ClientID)
 		clk.Set(t0.Add(-time.Second)) // used one second before it expires
-		if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); err != nil {
+		if _, err := s.Refresh(ctx, p.RefreshToken, resource, "", agent.Holder{}); err != nil {
 			t.Fatal(err)
 		}
 		clk.Set(t0.Add(time.Second)) // within the grace period, but expired
-		if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) || errors.Is(err, agent.ErrRefreshReused) {
+		if _, err := s.Refresh(ctx, p.RefreshToken, resource, "", agent.Holder{}); !errors.Is(err, agent.ErrInvalidGrant) || errors.Is(err, agent.ErrRefreshReused) {
 			t.Errorf("got %v", err)
 		}
 	})
 	t.Run("other resource", func(t *testing.T) {
 		s, _, p := used(t)
-		if _, err := s.Refresh(ctx, p.RefreshToken, "https://other.example.org/mcp", ""); !errors.Is(err, agent.ErrInvalidGrant) || errors.Is(err, agent.ErrRefreshReused) {
+		if _, err := s.Refresh(ctx, p.RefreshToken, "https://other.example.org/mcp", "", agent.Holder{}); !errors.Is(err, agent.ErrInvalidGrant) || errors.Is(err, agent.ErrRefreshReused) {
 			t.Errorf("got %v", err)
 		}
 	})
@@ -435,14 +437,14 @@ func TestRefreshRejects(t *testing.T) {
 		"empty": "", "access token": p.AccessToken, "unknown": "hmr_" + strings.Repeat("A", 43),
 		"bad encoding": "hmr_" + strings.Repeat("*", 43), "wrong length": p.RefreshToken + "A",
 	} {
-		if _, err := s.Refresh(ctx, token, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
+		if _, err := s.Refresh(ctx, token, resource, "", agent.Holder{}); !errors.Is(err, agent.ErrInvalidGrant) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	if err := s.Revoke(ctx, a.ClientID, admin); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
+	if _, err := s.Refresh(ctx, p.RefreshToken, resource, "", agent.Holder{}); !errors.Is(err, agent.ErrInvalidGrant) {
 		t.Errorf("revoked agent: %v", err)
 	}
 }
@@ -455,13 +457,13 @@ func TestRevokeRevokesAccessAndRefreshTokens(t *testing.T) {
 	if err := s.Revoke(ctx, a.ClientID, admin); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Authenticate(ctx, p.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
+	if _, err := s.Authenticate(ctx, p.AccessToken, resource, ""); !errors.Is(err, agent.ErrUnauthorized) {
 		t.Errorf("access token of revoked agent: %v", err)
 	}
-	if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
+	if _, err := s.Refresh(ctx, p.RefreshToken, resource, "", agent.Holder{}); !errors.Is(err, agent.ErrInvalidGrant) {
 		t.Errorf("refresh token of revoked agent: %v", err)
 	}
-	if _, err := s.Authenticate(ctx, q.AccessToken, resource); err != nil {
+	if _, err := s.Authenticate(ctx, q.AccessToken, resource, ""); err != nil {
 		t.Errorf("other agent affected: %v", err)
 	}
 }
@@ -489,13 +491,13 @@ func TestEmergencyStop(t *testing.T) {
 	if on, _ := s.EmergencyStopActive(ctx); !on {
 		t.Error("not active")
 	}
-	if _, err := s.Authenticate(ctx, pa.AccessToken, resource); err != nil {
+	if _, err := s.Authenticate(ctx, pa.AccessToken, resource, ""); err != nil {
 		t.Errorf("access during stop: %v", err)
 	}
 	if _, err := s.StillAuthorized(ctx, pa.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
 		t.Errorf("answer during stop: %v", err)
 	}
-	rotated, err := s.Refresh(ctx, pb.RefreshToken, resource, "")
+	rotated, err := s.Refresh(ctx, pb.RefreshToken, resource, "", agent.Holder{})
 	if err != nil {
 		t.Fatalf("refresh during stop: %v", err)
 	}
@@ -507,7 +509,7 @@ func TestEmergencyStop(t *testing.T) {
 		t.Fatalf("release = %v, %v", changed, err)
 	}
 	for _, token := range []string{pa.AccessToken, rotated.AccessToken} {
-		if _, err := s.Authenticate(ctx, token, resource); err != nil {
+		if _, err := s.Authenticate(ctx, token, resource, ""); err != nil {
 			t.Errorf("token after release: %v", err)
 		}
 	}
@@ -539,10 +541,10 @@ func TestWithdrawAllTokens(t *testing.T) {
 			}
 			check := func(when string) {
 				t.Helper()
-				if _, err := s.Authenticate(ctx, p.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
+				if _, err := s.Authenticate(ctx, p.AccessToken, resource, ""); !errors.Is(err, agent.ErrUnauthorized) {
 					t.Errorf("access %s: %v", when, err)
 				}
-				if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); !errors.Is(err, agent.ErrInvalidGrant) {
+				if _, err := s.Refresh(ctx, p.RefreshToken, resource, "", agent.Holder{}); !errors.Is(err, agent.ErrInvalidGrant) {
 					t.Errorf("refresh %s: %v", when, err)
 				}
 			}
@@ -552,7 +554,7 @@ func TestWithdrawAllTokens(t *testing.T) {
 			}
 			check("after the release")
 			fresh := issue(t, s, a.ClientID)
-			if _, err := s.Authenticate(ctx, fresh.AccessToken, resource); err != nil {
+			if _, err := s.Authenticate(ctx, fresh.AccessToken, resource, ""); err != nil {
 				t.Errorf("new token after release: %v", err)
 			}
 			out := exported(t, log)
@@ -578,7 +580,7 @@ func TestEmergencyStopSetByAnotherStoreTakesEffect(t *testing.T) {
 	if _, err := cli.WithdrawAllTokens(ctx, admin); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Authenticate(ctx, p.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
+	if _, err := s.Authenticate(ctx, p.AccessToken, resource, ""); !errors.Is(err, agent.ErrUnauthorized) {
 		t.Errorf("Authenticate = %v", err)
 	}
 }
@@ -600,7 +602,7 @@ func TestPurgeExpiredTokens(t *testing.T) {
 	if left != 2 {
 		t.Errorf("%d tokens left", left)
 	}
-	if _, err := s.Authenticate(ctx, keep.AccessToken, resource); err != nil {
+	if _, err := s.Authenticate(ctx, keep.AccessToken, resource, ""); err != nil {
 		t.Errorf("current token: %v", err)
 	}
 }
@@ -614,10 +616,10 @@ func TestTokenFunctionsReportDatabaseErrors(t *testing.T) {
 	if _, err := s.IssueTokens(ctx, a.ClientID, resource); err == nil {
 		t.Error("IssueTokens succeeded")
 	}
-	if _, err := s.Authenticate(ctx, p.AccessToken, resource); err == nil || errors.Is(err, agent.ErrUnauthorized) {
+	if _, err := s.Authenticate(ctx, p.AccessToken, resource, ""); err == nil || errors.Is(err, agent.ErrUnauthorized) {
 		t.Errorf("Authenticate = %v, want a database error", err)
 	}
-	if _, err := s.Refresh(ctx, p.RefreshToken, resource, ""); err == nil || errors.Is(err, agent.ErrInvalidGrant) {
+	if _, err := s.Refresh(ctx, p.RefreshToken, resource, "", agent.Holder{}); err == nil || errors.Is(err, agent.ErrInvalidGrant) {
 		t.Errorf("Refresh = %v, want a database error", err)
 	}
 	if _, err := s.SetEmergencyStop(ctx, true, admin); err == nil {
@@ -650,10 +652,10 @@ func TestRefreshChecksTheOAuthClient(t *testing.T) {
 		t.Errorf("agent = %+v", got)
 	}
 	p := issue(t, s, a.ClientID)
-	if _, err := s.Refresh(ctx, p.RefreshToken, resource, "https://evil.example.org/client.json"); !errors.Is(err, agent.ErrInvalidGrant) {
+	if _, err := s.Refresh(ctx, p.RefreshToken, resource, "https://evil.example.org/client.json", agent.Holder{}); !errors.Is(err, agent.ErrInvalidGrant) {
 		t.Errorf("other client: %v", err)
 	}
-	if _, err := s.Refresh(ctx, p.RefreshToken, resource, "https://claude.example.org/client.json"); err != nil {
+	if _, err := s.Refresh(ctx, p.RefreshToken, resource, "https://claude.example.org/client.json", agent.Holder{}); err != nil {
 		t.Errorf("own client after a refused attempt: %v", err)
 	}
 }
@@ -676,20 +678,20 @@ func TestRefreshReuseByAnotherClientKeepsTheFamily(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := issue(t, s, a.ClientID)
-	second, err := s.Refresh(ctx, first.RefreshToken, resource, own)
+	second, err := s.Refresh(ctx, first.RefreshToken, resource, own, agent.Holder{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for name, token := range map[string]string{"used": first.RefreshToken, "unused": second.RefreshToken} {
-		_, err := s.Refresh(ctx, token, resource, "https://evil.example.org/client.json")
+		_, err := s.Refresh(ctx, token, resource, "https://evil.example.org/client.json", agent.Holder{})
 		if !errors.Is(err, agent.ErrInvalidGrant) || errors.Is(err, agent.ErrRefreshReused) || !errors.Is(err, agent.ErrRefreshWrongClient) {
 			t.Errorf("%s token from another client: %v", name, err)
 		}
 	}
-	if _, err := s.Authenticate(ctx, second.AccessToken, resource); err != nil {
+	if _, err := s.Authenticate(ctx, second.AccessToken, resource, ""); err != nil {
 		t.Errorf("family revoked by another client: %v", err)
 	}
-	if _, err := s.Refresh(ctx, second.RefreshToken, resource, own); err != nil {
+	if _, err := s.Refresh(ctx, second.RefreshToken, resource, own, agent.Holder{}); err != nil {
 		t.Errorf("own client afterwards: %v", err)
 	}
 	out := exported(t, log)
@@ -743,7 +745,7 @@ func TestStillAuthorizedIgnoresOnlyTheExpiry(t *testing.T) {
 	a := register(t, s, "A")
 	p := issue(t, s, a.ClientID)
 	c.Set(t0.Add(time.Hour))
-	if _, err := s.Authenticate(ctx, p.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
+	if _, err := s.Authenticate(ctx, p.AccessToken, resource, ""); !errors.Is(err, agent.ErrUnauthorized) {
 		t.Fatalf("expired token authenticated: %v", err)
 	}
 	if got, err := s.StillAuthorized(ctx, p.AccessToken, resource); err != nil || got.ClientID != a.ClientID {

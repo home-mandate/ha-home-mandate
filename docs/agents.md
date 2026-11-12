@@ -184,6 +184,37 @@ front of them as for Claude Desktop. For your own scripts, implement the Device
 Authorization Grant (RFC 8628) against `/oauth/device_authorization` and `/oauth/token`
 with `resource` set to the MCP endpoint URL, and show the user code to the human.
 
+## DPoP-bound tokens
+
+With DPoP (RFC 9449), an agent's tokens work only together with a key that stays with its
+client: whoever steals a token cannot use it elsewhere. It is off by default; switch it on
+with the app option `dpop` (`HM_DPOP` in container mode):
+
+- `off`: Home-Mandate does not offer DPoP. Agents that were bound before stay bound.
+- `optional`: agents whose client supports DPoP get bound tokens, all others keep working
+  with Bearer tokens.
+- `required`: only agents whose client supports DPoP are admitted, and Bearer tokens are
+  refused.
+
+The **Agents** page shows each agent as **Bound (DPoP)** or **Unbound**. Unbound means: a
+stolen token could be used elsewhere until it expires, at most 10 minutes for an access
+token; the refresh token is rotated and tied to the agent's client. An agent that was
+bound once stays bound. To use Bearer tokens again, revoke and remove it and pair the
+client anew.
+
+Which clients support it: clients built on the MCP TypeScript SDK 2.2 or later with
+`OAuthClientProvider.dpop()`. claude.ai, ChatGPT and `mcp-remote` use Bearer tokens today
+and keep working with `optional`.
+
+A DPoP client that does not keep its key across restarts gets a new key each time. Its
+refresh token then no longer fits, and it has to sign in again, which needs your consent:
+on the consent page choose **Reconnect** to keep its entry and mandate. Configure such a
+client to keep its key if it can.
+
+DPoP does not protect against someone who sits between the client and Home-Mandate and
+passes the client's requests on as they happen; TLS does that. It protects against using a
+token later or from somewhere else.
+
 ## The tools agents see
 
 | Tool | Input | What it does |

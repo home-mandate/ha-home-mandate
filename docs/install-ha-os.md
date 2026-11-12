@@ -68,6 +68,7 @@ app; invalid values stop the start with a message in the log.
 | `ha_browser_url` | Home Assistant URL for your browser | empty | Required together with `public_url`. Home Assistant as your browser reaches it, see below. |
 | `approval_timeout_seconds` | Approval timeout | `120` | How long an action waits for an answer to an approval request, 30 to 600 seconds. A mandate may only shorten it. |
 | `log_level` | Log level | `info` | `debug`, `info`, `warning` or `error`. |
+| `dpop` | DPoP-bound tokens | `off` | `off`, `optional` or `required`; see [DPoP-bound tokens](agents.md#dpop-bound-tokens). An agent bound once stays bound, also after switching back to `off`. |
 
 ### `public_url`
 

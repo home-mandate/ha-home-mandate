@@ -92,6 +92,30 @@ func TestResolveAcceptsAClientThatAlsoSupportsNone(t *testing.T) {
 	}
 }
 
+// RFC 9449 section 5.2: a client whose metadata say dpop_bound_access_tokens gets only
+// bound tokens; without the member, or with false, nothing changes.
+func TestResolveReadsDPoPBoundAccessTokens(t *testing.T) {
+	c, r := newCIMDServer(t)
+	for path, want := range map[string]bool{
+		"/bound.json":   true,
+		"/unbound.json": false,
+		"/plain.json":   false,
+	} {
+		doc := goodDoc
+		if path != "/plain.json" {
+			doc = strings.Replace(goodDoc, `"response_types"`, fmt.Sprintf(`"dpop_bound_access_tokens":%t,"response_types"`, want), 1)
+		}
+		got, err := r.Resolve(context.Background(), c.json(path, doc))
+		if err != nil || got.DPoPBound != want {
+			t.Errorf("%s: %+v, %v", path, got, err)
+		}
+	}
+	if _, err := r.Resolve(context.Background(), c.json("/string.json", strings.Replace(goodDoc, `"response_types"`,
+		`"dpop_bound_access_tokens":"true","response_types"`, 1))); !errors.Is(err, ErrInvalidClient) {
+		t.Errorf("not a boolean: %v", err)
+	}
+}
+
 // Negative catalog: client metadata unreachable, wrong format, client ID ≠ URL → rejected.
 func TestResolveRejectsBadDocuments(t *testing.T) {
 	c, r := newCIMDServer(t)

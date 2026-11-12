@@ -134,8 +134,8 @@ func setUp() error {
 	env.network = "hm-e2e-net-" + env.id
 	env.cimdNet, env.cimd = "hm-e2e-cimd-net-"+env.id, "hm-e2e-cimd-"+env.id
 
-	for _, step := range []func() error{prepareImage, makeCertificates, createNetwork, startHA, onboard, createUsers, startCIMD,
-		startGateway, startIngress} {
+	for _, step := range []func() error{prepareImage, makeCertificates, createNetwork, startHA, onboard, createUsers, confirmHTTPConfig,
+		startCIMD, startGateway, startIngress} {
 		if err := step(); err != nil {
 			return err
 		}
@@ -429,6 +429,8 @@ func startGateway() error {
 		// Shorter than the mandates' approval timeout (10 s), so that a request without an
 		// answer gives the pending result (issue #27).
 		"-e", "HM_APPROVAL_WAIT=5",
+		// DPoP offered, Bearer agents keep working (e2e/dpop_test.go).
+		"-e", "HM_DPOP=optional",
 		env.image)...); err != nil {
 		return err
 	}

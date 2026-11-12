@@ -23,6 +23,7 @@ FUZZ_TARGETS := \
 	internal/pdp:FuzzEvaluationEndpoint \
 	internal/oauth:FuzzEndpoints \
 	internal/oauth:FuzzClientMetadata \
+	internal/dpop:FuzzParseProof \
 	internal/agent:FuzzTokens \
 	internal/mandate:FuzzPut \
 	internal/config:FuzzAppOptions \
@@ -31,7 +32,7 @@ FUZZ_TARGETS := \
 # Coverage thresholds per package (docs/TESTING.md section 2). The strict packages are
 # enforced as soon as their directory exists.
 COVER_DEFAULT := 85
-STRICT_PKGS   := internal/pdp internal/oauth internal/approval internal/audit internal/api
+STRICT_PKGS   := internal/pdp internal/oauth internal/approval internal/audit internal/api internal/dpop
 COVER_FLAGS   := -default $(COVER_DEFAULT) $(foreach p,$(STRICT_PKGS),$(if $(wildcard $(p)),-min $(p)=95))
 
 VERSION ?= dev

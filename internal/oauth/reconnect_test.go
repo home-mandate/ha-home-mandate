@@ -39,7 +39,7 @@ func (h *harness) admitByBrowser() agent.Agent {
 	if status != http.StatusOK {
 		h.t.Fatalf("token = %d %v", status, tokens)
 	}
-	a, err := h.agents.Authenticate(context.Background(), tokens["access_token"].(string), testResource)
+	a, err := h.agents.Authenticate(context.Background(), tokens["access_token"].(string), testResource, "")
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestConsentOffersToReconnectAfterAnEmergencyStop(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("token = %d %v", status, tokens)
 	}
-	got, err := h.agents.Authenticate(context.Background(), tokens["access_token"].(string), testResource)
+	got, err := h.agents.Authenticate(context.Background(), tokens["access_token"].(string), testResource, "")
 	if err != nil || got.ClientID != a.ClientID {
 		t.Errorf("reconnected agent = %+v, %v", got, err)
 	}
@@ -152,7 +152,7 @@ func TestPairingPageOffersToReconnect(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("poll = %d %v", status, tokens)
 	}
-	if got, err := h.agents.Authenticate(context.Background(), tokens["access_token"].(string), testResource); err != nil || got.ClientID != admitted[0].ClientID {
+	if got, err := h.agents.Authenticate(context.Background(), tokens["access_token"].(string), testResource, ""); err != nil || got.ClientID != admitted[0].ClientID {
 		t.Errorf("agent = %+v, %v", got, err)
 	}
 	if n := countAgents(t, h); n != 1 {
@@ -209,7 +209,7 @@ func TestReconnectInTheUI(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("poll = %d %v", status, tokens)
 	}
-	if who, err := h.agents.Authenticate(ctx, tokens["access_token"].(string), testResource); err != nil || who.ClientID != admitted.ClientID {
+	if who, err := h.agents.Authenticate(ctx, tokens["access_token"].(string), testResource, ""); err != nil || who.ClientID != admitted.ClientID {
 		t.Errorf("agent = %+v, %v", who, err)
 	}
 }

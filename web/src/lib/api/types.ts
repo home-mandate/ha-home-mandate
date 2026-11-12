@@ -155,6 +155,11 @@ export interface Agent {
    * and is reconnected (issue #22), or once its tokens expired.
    */
   connected: boolean;
+  /**
+   * "dpop" once the agent's tokens are DPoP-bound (RFC 9449): they work only with a key that
+   * stays with its client, for good. "none": Bearer tokens (issue #65).
+   */
+  binding: 'none' | 'dpop';
   /** Requests of the agent (any decision) on the current day in the household's time zone. */
   requests_today: number;
   /** Requests counted against the mandate's rate limit in the last 60 minutes. */

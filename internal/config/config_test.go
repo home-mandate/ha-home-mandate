@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/home-mandate/ha-home-mandate/internal/dpop"
 )
 
 // env returns a getenv for a fixed map.
@@ -252,6 +254,45 @@ func TestApprovalWait(t *testing.T) {
 	}
 	if _, err := app(`{"approval_timeout_seconds":120,"log_level":"info","approval_wait_seconds":60}`); !errors.Is(err, ErrInvalid) {
 		t.Errorf("app option too long: %v", err)
+	}
+}
+
+// Issue #63, decision of 2026-11-10: DPoP is off unless switched on, as an app option or
+// HM_DPOP; anything but off, optional and required stops the start.
+func TestDPoPMode(t *testing.T) {
+	base := map[string]string{"HM_HA_URL": "ws://localhost:8123/api/websocket", "HM_HA_TOKEN": "t"}
+	for value, want := range map[string]dpop.Mode{"": dpop.ModeOff, "off": dpop.ModeOff, "optional": dpop.ModeOptional, "required": dpop.ModeRequired} {
+		m := map[string]string{"HM_DPOP": value}
+		for k, v := range base {
+			m[k] = v
+		}
+		if cfg, err := load(env(m), files(nil)); err != nil || cfg.DPoP != want {
+			t.Errorf("HM_DPOP=%q: %v, %v", value, cfg.DPoP, err)
+		}
+	}
+	for _, value := range []string{"on", "Optional", " required", "true"} {
+		m := map[string]string{"HM_DPOP": value}
+		for k, v := range base {
+			m[k] = v
+		}
+		if _, err := load(env(m), files(nil)); !errors.Is(err, ErrInvalid) {
+			t.Errorf("HM_DPOP=%q: %v", value, err)
+		}
+	}
+	app := func(opts string) (Config, error) {
+		return load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": opts}))
+	}
+	if cfg, err := app(options); err != nil || cfg.DPoP != dpop.ModeOff {
+		t.Errorf("app default: %v, %v", cfg.DPoP, err)
+	}
+	if cfg, err := app(`{"approval_timeout_seconds":120,"log_level":"info","dpop":"required"}`); err != nil || cfg.DPoP != dpop.ModeRequired {
+		t.Errorf("app option: %v, %v", cfg.DPoP, err)
+	}
+	if _, err := app(`{"approval_timeout_seconds":120,"log_level":"info","dpop":"yes"}`); !errors.Is(err, ErrInvalid) {
+		t.Errorf("app option invalid: %v", err)
+	}
+	if cfg, _ := app(options); !strings.Contains(cfg.String(), "dpop=off") {
+		t.Errorf("String() = %s", cfg)
 	}
 }
 

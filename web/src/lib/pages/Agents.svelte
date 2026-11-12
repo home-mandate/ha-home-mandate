@@ -16,8 +16,10 @@
   import type { Agent } from '../api/types.ts';
   import AgentName from '../components/AgentName.svelte';
   import ClaimLegend from '../components/ClaimLegend.svelte';
+  import BindingLegend from '../components/agents/BindingLegend.svelte';
   import Button from '../components/Button.svelte';
   import ClientIdentity from '../components/ClientIdentity.svelte';
+  import TokenBinding from '../components/agents/TokenBinding.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import ErrorState from '../components/ErrorState.svelte';
   import Icon from '../components/Icon.svelte';
@@ -174,7 +176,14 @@
             {@const seen = last(agent)}
             <tr class:revoked={agent.status === 'revoked'}>
               <th scope="row"><a href={href({ name: 'agent', id: agent.client_id })}><AgentName name={agent.display_name} /></a></th>
-              <td><ClientIdentity client={agent.oauth_client} verified={agent.client_verified} /></td>
+              <td
+                ><span class="client"
+                  ><ClientIdentity client={agent.oauth_client} verified={agent.client_verified} />{#if agent.status === 'active'}<TokenBinding
+                      binding={agent.binding}
+                      compact
+                    />{/if}</span
+                ></td
+              >
               <td>
                 {#if agent.mandate}
                   <span class="mandate"
@@ -202,6 +211,7 @@
             <span class="hm-visually-hidden">, </span>
             <span class="facts">
               <AgentStatus status={agent.status} connected={agent.connected} removed={agent.removed_at !== null} compact />
+              {#if agent.status === 'active'}<TokenBinding binding={agent.binding} compact />{/if}
               <span><bdi>{agent.mandate ? cleanUntrusted(agent.mandate.name) : m.agents_no_mandate()}</bdi> · {#if seen.at}<time datetime={seen.at} title={seen.title}>{seen.text}</time>{:else}{seen.text}{/if}</span>
             </span>
           </a>
@@ -210,6 +220,7 @@
     </ul>
   {/if}
   {#if agents && agents.length > 0}<ClaimLegend />{/if}
+  {#if agents && agents.some((a) => a.status === 'active')}<BindingLegend />{/if}
 {/if}
 
 <style>
@@ -335,6 +346,12 @@
     display: flex;
     padding-block-start: 2px;
     color: var(--hm-color-text-subtle);
+  }
+  .client {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hm-space-2);
   }
   .facts {
     display: flex;

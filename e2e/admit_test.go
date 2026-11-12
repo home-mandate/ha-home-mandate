@@ -187,6 +187,13 @@ var approverOnce sync.Once
 // edit): admin-approver approves, within 10 seconds.
 func newAgent(t *testing.T, name string, edit func(map[string]any)) string {
 	t.Helper()
+	return admit(t, name, voiceTemplate(t, edit))
+}
+
+// voiceTemplate imports the voice assistant mandate of the specification, edited by edit and
+// approved by admin-approver within 10 seconds, as a new template and returns its name.
+func voiceTemplate(t *testing.T, edit func(map[string]any)) string {
+	t.Helper()
 	approver := env.users[adminApprover].id
 	approverOnce.Do(func() { cli(t, "", "approver", "add", approver, approverDevice) })
 	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
@@ -208,7 +215,7 @@ func newAgent(t *testing.T, name string, edit func(map[string]any)) string {
 	template := "t-" + randomHex(4)
 	mandate, _ := json.Marshal(doc)
 	cli(t, string(mandate), "mandate", "template", "import", template, "-")
-	return admit(t, name, template)
+	return template
 }
 
 // clientIDOf returns the client ID of the agent with display name from agent list.

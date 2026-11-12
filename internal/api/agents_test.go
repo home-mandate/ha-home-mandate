@@ -61,6 +61,22 @@ func TestAgents(t *testing.T) {
 		*a.Mandate.MaxActionsPerHour != 60 || !strings.HasPrefix(a.Mandate.Digest, "sha256:") {
 		t.Errorf("agent = %+v, mandate %+v", a, a.Mandate)
 	}
+	if a.Binding != agent.BindingNone {
+		t.Errorf("binding of a Bearer agent = %q", a.Binding)
+	}
+	// Issue #65: an agent with a DPoP-bound token is listed as bound.
+	_, pair, err := h.adm.Admit(ctx, admission.Request{DisplayName: "Bound", Template: "voice-assistant", OAuthClient: "n8n-bound",
+		Resource: "https://hm.example.org/mcp", By: audit.Actor{Kind: audit.ActorUser, ID: adminID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.agents.Bind(ctx, pair, agent.Holder{JKT: strings.Repeat("k", 43), Bind: true}); err != nil {
+		t.Fatal(err)
+	}
+	h.ok(http.MethodGet, "/api/agents", nil, &list)
+	if len(list) != 2 || list[1].Binding != agent.BindingDPoP {
+		t.Errorf("bound agent = %+v", list)
+	}
 	// In UTC (no time zone yet) the day starts at 00:00 UTC: only two requests today.
 	h.status.TimeZone = ""
 	h.ok(http.MethodGet, "/api/agents", nil, &list)

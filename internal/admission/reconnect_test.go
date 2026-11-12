@@ -69,10 +69,10 @@ func TestReconnectAfterAnEmergencyStop(t *testing.T) {
 	if got.ClientID != a.ClientID || tokens.AccessToken == "" {
 		t.Errorf("reconnected = %+v", got)
 	}
-	if who, err := e.agents.Authenticate(ctx, tokens.AccessToken, resource); err != nil || who.ClientID != a.ClientID {
+	if who, err := e.agents.Authenticate(ctx, tokens.AccessToken, resource, ""); err != nil || who.ClientID != a.ClientID {
 		t.Errorf("new token = %+v, %v", who, err)
 	}
-	if _, err := e.agents.Authenticate(ctx, old.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
+	if _, err := e.agents.Authenticate(ctx, old.AccessToken, resource, ""); !errors.Is(err, agent.ErrUnauthorized) {
 		t.Errorf("withdrawn token = %v", err)
 	}
 	// A second reconnect is refused: the agent has tokens again.

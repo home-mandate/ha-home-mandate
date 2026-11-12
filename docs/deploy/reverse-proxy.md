@@ -36,6 +36,10 @@ Take A unless you want TLS to end inside Home-Mandate.
   `public_url`), exactly as browsers and agents type it (`https://hm.example.org`), in
   both ways. Only without a proxy, when agents connect to Home-Mandate's own TLS
   directly, does the public URL carry its port (`https://hm.example.org:8765`).
+- Pass the **`Authorization` and `DPoP` request headers** and the **`WWW-Authenticate` and
+  `DPoP-Nonce` response headers** unchanged (all four proxies above do by default). With
+  DPoP (option `dpop`), a proof names the public URL, which is why the public URL above
+  must be exactly the address agents use.
 - Let the browser reach **Home Assistant from outside** too: signing in to the UI sends
   the browser to Home Assistant, so `HM_HA_BROWSER_URL` is Home Assistant's public
   address (`https://ha.example.org`), not a LAN address.

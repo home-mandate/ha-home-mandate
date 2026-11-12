@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/home-mandate/ha-home-mandate/internal/dpop"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
@@ -33,6 +34,8 @@ type authzRequest struct {
 	state       string
 	challenge   string
 	resource    string
+	// dpopJKT binds the code to a DPoP key (RFC 9449 section 10); empty if not asked for.
+	dpopJKT string
 }
 
 // decision is what the human chose on the consent page or in the UI.
@@ -85,6 +88,15 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	case authz.resource != s.cfg.Resource:
 		s.redirectError(w, r, authz, "invalid_target")
 		return
+	}
+	// dpop_jkt counts only while DPoP is offered; otherwise it is ignored, as by any
+	// server without DPoP.
+	if jkt, set := q["dpop_jkt"]; set && s.dpopMode() != dpop.ModeOff {
+		if !dpop.ValidThumbprint(jkt) {
+			s.redirectError(w, r, authz, "invalid_request")
+			return
+		}
+		authz.dpopJKT = jkt
 	}
 	id, sess, err := s.sessions.create(s.clientAddr(r), purposeAuthorize, authz)
 	if err != nil {
