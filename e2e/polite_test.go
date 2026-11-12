@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"sync/atomic"
+	"testing"
 	"time"
 )
 
@@ -24,10 +26,28 @@ const (
 	politeTimeout = 3 * time.Minute
 )
 
+// onboardingWindow is the gateway's window of the limits above (oauth rateWindow).
+const onboardingWindow = time.Minute
+
+// lastOnboarding is when a polite client last sent a request, in Unix nanoseconds.
+var lastOnboarding atomic.Int64
+
+// waitForFreshOnboardingWindow waits until a whole window has passed since the last
+// request of a polite client, so that a client that does not wait after a 429, such as
+// the browser of a Playwright spec, starts with the full limit of the sender.
+func waitForFreshOnboardingWindow(t *testing.T) {
+	t.Helper()
+	if wait := time.Until(time.Unix(0, lastOnboarding.Load()).Add(onboardingWindow + time.Second)); wait > 0 {
+		t.Logf("waiting %s for a fresh window of the onboarding limits", wait.Round(time.Second))
+		time.Sleep(wait)
+	}
+}
+
 type polite struct{ next http.RoundTripper }
 
 func (p polite) RoundTrip(r *http.Request) (*http.Response, error) {
 	for attempt := 0; ; attempt++ {
+		lastOnboarding.Store(time.Now().UnixNano())
 		resp, err := p.next.RoundTrip(r)
 		if err != nil || resp.StatusCode != http.StatusTooManyRequests || attempt == politeRetries {
 			return resp, err

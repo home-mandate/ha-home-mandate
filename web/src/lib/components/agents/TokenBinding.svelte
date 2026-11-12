@@ -19,9 +19,9 @@
 </script>
 
 {#if binding === 'dpop'}
-  <StatusPill tone="positive" shape="square" {compact}>{m.agent_binding_dpop()}</StatusPill>
+  <StatusPill tone="positive" shape="square" {compact} wrap>{m.agent_binding_dpop()}</StatusPill>
 {:else}
-  <StatusPill tone="neutral" shape="ring" {compact}>{m.agent_binding_none()}</StatusPill>
+  <StatusPill tone="neutral" shape="ring" {compact} wrap>{m.agent_binding_none()}</StatusPill>
   {#if explain}<p class="hint">{m.agent_binding_legend_none()}</p>{/if}
 {/if}
 

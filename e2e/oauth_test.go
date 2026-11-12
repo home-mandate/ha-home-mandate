@@ -37,6 +37,9 @@ func TestOAuthInTheBrowser(t *testing.T) {
 		uiLogin(t, adminApprover).ok(http.MethodPut, "api/templates/hm-light-climate/hidden", map[string]any{"hidden": false}, nil)
 	})
 
+	// The tests before it may have used up much of the sender's limits; the browser does
+	// not wait after a 429.
+	waitForFreshOnboardingWindow(t)
 	playwright(t, "e2e-live/oauth.spec.ts", "HM_LIVE_PUBLIC="+env.public, "HM_LIVE_CLIENT_ID="+cimdClientID,
 		"HM_LIVE_SPKI="+spkiHashes(t), "NODE_EXTRA_CA_CERTS="+filepath.Join(env.certs, "ca.pem"))
 
