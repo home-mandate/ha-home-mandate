@@ -38,6 +38,7 @@ Fuzz targets (`FUZZ_TARGETS` in the Makefile; a new parser of input from outside
 | `internal/pdp:FuzzEvaluationEndpoint` | AuthZEN requests to the PDP endpoint | 400 or a well-formed decision; other subjects, households and unknown devices are `deny`; deterministic |
 | `internal/oauth:FuzzEndpoints` | Queries and forms of authorize, callback, consent, token, device authorization and pairing | No 5xx; OAuth JSON errors; redirects only to the sign-in, a registered redirect URI or the server itself; no agent admitted |
 | `internal/oauth:FuzzClientMetadata` | Client ID Metadata Documents (fetched from the internet) | `invalid_client` or a client with safe redirect URIs and a showable name |
+| `internal/dpop:FuzzParseProof` | `DPoP` proof headers at the token endpoint and `/mcp` | `ErrNoProof` or `ErrInvalidProof`; accepted only if signed by a test key |
 | `internal/agent:FuzzTokens` | Bearer and refresh tokens | Only the issued token authenticates, only for its resource; a wrong refresh token changes nothing |
 | `internal/mandate:FuzzPut` | Mandate documents (editor, import) | Defined errors; a refusal writes nothing; what is stored is what decisions use |
 | `internal/config:FuzzAppOptions` | The app's `options.json` | `ErrInvalid`, or certificate paths in `/ssl` and URLs that are origins |
@@ -49,7 +50,7 @@ Inputs that once failed stay in the package's `testdata/fuzz` and run with every
 
 | Scope | Line coverage |
 |---|---|
-| `home-mandate/spec/evaluator`, `internal/pdp`, `internal/oauth`, `internal/approval`, `internal/audit`, `internal/api` | ≥ 95 % |
+| `home-mandate/spec/evaluator`, `internal/pdp`, `internal/oauth`, `internal/approval`, `internal/audit`, `internal/api`, `internal/dpop` | ≥ 95 % |
 | Other Go packages | ≥ 85 % |
 | `web/src/lib` (logic, excluding pure presentation) | ≥ 85 % |
 | Mutation score `home-mandate/spec/evaluator` | ≥ 90 % killed mutants |
