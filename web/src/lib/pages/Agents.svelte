@@ -16,6 +16,7 @@
   import type { Agent } from '../api/types.ts';
   import AgentName from '../components/AgentName.svelte';
   import ClaimLegend from '../components/ClaimLegend.svelte';
+  import BindingLegend from '../components/agents/BindingLegend.svelte';
   import Button from '../components/Button.svelte';
   import ClientIdentity from '../components/ClientIdentity.svelte';
   import TokenBinding from '../components/agents/TokenBinding.svelte';
@@ -219,6 +220,7 @@
     </ul>
   {/if}
   {#if agents && agents.length > 0}<ClaimLegend />{/if}
+  {#if agents && agents.some((a) => a.status === 'active')}<BindingLegend />{/if}
 {/if}
 
 <style>

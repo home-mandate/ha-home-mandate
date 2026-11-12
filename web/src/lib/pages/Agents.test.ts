@@ -72,6 +72,25 @@ describe('Agents', () => {
     expect(within(revoked).queryByText('Bound (DPoP)')).toBeNull();
   });
 
+  it('explains below the list in plain words what bound and unbound mean (issue #156)', async () => {
+    await start();
+    await screen.findByRole('table', { name: 'Agents' });
+    const legend = screen.getByTestId('binding-legend');
+    expect(legend.textContent).toContain('Bound (DPoP):');
+    expect(legend.textContent).toContain('works only on the device or service it was set up on');
+    expect(legend.textContent).toContain('Unbound:');
+    expect(legend.textContent).toContain('normal for most agents today');
+    expect(legend.textContent).not.toMatch(/token|key/i);
+  });
+
+  it('shows no binding legend when no listed agent is active (issue #156)', async () => {
+    await start({}, async (api) => {
+      for (const a of await api.agents()) if (a.status === 'active') await api.revokeAgent(a.client_id);
+    });
+    await screen.findByRole('table', { name: 'Agents' });
+    expect(screen.queryByTestId('binding-legend')).toBeNull();
+  });
+
   it('shows hostile names as text', async () => {
     await start();
     const table = await screen.findByRole('table', { name: 'Agents' });

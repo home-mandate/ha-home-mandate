@@ -52,7 +52,7 @@ describe('AgentDetail', () => {
     await start(VOICE);
     const unbound = await waitFor(() => section('Identity'));
     expect(within(unbound).getByText('Unbound')).toBeTruthy();
-    expect(plain(unbound.textContent)).toContain('A stolen token could be used elsewhere until it expires');
+    expect(plain(unbound.textContent)).toContain('Whoever copied it could use it until it expires');
   });
 
   it('shows a paired agent without redirect address', async () => {
