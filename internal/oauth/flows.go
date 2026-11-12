@@ -92,7 +92,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	// dpop_jkt counts only while DPoP is offered; otherwise it is ignored, as by any
 	// server without DPoP.
 	if jkt, set := q["dpop_jkt"]; set && s.dpopMode() != dpop.ModeOff {
-		if !jktPattern.MatchString(jkt) {
+		if !dpop.ValidThumbprint(jkt) {
 			s.redirectError(w, r, authz, "invalid_request")
 			return
 		}

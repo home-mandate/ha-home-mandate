@@ -80,6 +80,9 @@ func (s *Server) exchangeCode(w http.ResponseWriter, r *http.Request, form map[s
 	// RFC 9449 section 10: a code bound by dpop_jkt is exchanged only with a proof of that
 	// key. Refused before the admission, so that nobody is admitted without the tokens.
 	h = requireFor(h, c.authz.client)
+	if c.authz.dpopJKT != "" {
+		h.Bind = true // the code was bound while DPoP was offered; switching off since changes nothing
+	}
 	if c.authz.dpopJKT != "" && h.JKT != c.authz.dpopJKT || h.Require && h.JKT == "" {
 		s.warn("code exchange refused: DPoP proof missing or of another key", "oauth_client", c.authz.client.ID)
 		oauthError(w, http.StatusBadRequest, errInvalidDPoPProof)

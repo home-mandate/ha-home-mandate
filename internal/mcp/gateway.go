@@ -220,8 +220,8 @@ type Gateway struct {
 	byKey        map[string]*waiting     // open requests by agent and idempotency key
 	keyLocks     [lockStripes]sync.Mutex // dedup.go
 	deviceLocks  [lockStripes]sync.Mutex
-	cooldowns    map[string]cooldown // waits after requests not approved, per agent and device
-	rejectedLog  time.Time           // last auth.rejected entry for an invalid token
+	cooldowns    map[string]cooldown  // waits after requests not approved, per agent and device
+	rejectedLog  map[string]time.Time // last auth.rejected entry per error code (invalid token or proof)
 	// statusLimiter bounds approval_status and approval_cancel per agent.
 	statusLimiter *ratelimit.Limiter
 	// closing: after Close, requests that end are left to the next start.
@@ -265,7 +265,7 @@ func New(cfg Config) *Gateway {
 	if cfg.ApprovalWait <= 0 {
 		cfg.ApprovalWait = defaultApprovalWait
 	}
-	g := &Gateway{cfg: cfg, rateLimitLog: map[string]time.Time{}, pendingAsks: map[string]int{}, waits: map[string]*waiting{}, open: map[string]*waiting{},
+	g := &Gateway{cfg: cfg, rateLimitLog: map[string]time.Time{}, rejectedLog: map[string]time.Time{}, pendingAsks: map[string]int{}, waits: map[string]*waiting{}, open: map[string]*waiting{},
 		byKey:         map[string]*waiting{},
 		statusLimiter: ratelimit.New(cfg.Now), cooldowns: map[string]cooldown{}, server: sdk.NewServer(&sdk.Implementation{Name: "home-mandate", Version: cfg.Version}, nil)}
 	addTool(g.server, &sdk.Tool{Name: "list_devices",
@@ -364,7 +364,7 @@ func (g *Gateway) Handler() http.Handler {
 // verify checks the token with the key withDPoP found proved, if any; then the proof's
 // jti is recorded, so that only the holder of a valid token can fill the replay cache.
 func (g *Gateway) verify(ctx context.Context, token string, r *http.Request) (*sdkauth.TokenInfo, error) {
-	st := g.proofOf(r)
+	st := proofOf(r)
 	jkt := ""
 	if st != nil {
 		jkt = st.proof.JKT
@@ -373,7 +373,7 @@ func (g *Gateway) verify(ctx context.Context, token string, r *http.Request) (*s
 	if err == nil && st != nil {
 		if err := g.cfg.DPoP.Accept(st.proof); err != nil {
 			st.replayed = true
-			g.recordRejectedCode(ctx, "invalid_dpop_proof")
+			g.recordRejectedCode(ctx, errInvalidDPoPProof)
 			return nil, sdkauth.ErrInvalidToken
 		}
 	}
@@ -381,7 +381,7 @@ func (g *Gateway) verify(ctx context.Context, token string, r *http.Request) (*s
 		if !errors.Is(err, agent.ErrUnauthorized) {
 			g.cfg.Logger.Error("token check failed", "error", err)
 		}
-		g.recordRejectedCode(ctx, "invalid_token")
+		g.recordRejectedCode(ctx, errInvalidToken)
 		return nil, sdkauth.ErrInvalidToken
 	}
 	// The token stays with the request so that it can be checked again after a human
@@ -397,17 +397,18 @@ func tokenOf(req *sdk.CallToolRequest) string {
 	return token
 }
 
-// recordRejectedCode logs at most one auth.rejected entry per interval: an invalid
-// token or proof names no agent, and anyone on the network could otherwise fill the audit
-// log. code is invalid_token, invalid_dpop_proof or dpop_required.
+// recordRejectedCode logs at most one auth.rejected entry per interval and code: an
+// invalid token or proof names no agent, and anyone on the network could otherwise fill
+// the audit log; per code, so that a flood of one kind hides no other. code is
+// errInvalidToken, errInvalidDPoPProof or errDPoPRequired.
 func (g *Gateway) recordRejectedCode(ctx context.Context, code string) {
 	now := g.cfg.Now()
 	g.mu.Lock()
-	if !g.rejectedLog.IsZero() && now.Sub(g.rejectedLog) < rateLimitLogInterval {
+	if last, ok := g.rejectedLog[code]; ok && now.Sub(last) < rateLimitLogInterval {
 		g.mu.Unlock()
 		return
 	}
-	g.rejectedLog = now
+	g.rejectedLog[code] = now
 	g.mu.Unlock()
 	if _, err := g.cfg.Audit.Append(context.WithoutCancel(ctx), audit.Entry{Event: audit.EventAuthRejected,
 		Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication, Error: code}}); err != nil {

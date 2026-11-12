@@ -5,7 +5,6 @@ package oauth
 import (
 	"errors"
 	"net/http"
-	"regexp"
 
 	"github.com/home-mandate/ha-home-mandate/internal/agent"
 	"github.com/home-mandate/ha-home-mandate/internal/dpop"
@@ -16,9 +15,6 @@ const (
 	errInvalidDPoPProof = "invalid_dpop_proof"
 	errUseDPoPNonce     = "use_dpop_nonce"
 )
-
-// jktPattern is the value of dpop_jkt: an RFC 7638 thumbprint, base64url of a SHA-256.
-var jktPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
 
 // dpopMode is the configured mode; it is read under the lock so that tests may switch it
 // while the server runs.

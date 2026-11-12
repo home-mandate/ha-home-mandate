@@ -5,10 +5,10 @@
 // resource, a server nonce where it is required, and a jti that is not used twice. The
 // thumbprint of the key (RFC 7638) is what tokens are bound to (cnf.jkt).
 //
-// Check is stateless and safe to run on any request. Accept records the jti; callers run it
-// only once the request is otherwise authorized (a valid grant at the token endpoint, a
-// known token at the resource), so that nobody without a grant or token can fill the
-// replay cache.
+// Check is stateless and safe to run on any request. Accept records the jti. At the
+// resource, callers run it only once the token fitted, so that nobody without a token can
+// fill the replay cache; at the token endpoint it runs before the grant is looked at, and
+// the endpoint's request limit keeps the cache from filling (oauth.TestTokenLimitCannotFillTheReplayCache).
 package dpop
 
 import (
@@ -23,6 +23,7 @@ import (
 	"math"
 	"math/big"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -41,9 +42,9 @@ const (
 	// maxProofBytes bounds a proof; a P-256 proof with ath and nonce is about 600 bytes.
 	maxProofBytes = 4096
 	maxJTIBytes   = 256
-	// replayEntries bounds the replay cache: at 2 * Window per entry, 20 000 proofs within
+	// ReplayEntries bounds the replay cache: at 2 * Window per entry, 20 000 proofs within
 	// two minutes, far more than one household's agents send.
-	replayEntries = 20_000
+	ReplayEntries = 20_000
 )
 
 // Mode is whether the gateway offers DPoP (app option dpop, HM_DPOP).
@@ -115,7 +116,7 @@ type Verifier struct {
 
 // NewVerifier returns a Verifier on the clock now.
 func NewVerifier(now func() time.Time) *Verifier {
-	return &Verifier{now: now, nonces: newNonces(now()), replay: newReplayCache(replayEntries)}
+	return &Verifier{now: now, nonces: newNonces(now()), replay: newReplayCache(ReplayEntries)}
 }
 
 // Nonce returns a fresh server nonce for the DPoP-Nonce header.
@@ -266,6 +267,12 @@ func (c claims) match(e Expect, now time.Time) error {
 	}
 	return nil
 }
+
+// thumbprintPattern is an RFC 7638 SHA-256 thumbprint: 43 characters of base64url.
+var thumbprintPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
+
+// ValidThumbprint reports whether s has the form of a thumbprint (cnf.jkt, dpop_jkt).
+func ValidThumbprint(s string) bool { return thumbprintPattern.MatchString(s) }
 
 // AccessTokenHash is the ath of a token: base64url of its SHA-256.
 func AccessTokenHash(token string) string {

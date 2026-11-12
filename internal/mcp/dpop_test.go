@@ -5,6 +5,7 @@ package mcp
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -189,5 +190,29 @@ func TestProtocolVersionsThatRequireDPoP(t *testing.T) {
 	challenges(t, "Bearer with that version", h.postWith("Bearer "+h.token, "", "2099-01-01"), "")
 	if resp := h.postWith("Bearer "+h.token, "", "2025-11-25"); resp.StatusCode != http.StatusOK {
 		t.Errorf("Bearer with another version: %d", resp.StatusCode)
+	}
+}
+
+// Refusals are logged at most once a minute per kind: invalid tokens cannot hide a proof
+// that was refused (review of the branch).
+func TestRejectionsAreThrottledPerKind(t *testing.T) {
+	h := dpopHarness(t, dpop.ModeOptional)
+	key := newKey(t)
+	token := h.boundToken(key)
+	for range 3 {
+		h.postWith("Bearer hma_"+strings.Repeat("A", 43), "", "")
+	}
+	h.postWith("DPoP "+token, "", "")
+	out := h.auditLog()
+	if strings.Count(out, `"error":"invalid_token"`) != 1 || strings.Count(out, `"error":"invalid_dpop_proof"`) != 1 {
+		t.Errorf("audit log:\n%s", out)
+	}
+}
+
+func TestChallengeWriterPassesFlushesOn(t *testing.T) {
+	rec := httptest.NewRecorder()
+	(&challengeWriter{ResponseWriter: rec}).Flush()
+	if !rec.Flushed {
+		t.Error("flush not passed on")
 	}
 }

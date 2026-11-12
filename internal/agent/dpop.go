@@ -7,9 +7,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"regexp"
 
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/dpop"
 )
 
 // Bindings of an agent (agents.binding, migration 0022).
@@ -38,9 +38,6 @@ const (
 	errDPoPRequired     = "dpop_required"
 )
 
-// jktPattern is an RFC 7638 thumbprint: base64url of a SHA-256, without padding.
-var jktPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
-
 // Holder is what a token request proved about the client's DPoP key (RFC 9449).
 type Holder struct {
 	// JKT is the thumbprint of the key of the request's valid proof; empty without one.
@@ -54,7 +51,7 @@ type Holder struct {
 }
 
 func (h Holder) check() error {
-	if h.JKT != "" && !jktPattern.MatchString(h.JKT) {
+	if h.JKT != "" && !dpop.ValidThumbprint(h.JKT) {
 		return errors.New("agent: malformed DPoP thumbprint")
 	}
 	return nil
@@ -70,14 +67,18 @@ func (r dpopRefusal) Error() string { return r.err.Error() }
 func (r dpopRefusal) Unwrap() error { return r.err }
 
 // decideKey is the one rule for the key a family's next tokens are bound to; it returns
-// that key, empty for Bearer tokens:
+// that key, empty for Bearer tokens. handOut is true for a pair just issued after a human's
+// approval (Bind), false for a refresh:
 //
 //   - a bound family keeps its key; a request without a proof of it is refused (ErrDPoPKey);
+//   - an unbound family of a bound agent takes a new key only at the hand-out: at a refresh
+//     it is a family from before, whose stolen refresh token must not bind it to the thief's
+//     key (ErrDPoPRequired);
 //   - an unbound family becomes bound to the proved key if binding is offered or the agent
 //     is bound already;
 //   - otherwise the tokens stay Bearer tokens, unless the agent is bound or the request
 //     requires binding (ErrDPoPRequired).
-func (s *Store) decideKey(ctx context.Context, tx *sql.Tx, family, binding string, h Holder) (string, error) {
+func (s *Store) decideKey(ctx context.Context, tx *sql.Tx, family, binding string, h Holder, handOut bool) (string, error) {
 	var bound sql.NullString
 	err := tx.QueryRowContext(ctx, `SELECT dpop_jkt FROM tokens WHERE family_id = ? AND dpop_jkt IS NOT NULL LIMIT 1`, family).Scan(&bound)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -88,6 +89,8 @@ func (s *Store) decideKey(ctx context.Context, tx *sql.Tx, family, binding strin
 		return "", dpopRefusal{ErrDPoPKey, errInvalidDPoPProof}
 	case bound.Valid:
 		return bound.String, nil
+	case binding == BindingDPoP && !handOut:
+		return "", dpopRefusal{ErrDPoPRequired, errDPoPRequired}
 	case h.JKT != "" && (h.Bind || binding == BindingDPoP):
 		return h.JKT, nil
 	case binding == BindingDPoP || h.Require:
@@ -105,14 +108,22 @@ func keyFits(binding, tokenJKT, jkt string) bool {
 	return jkt == "" && binding != BindingDPoP
 }
 
-// markBound records that the agent's tokens are bound from now on.
-func (s *Store) markBound(ctx context.Context, tx *sql.Tx, clientID, jkt string) error {
+// markBound records that the agent's tokens are bound from now on, and withdraws its
+// other unbound families: they could only ever be refused (decideKey, keyFits). The family
+// that was just bound keeps its earlier rows, so that a retry within the grace period of a
+// refresh (#71) still finds them.
+func (s *Store) markBound(ctx context.Context, tx *sql.Tx, clientID, family, jkt string) error {
 	if jkt == "" {
 		return nil
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE agents SET binding = ? WHERE client_id = ? AND binding <> ?`,
 		BindingDPoP, clientID, BindingDPoP); err != nil {
 		return fmt.Errorf("agent: bind agent: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE tokens SET revoked_at = ?
+		WHERE client_id = ? AND family_id <> ? AND dpop_jkt IS NULL AND revoked_at IS NULL`,
+		s.clock().Format(timeFormat), clientID, family); err != nil {
+		return fmt.Errorf("agent: withdraw unbound tokens: %w", err)
 	}
 	return nil
 }
@@ -138,7 +149,7 @@ func (s *Store) Bind(ctx context.Context, p TokenPair, h Holder) (TokenPair, err
 		if err != nil {
 			return fmt.Errorf("agent: bind: %w", err)
 		}
-		jkt, err := s.decideKey(ctx, tx, r.family, r.binding, h)
+		jkt, err := s.decideKey(ctx, tx, r.family, r.binding, h, true)
 		var refusal dpopRefusal
 		switch {
 		case errors.As(err, &refusal) && errors.Is(err, ErrDPoPRequired):
@@ -154,7 +165,7 @@ func (s *Store) Bind(ctx context.Context, p TokenPair, h Holder) (TokenPair, err
 			return fmt.Errorf("agent: bind tokens: %w", err)
 		}
 		p.JKT = jkt
-		return s.markBound(ctx, tx, r.clientID, jkt)
+		return s.markBound(ctx, tx, r.clientID, r.family, jkt)
 	})
 	if err == nil && rejected != nil {
 		return TokenPair{}, rejected

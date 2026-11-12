@@ -288,3 +288,24 @@ func TestDeviceFlowBindsAtThePoll(t *testing.T) {
 		}
 	}
 }
+
+// A code bound by dpop_jkt keeps that binding even if DPoP was switched off between the
+// authorization request and the exchange (review of the branch).
+func TestCodeBoundByDPoPJKTStaysBoundWhenDPoPIsSwitchedOff(t *testing.T) {
+	h := newDPoPHarness(t, dpop.ModeOptional)
+	key := newKey(t, dpoptest.EdDSA)
+	code, verifier := h.codeFor(testClient, func(q url.Values) { q.Set("dpop_jkt", key.JKT()) })
+	h.server.setDPoPMode(dpop.ModeOff)
+	if status, out, _ := h.tokenRequestWith(exchangeFor(testClient, code, verifier), h.proof(key, false)); status != http.StatusOK || out["token_type"] != "DPoP" {
+		t.Errorf("exchange after switching off = %d %v", status, out)
+	}
+}
+
+// The token endpoint records a proof's jti before the grant is checked; its request limit
+// must keep the replay cache from filling within the time a proof counts (2 × Window).
+func TestTokenLimitCannotFillTheReplayCache(t *testing.T) {
+	perWindow := tokenGlobal * int((2*dpop.Window+rateWindow-1)/rateWindow)
+	if perWindow >= dpop.ReplayEntries {
+		t.Errorf("%d token requests fit into the time a proof counts, the replay cache holds %d", perWindow, dpop.ReplayEntries)
+	}
+}

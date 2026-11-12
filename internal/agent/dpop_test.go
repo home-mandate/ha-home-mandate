@@ -205,3 +205,34 @@ func TestBindRejects(t *testing.T) {
 		t.Errorf("binding a bound pair to another key: %v", err)
 	}
 }
+
+// Review of the branch: a bound agent may still hold an unbound family from before (a
+// reconnect leaves older families alone). Whoever stole that family's refresh token must
+// not bind it to a key of their own; a new key comes only with a human's approval (Bind).
+// Becoming bound withdraws the agent's other unbound families.
+func TestAnUnboundFamilyOfABoundAgentCannotBeBoundAtRefresh(t *testing.T) {
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+	a := register(t, s, "A")
+	older := bind(t, s, issue(t, s, a.ClientID), agent.Holder{})
+	newer := bind(t, s, issue(t, s, a.ClientID), agent.Holder{})
+	// The agent becomes bound through the newer family; the older one is withdrawn.
+	if p, err := s.Refresh(ctx, newer.RefreshToken, resource, "", agent.Holder{JKT: keyA, Bind: true}); err != nil || p.JKT != keyA {
+		t.Fatalf("binding refresh: %+v, %v", p, err)
+	}
+	for _, h := range []agent.Holder{{JKT: keyB, Bind: true}, {JKT: keyB}, {}} {
+		if _, err := s.Refresh(ctx, older.RefreshToken, resource, "", h); err == nil {
+			t.Errorf("older family refreshed with %+v", h)
+		}
+	}
+	// Even if the older family was not withdrawn (a family issued before the switch and
+	// handed out later), its refresh with a proof is refused.
+	sibling := issue(t, s, a.ClientID)
+	if _, err := s.Refresh(ctx, sibling.RefreshToken, resource, "", agent.Holder{JKT: keyB, Bind: true}); !errors.Is(err, agent.ErrDPoPRequired) {
+		t.Errorf("unbound sibling refreshed with a new key: %v", err)
+	}
+	// Through Bind, after a human's approval, a new key is fine.
+	if p := bind(t, s, issue(t, s, a.ClientID), agent.Holder{JKT: keyB, Bind: true}); p.JKT != keyB {
+		t.Errorf("hand-out with a new key: %+v", p)
+	}
+}

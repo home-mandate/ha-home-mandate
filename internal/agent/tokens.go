@@ -232,7 +232,7 @@ func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string
 			rejected = ErrRefreshWrongClient
 			return s.rejectRefresh(ctx, tx, r, errRefreshWrongClient)
 		}
-		jkt, err := s.decideKey(ctx, tx, r.family, r.binding, h)
+		jkt, err := s.decideKey(ctx, tx, r.family, r.binding, h, false)
 		if err != nil {
 			var dpopErr dpopRefusal
 			if !errors.As(err, &dpopErr) {
@@ -253,7 +253,7 @@ func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string
 				return err
 			}
 			p.Repeated = true
-			return s.markBound(ctx, tx, r.clientID, jkt)
+			return s.markBound(ctx, tx, r.clientID, r.family, jkt)
 		}
 		if err := s.checkRefresh(r, resource); err != nil {
 			return err
@@ -269,7 +269,7 @@ func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string
 		if p, err = s.insertPair(ctx, tx, r.clientID, r.family, r.resource, jkt); err != nil {
 			return err
 		}
-		return s.markBound(ctx, tx, r.clientID, jkt)
+		return s.markBound(ctx, tx, r.clientID, r.family, jkt)
 	})
 	if err == nil && rejected != nil {
 		return TokenPair{}, rejected

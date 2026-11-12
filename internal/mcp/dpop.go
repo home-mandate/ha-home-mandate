@@ -16,6 +16,13 @@ import (
 // (issue #64). There is no setting for this.
 var dpopRequiredProtocols = map[string]bool{}
 
+// Error codes of refused requests in the challenge and in auth.rejected.
+const (
+	errInvalidToken     = "invalid_token"
+	errInvalidDPoPProof = "invalid_dpop_proof"
+	errDPoPRequired     = "dpop_required"
+)
+
 // dpopChallengeAlgs is the algs parameter of the DPoP challenge (RFC 9449 section 7.1).
 var dpopChallengeAlgs = `algs="` + strings.Join(dpop.Algorithms, " ") + `"`
 
@@ -45,14 +52,14 @@ func (g *Gateway) withDPoP(next http.Handler) http.Handler {
 		usedDPoP := strings.EqualFold(scheme, "DPoP")
 		cw := &challengeWriter{ResponseWriter: w, offer: g.cfg.DPoPMode != dpop.ModeOff || usedDPoP}
 		if usedDPoP && token != "" {
-			cw.dpopError = "invalid_token"
+			cw.dpopError = errInvalidToken
 		}
 		switch {
 		case usedDPoP && token != "":
 			p, err := g.cfg.DPoP.Check(r.Header, dpop.Expect{Method: r.Method, URL: g.cfg.Resource, AccessToken: token})
 			if err != nil {
-				g.recordRejectedCode(r.Context(), "invalid_dpop_proof")
-				cw.dpopError = "invalid_dpop_proof"
+				g.recordRejectedCode(r.Context(), errInvalidDPoPProof)
+				cw.dpopError = errInvalidDPoPProof
 				g.unauthorized(cw)
 				return
 			}
@@ -61,7 +68,7 @@ func (g *Gateway) withDPoP(next http.Handler) http.Handler {
 			r.Header.Set("Authorization", "Bearer "+token)
 		case strings.EqualFold(scheme, "Bearer") &&
 			(g.cfg.DPoPMode == dpop.ModeRequired || dpopRequiredProtocols[r.Header.Get("MCP-Protocol-Version")]):
-			g.recordRejectedCode(r.Context(), "dpop_required")
+			g.recordRejectedCode(r.Context(), errDPoPRequired)
 			g.unauthorized(cw)
 			return
 		}
@@ -91,7 +98,7 @@ func (g *Gateway) unauthorized(w http.ResponseWriter) {
 }
 
 // proofOf returns the state of the proof withDPoP checked for r; nil without one.
-func (g *Gateway) proofOf(r *http.Request) *dpopState {
+func proofOf(r *http.Request) *dpopState {
 	if r == nil {
 		return nil
 	}
@@ -109,7 +116,7 @@ type challengeWriter struct {
 
 func (c *challengeWriter) WriteHeader(code int) {
 	if c.state != nil && c.state.replayed {
-		c.dpopError = "invalid_dpop_proof"
+		c.dpopError = errInvalidDPoPProof
 	}
 	if c.offer && (code == http.StatusUnauthorized || code == http.StatusForbidden) {
 		challenge := "DPoP " + dpopChallengeAlgs
@@ -123,3 +130,6 @@ func (c *challengeWriter) WriteHeader(code int) {
 
 // Unwrap lets http.ResponseController reach the connection (flushing of streams).
 func (c *challengeWriter) Unwrap() http.ResponseWriter { return c.ResponseWriter }
+
+// Flush passes a flush on, for handlers that check for http.Flusher directly.
+func (c *challengeWriter) Flush() { _ = http.NewResponseController(c.ResponseWriter).Flush() }
