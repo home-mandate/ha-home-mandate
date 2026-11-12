@@ -194,7 +194,7 @@ func TestPairPageKeepsNoStateBeforeTheSignIn(t *testing.T) {
 // rejectingTokens answers every refresh as a reused token.
 type rejectingTokens struct{}
 
-func (rejectingTokens) Refresh(context.Context, string, string, string) (agent.TokenPair, error) {
+func (rejectingTokens) Refresh(context.Context, string, string, string, agent.Holder) (agent.TokenPair, error) {
 	return agent.TokenPair{}, agent.ErrRefreshReused
 }
 

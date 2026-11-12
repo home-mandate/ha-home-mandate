@@ -106,7 +106,7 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request, form map[string
 		oauthError(w, http.StatusBadRequest, "invalid_target")
 		return
 	}
-	tokens, err := s.cfg.Tokens.Refresh(r.Context(), form["refresh_token"], form["resource"], form["client_id"])
+	tokens, err := s.cfg.Tokens.Refresh(r.Context(), form["refresh_token"], form["resource"], form["client_id"], agent.Holder{})
 	switch {
 	case err == nil:
 		if tokens.Repeated {

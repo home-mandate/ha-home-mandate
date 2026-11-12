@@ -92,7 +92,7 @@ var (
 // Interfaces to the rest of the gateway.
 type (
 	Authenticator interface {
-		Authenticate(ctx context.Context, token, resource string) (agent.Agent, error)
+		Authenticate(ctx context.Context, token, resource, jkt string) (agent.Agent, error)
 		// StillAuthorized is Authenticate without the token's expiry, for the check after
 		// a late answer to an approval request.
 		StillAuthorized(ctx context.Context, token, resource string) (agent.Agent, error)
@@ -351,7 +351,7 @@ func (g *Gateway) Handler() http.Handler {
 }
 
 func (g *Gateway) verify(ctx context.Context, token string, _ *http.Request) (*sdkauth.TokenInfo, error) {
-	a, err := g.cfg.Agents.Authenticate(ctx, token, g.cfg.Resource)
+	a, err := g.cfg.Agents.Authenticate(ctx, token, g.cfg.Resource, "")
 	if err != nil {
 		if !errors.Is(err, agent.ErrUnauthorized) {
 			g.cfg.Logger.Error("token check failed", "error", err)

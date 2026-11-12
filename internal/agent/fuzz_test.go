@@ -31,7 +31,7 @@ func FuzzTokens(f *testing.F) {
 	ctx := context.Background()
 	f.Fuzz(func(t *testing.T, token, res string) {
 		token = strings.NewReplacer("ACCESS", pair.AccessToken, "REFRESH", pair.RefreshToken).Replace(token)
-		got, err := s.Authenticate(ctx, token, res)
+		got, err := s.Authenticate(ctx, token, res, "")
 		valid := token == pair.AccessToken && res == resource
 		if valid != (err == nil) || err != nil && !errors.Is(err, agent.ErrUnauthorized) || valid && got.ClientID != a.ClientID {
 			t.Fatalf("Authenticate(%q, %q) = %+v, %v", token, res, got, err)
@@ -39,10 +39,10 @@ func FuzzTokens(f *testing.F) {
 		if token == pair.RefreshToken {
 			return // would rotate the issued pair
 		}
-		if p, err := s.Refresh(ctx, token, res, a.OAuthClient); !errors.Is(err, agent.ErrInvalidGrant) {
+		if p, err := s.Refresh(ctx, token, res, a.OAuthClient, agent.Holder{}); !errors.Is(err, agent.ErrInvalidGrant) {
 			t.Fatalf("Refresh(%q) = %+v, %v", token, p, err)
 		}
-		if _, err := s.Authenticate(ctx, pair.AccessToken, resource); err != nil {
+		if _, err := s.Authenticate(ctx, pair.AccessToken, resource, ""); err != nil {
 			t.Fatalf("the issued token stopped working after %q: %v", token, err)
 		}
 	})

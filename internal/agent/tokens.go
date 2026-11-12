@@ -71,6 +71,9 @@ type TokenPair struct {
 	// Repeated marks a pair issued for a refresh token presented again within
 	// RefreshGracePeriod.
 	Repeated bool
+	// JKT is the thumbprint of the DPoP key the pair is bound to (token_type DPoP);
+	// empty for Bearer tokens.
+	JKT string
 }
 
 // IssueTokens starts a new token family for an active agent, bound to resource.
@@ -108,19 +111,20 @@ func (s *Store) IssueTokensTx(ctx context.Context, tx *sql.Tx, clientID, resourc
 	if status != StatusActive {
 		return TokenPair{}, ErrRevoked
 	}
-	return s.insertPair(ctx, tx, clientID, newFamilyID(), resource)
+	return s.insertPair(ctx, tx, clientID, newFamilyID(), resource, "")
 }
 
-func (s *Store) insertPair(ctx context.Context, tx *sql.Tx, clientID, family, resource string) (TokenPair, error) {
+// insertPair stores a new pair of the family, bound to the DPoP key jkt if it is set.
+func (s *Store) insertPair(ctx context.Context, tx *sql.Tx, clientID, family, resource, jkt string) (TokenPair, error) {
 	now := s.clock()
-	p := TokenPair{AccessToken: newToken(accessPrefix), RefreshToken: newToken(refreshPrefix), ExpiresAt: now.Add(AccessTokenTTL)}
+	p := TokenPair{AccessToken: newToken(accessPrefix), RefreshToken: newToken(refreshPrefix), ExpiresAt: now.Add(AccessTokenTTL), JKT: jkt}
 	for _, t := range []struct {
 		token, kind string
 		ttl         time.Duration
 	}{{p.AccessToken, kindAccess, AccessTokenTTL}, {p.RefreshToken, kindRefresh, RefreshTokenTTL}} {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO tokens (token_hash, kind, client_id, family_id, resource, created_at, expires_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`, hashToken(t.token), t.kind, clientID, family, resource,
-			now.Format(timeFormat), now.Add(t.ttl).Format(timeFormat)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO tokens (token_hash, kind, client_id, family_id, resource, created_at, expires_at, dpop_jkt)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, hashToken(t.token), t.kind, clientID, family, resource,
+			now.Format(timeFormat), now.Add(t.ttl).Format(timeFormat), nullable(jkt)); err != nil {
 			return TokenPair{}, fmt.Errorf("agent: store token: %w", err)
 		}
 	}
@@ -128,37 +132,44 @@ func (s *Store) insertPair(ctx context.Context, tx *sql.Tx, clientID, family, re
 }
 
 // Authenticate returns the agent an access token belongs to, if the token is valid for
-// resource. Every failure is ErrUnauthorized, except database errors. The agent's status
-// and the token's revocation are read on every call. The emergency stop does not count
-// here: it blocks the agent's requests (each is denied with emergency_stop), not its
-// sign-in, so that the agent can say why and need not sign in again.
-func (s *Store) Authenticate(ctx context.Context, token, resource string) (Agent, error) {
-	return s.authenticate(ctx, token, resource, false)
+// resource. jkt is the thumbprint of the key of the request's DPoP proof, checked by the
+// caller, or empty for a Bearer token: a bound token needs a proof of its key, and an
+// unbound token counts only as Bearer and only while its agent is not bound (dpop.go).
+// Every failure is ErrUnauthorized, except database errors. The agent's status and the
+// token's revocation are read on every call. The emergency stop does not count here: it
+// blocks the agent's requests (each is denied with emergency_stop), not its sign-in, so
+// that the agent can say why and need not sign in again.
+func (s *Store) Authenticate(ctx context.Context, token, resource, jkt string) (Agent, error) {
+	return s.authenticate(ctx, token, resource, jkt, false)
 }
 
 // StillAuthorized is Authenticate without the token's expiry: whether the access token
 // that made an approval request still counts when the answer comes, possibly after the
 // token expired (issue #27). A revocation of the token, its family or the agent, the
 // emergency stop and another resource still fail.
+//
+// The DPoP proof belonged to the original request; the answer is checked against the
+// token alone (issue #64).
 func (s *Store) StillAuthorized(ctx context.Context, token, resource string) (Agent, error) {
-	return s.authenticate(ctx, token, resource, true)
+	return s.authenticate(ctx, token, resource, "", true)
 }
 
-// authenticate checks token; for an answer it ignores the expiry and counts the stop.
-func (s *Store) authenticate(ctx context.Context, token, resource string, answer bool) (Agent, error) {
+// authenticate checks token; for an answer it ignores the expiry, the DPoP key and counts
+// the stop.
+func (s *Store) authenticate(ctx context.Context, token, resource, jkt string, answer bool) (Agent, error) {
 	if resource == "" || !wellFormed(token, accessPrefix) {
 		return Agent{}, ErrUnauthorized
 	}
 	var a Agent
 	var createdAt, kind, tokenResource, expiresAt, stop string
-	var revokedAt sql.NullString
+	var revokedAt, tokenJKT sql.NullString
 	err := s.db.QueryRowContext(ctx, `SELECT a.client_id, a.display_name, a.status, a.created_at, a.created_by,
-			a.oauth_client, a.client_verified, t.kind, t.resource, t.expires_at, t.revoked_at,
+			a.oauth_client, a.client_verified, a.binding, t.kind, t.resource, t.expires_at, t.revoked_at, t.dpop_jkt,
 			COALESCE((SELECT value FROM settings WHERE key = ?), ?)
 		FROM tokens t JOIN agents a ON a.client_id = t.client_id WHERE t.token_hash = ?`,
 		settingEmergencyStop, stopOff, hashToken(token)).
-		Scan(&a.ClientID, &a.DisplayName, &a.Status, &createdAt, &a.CreatedBy, &a.OAuthClient, &a.ClientVerified,
-			&kind, &tokenResource, &expiresAt, &revokedAt, &stop)
+		Scan(&a.ClientID, &a.DisplayName, &a.Status, &createdAt, &a.CreatedBy, &a.OAuthClient, &a.ClientVerified, &a.Binding,
+			&kind, &tokenResource, &expiresAt, &revokedAt, &tokenJKT, &stop)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Agent{}, ErrUnauthorized
 	}
@@ -167,7 +178,7 @@ func (s *Store) authenticate(ctx context.Context, token, resource string, answer
 	}
 	expires, err := time.Parse(timeFormat, expiresAt)
 	if err != nil || kind != kindAccess || tokenResource != resource || revokedAt.Valid || a.Status != StatusActive ||
-		answer && stop != stopOff || !answer && !s.clock().Before(expires) {
+		answer && stop != stopOff || !answer && !s.clock().Before(expires) || !answer && !keyFits(a.Binding, tokenJKT.String, jkt) {
 		return Agent{}, ErrUnauthorized
 	}
 	a.CreatedAt, _ = time.Parse(timeFormat, createdAt)
@@ -176,8 +187,8 @@ func (s *Store) authenticate(ctx context.Context, token, resource string, answer
 
 // refreshRow is a refresh token with its agent.
 type refreshRow struct {
-	kind, clientID, name, family, resource, expiresAt, status, oauthClient string
-	usedAt, revokedAt                                                      sql.NullString
+	kind, clientID, name, family, resource, expiresAt, status, oauthClient, binding string
+	usedAt, revokedAt                                                               sql.NullString
 }
 
 // Refresh rotates a refresh token: it can be used once and yields a new pair in the
@@ -188,7 +199,14 @@ type refreshRow struct {
 // it yields another pair in the family, marked Repeated. The client is checked first: a token presented by another client
 // is logged as auth.rejected but revokes nothing (ErrRefreshWrongClient), so that a
 // replay by someone else cannot cut the agent off.
-func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string) (TokenPair, error) {
+//
+// h is the DPoP key the request proved: a bound family is rotated only with a proof of
+// its key, and an unbound one may become bound (dpop.go). A refusal for the key is
+// ErrDPoPKey or ErrDPoPRequired, logged as auth.rejected, and changes nothing.
+func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string, h Holder) (TokenPair, error) {
+	if err := h.check(); err != nil {
+		return TokenPair{}, err
+	}
 	if !wellFormed(token, refreshPrefix) {
 		return TokenPair{}, ErrInvalidGrant
 	}
@@ -197,9 +215,10 @@ func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		var r refreshRow
 		err := tx.QueryRowContext(ctx, `SELECT t.kind, t.client_id, a.display_name, t.family_id, t.resource, t.expires_at,
-				a.status, a.oauth_client, t.used_at, t.revoked_at
+				a.status, a.oauth_client, a.binding, t.used_at, t.revoked_at
 			FROM tokens t JOIN agents a ON a.client_id = t.client_id WHERE t.token_hash = ?`, hashToken(token)).
-			Scan(&r.kind, &r.clientID, &r.name, &r.family, &r.resource, &r.expiresAt, &r.status, &r.oauthClient, &r.usedAt, &r.revokedAt)
+			Scan(&r.kind, &r.clientID, &r.name, &r.family, &r.resource, &r.expiresAt, &r.status, &r.oauthClient, &r.binding,
+				&r.usedAt, &r.revokedAt)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrInvalidGrant
 		}
@@ -213,6 +232,15 @@ func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string
 			rejected = ErrRefreshWrongClient
 			return s.rejectRefresh(ctx, tx, r, errRefreshWrongClient)
 		}
+		jkt, err := s.decideKey(ctx, tx, r.family, r.binding, h)
+		if err != nil {
+			var dpopErr dpopRefusal
+			if !errors.As(err, &dpopErr) {
+				return err
+			}
+			rejected = dpopErr.err
+			return s.rejectRefresh(ctx, tx, r, dpopErr.code)
+		}
 		if r.usedAt.Valid {
 			if !s.withinGrace(r.usedAt.String) {
 				rejected = ErrRefreshReused
@@ -221,9 +249,11 @@ func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string
 			if err := s.checkRefresh(r, resource); err != nil {
 				return err
 			}
-			p, err = s.insertPair(ctx, tx, r.clientID, r.family, r.resource)
+			if p, err = s.insertPair(ctx, tx, r.clientID, r.family, r.resource, jkt); err != nil {
+				return err
+			}
 			p.Repeated = true
-			return err
+			return s.markBound(ctx, tx, r.clientID, jkt)
 		}
 		if err := s.checkRefresh(r, resource); err != nil {
 			return err
@@ -236,8 +266,10 @@ func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string
 		if n, err := res.RowsAffected(); err != nil || n != 1 {
 			return ErrInvalidGrant // cannot happen with serialized write transactions
 		}
-		p, err = s.insertPair(ctx, tx, r.clientID, r.family, r.resource)
-		return err
+		if p, err = s.insertPair(ctx, tx, r.clientID, r.family, r.resource, jkt); err != nil {
+			return err
+		}
+		return s.markBound(ctx, tx, r.clientID, jkt)
 	})
 	if err == nil && rejected != nil {
 		return TokenPair{}, rejected

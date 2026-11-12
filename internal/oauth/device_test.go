@@ -109,7 +109,7 @@ func TestDeviceFlow(t *testing.T) {
 	if status != http.StatusOK || tokens["access_token"] == nil {
 		t.Fatalf("poll after approval = %d %v", status, tokens)
 	}
-	got, err := h.agents.Authenticate(context.Background(), tokens["access_token"].(string), testResource)
+	got, err := h.agents.Authenticate(context.Background(), tokens["access_token"].(string), testResource, "")
 	if err != nil || got.DisplayName != "Kitchen n8n" || got.OAuthClient != "n8n-kitchen" || got.ClientVerified {
 		t.Errorf("agent = %+v, %v", got, err)
 	}

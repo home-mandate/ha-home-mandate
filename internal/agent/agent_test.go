@@ -82,10 +82,10 @@ func TestRevokeTakesEffectImmediately(t *testing.T) {
 	if err := s.Revoke(ctx, a.ClientID, admin); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Authenticate(ctx, token, resource); !errors.Is(err, agent.ErrUnauthorized) {
+	if _, err := s.Authenticate(ctx, token, resource, ""); !errors.Is(err, agent.ErrUnauthorized) {
 		t.Errorf("revoked agent's token: %v, want ErrUnauthorized", err)
 	}
-	if _, err := s.Authenticate(ctx, otherToken, resource); err != nil {
+	if _, err := s.Authenticate(ctx, otherToken, resource, ""); err != nil {
 		t.Errorf("other agent affected: %v", err)
 	}
 	if err := s.Revoke(ctx, a.ClientID, admin); err != nil {

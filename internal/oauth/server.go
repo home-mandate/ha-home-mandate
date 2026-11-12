@@ -53,7 +53,7 @@ type (
 	}
 	// Refresher rotates refresh tokens.
 	Refresher interface {
-		Refresh(ctx context.Context, token, resource, oauthClient string) (agent.TokenPair, error)
+		Refresh(ctx context.Context, token, resource, oauthClient string, h agent.Holder) (agent.TokenPair, error)
 	}
 	// Auditor writes audit entries.
 	Auditor interface {

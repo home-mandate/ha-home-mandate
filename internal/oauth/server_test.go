@@ -358,7 +358,7 @@ func TestAuthorizationCodeFlow(t *testing.T) {
 		header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("token = %d %v", status, tokens)
 	}
-	a, err := h.agents.Authenticate(context.Background(), tokens["access_token"].(string), testResource)
+	a, err := h.agents.Authenticate(context.Background(), tokens["access_token"].(string), testResource, "")
 	if err != nil || a.DisplayName != "Claude" || a.OAuthClient != testClient || !a.ClientVerified || a.CreatedBy != "u-admin" {
 		t.Errorf("agent = %+v, %v", a, err)
 	}
@@ -377,7 +377,7 @@ func TestAuthorizationCodeFlow(t *testing.T) {
 	if status, out, _ := h.tokenRequest(refresh); status != http.StatusBadRequest || out["error"] != "invalid_grant" {
 		t.Errorf("reused refresh token = %d %v", status, out)
 	}
-	if _, err := h.agents.Authenticate(context.Background(), next["access_token"].(string), testResource); err == nil {
+	if _, err := h.agents.Authenticate(context.Background(), next["access_token"].(string), testResource, ""); err == nil {
 		t.Error("token of the reused family still valid")
 	}
 	out := h.auditLog()
@@ -811,7 +811,7 @@ func TestErrorsReachTheAgentWithoutDetails(t *testing.T) {
 
 type failingTokens struct{}
 
-func (failingTokens) Refresh(context.Context, string, string, string) (agent.TokenPair, error) {
+func (failingTokens) Refresh(context.Context, string, string, string, agent.Holder) (agent.TokenPair, error) {
 	return agent.TokenPair{}, errors.New("database is locked")
 }
 

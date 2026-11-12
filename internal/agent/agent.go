@@ -73,6 +73,9 @@ type Agent struct {
 	// Connected says whether the agent holds a token that is still valid: an access
 	// token, or a refresh token not used yet. An emergency stop can withdraw all of them.
 	Connected bool
+	// Binding is BindingDPoP once the agent got its first DPoP-bound token; from then on
+	// all its tokens are bound (dpop.go).
+	Binding string
 }
 
 // Client is the OAuth client an agent is admitted with.
@@ -221,7 +224,7 @@ func (s *Store) query(ctx context.Context, where string, args ...any) ([]Agent, 
 	args = append([]any{s.clock().Format(timeFormat)}, args...)
 	rows, err := s.db.QueryContext(ctx, `SELECT a.client_id, a.display_name, a.status, a.created_at, a.created_by, a.oauth_client,
 			a.client_verified, a.redirect_uris, coalesce(a.revoked_at, ''), a.revoked_by, coalesce(a.removed_at, ''), a.removed_by,
-			EXISTS (SELECT 1 FROM tokens t WHERE t.client_id = a.client_id AND `+validToken+`)
+			a.binding, EXISTS (SELECT 1 FROM tokens t WHERE t.client_id = a.client_id AND `+validToken+`)
 		FROM agents a `+where+` ORDER BY a.rowid`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("agent: query: %w", err)
@@ -232,7 +235,7 @@ func (s *Store) query(ctx context.Context, where string, args ...any) ([]Agent, 
 		var a Agent
 		var createdAt, uris, revokedAt, removedAt string
 		if err := rows.Scan(&a.ClientID, &a.DisplayName, &a.Status, &createdAt, &a.CreatedBy, &a.OAuthClient, &a.ClientVerified,
-			&uris, &revokedAt, &a.RevokedBy, &removedAt, &a.RemovedBy, &a.Connected); err != nil {
+			&uris, &revokedAt, &a.RevokedBy, &removedAt, &a.RemovedBy, &a.Binding, &a.Connected); err != nil {
 			return nil, fmt.Errorf("agent: query: %w", err)
 		}
 		a.CreatedAt, _ = time.Parse(timeFormat, createdAt)

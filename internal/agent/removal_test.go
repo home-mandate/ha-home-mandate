@@ -235,17 +235,17 @@ func TestReconnectIssuesNewTokensToTheExistingAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Authenticate(ctx, fresh.AccessToken, resource)
+	got, err := s.Authenticate(ctx, fresh.AccessToken, resource, "")
 	if err != nil || got.ClientID != a.ClientID {
 		t.Errorf("new token = %+v, %v", got, err)
 	}
-	if _, err := s.Authenticate(ctx, old.AccessToken, resource); !errors.Is(err, agent.ErrUnauthorized) {
+	if _, err := s.Authenticate(ctx, old.AccessToken, resource, ""); !errors.Is(err, agent.ErrUnauthorized) {
 		t.Errorf("withdrawn token after reconnect: %v", err)
 	}
-	if _, err := s.Refresh(ctx, old.RefreshToken, resource, cimd.ID); !errors.Is(err, agent.ErrInvalidGrant) {
+	if _, err := s.Refresh(ctx, old.RefreshToken, resource, cimd.ID, agent.Holder{}); !errors.Is(err, agent.ErrInvalidGrant) {
 		t.Errorf("withdrawn refresh token after reconnect: %v", err)
 	}
-	if _, err := s.Refresh(ctx, fresh.RefreshToken, resource, cimd.ID); err != nil {
+	if _, err := s.Refresh(ctx, fresh.RefreshToken, resource, cimd.ID, agent.Holder{}); err != nil {
 		t.Errorf("refresh of the new tokens: %v", err)
 	}
 	out := exported(t, log)
