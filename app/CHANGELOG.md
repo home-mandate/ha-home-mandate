@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2-rc.1
+
+Release candidate to try the new way releases are published. Experimental. The app is the same
+as 0.1.1.
+
+Maintenance
+- A release is created as a draft and published only with its signed conformance reports and
+  the SBOM of the sources attached; published releases can't be changed anymore (#153)
+
 ## 0.1.1
 
 Patch of 0.1.0. Implements the Home-Mandate Specification v0.1.1. Changes since 0.1.0:
