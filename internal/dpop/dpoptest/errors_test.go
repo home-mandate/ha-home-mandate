@@ -5,6 +5,7 @@ package dpoptest
 import (
 	"crypto/ecdsa"
 	"math/big"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -23,5 +24,8 @@ func TestErrorsArePassedOn(t *testing.T) {
 	broken := &Key{alg: ES256, ec: &ecdsa.PrivateKey{PublicKey: k.ec.PublicKey, D: big.NewInt(0)}}
 	if _, err := broken.Proof(Claims{Method: "POST", URL: "https://hm.test/", IssuedAt: time.Unix(0, 0)}); err == nil {
 		t.Error("signed with a zero scalar")
+	}
+	if _, err := (Transport{Key: broken, Token: "t"}).RoundTrip(httptest.NewRequest("GET", "https://hm.test/mcp", nil)); err == nil {
+		t.Error("request sent without a proof")
 	}
 }

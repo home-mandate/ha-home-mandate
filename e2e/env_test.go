@@ -429,6 +429,8 @@ func startGateway() error {
 		// Shorter than the mandates' approval timeout (10 s), so that a request without an
 		// answer gives the pending result (issue #27).
 		"-e", "HM_APPROVAL_WAIT=5",
+		// DPoP offered, Bearer agents keep working (e2e/dpop_test.go).
+		"-e", "HM_DPOP=optional",
 		env.image)...); err != nil {
 		return err
 	}

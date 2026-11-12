@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"time"
 )
 
@@ -144,4 +145,37 @@ func (k *Key) sign(input []byte) ([]byte, error) {
 	r.FillBytes(out[:32])
 	s.FillBytes(out[32:])
 	return out, nil
+}
+
+// Transport sends every request with the access token in the DPoP scheme and a fresh proof
+// of Key (RFC 9449 section 7): htu is the request URL without query and fragment, ath the
+// token's hash. It is the test client's side of the MCP endpoint.
+type Transport struct {
+	Key   *Key
+	Token string
+	// Base sends the requests; nil is http.DefaultTransport. Now is the clock of iat; nil
+	// is time.Now.
+	Base http.RoundTripper
+	Now  func() time.Time
+}
+
+// RoundTrip adds the Authorization and DPoP headers to a copy of r.
+func (t Transport) RoundTrip(r *http.Request) (*http.Response, error) {
+	now, base := t.Now, t.Base
+	if now == nil {
+		now = time.Now
+	}
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	u := *r.URL
+	u.RawQuery, u.Fragment = "", ""
+	proof, err := t.Key.Proof(Claims{Method: r.Method, URL: u.String(), AccessToken: t.Token, IssuedAt: now()})
+	if err != nil {
+		return nil, err
+	}
+	r = r.Clone(r.Context())
+	r.Header.Set("Authorization", "DPoP "+t.Token)
+	r.Header.Set("DPoP", proof)
+	return base.RoundTrip(r)
 }

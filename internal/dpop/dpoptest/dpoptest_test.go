@@ -3,7 +3,10 @@
 package dpoptest_test
 
 import (
+	"errors"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,5 +52,34 @@ func TestProofsVerify(t *testing.T) {
 	}
 	if _, err := dpoptest.FixedKey("RS256", seed); err == nil {
 		t.Error("RS256 fixed key made")
+	}
+}
+
+// The transport's requests pass the gateway's check at the resource, query and all.
+func TestTransport(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	v := dpop.NewVerifier(func() time.Time { return now })
+	k, err := dpoptest.NewKey(dpoptest.EdDSA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got error
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "DPoP ")
+		if !ok {
+			got = errors.New("no DPoP scheme")
+			return
+		}
+		_, got = v.Verify(r.Header, dpop.Expect{Method: r.Method, URL: "http://" + r.Host + r.URL.Path, AccessToken: token})
+	}))
+	t.Cleanup(srv.Close)
+	c := &http.Client{Transport: dpoptest.Transport{Key: k, Token: "hma_t", Now: func() time.Time { return now }}}
+	resp, err := c.Get(srv.URL + "/mcp?x=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got != nil {
+		t.Errorf("proof of the transport: %v", got)
 	}
 }
