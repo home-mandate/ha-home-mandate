@@ -90,9 +90,7 @@ type Claims struct {
 // Proof returns a proof for c with a fresh jti.
 func (k *Key) Proof(c Claims) (string, error) {
 	jti := make([]byte, 16)
-	if _, err := rand.Read(jti); err != nil {
-		return "", err
-	}
+	_, _ = rand.Read(jti) // crypto/rand.Read never fails (Go ≥ 1.24)
 	claims := map[string]any{"jti": b64.EncodeToString(jti), "htm": c.Method, "htu": c.URL, "iat": c.IssuedAt.Unix()}
 	if c.AccessToken != "" {
 		sum := sha256.Sum256([]byte(c.AccessToken))
