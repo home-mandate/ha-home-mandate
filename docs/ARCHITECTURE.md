@@ -1010,8 +1010,10 @@ Decided by the maintainer on 2026-10-01.
      family to the key's thumbprint (`tokens.dpop_jkt`), and the agent becomes `dpop`
      (`agents.binding`). Database triggers keep both from changing back. A bound agent gets
      no Bearer token any more, also after switching DPoP off; the only way back is removing
-     the agent and pairing anew. A client that lost its key reconnects with the household's
-     consent, with a new key and only with DPoP.
+     the agent and pairing anew. Becoming bound withdraws the agent's other unbound token
+     families, and such a family is never bound at a refresh: its stolen refresh token must
+     not bind it to the thief's key. A client that lost its key reconnects with the
+     household's consent, with a new key and only with DPoP.
    - **One rule, one place.** `agent.Store` decides the key of every family (`decideKey`)
      and checks it on every request (`Authenticate`). The token endpoint and `/mcp` only
      pass on the thumbprint that `internal/dpop` verified.
