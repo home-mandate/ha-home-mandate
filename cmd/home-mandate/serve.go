@@ -363,7 +363,8 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 	proofs := dpop.NewVerifier(time.Now)
 	gw := mcp.New(mcp.Config{Resource: resource, ResourceMetadataURL: metadata, Agents: s.agents, PDP: decider, Catalog: g.catalog, HA: client,
 		TemperatureUnit: g.temperatureUnit, TimeZone: g.householdTimeZone, ServiceUser: g.serviceUser,
-		Limiter: restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, ApprovalWait: s.cfg.ApprovalWait, Clock: s.log, Audit: s.log, Approvals: approvals, Journal: s.journal, Intents: s.intents, Logger: logger, Version: version})
+		Limiter: restoredLimiter(ctx, s.log, time.Now, logger), ApprovalLimit: s.cfg.ApprovalTimeout, ApprovalWait: s.cfg.ApprovalWait, Clock: s.log, Audit: s.log, Approvals: approvals, Journal: s.journal, Intents: s.intents, Logger: logger, Version: version,
+		DPoPMode: s.cfg.DPoP, DPoP: proofs})
 	g.mcp = gw
 	as, handler, err := withOAuth(s, gw.Handler(), http.HandlerFunc(g.serveDirect), resource, proofs, logger)
 	if err != nil {
