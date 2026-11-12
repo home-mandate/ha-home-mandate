@@ -26,21 +26,23 @@ type wireAgentMandate struct {
 }
 
 type wireAgent struct {
-	ClientID        string            `json:"client_id"`
-	DisplayName     string            `json:"display_name"`
-	Status          string            `json:"status"`
-	CreatedAt       string            `json:"created_at"`
-	CreatedBy       string            `json:"created_by"`
-	CreatedByName   *string           `json:"created_by_name"`
-	LastActiveAt    *string           `json:"last_active_at"`
-	OAuthClient     string            `json:"oauth_client"`
-	ClientVerified  bool              `json:"client_verified"`
-	RedirectURIs    []string          `json:"redirect_uris"`
-	RevokedAt       *string           `json:"revoked_at"`
-	RevokedByName   *string           `json:"revoked_by_name"`
-	RemovedAt       *string           `json:"removed_at"`
-	RemovedByName   *string           `json:"removed_by_name"`
-	Connected       bool              `json:"connected"`
+	ClientID       string   `json:"client_id"`
+	DisplayName    string   `json:"display_name"`
+	Status         string   `json:"status"`
+	CreatedAt      string   `json:"created_at"`
+	CreatedBy      string   `json:"created_by"`
+	CreatedByName  *string  `json:"created_by_name"`
+	LastActiveAt   *string  `json:"last_active_at"`
+	OAuthClient    string   `json:"oauth_client"`
+	ClientVerified bool     `json:"client_verified"`
+	RedirectURIs   []string `json:"redirect_uris"`
+	RevokedAt      *string  `json:"revoked_at"`
+	RevokedByName  *string  `json:"revoked_by_name"`
+	RemovedAt      *string  `json:"removed_at"`
+	RemovedByName  *string  `json:"removed_by_name"`
+	Connected      bool     `json:"connected"`
+	// Binding is "dpop" once the agent's tokens are DPoP-bound, else "none" (issue #65).
+	Binding         string            `json:"binding"`
 	RequestsToday   int               `json:"requests_today"`
 	ActionsLastHour int               `json:"actions_last_hour"`
 	Mandate         *wireAgentMandate `json:"mandate"`
@@ -95,7 +97,7 @@ func (s *Server) presentAgents(ctx context.Context, list []agent.Agent) ([]wireA
 		w := wireAgent{ClientID: a.ClientID, DisplayName: a.DisplayName, Status: a.Status, CreatedAt: *formatTime(a.CreatedAt),
 			CreatedBy: a.CreatedBy, CreatedByName: s.users.name(ctx, a.CreatedBy), OAuthClient: a.OAuthClient,
 			ClientVerified: a.ClientVerified, RedirectURIs: a.RedirectURIs, RevokedAt: formatTime(a.RevokedAt),
-			RemovedAt: formatTime(a.RemovedAt), Connected: a.Connected}
+			RemovedAt: formatTime(a.RemovedAt), Connected: a.Connected, Binding: a.Binding}
 		if w.RedirectURIs == nil {
 			w.RedirectURIs = []string{}
 		}

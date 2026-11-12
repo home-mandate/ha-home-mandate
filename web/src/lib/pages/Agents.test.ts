@@ -61,6 +61,17 @@ describe('Agents', () => {
     expect(within(table).getByText('voice-assistant').closest('.claimed')?.textContent).toContain('unverified');
   });
 
+  it('marks whether an active agent’s tokens are bound (DPoP), and says nothing for a revoked one (issue #65)', async () => {
+    await start();
+    const table = await screen.findByRole('table', { name: 'Agents' });
+    const rows = within(table).getAllByRole('row').slice(1);
+    expect(within(rows[1] as HTMLElement).getByText('Bound (DPoP)')).toBeTruthy();
+    expect(within(rows[0] as HTMLElement).getByText('Unbound')).toBeTruthy();
+    const revoked = rows.at(-1) as HTMLElement;
+    expect(within(revoked).queryByText('Unbound')).toBeNull();
+    expect(within(revoked).queryByText('Bound (DPoP)')).toBeNull();
+  });
+
   it('shows hostile names as text', async () => {
     await start();
     const table = await screen.findByRole('table', { name: 'Agents' });

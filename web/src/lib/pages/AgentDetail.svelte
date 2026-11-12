@@ -18,6 +18,7 @@
   import Banner from '../components/Banner.svelte';
   import Button from '../components/Button.svelte';
   import ClientIdentity from '../components/ClientIdentity.svelte';
+  import TokenBinding from '../components/agents/TokenBinding.svelte';
   import ErrorState from '../components/ErrorState.svelte';
   import FullPageState from '../components/FullPageState.svelte';
   import Icon from '../components/Icon.svelte';
@@ -207,6 +208,10 @@
         <dl>
           <dt>{m.agents_col_client()}</dt>
           <dd><ClientIdentity client={agent.oauth_client} verified={agent.client_verified} /></dd>
+          {#if agent.status === 'active'}
+            <dt>{m.agent_binding_label()}</dt>
+            <dd><TokenBinding binding={agent.binding} explain /></dd>
+          {/if}
           <dt>{m.agent_detail_way()}</dt>
           <dd>{agent.client_id.startsWith(PAIRED) ? m.agent_way_code() : m.agent_way_browser()}</dd>
           {#if agent.redirect_uris.length > 0}

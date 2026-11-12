@@ -43,6 +43,18 @@ describe('AgentDetail', () => {
     expect(plain(identity.textContent)).toContain('by Markus');
   });
 
+  it('shows that a bound agent’s tokens need its key, and explains what unbound means (issue #65)', async () => {
+    await start(CLAUDE);
+    const identity = await waitFor(() => section('Identity'));
+    expect(within(identity).getByText('Bound (DPoP)')).toBeTruthy();
+    expect(identity.textContent).not.toContain('stolen');
+    cleanup();
+    await start(VOICE);
+    const unbound = await waitFor(() => section('Identity'));
+    expect(within(unbound).getByText('Unbound')).toBeTruthy();
+    expect(plain(unbound.textContent)).toContain('A stolen token could be used elsewhere until it expires');
+  });
+
   it('shows a paired agent without redirect address', async () => {
     await start(VOICE);
     const identity = await waitFor(() => section('Identity'));

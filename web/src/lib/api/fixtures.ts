@@ -159,6 +159,7 @@ type Defaulted =
   | 'removed_at'
   | 'removed_by_name'
   | 'connected'
+  | 'binding'
   | 'requests_today'
   | 'actions_last_hour'
   | 'mandate';
@@ -175,6 +176,7 @@ const agent = ({ mandate, ...a }: AgentInput): Agent => ({
   removed_at: null,
   removed_by_name: null,
   connected: a.status === 'active',
+  binding: 'none',
   requests_today: 0,
   actions_last_hour: 0,
   mandate: mandate && { ...mandate, max_actions_per_hour: null, digest: '', rules_from: null, removed_at: null },
@@ -215,6 +217,7 @@ export const agentsFixture: Agent[] = [
     last_active_at: '2026-10-02T17:12:00Z',
     oauth_client: 'https://claude.ai/oauth/claude-code-client-metadata',
     client_verified: true,
+    binding: 'dpop',
     redirect_uris: ['https://agent.example/oauth/callback'],
     mandate: { id: 'mandate-claude', name: 'Claude Code', status: 'active' },
   }),
