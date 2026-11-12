@@ -29,6 +29,7 @@ import (
 
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/config"
+	"github.com/home-mandate/ha-home-mandate/internal/dpop"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 	"github.com/home-mandate/ha-home-mandate/internal/pdp"
 	"github.com/home-mandate/ha-home-mandate/internal/store"
@@ -245,7 +246,7 @@ func TestWithOAuth(t *testing.T) {
 	logger := slog.New(slog.DiscardHandler)
 
 	// Without a public URL, only the MCP endpoint is served.
-	as, h, err := withOAuth(s, mcpHandler, ui, "", logger)
+	as, h, err := withOAuth(s, mcpHandler, ui, "", dpop.NewVerifier(time.Now), logger)
 	if err != nil || as != nil {
 		t.Fatal(as, err)
 	}
@@ -257,7 +258,7 @@ func TestWithOAuth(t *testing.T) {
 
 	s.cfg = config.Config{PublicURL: "https://hm.example.org", HABrowserURL: "https://ha.example.org",
 		HAHTTPURL: "https://ha.example.org", HAURL: "wss://ha.example.org/api/websocket"}
-	as, h, err = withOAuth(s, mcpHandler, ui, "https://hm.example.org/mcp", logger)
+	as, h, err = withOAuth(s, mcpHandler, ui, "https://hm.example.org/mcp", dpop.NewVerifier(time.Now), logger)
 	if err != nil || as == nil {
 		t.Fatal(as, err)
 	}
@@ -271,7 +272,7 @@ func TestWithOAuth(t *testing.T) {
 	}
 
 	s.cfg.HAHTTPURL = "http://ha.example.org" // plaintext on the LAN
-	if _, _, err := withOAuth(s, mcpHandler, ui, "https://hm.example.org/mcp", logger); err == nil {
+	if _, _, err := withOAuth(s, mcpHandler, ui, "https://hm.example.org/mcp", dpop.NewVerifier(time.Now), logger); err == nil {
 		t.Error("plaintext Home Assistant accepted")
 	}
 
@@ -282,7 +283,7 @@ func TestWithOAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if as, _, err := withOAuth(s, mcpHandler, ui, "https://hm.example.org/mcp", logger); err != nil || as == nil {
+	if as, _, err := withOAuth(s, mcpHandler, ui, "https://hm.example.org/mcp", dpop.NewVerifier(time.Now), logger); err != nil || as == nil {
 		t.Errorf("app mode with public_url: %v", err)
 	}
 }

@@ -58,6 +58,9 @@ type Client struct {
 	Name         string // claimed by the client, never trusted as a fact
 	RedirectURIs []string
 	Verified     bool // the metadata document was fetched from ID
+	// DPoPBound: the metadata ask for DPoP-bound tokens (dpop_bound_access_tokens, RFC
+	// 9449 section 5.2); every token of the client must then be bound.
+	DPoPBound bool
 }
 
 // ClientResolver turns a client ID into a Client.
@@ -250,6 +253,7 @@ type metadata struct {
 	// AuthMethods is not part of RFC 7591, but clients such as ChatGPT list in it the
 	// methods they can use besides the one they declare.
 	AuthMethods []string `json:"token_endpoint_auth_methods_supported"`
+	DPoPBound   bool     `json:"dpop_bound_access_tokens"`
 }
 
 // public reports whether the client can authenticate as a public client (none): it
@@ -298,7 +302,7 @@ func (r *CIMDResolver) fetch(ctx context.Context, clientID string, u *url.URL) (
 	if !displayable(name) {
 		name = u.Hostname()
 	}
-	return Client{ID: clientID, Name: name, RedirectURIs: md.RedirectURIs, Verified: true}, nil
+	return Client{ID: clientID, Name: name, RedirectURIs: md.RedirectURIs, Verified: true, DPoPBound: md.DPoPBound}, nil
 }
 
 func isJSON(contentType string) bool {

@@ -135,6 +135,7 @@ func newHarness(t testing.TB) *harness {
 		Clients: fakeClients{
 			testClient:    {ID: testClient, Name: "Claude <b>Code</b>", RedirectURIs: []string{testRedirect, "https://app.example.org/cb"}, Verified: true},
 			"n8n-kitchen": {ID: "n8n-kitchen", Name: "n8n-kitchen"},
+			dpopClient:    {ID: dpopClient, Name: "Bound client", RedirectURIs: []string{testRedirect}, Verified: true, DPoPBound: true},
 		},
 		Admission: adm, Tokens: agents, Audit: log, Now: clock.Now})
 	h.srv = httptest.NewTLSServer(h.server.Handler())
@@ -812,6 +813,10 @@ func TestErrorsReachTheAgentWithoutDetails(t *testing.T) {
 type failingTokens struct{}
 
 func (failingTokens) Refresh(context.Context, string, string, string, agent.Holder) (agent.TokenPair, error) {
+	return agent.TokenPair{}, errors.New("database is locked")
+}
+
+func (failingTokens) Bind(context.Context, agent.TokenPair, agent.Holder) (agent.TokenPair, error) {
 	return agent.TokenPair{}, errors.New("database is locked")
 }
 

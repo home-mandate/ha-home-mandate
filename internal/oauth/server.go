@@ -18,6 +18,7 @@ import (
 	"github.com/home-mandate/ha-home-mandate/internal/admission"
 	"github.com/home-mandate/ha-home-mandate/internal/agent"
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
+	"github.com/home-mandate/ha-home-mandate/internal/dpop"
 	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
 
@@ -51,9 +52,10 @@ type (
 		Reconnectable(ctx context.Context, client agent.Client) ([]admission.Reconnectable, error)
 		Reconnect(ctx context.Context, req admission.ReconnectRequest) (agent.Agent, agent.TokenPair, error)
 	}
-	// Refresher rotates refresh tokens.
+	// Refresher rotates refresh tokens and binds issued tokens to the client's DPoP key.
 	Refresher interface {
 		Refresh(ctx context.Context, token, resource, oauthClient string, h agent.Holder) (agent.TokenPair, error)
+		Bind(ctx context.Context, p agent.TokenPair, h agent.Holder) (agent.TokenPair, error)
 	}
 	// Auditor writes audit entries.
 	Auditor interface {
@@ -74,6 +76,10 @@ type Config struct {
 	Audit     Auditor
 	Logger    *slog.Logger
 	Now       func() time.Time
+	// DPoPMode is whether DPoP-bound tokens are offered; DPoP checks the proofs. The MCP
+	// endpoint shares the verifier (nonces, replay cache); nil makes one on Now.
+	DPoPMode dpop.Mode
+	DPoP     *dpop.Verifier
 }
 
 // Server is the authorization server.
@@ -91,6 +97,7 @@ type Server struct {
 	warned             warnings
 	// pairKey signs the state of pairing sign-ins (pairState); new at every start.
 	pairKey []byte
+	dpop    *dpop.Verifier
 
 	mu         sync.Mutex
 	codes      map[string]*authCode
@@ -122,11 +129,17 @@ func New(cfg Config) *Server {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.DPoPMode == "" {
+		cfg.DPoPMode = dpop.ModeOff
+	}
+	if cfg.DPoP == nil {
+		cfg.DPoP = dpop.NewVerifier(cfg.Now)
+	}
 	s := &Server{cfg: cfg, sessions: newSessions(cfg.Now), codes: map[string]*authCode{},
 		grants: map[string]*deviceGrant{}, uiFailures: map[string]*uiFailures{},
 		uiLocks: map[string]*sessionLock{}, clientAddr: senderKey,
 		onboarding: newRateLimit(onboardingPerSender, onboardingGlobal), tokens: newRateLimit(tokenPerSender, tokenGlobal),
-		warned: warnings{last: map[string]time.Time{}}, pairKey: newPairKey()}
+		warned: warnings{last: map[string]time.Time{}}, pairKey: newPairKey(), dpop: cfg.DPoP}
 	s.secure = strings.HasPrefix(cfg.PublicURL, "https://")
 	s.cookie = "hm_session"
 	if s.secure {
@@ -156,7 +169,7 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) metadata(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSON(w, http.StatusOK, s.dpopMetadata(map[string]any{
 		"issuer":                                         s.cfg.PublicURL,
 		"authorization_endpoint":                         s.cfg.PublicURL + AuthorizePath,
 		"token_endpoint":                                 s.cfg.PublicURL + TokenPath,
@@ -167,16 +180,16 @@ func (s *Server) metadata(w http.ResponseWriter, _ *http.Request) {
 		"token_endpoint_auth_methods_supported":          []string{"none"},
 		"client_id_metadata_document_supported":          true,
 		"authorization_response_iss_parameter_supported": true,
-	})
+	}, false))
 }
 
 func (s *Server) resourceMetadata(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSON(w, http.StatusOK, s.dpopMetadata(map[string]any{
 		"resource":                 s.cfg.Resource,
 		"authorization_servers":    []string{s.cfg.PublicURL},
 		"bearer_methods_supported": []string{"header"},
 		"resource_name":            "Home-Mandate",
-	})
+	}, true))
 }
 
 func (s *Server) style(w http.ResponseWriter, _ *http.Request) {

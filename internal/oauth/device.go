@@ -139,7 +139,7 @@ func normalizeUserCode(code string) string {
 }
 
 // pollDevice answers the agent's polling (RFC 8628 section 3.5).
-func (s *Server) pollDevice(w http.ResponseWriter, r *http.Request, form map[string]string) {
+func (s *Server) pollDevice(w http.ResponseWriter, r *http.Request, form map[string]string, h agent.Holder) {
 	if form["device_code"] == "" || form["client_id"] == "" {
 		oauthError(w, http.StatusBadRequest, "invalid_request")
 		return
@@ -162,10 +162,11 @@ func (s *Server) pollDevice(w http.ResponseWriter, r *http.Request, form map[str
 		oauthError(w, http.StatusBadRequest, "access_denied")
 	case g.status == grantIssued:
 		delete(s.grants, key)
-		tokens := *g.tokens
+		tokens, client := *g.tokens, g.client
 		g.tokens = nil
 		s.mu.Unlock()
-		writeTokens(w, tokens)
+		// The tokens were issued at the human's approval; the proof comes now.
+		s.handOut(w, r, tokens, requireFor(h, client), client)
 	case !g.lastPoll.IsZero() && now.Sub(g.lastPoll) < g.interval:
 		g.interval += deviceInterval
 		g.lastPoll = now

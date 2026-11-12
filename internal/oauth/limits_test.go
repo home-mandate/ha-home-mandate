@@ -198,6 +198,10 @@ func (rejectingTokens) Refresh(context.Context, string, string, string, agent.Ho
 	return agent.TokenPair{}, agent.ErrRefreshReused
 }
 
+func (rejectingTokens) Bind(context.Context, agent.TokenPair, agent.Holder) (agent.TokenPair, error) {
+	return agent.TokenPair{}, agent.ErrInvalidGrant
+}
+
 // syncBuffer is a log destination safe for concurrent handlers.
 type syncBuffer struct {
 	mu  sync.Mutex
