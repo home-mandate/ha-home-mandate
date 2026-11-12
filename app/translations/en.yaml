@@ -35,5 +35,12 @@ configuration:
     description: >-
       Home Assistant as your browser reaches it, e.g. https://ha.example.org:8123. Needed
       with the public URL: signing in to admit an agent goes through Home Assistant.
+  dpop:
+    name: DPoP-bound tokens
+    description: >-
+      off (default), optional or required. With DPoP, an agent's tokens only work together
+      with a key that stays with its client, so a stolen token is useless elsewhere.
+      optional binds the tokens of agents that support it; required admits only such agents.
+      An agent that was bound once stays bound, also after switching this off.
 network:
   8765/tcp: MCP endpoint for AI agents (HTTPS)

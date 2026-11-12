@@ -51,7 +51,8 @@ func TestValidProofs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", alg, err)
 		}
-		if p.JKT != thumbprintOf(t, s) || len(p.JKT) != 43 {
+		// The client's own computation of the thumbprint (dpoptest) agrees.
+		if p.JKT != thumbprintOf(t, s) || p.JKT != s.key.JKT() || len(p.JKT) != 43 {
 			t.Errorf("%s: JKT = %s", alg, p.JKT)
 		}
 		// The same key gives the same thumbprint for the next proof.
@@ -63,7 +64,7 @@ func TestValidProofs(t *testing.T) {
 
 func thumbprintOf(t testing.TB, s signer) string {
 	t.Helper()
-	k, err := parseJWK(mustJSON(t, s.jwk()), s.alg)
+	k, err := parseJWK(mustJSON(t, s.jwk()), s.key.Alg())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,6 +411,19 @@ func TestNormalizeHTU(t *testing.T) {
 	for _, in := range []string{"", "/mcp", "ftp://gateway.example/", "mailto:a@b", "https://u:p@gateway.example/", "https://%zz/", "https:///mcp"} {
 		if got, ok := normalizeHTU(in); ok {
 			t.Errorf("normalizeHTU(%s) = %s, want refusal", in, got)
+		}
+	}
+}
+
+func TestParseMode(t *testing.T) {
+	for in, want := range map[string]Mode{"": ModeOff, "off": ModeOff, "optional": ModeOptional, "required": ModeRequired} {
+		if got, err := ParseMode(in); err != nil || got != want {
+			t.Errorf("ParseMode(%q) = %s, %v", in, got, err)
+		}
+	}
+	for _, in := range []string{"on", "OFF", "required "} {
+		if _, err := ParseMode(in); err == nil {
+			t.Errorf("ParseMode(%q) accepted", in)
 		}
 	}
 }

@@ -22,6 +22,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/home-mandate/ha-home-mandate/internal/dpop"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 )
 
@@ -114,6 +115,8 @@ type Config struct {
 	// the pending result; a request whose timeout is shorter ends within the call.
 	ApprovalWait time.Duration
 	LogLevel     slog.Level
+	// DPoP is whether DPoP-bound tokens are offered (RFC 9449); off by default.
+	DPoP dpop.Mode
 }
 
 // String omits nothing but the token, which Secret redacts.
@@ -122,9 +125,9 @@ func (c Config) String() string {
 	if c.Proxy.IsValid() {
 		proxy = c.Proxy.String()
 	}
-	return fmt.Sprintf("mode=%s data=%s ha=%s token=%s tls=%t mcp=%s proxy=%s ingress=%s public=%s approval=%s wait=%s log=%s",
+	return fmt.Sprintf("mode=%s data=%s ha=%s token=%s tls=%t mcp=%s proxy=%s ingress=%s public=%s approval=%s wait=%s log=%s dpop=%s",
 		c.Mode, c.DataDir, c.HAURL, c.HAToken, c.TLSCert != "", c.MCPAddr, proxy, c.IngressAddr, c.PublicURL, c.ApprovalTimeout,
-		c.ApprovalWait, c.LogLevel)
+		c.ApprovalWait, c.LogLevel, c.DPoP)
 }
 
 // DataDir returns the data directory without reading the rest of the configuration, so
@@ -172,6 +175,7 @@ type appOptionsFile struct {
 	LogLevel               string `json:"log_level"`
 	PublicURL              string `json:"public_url"`
 	HABrowserURL           string `json:"ha_browser_url"`
+	DPoP                   string `json:"dpop"`
 }
 
 func loadApp(token ha.Secret, readFile func(string) ([]byte, error)) (Config, error) {
@@ -199,6 +203,9 @@ func loadApp(token ha.Secret, readFile func(string) ([]byte, error)) (Config, er
 		}
 	}
 	if cfg.LogLevel, err = logLevel(opts.LogLevel); err != nil {
+		return Config{}, err
+	}
+	if cfg.DPoP, err = dpopMode("dpop", opts.DPoP); err != nil {
 		return Config{}, err
 	}
 	cfg.IngressAddr = ":" + ingressPort
@@ -330,6 +337,9 @@ func loadContainer(e Env) (Config, error) {
 		if cfg.ApprovalWait, err = approvalWait(seconds); err != nil {
 			return Config{}, err
 		}
+	}
+	if cfg.DPoP, err = dpopMode("HM_DPOP", getenv("HM_DPOP")); err != nil {
+		return Config{}, err
 	}
 	if cfg.LogLevel, err = logLevel(getenv("HM_LOG_LEVEL")); err != nil {
 		return Config{}, err
@@ -502,6 +512,14 @@ func approvalWait(seconds int) (time.Duration, error) {
 		return 0, fmt.Errorf("%w: approval wait must be between %s and %s", ErrInvalid, minApprovalWait, maxApprovalWait)
 	}
 	return d, nil
+}
+
+func dpopMode(option, s string) (dpop.Mode, error) {
+	m, err := dpop.ParseMode(s)
+	if err != nil {
+		return "", fmt.Errorf("%w: %s must be off, optional or required", ErrInvalid, option)
+	}
+	return m, nil
 }
 
 func logLevel(s string) (slog.Level, error) {

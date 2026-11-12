@@ -46,6 +46,30 @@ const (
 	replayEntries = 20_000
 )
 
+// Mode is whether the gateway offers DPoP (app option dpop, HM_DPOP).
+type Mode string
+
+const (
+	// ModeOff: no DPoP in the metadata and challenges, Bearer tokens only. Agents bound
+	// before stay bound and are still checked with DPoP.
+	ModeOff Mode = "off"
+	// ModeOptional: tokens are bound when the token request carries a proof.
+	ModeOptional Mode = "optional"
+	// ModeRequired: only bound tokens; the metadata say dpop_bound_access_tokens_required.
+	ModeRequired Mode = "required"
+)
+
+// ParseMode reads a mode; empty is ModeOff.
+func ParseMode(s string) (Mode, error) {
+	switch m := Mode(s); m {
+	case "":
+		return ModeOff, nil
+	case ModeOff, ModeOptional, ModeRequired:
+		return m, nil
+	}
+	return "", errors.New("dpop must be off, optional or required")
+}
+
 // Algorithms lists the signature algorithms of a proof, for dpop_signing_alg_values_supported.
 var Algorithms = []string{algES256, algEdDSA}
 

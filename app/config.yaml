@@ -56,3 +56,5 @@ schema:
   # Both optional: without public_url, no agent can be admitted (OAuth is off).
   public_url: url?
   ha_browser_url: url?
+  # Optional: DPoP-bound tokens (RFC 9449); off by default. Agents bound once stay bound.
+  dpop: list(off|optional|required)?
