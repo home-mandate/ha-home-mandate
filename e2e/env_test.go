@@ -134,8 +134,8 @@ func setUp() error {
 	env.network = "hm-e2e-net-" + env.id
 	env.cimdNet, env.cimd = "hm-e2e-cimd-net-"+env.id, "hm-e2e-cimd-"+env.id
 
-	for _, step := range []func() error{prepareImage, makeCertificates, createNetwork, startHA, onboard, createUsers, startCIMD,
-		startGateway, startIngress} {
+	for _, step := range []func() error{prepareImage, makeCertificates, createNetwork, startHA, onboard, createUsers, confirmHTTPConfig,
+		startCIMD, startGateway, startIngress} {
 		if err := step(); err != nil {
 			return err
 		}
