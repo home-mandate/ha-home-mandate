@@ -5,14 +5,12 @@ package oauth
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
-	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -25,6 +23,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/home-mandate/ha-home-mandate/internal/netx"
 	"github.com/home-mandate/ha-home-mandate/internal/untrusted"
 )
 
@@ -93,71 +92,18 @@ type cachedClient struct {
 
 // NewCIMDResolver returns a resolver; roots nil means the system roots.
 func NewCIMDResolver(roots *x509.CertPool) *CIMDResolver {
-	r := &CIMDResolver{now: time.Now, allowAddr: publicAddr, cache: map[string]cachedClient{},
+	r := &CIMDResolver{now: time.Now, allowAddr: netx.PublicAddr, cache: map[string]cachedClient{},
 		failed: map[string]time.Time{}, fetching: make(chan struct{}, cimdParallel)}
-	dialer := &net.Dialer{Timeout: cimdTimeout, Control: r.control}
-	r.client = &http.Client{
-		Timeout: cimdTimeout,
-		Transport: &http.Transport{
-			Proxy:                  nil,
-			DialContext:            dialer.DialContext,
-			TLSClientConfig:        &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots},
-			TLSHandshakeTimeout:    cimdTimeout,
-			ResponseHeaderTimeout:  cimdTimeout,
-			DisableKeepAlives:      true,
-			MaxResponseHeaderBytes: 16 << 10,
-		},
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
+	r.client = netx.NewClient(netx.Config{Timeout: cimdTimeout, Roots: roots, Control: r.control})
 	return r
 }
 
 // control runs for every connection with the resolved address.
 func (r *CIMDResolver) control(_, address string, _ syscall.RawConn) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return err
-	}
-	ip, err := netip.ParseAddr(host)
-	if err != nil || !r.allowAddr(ip.Unmap()) {
-		return fmt.Errorf("%w: address not public", ErrInvalidClient)
+	if err := netx.CheckAddress(address, r.allowAddr); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidClient, err)
 	}
 	return nil
-}
-
-// nonPublic lists special-purpose ranges beyond what netip classifies. 192.88.99.0/24,
-// the deprecated 6to4 relay anycast, stays allowed: the E2E suite uses it as a public
-// stand-in.
-var nonPublic = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),
-	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("192.0.0.0/24"),
-	netip.MustParsePrefix("192.0.2.0/24"),
-	netip.MustParsePrefix("198.18.0.0/15"),
-	netip.MustParsePrefix("198.51.100.0/24"),
-	netip.MustParsePrefix("203.0.113.0/24"),
-	netip.MustParsePrefix("240.0.0.0/4"),
-	netip.MustParsePrefix("::/96"), // IPv4-compatible, deprecated
-	netip.MustParsePrefix("64:ff9b::/96"),
-	netip.MustParsePrefix("64:ff9b:1::/48"),
-	netip.MustParsePrefix("100::/64"),
-	netip.MustParsePrefix("2001::/32"), // Teredo
-	netip.MustParsePrefix("2001:db8::/32"),
-	netip.MustParsePrefix("2002::/16"),
-	netip.MustParsePrefix("fec0::/10"), // site-local, deprecated
-}
-
-func publicAddr(ip netip.Addr) bool {
-	if !ip.IsValid() || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
-		return false
-	}
-	for _, p := range nonPublic {
-		if p.Contains(ip) {
-			return false
-		}
-	}
-	return true
 }
 
 // Resolve returns the client for a Client ID Metadata Document URL (fetched, cached for
