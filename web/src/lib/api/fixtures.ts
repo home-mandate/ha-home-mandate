@@ -8,6 +8,7 @@ import type {
   Agent,
   ApprovalHistoryEntry,
   ApprovalRequest,
+  CTCertificate,
   ApproverList,
   AuditEntry,
   Defaults,
@@ -97,6 +98,35 @@ export const systemFixture: SystemStatus = {
   approvers_configured: 1,
   clock_behind: false,
   directory: { store_failing_since: null, overflow: false, renames_last_hour: 0, rename_flood_threshold: 50 },
+  ct: {
+    state: 'active',
+    reason: null,
+    name: 'home.example',
+    since: '2026-09-01T08:00:00Z',
+    own_key_known: true,
+    key_error: null,
+    last_success: '2026-10-02T17:30:00Z',
+    unavailable: false,
+    sources: [
+      { name: 'certspotter', last_success: '2026-10-02T17:30:00Z', last_failure: null, failure: null },
+      { name: 'crtsh', last_success: '2026-10-02T17:30:00Z', last_failure: null, failure: null },
+    ],
+    certificates: [],
+  },
+};
+
+/** A certificate for the public name that Home-Mandate did not obtain (issue #66). */
+export const ctAlarmFixture: CTCertificate = {
+  digest: 'kPYe4TclFMsM9R3f6RaAkkZMqT6s7tBIqzemuT4FtJA',
+  names: ['home.example', '*.example'],
+  issuer: 'CN=R11, O=Let\'s Encrypt, C=US',
+  serial: '04A1F3C2D9E8B7A6',
+  not_before: '2026-10-01T00:00:00Z',
+  not_after: '2026-12-30T00:00:00Z',
+  first_seen: '2026-10-02T17:30:00Z',
+  result: 'alarm',
+  acknowledged: null,
+  pending: null,
 };
 
 export const defaultsFixture: Defaults = { approval_timeout: 'PT2M', max_actions_per_hour: 60, bell: false };

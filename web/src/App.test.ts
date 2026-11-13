@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import App from './App.svelte';
+import { ctAlarmFixture } from './lib/api/fixtures.ts';
 import { createMockClient, type MockOptions } from './lib/api/mock.ts';
 import type { ApiClient, EventHandlers } from './lib/api/client.ts';
 import { AppState } from './lib/app/state.svelte.ts';
@@ -226,6 +227,25 @@ describe('App frame', () => {
     await tick();
     expect(screen.getByText('Many renames in Home Assistant')).toBeTruthy();
     expect(screen.getByText(/renamed 51 devices in the last hour.*broken integration/)).toBeTruthy();
+  });
+
+  it('warns of a certificate for the public name not obtained by Home-Mandate and opens the certificates (issue #66)', async () => {
+    const { api } = await start();
+    expect(screen.queryByText(/not obtained by Home-Mandate/)).toBeNull();
+    api.control.setCT((ct) => ({ ...ct, certificates: [ctAlarmFixture, { ...ctAlarmFixture, digest: 'x', result: 'past-exposure' }] }));
+    await tick();
+    expect(screen.getByText('Certificate for home.example not obtained by Home-Mandate')).toBeTruthy();
+    expect(screen.getByText(/^1 certificate that Home-Mandate did not obtain itself/)).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Check' }));
+    expect(window.location.hash).toBe('#/settings/ct');
+    api.control.setCT((ct) => ({ ...ct, certificates: [], unavailable: true }));
+    await tick();
+    expect(screen.queryByText(/not obtained by Home-Mandate/)).toBeNull();
+    expect(screen.getByText('Certificate monitoring not possible')).toBeTruthy();
+    api.control.setCT((ct) => ({ ...ct, state: 'off', unavailable: true, certificates: [ctAlarmFixture] }));
+    await tick();
+    expect(screen.queryByText('Certificate monitoring not possible')).toBeNull();
+    expect(screen.queryByText(/not obtained by Home-Mandate/)).toBeNull();
   });
 
   it('opens the broken entry from the chain banner', async () => {

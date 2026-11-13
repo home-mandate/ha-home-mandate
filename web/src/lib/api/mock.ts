@@ -26,6 +26,7 @@ import {
   digestOf,
   NOW,
   sessionFixture,
+  ctAlarmFixture,
   systemFixture,
   tabletAgentFixture,
   templatesFixture,
@@ -38,6 +39,9 @@ import type {
   ApiErrorCode,
   ApprovalCause,
   ApprovalHistoryEntry,
+  CTCertificate,
+  CTPending,
+  CTStatus,
   ApprovalPage,
   ApprovalRequest,
   Approvals,
@@ -155,6 +159,8 @@ export interface MockControls {
   setDirectoryStore(since: string | null, overflow: boolean): void;
   /** As Home Assistant renaming this many entities in the last hour. */
   setRenamesLastHour(count: number): void;
+  /** As a change of the certificate monitoring (issue #66). */
+  setCT(change: (ct: CTStatus) => CTStatus): void;
   /** As a rename in Home Assistant: the device gets another entity ID, rules keep the old one. */
   renameDevice(from: string, to: string): void;
   /** As a device moved in Home Assistant: it gets these areas (room and floor). */
@@ -191,6 +197,8 @@ export interface MockOptions {
    * behind the pairing code was admitted before, so the pairing offers to reconnect it (#22).
    */
   afterStop?: boolean;
+  /** Certificate monitoring found a certificate for the public name that Home-Mandate did not obtain (issue #66). */
+  ctAlarm?: boolean;
   now?: () => Date;
 }
 
@@ -409,13 +417,23 @@ function matchesQuery(e: AuditEntry, q: AuditQuery): boolean {
   );
 }
 
+/** mockSystem is the system status the mock starts with. */
+function mockSystem(options: MockOptions): SystemStatus {
+  let system = options.noApprovers ? { ...systemFixture, approvers_configured: 0 } : systemFixture;
+  if (options.ctAlarm) {
+    const alarm = options.hostile ? { ...ctAlarmFixture, issuer: WORST_NAME, names: [WORST_NAME, ...ctAlarmFixture.names] } : ctAlarmFixture;
+    system = { ...system, ct: { ...system.ct, certificates: [alarm] } };
+  }
+  return system;
+}
+
 export function createMockClient(options: MockOptions = {}): MockClient {
   const now = options.now ?? (() => new Date(NOW));
   const pairingCandidate: PairingCandidate = options.hostile ? { ...pairingFixture, claimed_name: WORST_NAME } : pairingFixture;
   const startAgents = options.afterStop ? [...agentsFixture.map((a) => ({ ...a, connected: false })), tabletAgentFixture] : agentsFixture;
   const initial: State = {
     session: options.household ? { ...sessionFixture, household: options.household } : sessionFixture,
-    system: options.noApprovers ? { ...systemFixture, approvers_configured: 0 } : systemFixture,
+    system: mockSystem(options),
     defaults: defaultsFixture,
     devices: devicesFixture,
     renames: {},
@@ -443,6 +461,8 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     state = { ...state, system };
     emit({ type: 'system', system });
   };
+  const setCertificate = (digest: string, cert: CTCertificate) =>
+    setSystem({ ...state.system, ct: { ...state.system.ct, certificates: state.system.ct.certificates.map((c) => (c.digest === digest ? cert : c)) } });
 
   function log(event: AuditEvent, extra: Partial<AuditEntry> = {}): void {
     const seq = (state.audit.at(-1)?.seq ?? 0) + 1;
@@ -786,6 +806,9 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     },
     setDirectoryStore(since, overflow) {
       setSystem({ ...state.system, directory: { ...state.system.directory, store_failing_since: since, overflow } });
+    },
+    setCT(change) {
+      setSystem({ ...state.system, ct: change(copy(state.system.ct)) });
     },
     setRenamesLastHour(count) {
       setSystem({ ...state.system, directory: { ...state.system.directory, renames_last_hour: count } });
@@ -1331,6 +1354,33 @@ export function createMockClient(options: MockOptions = {}): MockClient {
         log(active ? 'emergency_stop.activated' : 'emergency_stop.released');
       }
       return copy(state.system.emergency_stop);
+    },
+
+    async acknowledgeCertificate(digest) {
+      const cert = state.system.ct.certificates.find((c) => c.digest === digest && c.result !== 'none');
+      if (!cert) return fail('not_found');
+      if (state.system.approvers_configured === 0) return fail('no_approvers');
+      const pending: CTPending = cert.pending ?? {
+        id: `ct${String(++counter).padStart(30, '0')}`,
+        expires: new Date(now().getTime() + state.system.approval_timeout_seconds * 1000).toISOString(),
+        requested_by: user().id,
+        requested_by_name: user().name,
+        answerers: [user().id],
+      };
+      setCertificate(digest, { ...cert, pending });
+      return copy(pending);
+    },
+
+    async answerCertificate(id, approve) {
+      const cert = state.system.ct.certificates.find((c) => c.pending?.id === id);
+      if (!cert || !cert.pending?.answerers.includes(user().id)) return fail('not_found');
+      setCertificate(
+        cert.digest,
+        approve
+          ? { ...cert, result: 'none', pending: null, acknowledged: { by: user().id, by_name: user().name, via: 'ui', at: now().toISOString() } }
+          : { ...cert, pending: null },
+      );
+      return copy(state.system.ct);
     },
 
     events(handlers): EventsConnection {

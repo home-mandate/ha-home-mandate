@@ -109,6 +109,60 @@ export interface SystemStatus {
   chain: ChainStatus;
   /** Approvers set up; 0 means every approval request is denied at once. */
   approvers_configured: number;
+  /** Certificate Transparency monitoring of the public name (issue #66). */
+  ct: CTStatus;
+}
+
+// ---------------------------------------------------------------------------
+// Certificate Transparency monitoring (issue #66, RELAY-v0 section 6.7): part of GET
+// api/system; POST api/ct/acknowledge, POST api/ct/confirmations/<id>/answer.
+
+/**
+ * off: switched off (ct_watch, HM_CT_WATCH). not_applicable: the public URL has no public
+ * https name (reason). active: it runs. unreadable: it runs, but its state could not be read.
+ */
+export type CTState = 'off' | 'not_applicable' | 'active' | 'unreadable';
+export type CTReason = 'no_public_url' | 'no_tls' | 'ip_address' | 'not_public_name';
+
+/** A confirmation of "This is mine" waiting for an approver, like a critical request. */
+export interface CTPending {
+  id: string;
+  expires: string;
+  requested_by: string;
+  requested_by_name: string | null;
+  /** Who may answer in the UI (Home Assistant user IDs); the others answer on their phone. */
+  answerers: string[];
+}
+
+export interface CTCertificate {
+  /** SHA-256 of the TBSCertificate without poison and SCT list, base64url: the certificate's identity. */
+  digest: string;
+  /** Names, issuer and serial come from a public log: untrusted text. */
+  names: string[];
+  issuer: string;
+  serial: string;
+  not_before: string;
+  not_after: string;
+  first_seen: string;
+  /** alarm: valid now or later; past-exposure: expired since monitoring began; none: acknowledged. */
+  result: 'alarm' | 'past-exposure' | 'none';
+  acknowledged: { by: string; by_name: string | null; via: 'push' | 'ui'; at: string } | null;
+  pending: CTPending | null;
+}
+
+export interface CTStatus {
+  state: CTState;
+  reason: CTReason | null;
+  name: string | null;
+  since: string | null;
+  /** false: Home-Mandate cannot see its own certificate; every certificate needs an acknowledgement. */
+  own_key_known: boolean;
+  key_error: string | null;
+  last_success: string | null;
+  /** No query succeeded for 24 hours. */
+  unavailable: boolean;
+  sources: { name: string; last_success: string | null; last_failure: string | null; failure: string | null }[];
+  certificates: CTCertificate[];
 }
 
 // ---------------------------------------------------------------------------

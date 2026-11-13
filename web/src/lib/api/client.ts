@@ -22,6 +22,8 @@ import type {
   AuditPage,
   AuditQuery,
   AuditVerification,
+  CTPending,
+  CTStatus,
   Defaults,
   DeviceCatalog,
   EmergencyStop,
@@ -139,6 +141,11 @@ export interface ApiClient {
 
   /** revokeTokens also withdraws every agent's access, for who suspects a stolen one. */
   setEmergencyStop(active: boolean, revokeTokens?: boolean): Promise<EmergencyStop>;
+
+  /** "This is mine": asks the approvers to confirm that the certificate is the household's. */
+  acknowledgeCertificate(digest: string): Promise<CTPending>;
+  /** An approver's answer to such a confirmation in the UI. */
+  answerCertificate(id: string, approve: boolean): Promise<CTStatus>;
 
   /** Opens the live event stream; it reconnects on its own until closed. */
   events(handlers: EventHandlers): EventsConnection;
@@ -425,6 +432,9 @@ export function createHttpClient(options: HttpClientOptions = {}): ApiClient {
     deleteApprover: async (id, baseVersion) => request('DELETE', `approvers/${segment(id)}?base_version=${encodeURIComponent(baseVersion)}`),
 
     setEmergencyStop: (active, revokeTokens) => request('PUT', 'emergency-stop', revokeTokens ? { active, revoke_tokens: true } : { active }),
+
+    acknowledgeCertificate: (digest) => request('POST', 'ct/acknowledge', { digest }),
+    answerCertificate: (id, approve) => request('POST', `ct/confirmations/${segment(id)}/answer`, { approve }),
 
     events: (handlers) =>
       connectEvents({

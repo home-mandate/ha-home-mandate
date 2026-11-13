@@ -19,6 +19,7 @@
   import AboutSection from '../components/settings/AboutSection.svelte';
   import ApproversSection from '../components/settings/ApproversSection.svelte';
   import CriticalSection from '../components/settings/CriticalSection.svelte';
+  import CtSection from '../components/settings/CtSection.svelte';
   import DefaultsSection from '../components/settings/DefaultsSection.svelte';
   import EstopSection from '../components/settings/EstopSection.svelte';
   import HaSection from '../components/settings/HaSection.svelte';
@@ -51,6 +52,7 @@
     { key: 'defaults', title: () => m.set_defaults() },
     { key: 'ha', title: () => m.set_ha() },
     { key: 'mcp', title: () => m.set_mcp() },
+    { key: 'ct', title: () => m.set_ct() },
     { key: 'retention', title: () => m.set_retention() },
     { key: 'estop', title: () => m.set_estop() },
     { key: 'about', title: () => m.set_about() },
@@ -183,6 +185,8 @@
           <HaSection ha={app.system.ha} mode={app.system.mode} household={app.session?.household ?? null} {ctx} />
         {:else if s.key === 'mcp' && app.system}
           <McpSection system={app.system} {ctx} />
+        {:else if s.key === 'ct' && app.system}
+          <CtSection {app} ct={app.system.ct} {ctx} />
         {:else if s.key === 'retention'}
           <p class="text">{m.set_retention_value()}</p>
         {:else if s.key === 'estop' && app.system}
