@@ -30,14 +30,22 @@ type uiClient struct {
 	c    *http.Client
 	user string
 	csrf string
+	// base and path are the Ingress stand-in and the UI's path behind it.
+	base, path string
 }
 
 func uiLogin(t *testing.T, user string) *uiClient {
 	t.Helper()
+	return uiLoginVia(t, user, env.uiURL, env.uiPath)
+}
+
+// uiLoginVia signs user in through the Ingress stand-in at base, whose UI is at path.
+func uiLoginVia(t *testing.T, user, base, path string) *uiClient {
+	t.Helper()
 	jar, _ := cookiejar.New(nil)
 	c := &http.Client{Jar: jar, Timeout: 30 * time.Second}
 	u := env.users[user]
-	resp, err := c.PostForm(env.uiURL+"/login", url.Values{"username": {u.name}, "password": {u.password}})
+	resp, err := c.PostForm(base+"/login", url.Values{"username": {u.name}, "password": {u.password}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +53,7 @@ func uiLogin(t *testing.T, user string) *uiClient {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("sign-in of %s through Ingress = %d", user, resp.StatusCode)
 	}
-	ui := &uiClient{t: t, c: c, user: user}
+	ui := &uiClient{t: t, c: c, user: user, base: base, path: path}
 	if status, body := ui.do(http.MethodGet, "api/session", nil); status == http.StatusOK {
 		var s struct {
 			CSRF string `json:"csrf_token"`
@@ -67,7 +75,7 @@ func (u *uiClient) do(method, path string, body any) (int, []byte) {
 	} else {
 		rd = bytes.NewReader(nil)
 	}
-	req, _ := http.NewRequest(method, env.uiURL+env.uiPath+"/"+path, rd)
+	req, _ := http.NewRequest(method, u.base+u.path+"/"+path, rd)
 	req.Header.Set("Accept", "application/json")
 	if method != http.MethodGet {
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
