@@ -106,6 +106,8 @@ func (s *Server) routes() *http.ServeMux {
 	route("POST /api/approvers/{id}/test", noBody, s.testApprover)
 
 	route("PUT /api/emergency-stop", jsonBody, s.putEmergencyStop)
+	route("POST /api/ct/acknowledge", jsonBody, s.acknowledgeCertificate)
+	route("POST /api/ct/confirmations/{id}/answer", jsonBody, s.answerCertificate)
 
 	mux.Handle("GET /api/events", s.authenticated(http.HandlerFunc(s.events)))
 	// Everything else under /api: the same answer for unknown paths and methods.

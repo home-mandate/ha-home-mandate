@@ -139,7 +139,12 @@ type Config struct {
 	// MCPURL is the URL agents connect to, from the configuration only; empty without TLS.
 	MCPURL string
 	// TLS reports the certificate of the MCP endpoint.
-	TLS       func() TLSStatus
+	TLS func() TLSStatus
+	// CT is the Certificate Transparency monitoring (issue #66); nil when it does not
+	// run, and then CTState says why ("off" or "not_applicable" with CTReason).
+	CT        CT
+	CTState   string
+	CTReason  string
 	Retention time.Duration
 	// ApprovalTimeout is the installation's upper limit for an approval wait
 	// (approval_timeout_seconds, HM_APPROVAL_TIMEOUT); a mandate may only shorten it.

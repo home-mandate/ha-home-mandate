@@ -72,6 +72,8 @@ type wireSystem struct {
 	// Directory: storing renames of Home Assistant has failed for a while; with overflow,
 	// renames cannot be held any more and nothing is decided.
 	Directory wireDirectory `json:"directory"`
+	// CT is the Certificate Transparency monitoring of the public name (issue #66).
+	CT wireCT `json:"ct"`
 }
 
 type wireDirectory struct {
@@ -134,6 +136,7 @@ func (s *Server) system(ctx context.Context) (wireSystem, error) {
 	if !tls.Present {
 		out.TLS.ValidUntil = nil
 	}
+	out.CT = s.ct(ctx)
 	return out, nil
 }
 
