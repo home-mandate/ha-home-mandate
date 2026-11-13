@@ -1033,6 +1033,48 @@ Decided by the maintainer on 2026-10-01.
    - **Limits.** DPoP stops the later use of a stolen token, not a live man-in-the-middle
      who relays requests as they happen.
 
+7. **Certificate Transparency monitoring (2026-11-13, issue #66).** Whoever controls the DNS
+   of the public name can get a publicly trusted certificate for it and sit between agent
+   and home. Home-Mandate cannot prevent that, but every such certificate appears in CT logs.
+   **Decision: watch the public name as RELAY-v0 section 6.7 prescribes for gateways, on by
+   default** (app option `ct_watch`, `HM_CT_WATCH`). `internal/ctwatch` holds the decision
+   as a pure function, tested with every case of the relay's `ct-v0.json` (a pinned copy
+   until a release of the spec module carries the relay cases).
+   - **What is watched.** Only the host of the public URL, when it is an https name no
+     public CA would refuse (not an IP address, `.local`, `.home.arpa` and the like); the
+     system status says why otherwise. A wildcard covers exactly one label.
+   - **Sources.** Cert Spotter (SSLMate; one query with `match_wildcards` and a cursor, an
+     optional key) and crt.sh (the name and `*.<parent>`, each certificate downloaded and
+     read) every 15 minutes with a jitter, over the hardened client of `internal/netx`.
+     Only the public name leaves the household. A failure or a rate limit is "unknown",
+     never "no certificates"; 24 hours without any successful query ring the bell once.
+   - **Identity and own certificates.** A certificate is the SHA-256 of its TBSCertificate
+     without poison and SCT list, so a precertificate and its certificate are one (checked
+     against Cert Spotter's digests of real certificates). Own certificates are recognised
+     by the gateway's server key: the current one, or an earlier one for certificates
+     logged (earliest embedded SCT) before it was replaced; `ct_keys` keeps that history.
+     The key comes from the certificate files, or from a TLS handshake with the reverse
+     proxy at its configured address `HM_PROXY`, never through DNS: whoever controls the
+     DNS could otherwise answer the handshake and have their certificate taken for ours.
+     Without either, every certificate for the name needs an acknowledgement, and the UI
+     says so. Before an alarm the key is read again, so that a renewal the gateway has not
+     taken over yet raises none.
+   - **Alarm.** A certificate valid now or later raises an alarm; one that expired since
+     monitoring began is a past exposure. The first start of monitoring takes the place
+     of RELAY-v0's pairing; its first round is one inventory with one push. The approvers
+     get a push (issuer, names and validity, cleaned as untrusted text), Home Assistant's
+     bell shows the alarms while they last, the UI a banner and the list in Settings ›
+     Certificates.
+   - **"This is mine".** An administrator asks; an approver confirms it like a critical
+     request (on a device that asks for unlocking, or in the UI with the right to critical
+     requests). The acknowledgement names the digest only, nothing else of the certificate,
+     and the approvers are told who confirmed it. A confirmation waits in memory for the
+     approval timeout; after a restart the alarm stays and can be acknowledged again.
+   - **No audit entry.** SPEC-v0 has no events for this yet (home-mandate/spec#40), and new
+     events need a new audit version; until then the log, the notifications and the UI
+     carry it. The CAA checks and the reading of the installation in section 6.7 belong to
+     the relay and come with the relay client.
+
 **Toolchain (2026-10-01):**
 - Go 1.27.4 for `home-mandate`; build image `golang:1.27.4-alpine` pinned
   by digest (Dockerfile).
