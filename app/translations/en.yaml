@@ -42,5 +42,17 @@ configuration:
       with a key that stays with its client, so a stolen token is useless elsewhere.
       optional binds the tokens of agents that support it; required admits only such agents.
       An agent that was bound once stays bound, also after switching this off.
+  ct_watch:
+    name: Certificate monitoring
+    description: >-
+      on (default) or off. Home-Mandate watches the public Certificate Transparency logs for
+      certificates for the name of the public URL that it did not obtain itself, and tells
+      the approvers. Someone with such a certificate could intercept agents' connections.
+      The queries go to Cert Spotter (SSLMate) and crt.sh; they name only the public name.
+  ct_sslmate_key:
+    name: Cert Spotter API key
+    description: >-
+      Optional. Without a key, Cert Spotter allows a limited number of queries per IP
+      address, which households behind one shared IPv4 address share.
 network:
   8765/tcp: MCP endpoint for AI agents (HTTPS)

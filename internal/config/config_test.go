@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"math/big"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -563,5 +564,79 @@ func TestProxyRefusedInAppMode(t *testing.T) {
 	_, err := load(env(map[string]string{"SUPERVISOR_TOKEN": "s", "HM_PROXY": "192.0.2.10"}), files(map[string]string{appOptions: options}))
 	if !errors.Is(err, ErrInvalid) {
 		t.Errorf("Load = %v, want ErrInvalid", err)
+	}
+}
+
+// Issue #66, decision of 2026-11-13: CT monitoring is on unless switched off; the key of
+// Cert Spotter is optional, from a private file or the environment (then taken out of
+// it), and never shown.
+func TestCTOptions(t *testing.T) {
+	base := map[string]string{"HM_HA_URL": "ws://localhost:8123/api/websocket", "HM_HA_TOKEN": "t"}
+	with := func(kv ...string) func(string) string {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for i := 0; i < len(kv); i += 2 {
+			m[kv[i]] = kv[i+1]
+		}
+		return env(m)
+	}
+	for value, want := range map[string]bool{"": true, "on": true, "off": false} {
+		if cfg, err := load(with("HM_CT_WATCH", value), files(nil)); err != nil || cfg.CTWatch != want || cfg.CTKey != "" {
+			t.Errorf("HM_CT_WATCH=%q: %v, %v", value, cfg.CTWatch, err)
+		}
+	}
+	for _, bad := range [][]string{
+		{"HM_CT_WATCH", "yes"},
+		{"HM_CT_SSLMATE_KEY", "has space"},
+		{"HM_CT_SSLMATE_KEY", strings.Repeat("k", 257)},
+		{"HM_CT_SSLMATE_KEY", "k", "HM_CT_SSLMATE_KEY_FILE", "/run/secrets/ct"},
+		{"HM_CT_SSLMATE_KEY_FILE", "/nope"},
+		{"HM_CT_SSLMATE_KEY_FILE", "/run/secrets/empty"},
+	} {
+		if _, err := load(with(bad...), files(map[string]string{"/run/secrets/empty": "\n"})); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%v: %v", bad, err)
+		}
+	}
+	var unset []string
+	cfg, err := Load(Env{Getenv: with("HM_CT_SSLMATE_KEY", "abc_123"), ReadFile: files(nil), Stat: statAs(0o600),
+		Unsetenv: func(k string) error { unset = append(unset, k); return nil }})
+	if err != nil || cfg.CTKey != "abc_123" || !slices.Contains(unset, "HM_CT_SSLMATE_KEY") {
+		t.Errorf("key from the environment: %v %v %v", cfg.CTKey, unset, err)
+	}
+	if strings.Contains(cfg.String(), "abc_123") || !strings.Contains(cfg.String(), "ct=true ct_key=true") {
+		t.Errorf("String() = %s", cfg)
+	}
+	if _, err := Load(Env{Getenv: with("HM_CT_SSLMATE_KEY", "abc"), ReadFile: files(nil), Stat: statAs(0o600),
+		Unsetenv: func(k string) error {
+			if k == "HM_CT_SSLMATE_KEY" {
+				return errors.New("no")
+			}
+			return nil
+		}}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("key that cannot be taken out of the environment: %v", err)
+	}
+	if cfg, err := load(with("HM_CT_SSLMATE_KEY_FILE", "/run/secrets/ct"), files(map[string]string{"/run/secrets/ct": "from-file\n"})); err != nil || cfg.CTKey != "from-file" {
+		t.Errorf("key file: %v %v", cfg.CTKey, err)
+	}
+	if _, err := Load(Env{Getenv: with("HM_CT_SSLMATE_KEY_FILE", "/run/secrets/ct"), ReadFile: files(map[string]string{"/run/secrets/ct": "k"}),
+		Stat: statAs(0o644), Unsetenv: func(string) error { return nil }}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("readable key file: %v", err)
+	}
+	app := func(opts string) (Config, error) {
+		return load(env(map[string]string{"SUPERVISOR_TOKEN": "s"}), files(map[string]string{"/data/options.json": opts}))
+	}
+	if cfg, err := app(options); err != nil || !cfg.CTWatch || cfg.CTKey != "" {
+		t.Errorf("app default: %v, %v", cfg.CTWatch, err)
+	}
+	if cfg, err := app(`{"approval_timeout_seconds":120,"log_level":"info","ct_watch":"off","ct_sslmate_key":"k-1"}`); err != nil || cfg.CTWatch || cfg.CTKey != "k-1" {
+		t.Errorf("app options: %v, %v, %v", cfg.CTWatch, cfg.CTKey, err)
+	}
+	for _, opts := range []string{`{"approval_timeout_seconds":120,"log_level":"info","ct_watch":"maybe"}`,
+		`{"approval_timeout_seconds":120,"log_level":"info","ct_sslmate_key":"a b"}`} {
+		if _, err := app(opts); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: %v", opts, err)
+		}
 	}
 }
