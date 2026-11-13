@@ -84,7 +84,7 @@ func CheckAddress(address string, allow func(netip.Addr) bool) error {
 type Config struct {
 	// Timeout bounds a whole request, the connection and the TLS handshake each.
 	Timeout time.Duration
-	// Roots are the trusted CAs; nil means the system's (SSL_CERT_FILE, as Go reads it).
+	// Roots are the trusted CAs; nil means the system roots, as Go finds them.
 	Roots *x509.CertPool
 	// Control checks each dialled address; nil means CheckAddress with PublicAddr.
 	Control func(network, address string, c syscall.RawConn) error
