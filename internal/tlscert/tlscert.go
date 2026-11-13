@@ -98,6 +98,23 @@ func (l *Loader) Status() (time.Time, error) {
 	return l.notAfter, l.lastErr
 }
 
+// PublicKeySHA256 is the SHA-256 digest of the SubjectPublicKeyInfo of the certificate
+// in use, by which Certificate Transparency monitoring recognises the gateway's own
+// certificates (internal/ctwatch). With recheck, the files are looked at now rather than
+// at most once per CheckInterval: before an alarm, a renewal that was written but not
+// yet taken over must count.
+func (l *Loader) PublicKeySHA256(recheck bool) [sha256.Size]byte {
+	if recheck {
+		l.mu.Lock()
+		l.checked = time.Time{}
+		l.mu.Unlock()
+	}
+	l.refresh()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return sha256.Sum256(l.cert.Leaf.RawSubjectPublicKeyInfo)
+}
+
 // Expiring tells whether a certificate valid until notAfter is to be warned about at now.
 func Expiring(notAfter, now time.Time) bool {
 	return notAfter.Sub(now) < ExpiryWarning

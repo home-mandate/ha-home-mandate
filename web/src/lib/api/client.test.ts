@@ -97,6 +97,16 @@ describe('createHttpClient', () => {
     expect(put?.init.body).toBe('{"active":true}');
   });
 
+  it('asks for and answers the confirmation of a certificate (issue #66)', async () => {
+    const { api, calls } = await signedIn(json({ id: 'a'.repeat(32) }), json({ state: 'active' }));
+    await api.acknowledgeCertificate('kPYe4TclFMsM9R3f6RaAkkZMqT6s7tBIqzemuT4FtJA');
+    await api.answerCertificate('a'.repeat(32), false);
+    const [ack, answer] = calls();
+    expect([ack?.url, ack?.init.method, ack?.init.body]).toEqual([`${BASE}api/ct/acknowledge`, 'POST', '{"digest":"kPYe4TclFMsM9R3f6RaAkkZMqT6s7tBIqzemuT4FtJA"}']);
+    expect([answer?.url, answer?.init.body]).toEqual([`${BASE}api/ct/confirmations/${'a'.repeat(32)}/answer`, '{"approve":false}']);
+    expect(header(answer, 'X-HM-CSRF')).toBe(sessionFixture.csrf_token);
+  });
+
   it('sends reads without a CSRF header', async () => {
     const { fetch, calls } = fakeFetch(json(sessionFixture));
     await createHttpClient({ fetch, base: BASE }).session();

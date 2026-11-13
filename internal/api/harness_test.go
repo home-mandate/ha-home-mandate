@@ -196,6 +196,9 @@ type harness struct {
 	pairing   Pairing
 	direct    SignIn // direct mode on when set
 	publicURL string
+	ct        CT // certificate monitoring, nil while off
+	ctState   string
+	ctReason  string
 }
 
 type clock struct {
@@ -311,7 +314,7 @@ func (h *harness) build() {
 		UI:    http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ui") }),
 		Proxy: netip.MustParseAddr(supervisorAddr), Principal: household, Mode: "app", Version: "0.1.0", Commit: "abc123", MCPURL: "https://hm.example.org:8765/mcp",
 		TLS: func() TLSStatus { return TLSStatus{Present: true, ValidUntil: testStart.Add(90 * 24 * time.Hour)} }, Retention: 30 * 24 * time.Hour, ApprovalTimeout: 5 * time.Minute,
-		Direct: h.direct, PublicURL: h.publicURL,
+		Direct: h.direct, PublicURL: h.publicURL, CT: h.ct, CTState: h.ctState, CTReason: h.ctReason,
 		DirectUI: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "direct ui") }),
 		Now:      h.now.Now})
 	h.log.OnCommit(srv.AuditCommitted)

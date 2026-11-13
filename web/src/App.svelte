@@ -218,6 +218,7 @@
     {timeZone}
     onliftestop={() => go({ name: 'settings', section: 'estop' })}
     onchain={(seq) => go({ name: 'audit_entry', seq })}
+    onct={() => go({ name: 'settings', section: 'ct' })}
   />
 {/if}
 <main id="main" bind:this={main} tabindex="-1" aria-busy={app.phase === 'loading'}>

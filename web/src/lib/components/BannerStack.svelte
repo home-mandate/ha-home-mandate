@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!--
   Banners under the header, in the order of design README section 5: emergency stop ›
-  audit chain broken › clock behind the audit log › Home Assistant unreachable › TLS missing; then the lost live
+  audit chain broken › certificate for the public name not obtained by Home-Mandate (issue
+  #66) › clock behind the audit log › Home Assistant unreachable › TLS missing; then the lost live
   connection (README section 7), shown only after 5 s. They leave when the cause is gone.
 -->
 <script lang="ts">
@@ -23,9 +24,11 @@
     timeZone: string;
     onliftestop: () => void;
     onchain: (seq: number) => void;
+    /** Opens the certificates in the settings (issue #66). */
+    onct: () => void;
   }
 
-  let { system, downSince, now, locale, timeZone, onliftestop, onchain }: Props = $props();
+  let { system, downSince, now, locale, timeZone, onliftestop, onchain, onct }: Props = $props();
 
   const ctx = $derived({ locale, timeZone });
   /** A time from the server; an unreadable one shows nothing instead of breaking the frame. */
@@ -41,6 +44,8 @@
   const tlsExpired = $derived(tlsLeft !== null && tlsLeft <= 0);
   const tlsExpiring = $derived(tlsLeft !== null && tlsLeft > 0 && tlsLeft < TLS_WARNING_MS);
   const tlsMissing = $derived(system.mode === 'container' ? m.set_tls_missing_container() : m.set_tls_missing());
+  const ctAlarms = $derived(system.ct.state === 'active' ? system.ct.certificates.filter((c) => c.result === 'alarm').length : 0);
+  const ctDown = $derived(system.ct.state === 'active' && system.ct.unavailable);
   const connectionLost = $derived(downSince !== null && now - downSince >= CONNECTION_GRACE_MS);
 </script>
 
@@ -73,6 +78,24 @@
   {/if}
   {#if system.directory.renames_last_hour > system.directory.rename_flood_threshold}
     <Banner flush kind="info" title={m.banner_rename_flood_title()} body={m.banner_rename_flood_body({ count: system.directory.renames_last_hour })} />
+  {/if}
+  {#if ctAlarms > 0}
+    <Banner
+      flush
+      kind="critical"
+      title={m.banner_ct_title({ name: system.ct.name ?? '' })}
+      body={m.banner_ct_body({ count: ctAlarms })}
+      action={{ label: m.banner_ct_action(), onclick: onct }}
+    />
+  {/if}
+  {#if ctDown}
+    <Banner
+      flush
+      kind="warning"
+      title={m.banner_ct_unavailable_title()}
+      body={m.banner_ct_unavailable_body({ time: at(system.ct.last_success ?? system.ct.since) })}
+      action={{ label: m.banner_ct_action(), onclick: onct }}
+    />
   {/if}
   {#if system.clock_behind}
     <Banner flush kind="critical" title={m.banner_clock_title()} body={m.banner_clock_body()} />

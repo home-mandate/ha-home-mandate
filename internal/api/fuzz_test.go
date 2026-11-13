@@ -40,6 +40,8 @@ var fuzzRoutes = []string{
 	"PUT /api/approvers/{}",
 	"PUT /api/emergency-stop",
 	"GET /api/audit?{}",
+	"POST /api/ct/acknowledge",
+	"POST /api/ct/confirmations/{}/answer",
 }
 
 // FuzzWriteRequests: whatever an administrator's browser sends to a route that reads a
@@ -49,6 +51,8 @@ var fuzzRoutes = []string{
 // agent, so that the fuzzer reaches the checks behind them.
 func FuzzWriteRequests(f *testing.F) {
 	h := newHarness(f)
+	h.ct = activeCT()
+	h.build()
 	a := h.admit("Kitchen")
 	info := h.mandateOf(a.ClientID)
 	mandateID := info.ID
@@ -88,6 +92,8 @@ func FuzzWriteRequests(f *testing.F) {
 		{"PUT /api/settings", "", `{"x":1} {}`},
 		{"PUT /api/settings", "", `[`},
 		{"POST /api/agents/revoke", "", `{"client_id":"CLIENT"}`},
+		{"POST /api/ct/acknowledge", "", `{"digest":"kPYe4TclFMsM9R3f6RaAkkZMqT6s7tBIqzemuT4FtJA"}`},
+		{"POST /api/ct/confirmations/{}/answer", "0123456789abcdef0123456789abcdef", `{"approve":true}`},
 	} {
 		f.Add(route(seed.route), seed.param, []byte(seed.body))
 	}

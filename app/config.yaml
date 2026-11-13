@@ -58,3 +58,8 @@ schema:
   ha_browser_url: url?
   # Optional: DPoP-bound tokens (RFC 9449); off by default. Agents bound once stay bound.
   dpop: list(off|optional|required)?
+  # Optional: Certificate Transparency monitoring of the public name; on by default.
+  ct_watch: list(on|off)?
+  # Optional: an API key of Cert Spotter (SSLMate); without one, queries are limited per
+  # IP address.
+  ct_sslmate_key: password?

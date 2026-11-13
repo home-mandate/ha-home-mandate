@@ -68,6 +68,8 @@ app; invalid values stop the start with a message in the log.
 | `ha_browser_url` | Home Assistant URL for your browser | empty | Required together with `public_url`. Home Assistant as your browser reaches it, see below. |
 | `approval_timeout_seconds` | Approval timeout | `120` | How long an action waits for an answer to an approval request, 30 to 600 seconds. A mandate may only shorten it. |
 | `log_level` | Log level | `info` | `debug`, `info`, `warning` or `error`. |
+| `ct_watch` | Certificate monitoring | `on` | `on` or `off`. Watches the public Certificate Transparency logs for certificates for the name of `public_url` that Home-Mandate did not obtain, and tells the approvers. The queries go to Cert Spotter (SSLMate) and crt.sh and name only the public name. Runs only for a public https name. |
+| `ct_sslmate_key` | Cert Spotter API key | – | Optional. Without a key, Cert Spotter allows a limited number of queries per IP address (100 an hour), which households behind one shared IPv4 address share. |
 | `dpop` | DPoP-bound tokens | `off` | `off`, `optional` or `required`; see [DPoP-bound tokens](agents.md#dpop-bound-tokens). An agent bound once stays bound, also after switching back to `off`. |
 
 ### `public_url`

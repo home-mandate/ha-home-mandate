@@ -117,7 +117,7 @@ const testBellID = "hm_approval_00112233445566778899aabbccddeeff"
 
 func TestBellRingAndClear(t *testing.T) {
 	f := newFakeHA(t)
-	got := make(chan fakeMsg, 2)
+	got := make(chan fakeMsg, 4)
 	f.handle("call_service", func(m fakeMsg) (any, *CommandError) {
 		got <- m
 		return map[string]any{}, nil
@@ -142,6 +142,14 @@ func TestBellRingAndClear(t *testing.T) {
 	if clear["domain"] != "persistent_notification" || clear["service"] != "dismiss" || len(data) != 1 || data["notification_id"] != testBellID {
 		t.Errorf("clear = %v", clear)
 	}
+	for _, id := range []string{"hm_ct_alarm", "hm_ct_unavailable"} {
+		if err := bell.Ring(context.Background(), id, Notification{Message: "m"}); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		if m := <-got; m["service_data"].(map[string]any)["notification_id"] != id {
+			t.Errorf("ring %s = %v", id, m)
+		}
+	}
 }
 
 func TestBellRefusesForeignIDsAndContent(t *testing.T) {
@@ -154,15 +162,17 @@ func TestBellRefusesForeignIDsAndContent(t *testing.T) {
 		id string
 		n  Notification
 	}{
-		"foreign id":       {"config_entry_discovery", ok},
-		"prefix only":      {"hm_approval_", ok},
-		"upper case hex":   {"hm_approval_00112233445566778899AABBCCDDEEFF", ok},
-		"suffix":           {testBellID + "x", ok},
-		"no message":       {testBellID, Notification{Title: "t"}},
-		"long message":     {testBellID, Notification{Message: strings.Repeat("m", maxNotifyText+1)}},
-		"long title":       {testBellID, Notification{Title: strings.Repeat("t", maxNotifyText+1), Message: "m"}},
-		"with actions":     {testBellID, Notification{Message: "m", Actions: []NotificationAction{{Action: "A", Title: "a"}}}},
-		"newline injected": {testBellID + "\n", ok},
+		"foreign id":        {"config_entry_discovery", ok},
+		"prefix only":       {"hm_approval_", ok},
+		"upper case hex":    {"hm_approval_00112233445566778899AABBCCDDEEFF", ok},
+		"suffix":            {testBellID + "x", ok},
+		"no message":        {testBellID, Notification{Title: "t"}},
+		"long message":      {testBellID, Notification{Message: strings.Repeat("m", maxNotifyText+1)}},
+		"long title":        {testBellID, Notification{Title: strings.Repeat("t", maxNotifyText+1), Message: "m"}},
+		"with actions":      {testBellID, Notification{Message: "m", Actions: []NotificationAction{{Action: "A", Title: "a"}}}},
+		"newline injected":  {testBellID + "\n", ok},
+		"other ct id":       {"hm_ct_other", ok},
+		"ct id with suffix": {"hm_ct_alarm_x", ok},
 	} {
 		if err := bell.Ring(context.Background(), tc.id, tc.n); !errors.Is(err, ErrCommandNotAllowed) {
 			t.Errorf("Ring %s: %v", name, err)
@@ -186,6 +196,7 @@ func TestBellLeftovers(t *testing.T) {
 			{"notification_id": "config_entry_discovery"},
 			{"notification_id": testBellID},
 			{"notification_id": "hm_approval_not_ours"},
+			{"notification_id": "hm_ct_alarm"}, // the monitoring clears its own
 		}, nil
 	})
 	c, _ := startClient(t, testConfig(f.url()))

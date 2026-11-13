@@ -866,3 +866,22 @@ describe('createMockClient: answering approvals in the UI (F2)', () => {
     expect((await api.approvals()).open.map((r) => r.id)).toEqual(['a1000000000000000000000000000001']);
   });
 });
+
+describe('mock: certificate monitoring (issue #66)', () => {
+  it('refuses unknown certificates and answers of others, and keeps one confirmation per certificate', async () => {
+    const api = createMockClient({ ctAlarm: true });
+    await expect(api.acknowledgeCertificate('unknown')).rejects.toMatchObject({ code: 'not_found' });
+    await expect(api.answerCertificate('nope', true)).rejects.toMatchObject({ code: 'not_found' });
+    const digest = (await api.system()).ct.certificates[0]?.digest ?? '';
+    const first = await api.acknowledgeCertificate(digest);
+    expect(await api.acknowledgeCertificate(digest)).toEqual(first);
+    const ct = await api.answerCertificate(first.id, true);
+    expect(ct.certificates[0]).toMatchObject({ result: 'none', pending: null, acknowledged: { via: 'ui' } });
+    await expect(api.acknowledgeCertificate(digest)).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('shows hostile text in the certificate of the hostile household', async () => {
+    const api = createMockClient({ ctAlarm: true, hostile: true });
+    expect((await api.system()).ct.certificates[0]?.issuer).toBe(WORST_NAME);
+  });
+});

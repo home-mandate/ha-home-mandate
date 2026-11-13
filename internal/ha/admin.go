@@ -81,10 +81,15 @@ func (c *Client) NotifyServices(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// bellIDPattern is the only form of persistent notification ID Home-Mandate creates,
-// removes or lists (internal/approval: "hm_approval_" and 32 hex digits). Notifications
-// of anyone else are never touched.
-var bellIDPattern = regexp.MustCompile(`^hm_approval_[0-9a-f]{32}$`)
+// bellIDPattern is the only form of persistent notification ID Home-Mandate creates or
+// removes: an approval request's ("hm_approval_" and 32 hex digits, internal/approval)
+// and the two of Certificate Transparency monitoring (internal/ctwatch). Notifications of
+// anyone else are never touched.
+var bellIDPattern = regexp.MustCompile(`^(hm_approval_[0-9a-f]{32}|hm_ct_alarm|hm_ct_unavailable)$`)
+
+// approvalBellPattern are the IDs Leftovers lists: approval requests do not survive a
+// restart, the monitoring's notifications do and are cleared by the monitoring itself.
+var approvalBellPattern = regexp.MustCompile(`^hm_approval_[0-9a-f]{32}$`)
 
 // Bell shows Home-Mandate's neutral hint in Home Assistant's notification bell (decision
 // F2 B2). It implements approval.Bell.
@@ -133,7 +138,7 @@ func (b Bell) Leftovers(ctx context.Context) ([]string, error) {
 	}
 	var out []string
 	for _, n := range list {
-		if bellIDPattern.MatchString(n.ID) {
+		if approvalBellPattern.MatchString(n.ID) {
 			out = append(out, n.ID)
 		}
 	}

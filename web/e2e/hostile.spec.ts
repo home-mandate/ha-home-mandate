@@ -26,6 +26,8 @@ const WIDTHS: readonly Variant[] = [
 interface Screen {
   name: string;
   path: string;
+  /** Mock options besides hostile. */
+  mock?: Record<string, unknown>;
   setup?: (page: Page) => Promise<void>;
 }
 
@@ -55,6 +57,8 @@ const SCREENS: Screen[] = [
     },
   },
   { name: 'mandates', path: './#/mandates' },
+  // A certificate from a public log: its issuer and names are as hostile as agent text (#66).
+  { name: 'certificates', path: './#/settings/ct', mock: { ctAlarm: true } },
   { name: 'mandate editor', path: './#/mandates/mandate-voice' },
   {
     name: 'pairing candidate',
@@ -83,9 +87,9 @@ function agentTexts(page: Page): Promise<string[]> {
 
 for (const screen of SCREENS) {
   test(`hostile agent text: ${screen.name}`, async ({ page }) => {
-    await page.addInitScript(() => {
-      (window as unknown as { hmMockOptions: unknown }).hmMockOptions = { hostile: true };
-    });
+    await page.addInitScript((mock) => {
+      (window as unknown as { hmMockOptions: unknown }).hmMockOptions = { hostile: true, ...mock };
+    }, screen.mock ?? {});
     await page.goto(screen.path);
     await expect(page.locator('h1, h2').first()).toBeVisible();
     await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);

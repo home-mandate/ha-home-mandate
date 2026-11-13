@@ -35,7 +35,7 @@ const SCREENS: Screen[] = [
   {
     name: 'overview, every banner',
     path: './',
-    mock: { eventsState: 'closed' },
+    mock: { eventsState: 'closed', ctAlarm: true },
     setup: async (page) => {
       await page.evaluate(async () => {
         const mock = (window as unknown as Mock).hmMock;
@@ -43,9 +43,10 @@ const SCREENS: Screen[] = [
         mock.breakChain(18342);
         mock.setHaConnected(false);
       });
-      // Measure only once all four banners are there: emergency stop, broken chain, Home
-      // Assistant and the lost connection (shown after 5 s).
-      await expect(page.locator('.stack .banner')).toHaveCount(4, { timeout: 10_000 });
+      // Measure only once all five banners are there: emergency stop, broken chain, a
+      // certificate not obtained by Home-Mandate, Home Assistant and the lost connection
+      // (shown after 5 s).
+      await expect(page.locator('.stack .banner')).toHaveCount(5, { timeout: 10_000 });
     },
   },
   {
@@ -189,6 +190,16 @@ const SCREENS: Screen[] = [
   },
   { name: 'browser sign-in', path: './#/agents/browser' },
   { name: 'settings', path: './#/settings' },
+  { name: 'settings, a certificate not obtained by Home-Mandate (#66)', path: './#/settings/ct', mock: { ctAlarm: true } },
+  {
+    name: 'settings, a certificate waiting for confirmation (#66)',
+    path: './#/settings/ct',
+    mock: { ctAlarm: true },
+    setup: async (page) => {
+      await page.locator('.cert button').first().click();
+      await expect(page.locator('.cert .actions button')).toHaveCount(2);
+    },
+  },
   { name: 'settings, Home Assistant connection of a household in the US (#43)', path: './#/settings/ha', mock: { household: US_HOUSEHOLD } },
   {
     name: 'mandate editor, a rule open in a household in the US (#43)',

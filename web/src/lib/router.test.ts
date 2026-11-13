@@ -46,6 +46,7 @@ describe('parseHash', () => {
     ['#/audit/18342', { name: 'audit_entry', seq: 18342 }],
     ['#/settings', { name: 'settings', section: null }],
     ['#/settings/estop', { name: 'settings', section: 'estop' }],
+    ['#/settings/ct', { name: 'settings', section: 'ct' }],
     ['#/settings/critical', { name: 'settings', section: 'critical' }],
   ])('%s', (hash, want) => {
     expect(parseHash(hash)).toEqual(want);

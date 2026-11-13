@@ -60,6 +60,7 @@ describe('Settings: frame', () => {
       '#/settings/defaults',
       '#/settings/ha',
       '#/settings/mcp',
+      '#/settings/ct',
       '#/settings/retention',
       '#/settings/estop',
       '#/settings/about',
@@ -625,5 +626,84 @@ describe('Settings: system sections', () => {
     expect(within(about).getByRole('link', { name: /^Source code/ }).getAttribute('href')).toBe('https://github.com/home-mandate/ha-home-mandate');
     expect(within(about).getByRole('link', { name: /^Licenses of the included packages/ }).getAttribute('href')).toBe('./licenses.txt');
     expect(about.textContent).toContain('AGPL-3.0-or-later');
+  });
+});
+
+describe('Settings: certificates (issue #66)', () => {
+  it('shows the monitoring without findings', async () => {
+    await start({ section: 'ct' });
+    const ct = region('Certificates');
+    expect(within(ct).getByText(/Watching home\.example, last checked/)).toBeTruthy();
+    expect(within(ct).getByText('No certificate found that Home-Mandate did not obtain itself.')).toBeTruthy();
+    expect(within(ct).getByText(/Cert Spotter: last success/)).toBeTruthy();
+    expect(within(ct).getByText(/crt\.sh: last success/)).toBeTruthy();
+  });
+
+  it('asks the approvers to confirm "This is mine" and takes the answer of an approver here', async () => {
+    const { api } = await start({ section: 'ct', options: { ctAlarm: true } });
+    const ct = region('Certificates');
+    expect(within(ct).getByText('Not obtained by Home-Mandate')).toBeTruthy();
+    expect(within(ct).getByText('CN=R11, O=Let\'s Encrypt, C=US')).toBeTruthy();
+    await fireEvent.click(within(ct).getByRole('button', { name: 'This is mine' }));
+    expect(await within(ct).findByText(/Waiting for an approver to confirm/)).toBeTruthy();
+    expect(toasts.list().some((t) => t.text === 'The approvers were asked to confirm.')).toBe(true);
+    await fireEvent.click(within(ct).getByRole('button', { name: 'It is ours' }));
+    expect(await within(ct).findByText(/Confirmed as yours by .* in Home-Mandate/)).toBeTruthy();
+    expect(within(ct).queryByRole('button', { name: 'This is mine' })).toBeNull();
+    expect((await api.system()).ct.certificates[0]?.acknowledged?.via).toBe('ui');
+  });
+
+  it('keeps the alarm when the approver does not confirm', async () => {
+    await start({ section: 'ct', options: { ctAlarm: true } });
+    const ct = region('Certificates');
+    await fireEvent.click(within(ct).getByRole('button', { name: 'This is mine' }));
+    await fireEvent.click(await within(ct).findByRole('button', { name: 'Do not confirm' }));
+    expect(await within(ct).findByRole('button', { name: 'This is mine' })).toBeTruthy();
+    expect(within(ct).getByText('Not obtained by Home-Mandate')).toBeTruthy();
+  });
+
+  it('says when nobody can confirm', async () => {
+    await start({ section: 'ct', options: { ctAlarm: true, noApprovers: true } });
+    await fireEvent.click(within(region('Certificates')).getByRole('button', { name: 'This is mine' }));
+    await waitFor(() => expect(toasts.list().some((t) => t.text.startsWith('Nobody can confirm'))).toBe(true));
+  });
+
+  it('says why the monitoring does not run', async () => {
+    for (const [ct, text] of [
+      [{ state: 'off', reason: null }, 'Switched off (option ct_watch).'],
+      [{ state: 'not_applicable', reason: 'no_public_url' }, /there is no public URL/],
+      [{ state: 'not_applicable', reason: 'no_tls' }, /does not use https/],
+      [{ state: 'not_applicable', reason: 'ip_address' }, /is an IP address/],
+      [{ state: 'not_applicable', reason: 'not_public_name' }, /is not a public one/],
+      [{ state: 'unreadable', reason: null }, /cannot be read right now/],
+    ] as const) {
+      await start({
+        section: 'ct',
+        prepare: (api) => api.control.setCT((c) => ({ ...c, ...ct })),
+      });
+      expect(within(region('Certificates')).getByText(text)).toBeTruthy();
+      cleanup();
+    }
+  });
+
+  it('shows a monitoring that is not possible, an unknown own key and past exposures', async () => {
+    await start({
+      section: 'ct',
+      options: { ctAlarm: true },
+      prepare: (api) =>
+        api.control.setCT((c) => ({
+          ...c,
+          unavailable: true,
+          own_key_known: false,
+          sources: [{ name: 'crtsh', last_success: null, last_failure: NOW, failure: 'crt.sh answered 502' }],
+          certificates: c.certificates.map((cert) => ({ ...cert, result: 'past-exposure' as const })),
+        })),
+    });
+    const ct = region('Certificates');
+    expect(within(ct).getByText(/no query of the logs has succeeded for 24 hours/)).toBeTruthy();
+    expect(within(ct).getByText(/cannot see its own certificate/)).toBeTruthy();
+    expect(within(ct).getByText('Expired, possibly used before')).toBeTruthy();
+    expect(within(ct).getByText(/crt\.sh: no success yet/)).toBeTruthy();
+    expect(within(ct).getByText(/failed/)).toBeTruthy();
   });
 });

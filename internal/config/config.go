@@ -17,6 +17,7 @@ import (
 	"net/netip"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -117,6 +118,11 @@ type Config struct {
 	LogLevel     slog.Level
 	// DPoP is whether DPoP-bound tokens are offered (RFC 9449); off by default.
 	DPoP dpop.Mode
+	// CTWatch is whether the public name is watched in Certificate Transparency (issue
+	// #66); on by default, it runs only for a public https name.
+	CTWatch bool
+	// CTKey is an API key of Cert Spotter (SSLMate); empty means queries without one.
+	CTKey ha.Secret
 }
 
 // String omits nothing but the token, which Secret redacts.
@@ -125,9 +131,9 @@ func (c Config) String() string {
 	if c.Proxy.IsValid() {
 		proxy = c.Proxy.String()
 	}
-	return fmt.Sprintf("mode=%s data=%s ha=%s token=%s tls=%t mcp=%s proxy=%s ingress=%s public=%s approval=%s wait=%s log=%s dpop=%s",
+	return fmt.Sprintf("mode=%s data=%s ha=%s token=%s tls=%t mcp=%s proxy=%s ingress=%s public=%s approval=%s wait=%s log=%s dpop=%s ct=%t ct_key=%t",
 		c.Mode, c.DataDir, c.HAURL, c.HAToken, c.TLSCert != "", c.MCPAddr, proxy, c.IngressAddr, c.PublicURL, c.ApprovalTimeout,
-		c.ApprovalWait, c.LogLevel, c.DPoP)
+		c.ApprovalWait, c.LogLevel, c.DPoP, c.CTWatch, c.CTKey != "")
 }
 
 // DataDir returns the data directory without reading the rest of the configuration, so
@@ -176,6 +182,8 @@ type appOptionsFile struct {
 	PublicURL              string `json:"public_url"`
 	HABrowserURL           string `json:"ha_browser_url"`
 	DPoP                   string `json:"dpop"`
+	CTWatch                string `json:"ct_watch"`
+	CTSSLMateKey           string `json:"ct_sslmate_key"`
 }
 
 func loadApp(token ha.Secret, readFile func(string) ([]byte, error)) (Config, error) {
@@ -206,6 +214,12 @@ func loadApp(token ha.Secret, readFile func(string) ([]byte, error)) (Config, er
 		return Config{}, err
 	}
 	if cfg.DPoP, err = dpopMode("dpop", opts.DPoP); err != nil {
+		return Config{}, err
+	}
+	if cfg.CTWatch, err = ctWatch("ct_watch", opts.CTWatch); err != nil {
+		return Config{}, err
+	}
+	if cfg.CTKey, err = ctKey("ct_sslmate_key", opts.CTSSLMateKey); err != nil {
 		return Config{}, err
 	}
 	cfg.IngressAddr = ":" + ingressPort
@@ -341,6 +355,12 @@ func loadContainer(e Env) (Config, error) {
 	if cfg.DPoP, err = dpopMode("HM_DPOP", getenv("HM_DPOP")); err != nil {
 		return Config{}, err
 	}
+	if cfg.CTWatch, err = ctWatch("HM_CT_WATCH", getenv("HM_CT_WATCH")); err != nil {
+		return Config{}, err
+	}
+	if cfg.CTKey, err = containerCTKey(e); err != nil {
+		return Config{}, err
+	}
 	if cfg.LogLevel, err = logLevel(getenv("HM_LOG_LEVEL")); err != nil {
 		return Config{}, err
 	}
@@ -369,7 +389,7 @@ func containerToken(e Env) (ha.Secret, error) {
 		return "", fmt.Errorf("%w: set HM_HA_TOKEN or HM_HA_TOKEN_FILE, not both", ErrInvalid)
 	case file != "":
 		var err error
-		if token, err = tokenFile(e, file); err != nil {
+		if token, err = secretFile(e, "HM_HA_TOKEN_FILE", file); err != nil {
 			return "", err
 		}
 	case token != "":
@@ -383,23 +403,69 @@ func containerToken(e Env) (ha.Secret, error) {
 	return ha.Secret(token), nil
 }
 
-// tokenFile reads the token from a regular file that neither group nor others can read.
-func tokenFile(e Env, file string) (string, error) {
+// secretFile reads a secret from a regular file that neither group nor others can read;
+// option names the variable that pointed to it.
+func secretFile(e Env, option, file string) (string, error) {
 	info, err := e.Stat(file)
 	if err != nil {
-		return "", fmt.Errorf("%w: HM_HA_TOKEN_FILE: %w", ErrInvalid, err)
+		return "", fmt.Errorf("%w: %s: %w", ErrInvalid, option, err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("%w: HM_HA_TOKEN_FILE is not a regular file", ErrInvalid)
+		return "", fmt.Errorf("%w: %s is not a regular file", ErrInvalid, option)
 	}
 	if info.Mode().Perm()&0o044 != 0 {
-		return "", fmt.Errorf("%w: HM_HA_TOKEN_FILE is readable by group or others; make it readable by its owner only (chmod 600)", ErrInvalid)
+		return "", fmt.Errorf("%w: %s is readable by group or others; make it readable by its owner only (chmod 600)", ErrInvalid, option)
 	}
 	data, err := e.ReadFile(file)
 	if err != nil {
-		return "", fmt.Errorf("%w: HM_HA_TOKEN_FILE: %w", ErrInvalid, err)
+		return "", fmt.Errorf("%w: %s: %w", ErrInvalid, option, err)
 	}
 	return strings.TrimSpace(string(data)), nil
+}
+
+// containerCTKey reads the Cert Spotter key from HM_CT_SSLMATE_KEY_FILE (preferred) or
+// HM_CT_SSLMATE_KEY, which it then takes out of the environment; neither means none.
+func containerCTKey(e Env) (ha.Secret, error) {
+	key, file := e.Getenv("HM_CT_SSLMATE_KEY"), e.Getenv("HM_CT_SSLMATE_KEY_FILE")
+	switch {
+	case key != "" && file != "":
+		return "", fmt.Errorf("%w: set HM_CT_SSLMATE_KEY or HM_CT_SSLMATE_KEY_FILE, not both", ErrInvalid)
+	case file != "":
+		var err error
+		if key, err = secretFile(e, "HM_CT_SSLMATE_KEY_FILE", file); err != nil {
+			return "", err
+		}
+		if key == "" {
+			return "", fmt.Errorf("%w: HM_CT_SSLMATE_KEY_FILE is empty", ErrInvalid)
+		}
+	case key != "":
+		if err := e.Unsetenv("HM_CT_SSLMATE_KEY"); err != nil {
+			return "", fmt.Errorf("%w: cannot remove HM_CT_SSLMATE_KEY from the environment: %w", ErrInvalid, err)
+		}
+	}
+	return ctKey("HM_CT_SSLMATE_KEY", key)
+}
+
+// ctKeyPattern admits what an API key of Cert Spotter can be: printable characters a
+// header can carry, without spaces.
+var ctKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._~+/=-]{1,256}$`)
+
+func ctKey(option, s string) (ha.Secret, error) {
+	if s != "" && !ctKeyPattern.MatchString(s) {
+		return "", fmt.Errorf("%w: %s is not a valid API key", ErrInvalid, option)
+	}
+	return ha.Secret(s), nil
+}
+
+// ctWatch reads on or off; empty means on.
+func ctWatch(option, s string) (bool, error) {
+	switch s {
+	case "", "on":
+		return true, nil
+	case "off":
+		return false, nil
+	}
+	return false, fmt.Errorf("%w: %s must be on or off", ErrInvalid, option)
 }
 
 // caPool reads PEM certificates to trust for Home Assistant; "" means system roots.

@@ -45,5 +45,18 @@ configuration:
       nützt anderswo nichts. optional bindet die Tokens der Agenten, die es können; required
       lässt nur solche Agenten zu. Ein einmal gebundener Agent bleibt gebunden, auch wenn
       DPoP wieder ausgeschaltet wird.
+  ct_watch:
+    name: Zertifikatsüberwachung
+    description: >-
+      on (Standard) oder off. Home-Mandate durchsucht die öffentlichen Certificate-Transparency-
+      Logs nach Zertifikaten für den Namen der öffentlichen URL, die es nicht selbst bezogen
+      hat, und meldet sie den Freigebenden. Wer ein solches Zertifikat hat, könnte Verbindungen
+      der Agenten abfangen. Die Abfragen gehen an Cert Spotter (SSLMate) und crt.sh und nennen
+      nur den öffentlichen Namen.
+  ct_sslmate_key:
+    name: Cert-Spotter-API-Schlüssel
+    description: >-
+      Optional. Ohne Schlüssel erlaubt Cert Spotter eine begrenzte Zahl Abfragen pro IP-Adresse;
+      Haushalte hinter einer gemeinsamen IPv4-Adresse teilen sie sich.
 network:
   8765/tcp: MCP-Endpunkt für KI-Agenten (HTTPS)

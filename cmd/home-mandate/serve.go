@@ -28,6 +28,7 @@ import (
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/catalog"
 	"github.com/home-mandate/ha-home-mandate/internal/config"
+	"github.com/home-mandate/ha-home-mandate/internal/ctwatch"
 	"github.com/home-mandate/ha-home-mandate/internal/dpop"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 	"github.com/home-mandate/ha-home-mandate/internal/i18n"
@@ -262,7 +263,8 @@ type gateway struct {
 	proxied  bool         // TLS ends at the reverse proxy in front (HM_PROXY)
 	ingress  *http.Server // the UI behind Ingress; nil without HM_INGRESS_ADDR in container mode
 	ingressL net.Listener
-	certs    *tlscert.Loader // the MCP certificate; nil without TLS
+	certs    *tlscert.Loader  // the MCP certificate; nil without TLS
+	ct       *ctwatch.Watcher // Certificate Transparency monitoring; nil while it does not run
 	// direct is the UI of direct mode on the MCP listener; nil while it is off. Set once in
 	// newGateway, before the listener serves, so it needs no synchronization.
 	direct http.Handler
@@ -380,12 +382,22 @@ func newGateway(ctx context.Context, s *state, logger *slog.Logger) (*gateway, e
 		return nil, err
 	}
 
+	ct, err := g.newCTWatch(ctx, client, &uiAPI, logger)
+	if err != nil {
+		g.listener.Close()
+		return nil, err
+	}
+	g.ct = ct.watcher
 	apiCfg := api.Config{Proxy: trustedProxy(ctx, s.cfg, lookupHost, logger), Store: s.store, Log: s.log, Agents: s.agents, Mandates: s.mandates, Admission: s.admission,
 		Approvers: s.approvers, Approvals: approvals, Closed: s.journal, HA: client, Catalog: g.catalog, Marks: g.marks, Renames: g.renames, AreaMoves: g.moves, Status: g.status, UI: webui.Handler(),
 		Principal: s.household, Mode: string(s.cfg.Mode), Version: version, Commit: commit, Retention: retention,
 		ApprovalTimeout: s.cfg.ApprovalTimeout, TLS: g.tlsStatus, Logger: logger}
 	if as != nil {
 		apiCfg.Pairing = as
+	}
+	apiCfg.CTState, apiCfg.CTReason = ct.state, ct.reason
+	if ct.watcher != nil {
+		apiCfg.CT = ct.watcher
 	}
 	if directMode(s.cfg, g.certs) {
 		signIn, err := oauth.NewHASignIn(oauth.HASignInConfig{PublicURL: s.cfg.PublicURL, BrowserURL: s.cfg.HABrowserURL,
@@ -818,6 +830,9 @@ func (g *gateway) run(ctx context.Context) int {
 	})
 	wg.Go(func() { g.api.RunTail(ctx) })
 	wg.Go(func() { g.api.RunVerifier(ctx) })
+	if g.ct != nil {
+		wg.Go(func() { g.ct.Run(ctx) })
+	}
 	serveOn := func(name string, srv *http.Server, ln net.Listener) {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			g.logger.Error(name+" stopped", "error", err)
