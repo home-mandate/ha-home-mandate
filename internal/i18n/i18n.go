@@ -146,7 +146,28 @@ const (
 	PagePairInvalid               Key = "page_pair_invalid"
 	PagePairLocked                Key = "page_pair_locked"
 	// Reconnecting an existing agent instead of admitting a new one (issue #22).
-	PageAdmitNew            Key = "page_admit_new"
+	PageAdmitNew Key = "page_admit_new"
+	// Certificate Transparency monitoring (internal/ctwatch, issue #66).
+	CTAlarmTitle            Key = "ct_alarm_title"
+	CTAlarmMessage          Key = "ct_alarm_message"
+	CTAlarmNotYet           Key = "ct_alarm_not_yet"
+	CTAlarmMore             Key = "ct_alarm_more"
+	CTPastTitle             Key = "ct_past_title"
+	CTPastMessage           Key = "ct_past_message"
+	CTInventoryTitle        Key = "ct_inventory_title"
+	CTInventoryMessage      Key = "ct_inventory_message"
+	CTBellTitle             Key = "ct_bell_title"
+	CTBellMessage           Key = "ct_bell_message"
+	CTUnavailableTitle      Key = "ct_unavailable_title"
+	CTUnavailableMessage    Key = "ct_unavailable_message"
+	CTConfirmTitle          Key = "ct_confirm_title"
+	CTConfirmMessage        Key = "ct_confirm_message"
+	CTConfirmYes            Key = "ct_confirm_yes"
+	CTConfirmNo             Key = "ct_confirm_no"
+	CTAcknowledgedTitle     Key = "ct_acknowledged_title"
+	CTAcknowledgedMessage   Key = "ct_acknowledged_message"
+	CTViaPush               Key = "ct_via_push"
+	CTViaUI                 Key = "ct_via_ui"
 	PageReconnectTitle      Key = "page_reconnect_title"
 	PageReconnectIntro      Key = "page_reconnect_intro"
 	PageReconnectChoose     Key = "page_reconnect_choose"
@@ -169,6 +190,7 @@ var Keys = append([]Key{
 	ApprovalInvalidTitle, ApprovalInvalidMessage, ApprovalBellTitle, ApprovalBellMessage, ApprovalBellMessageLink, ApprovalBellMessageUI, ApprovalBellMessageAppLink, ApprovalTestTitle, ApprovalTestMessage,
 	ApprovalInterruptedTitle, ApprovalInterruptedMessage, ApprovalUnknownTitle, ApprovalUnknownMessage,
 	CheckpointTitle, CheckpointMessage, RenameFloodTitle, RenameFloodMessage,
+	CTAlarmTitle, CTAlarmMessage, CTAlarmNotYet, CTAlarmMore, CTPastTitle, CTPastMessage, CTInventoryTitle, CTInventoryMessage, CTBellTitle, CTBellMessage, CTUnavailableTitle, CTUnavailableMessage, CTConfirmTitle, CTConfirmMessage, CTConfirmYes, CTConfirmNo, CTAcknowledgedTitle, CTAcknowledgedMessage, CTViaPush, CTViaUI,
 	AuditModeProposedTitle, AuditModeProposedMessage, AuditModeActiveTitle, AuditModeActiveMessage,
 	PageErrorTitle, PageInvalidRequest, PageInvalidClient, PageSessionExpired, PageSignInFailed, PageNotAdmin, PageBusy, PageSignedInAs, PageConsentTitle, PageConsentClaimed, PageConsentVerified, PageConsentUnverified, PageConsentReturn, PageConsentName, PageConsentTemplate, PageConsentApprove, PageConsentDeny, PageConsentNoTemplates, PageConsentInvalid, PageDenied, PageAdmitted, PagePairTitle, PagePairIntro, PagePairCode, PagePairSubmit, PagePairInvalid, PagePairLocked,
 	TemplateReadOnlyTitle, TemplateReadOnlyDescription, TemplateLightClimateTitle, TemplateLightClimateDescription,
