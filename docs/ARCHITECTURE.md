@@ -1047,7 +1047,9 @@ Decided by the maintainer on 2026-10-01.
      optional key) and crt.sh (the name and `*.<parent>`, each certificate downloaded and
      read) every 15 minutes with a jitter, over the hardened client of `internal/netx`.
      Only the public name leaves the household. A failure or a rate limit is "unknown",
-     never "no certificates"; 24 hours without any successful query ring the bell once.
+     never "no certificates"; 24 hours without any successful query ring the bell once. An
+     entry whose certificate cannot be read is kept from the source's listing, without a
+     key, and raises an alarm (fail closed); an unknown end of validity counts as valid.
    - **Identity and own certificates.** A certificate is the SHA-256 of its TBSCertificate
      without poison and SCT list, so a precertificate and its certificate are one (checked
      against Cert Spotter's digests of real certificates). Own certificates are recognised
@@ -1056,6 +1058,8 @@ Decided by the maintainer on 2026-10-01.
      The key comes from the certificate files, or from a TLS handshake with the reverse
      proxy at its configured address `HM_PROXY`, never through DNS: whoever controls the
      DNS could otherwise answer the handshake and have their certificate taken for ours.
+     That certificate must be publicly trusted for the name, so that nobody on the way to
+     the proxy can answer with a key of their own.
      Without either, every certificate for the name needs an acknowledgement, and the UI
      says so. Before an alarm the key is read again, so that a renewal the gateway has not
      taken over yet raises none.

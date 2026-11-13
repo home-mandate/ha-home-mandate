@@ -43,19 +43,29 @@ func proxyServer(t *testing.T) (netip.AddrPort, *x509.Certificate) {
 	return addr, srv.Certificate()
 }
 
+func rootsOf(cert *x509.Certificate) *x509.CertPool {
+	pool := x509.NewCertPool()
+	pool.AddCert(cert)
+	return pool
+}
+
 func TestProxyKeyReadsTheKeyTheProxyServes(t *testing.T) {
 	addr, cert := proxyServer(t)
-	k, err := ProxyKey{Addr: addr, ServerName: "example.com", Timeout: 5 * time.Second}.Key(context.Background(), false)
+	k, err := ProxyKey{Addr: addr, ServerName: "example.com", Timeout: 5 * time.Second, Roots: rootsOf(cert)}.Key(context.Background(), false)
 	if err != nil || k != Digest(sha256.Sum256(cert.RawSubjectPublicKeyInfo)) {
 		t.Fatalf("%v %v", k, err)
 	}
 }
 
 func TestProxyKeyRefuses(t *testing.T) {
-	addr, _ := proxyServer(t)
+	addr, cert := proxyServer(t)
 	// A certificate that does not cover the name is not the gateway's.
-	if _, err := (ProxyKey{Addr: addr, ServerName: "home.example.org", Timeout: 5 * time.Second}).Key(context.Background(), false); !errors.Is(err, ErrKey) {
+	if _, err := (ProxyKey{Addr: addr, ServerName: "home.example.org", Timeout: 5 * time.Second, Roots: rootsOf(cert)}).Key(context.Background(), false); !errors.Is(err, ErrKey) {
 		t.Fatalf("other name: %v", err)
+	}
+	// Nor one that is not trusted: someone on the way could answer with their own key.
+	if _, err := (ProxyKey{Addr: addr, ServerName: "example.com", Timeout: 5 * time.Second}).Key(context.Background(), false); !errors.Is(err, ErrKey) {
+		t.Fatalf("untrusted certificate: %v", err)
 	}
 	// Nothing listening.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

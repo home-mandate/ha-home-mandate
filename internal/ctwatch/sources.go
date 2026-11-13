@@ -3,7 +3,9 @@
 package ctwatch
 
 import (
+	"cmp"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -33,9 +35,11 @@ type Source interface {
 type Batch struct {
 	Certs  []Parsed
 	Cursor string
-	// Skipped counts entries the source gave that could not be read; they are logged and
-	// the cursor moves past them, so that one broken entry cannot stop the monitoring.
-	Skipped int
+	// Unread counts entries whose certificate could not be read or did not fit what the
+	// source said of it. They are kept from the source's listing, with no key (never the
+	// gateway's own), so that they raise an alarm instead of vanishing (fail closed); the
+	// cursor moves past them, so that one broken entry cannot stop the monitoring.
+	Unread int
 }
 
 // RateLimitedError means the source refused the query for its rate limit; the next
@@ -52,6 +56,18 @@ func (e *RateLimitedError) Error() string {
 // ErrSource means a source answered with something this package does not accept.
 var ErrSource = errors.New("ctwatch: unusable answer")
 
+// errTooLarge is an answer beyond its limit; it is an ErrSource.
+var errTooLarge = fmt.Errorf("%w: too large", ErrSource)
+
+// statusError is an answer with a status other than 200; it is an ErrSource.
+type statusError struct {
+	source string
+	code   int
+}
+
+func (e *statusError) Error() string { return fmt.Sprintf("ctwatch: %s answered %d", e.source, e.code) }
+func (e *statusError) Unwrap() error { return ErrSource }
+
 const (
 	// SourceCertSpotter and SourceCrtSh name the sources in the store.
 	SourceCertSpotter = "certspotter"
@@ -63,6 +79,9 @@ const (
 	// maxPages bounds the pages of Cert Spotter read per round: every page counts
 	// against the hourly limit, and the next round continues at the cursor.
 	maxPages = 4
+	// certSpotterPage is the size of a full page of Cert Spotter (measured 2026-10-19); a
+	// shorter page is the last one.
+	certSpotterPage = 100
 	// maxDownloads bounds the certificates downloaded from crt.sh per round.
 	maxDownloads = 20
 	// maxRetryAfter caps what a source may ask the gateway to wait.
@@ -116,53 +135,85 @@ func (c *CertSpotter) Fetch(ctx context.Context, name, cursor string) (Batch, er
 		if err := c.get(ctx, c.baseURL+"/v1/issuances?"+q.Encode(), &page); err != nil {
 			return Batch{}, err
 		}
-		if len(page) == 0 {
-			break
-		}
 		for _, is := range page {
 			if !certSpotterID.MatchString(is.ID) {
 				return Batch{}, fmt.Errorf("%w: Cert Spotter issuance ID", ErrSource)
 			}
-			if p, err := is.parsed(); err != nil {
-				out.Skipped++
-			} else {
-				out.Certs = append(out.Certs, p)
+			p, read := is.parsed(name)
+			if !read {
+				out.Unread++
 			}
+			out.Certs = append(out.Certs, p)
 			out.Cursor = is.ID
+		}
+		if len(page) < certSpotterPage {
+			break // the last page: no query for an empty one, every query counts against the limit
 		}
 	}
 	return out, nil
 }
 
-// parsed reads the certificate itself when it can; its digests must then be the ones
-// Cert Spotter computed. Without a readable certificate, Cert Spotter's fields are used,
-// with no time of logging (which counts as late, never as early).
-func (is issuance) parsed() (Parsed, error) {
-	if !hexDigest.MatchString(is.TBS) || !hexDigest.MatchString(is.PublicKey) {
-		return Parsed{}, fmt.Errorf("%w: Cert Spotter digests", ErrSource)
+// farFuture stands for an end of validity no source told: the certificate counts as
+// valid, so that it raises an alarm.
+var farFuture = time.Date(9999, 12, 31, 0, 0, 0, 0, time.UTC)
+
+// parsed reads the certificate itself when it can, and read tells that it could and that
+// its digests are the ones Cert Spotter computed. Without a readable one, the issuance is kept from
+// Cert Spotter's fields: with its key only when there was no certificate to contradict
+// it, never with a time of logging (which counts as late), and found by name for the
+// query it answered.
+func (is issuance) parsed(query string) (p Parsed, read bool) {
+	tbs, tbsOK := hexDigestOf(is.TBS)
+	key, keyOK := hexDigestOf(is.PublicKey)
+	der, derErr := base64.StdEncoding.Strict().DecodeString(is.DER)
+	if derErr == nil && len(der) > 0 {
+		if c, err := ParseCert(der); err == nil {
+			// The certificate itself decides; a difference from Cert Spotter's digests is
+			// reported (read false), never a reason to drop it.
+			return c, tbsOK && keyOK && c.Digest == tbs && c.PublicKey == key
+		}
+		keyOK = false // a certificate that cannot be read: its key is not taken on trust
 	}
-	var tbs, key Digest
-	_, _ = hex.Decode(tbs[:], []byte(is.TBS))
-	_, _ = hex.Decode(key[:], []byte(is.PublicKey))
-	if der, err := base64.StdEncoding.Strict().DecodeString(is.DER); err == nil {
-		if p, err := ParseCert(der); err == nil {
-			if p.Digest != tbs || p.PublicKey != key {
-				return Parsed{}, fmt.Errorf("%w: Cert Spotter digests differ from the certificate", ErrSource)
-			}
-			return p, nil
+	p = Parsed{Issuer: is.Issuer.Name, Cert: Cert{Names: listedNames(is.Names, query), NotAfter: farFuture}}
+	if tbsOK {
+		p.Digest = tbs
+	} else {
+		p.Digest = sha256.Sum256([]byte(SourceCertSpotter + ":" + is.ID))
+	}
+	if keyOK {
+		p.PublicKey = key
+	}
+	if t, err := time.Parse(time.RFC3339, is.NotBefore); err == nil {
+		p.NotBefore = t.UTC()
+	}
+	if t, err := time.Parse(time.RFC3339, is.NotAfter); err == nil {
+		p.NotAfter = t.UTC()
+	}
+	return p, false
+}
+
+func hexDigestOf(s string) (Digest, bool) {
+	var d Digest
+	if !hexDigest.MatchString(s) {
+		return d, false
+	}
+	_, _ = hex.Decode(d[:], []byte(s))
+	return d, true
+}
+
+// listedNames are the names a source listed, lower case and bounded; none means the name
+// queried, which the source answered with this entry.
+func listedNames(names []string, query string) []string {
+	var out []string
+	for _, n := range names {
+		if n = strings.ToLower(strings.TrimSpace(n)); n != "" && len(n) <= 253 && len(out) < maxNames {
+			out = append(out, n)
 		}
 	}
-	notBefore, err1 := time.Parse(time.RFC3339, is.NotBefore)
-	notAfter, err2 := time.Parse(time.RFC3339, is.NotAfter)
-	if err1 != nil || err2 != nil || len(is.Names) == 0 || len(is.Names) > maxNames {
-		return Parsed{}, fmt.Errorf("%w: Cert Spotter issuance", ErrSource)
+	if len(out) == 0 {
+		return []string{strings.ToLower(query)}
 	}
-	names := make([]string, len(is.Names))
-	for i, n := range is.Names {
-		names[i] = strings.ToLower(n)
-	}
-	return Parsed{Cert: Cert{Digest: tbs, Names: names, NotBefore: notBefore.UTC(), NotAfter: notAfter.UTC(), PublicKey: key},
-		Issuer: is.Issuer.Name}, nil
+	return out
 }
 
 func (c *CertSpotter) get(ctx context.Context, target string, into any) error {
@@ -194,7 +245,28 @@ func NewCrtSh(client *http.Client) *CrtSh {
 func (*CrtSh) Name() string { return SourceCrtSh }
 
 type crtshEntry struct {
-	ID int64 `json:"id"`
+	ID        int64  `json:"id"`
+	NameValue string `json:"name_value"`
+	Issuer    string `json:"issuer_name"`
+	NotBefore string `json:"not_before"`
+	NotAfter  string `json:"not_after"`
+}
+
+// crtshTime is the form of crt.sh's times, UTC without a zone.
+const crtshTime = "2006-01-02T15:04:05"
+
+// listed keeps an entry whose certificate could not be read from crt.sh's listing, with
+// no key; its identity is crt.sh's ID, as no digest of it is known.
+func (e crtshEntry) listed(query string) Parsed {
+	p := Parsed{Issuer: e.Issuer, Cert: Cert{Digest: sha256.Sum256([]byte(SourceCrtSh + ":" + strconv.FormatInt(e.ID, 10))),
+		Names: listedNames(strings.Split(e.NameValue, "\n"), query), NotAfter: farFuture}}
+	if t, err := time.Parse(crtshTime, e.NotBefore); err == nil {
+		p.NotBefore = t.UTC()
+	}
+	if t, err := time.Parse(crtshTime, e.NotAfter); err == nil {
+		p.NotAfter = t.UTC()
+	}
+	return p
 }
 
 // Fetch lists both queries and downloads the certificates after cursor.
@@ -206,38 +278,39 @@ func (c *CrtSh) Fetch(ctx context.Context, name, cursor string) (Batch, error) {
 			return Batch{}, fmt.Errorf("%w: crt.sh cursor %q", ErrSource, cursor)
 		}
 	}
-	ids, err := c.list(ctx, name, after)
+	entries, err := c.list(ctx, name, after)
 	if err != nil {
 		return Batch{}, err
 	}
 	out := Batch{Cursor: cursor}
-	for i, id := range ids {
+	for i, e := range entries {
 		if i == maxDownloads {
 			break
 		}
-		p, err := c.download(ctx, id)
+		p, err := c.download(ctx, e.ID)
 		switch {
 		case errors.Is(err, ErrCert):
-			out.Skipped++
-		case err != nil && len(out.Certs) == 0 && out.Skipped == 0:
+			// Unreadable, too large or gone at crt.sh: kept from the listing.
+			out.Unread++
+			p = e.listed(name)
+		case err != nil && len(out.Certs) == 0:
 			return Batch{}, err
 		case err != nil:
 			return out, nil // what was read counts; the next round continues after it
-		default:
-			out.Certs = append(out.Certs, p)
 		}
-		out.Cursor = strconv.FormatInt(id, 10)
+		out.Certs = append(out.Certs, p)
+		out.Cursor = strconv.FormatInt(e.ID, 10)
 	}
 	return out, nil
 }
 
-// list returns the IDs after after of both queries, ascending and each once.
-func (c *CrtSh) list(ctx context.Context, name string, after int64) ([]int64, error) {
+// list returns the entries after after of both queries, ascending and each once.
+func (c *CrtSh) list(ctx context.Context, name string, after int64) ([]crtshEntry, error) {
 	queries := []string{name}
 	if _, parent, ok := strings.Cut(name, "."); ok && strings.Contains(parent, ".") {
 		queries = append(queries, "*."+parent)
 	}
-	var ids []int64
+	var out []crtshEntry
 	for _, q := range queries {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 			c.baseURL+"/?"+url.Values{"q": {q}, "output": {"json"}, "exclude": {"expired"}}.Encode(), nil)
@@ -253,12 +326,12 @@ func (c *CrtSh) list(ctx context.Context, name string, after int64) ([]int64, er
 				return nil, fmt.Errorf("%w: crt.sh ID", ErrSource)
 			}
 			if e.ID > after {
-				ids = append(ids, e.ID)
+				out = append(out, e)
 			}
 		}
 	}
-	slices.Sort(ids)
-	return slices.Compact(ids), nil
+	slices.SortFunc(out, func(a, b crtshEntry) int { return cmp.Compare(a.ID, b.ID) })
+	return slices.CompactFunc(out, func(a, b crtshEntry) bool { return a.ID == b.ID }), nil
 }
 
 func (c *CrtSh) download(ctx context.Context, id int64) (Parsed, error) {
@@ -267,12 +340,17 @@ func (c *CrtSh) download(ctx context.Context, id int64) (Parsed, error) {
 		return Parsed{}, err
 	}
 	body, err := get(c.client, req, SourceCrtSh, 2*MaxCertBytes)
-	if err != nil {
+	var status *statusError
+	switch {
+	case errors.As(err, &status) && status.code == http.StatusNotFound, errors.Is(err, errTooLarge):
+		return Parsed{}, fmt.Errorf("%w: crt.sh certificate %d: %w", ErrCert, id, err)
+	case err != nil:
 		return Parsed{}, err
 	}
 	block, _ := pem.Decode(body)
 	if block == nil || block.Type != "CERTIFICATE" {
-		return Parsed{}, fmt.Errorf("%w: crt.sh certificate %d is not PEM", ErrCert, id)
+		// An error page or a cut answer: asked again next round, not taken as unreadable.
+		return Parsed{}, fmt.Errorf("%w: crt.sh certificate %d is not PEM", ErrSource, id)
 	}
 	return ParseCert(block.Bytes)
 }
@@ -301,14 +379,14 @@ func get(client *http.Client, req *http.Request, source string, limit int64) ([]
 		return nil, &RateLimitedError{Source: source, RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: %s answered %d", ErrSource, source, resp.StatusCode)
+		return nil, &statusError{source: source, code: resp.StatusCode}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return nil, fmt.Errorf("ctwatch: %s: %w", source, err)
 	}
 	if int64(len(body)) > limit {
-		return nil, fmt.Errorf("%w: %s answered more than %d bytes", ErrSource, source, limit)
+		return nil, fmt.Errorf("%w: %s answered more than %d bytes", errTooLarge, source, limit)
 	}
 	return body, nil
 }

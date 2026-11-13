@@ -40,27 +40,28 @@ func (f FileKey) Key(_ context.Context, recheck bool) (Digest, error) {
 // name (HM_PROXY): a TLS handshake to the proxy's own address with the name as SNI. The
 // address is the configured one, never the name resolved through DNS: whoever controls
 // the name's DNS could otherwise answer the handshake and have their certificate taken
-// for the gateway's own.
+// for the gateway's own. The certificate must be publicly trusted for the name too, so
+// that someone on the way to the proxy cannot answer with a key of their own; a
+// certificate that is not leaves the key unknown (every certificate needs an
+// acknowledgement then), never taken on trust.
 type ProxyKey struct {
 	Addr       netip.AddrPort
 	ServerName string
 	Timeout    time.Duration
+	// Roots are the trusted CAs; nil means the system roots.
+	Roots *x509.CertPool
 }
 
-// Key performs the handshake. The certificate's trust does not matter, only its key and
-// that it covers the name; the connection goes nowhere but to the configured address.
+// Key performs the handshake and verifies the certificate for the name.
 func (p ProxyKey) Key(ctx context.Context, _ bool) (Digest, error) {
 	var leaf *x509.Certificate
 	conf := &tls.Config{
-		ServerName:         p.ServerName,
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: true, //nolint:gosec // only the key is read; VerifyConnection checks the name
+		ServerName: p.ServerName,
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    p.Roots,
 		VerifyConnection: func(cs tls.ConnectionState) error {
 			if len(cs.PeerCertificates) == 0 {
 				return fmt.Errorf("%w: no certificate", ErrKey)
-			}
-			if err := cs.PeerCertificates[0].VerifyHostname(p.ServerName); err != nil {
-				return fmt.Errorf("%w: %w", ErrKey, err)
 			}
 			leaf = cs.PeerCertificates[0]
 			return nil

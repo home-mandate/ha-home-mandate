@@ -4,12 +4,15 @@ package ctwatch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -60,7 +63,7 @@ func fakeSpotter(t *testing.T, issuances []map[string]any, pageSize int, check f
 
 func TestCertSpotterReadsAllPagesAndKeepsTheCursor(t *testing.T) {
 	all := spotterIssuances(t)
-	c, calls := fakeSpotter(t, all, 3, func(r *http.Request) {
+	c, calls := fakeSpotter(t, all, certSpotterPage, func(r *http.Request) {
 		q := r.URL.Query()
 		if r.URL.Path != "/v1/issuances" || q.Get("domain") != "example.com" || q.Get("match_wildcards") != "true" ||
 			strings.Join(q["expand"], ",") != "dns_names,cert_der,issuer" || r.Header.Get("Authorization") != "" ||
@@ -72,9 +75,9 @@ func TestCertSpotterReadsAllPagesAndKeepsTheCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 9 issuances in pages of 3: three full pages and the empty one that ends the list.
-	if len(b.Certs) != 9 || b.Skipped != 0 || b.Cursor != all[8]["id"] || calls.Load() != 4 {
-		t.Fatalf("%d certificates, %d skipped, cursor %s, %d calls", len(b.Certs), b.Skipped, b.Cursor, calls.Load())
+	// 9 issuances on a short page: the last one, so no further query.
+	if len(b.Certs) != 9 || b.Unread != 0 || b.Cursor != all[8]["id"] || calls.Load() != 1 {
+		t.Fatalf("%d certificates, %d unread, cursor %s, %d calls", len(b.Certs), b.Unread, b.Cursor, calls.Load())
 	}
 	b, err = c.Fetch(context.Background(), "example.com", b.Cursor)
 	if err != nil || len(b.Certs) != 0 || b.Cursor != all[8]["id"] {
@@ -83,11 +86,22 @@ func TestCertSpotterReadsAllPagesAndKeepsTheCursor(t *testing.T) {
 }
 
 func TestCertSpotterReadsAtMostMaxPagesARound(t *testing.T) {
-	all := spotterIssuances(t)
-	c, calls := fakeSpotter(t, all, 1, nil)
+	one := spotterIssuances(t)[0]
+	var many []map[string]any
+	for i := range maxPages*certSpotterPage + 5 {
+		is := maps.Clone(one)
+		is["id"] = strconv.Itoa(1000 + i)
+		many = append(many, is)
+	}
+	c, calls := fakeSpotter(t, many, certSpotterPage, nil)
 	b, err := c.Fetch(context.Background(), "example.com", "")
-	if err != nil || len(b.Certs) != maxPages || calls.Load() != maxPages || b.Cursor != all[maxPages-1]["id"] {
+	last := many[maxPages*certSpotterPage-1]["id"]
+	if err != nil || len(b.Certs) != maxPages*certSpotterPage || calls.Load() != maxPages || b.Cursor != last {
 		t.Fatalf("%d certificates, %d calls, cursor %s, %v", len(b.Certs), calls.Load(), b.Cursor, err)
+	}
+	b, err = c.Fetch(context.Background(), "example.com", b.Cursor)
+	if err != nil || len(b.Certs) != 5 || calls.Load() != maxPages+1 {
+		t.Fatalf("the rest: %d, %d calls, %v", len(b.Certs), calls.Load(), err)
 	}
 }
 
@@ -103,9 +117,10 @@ func TestCertSpotterSendsTheKey(t *testing.T) {
 	}
 }
 
-// TestCertSpotterIssuancesThatCannotBeRead: an issuance whose certificate does not match
-// Cert Spotter's own digests is skipped; one without a readable certificate is taken
-// from Cert Spotter's fields, without a time of logging.
+// TestCertSpotterIssuancesThatCannotBeRead: nothing is dropped (fail closed). An issuance
+// whose certificate does not fit Cert Spotter's digests, or that has none, is kept from
+// Cert Spotter's fields, without a time of logging, and without a key where a certificate
+// contradicts it; an unknown end of validity counts as valid.
 func TestCertSpotterIssuancesThatCannotBeRead(t *testing.T) {
 	all := spotterIssuances(t)
 	wrongDigest := maps.Clone(all[0])
@@ -116,14 +131,29 @@ func TestCertSpotterIssuancesThatCannotBeRead(t *testing.T) {
 	badDigest["pubkey_sha256"] = "XYZ"
 	badDates := maps.Clone(all[3])
 	badDates["cert_der"], badDates["not_after"] = "", "soon"
-	c, _ := fakeSpotter(t, []map[string]any{wrongDigest, noDER, badDigest, badDates}, 10, nil)
+	noNames := maps.Clone(all[4])
+	noNames["cert_der"], noNames["dns_names"], noNames["tbs_sha256"] = "", []string{}, "zz"
+	c, _ := fakeSpotter(t, []map[string]any{wrongDigest, noDER, badDigest, badDates, noNames}, 10, nil)
 	b, err := c.Fetch(context.Background(), "example.com", "")
-	if err != nil || len(b.Certs) != 1 || b.Skipped != 3 || b.Cursor != badDates["id"] {
+	if err != nil || len(b.Certs) != 5 || b.Unread != 5 || b.Cursor != noNames["id"] {
 		t.Fatalf("%+v %v", b, err)
 	}
-	got := b.Certs[0]
-	if !got.Logged.IsZero() || got.Names[0] != "example.com" || got.NotAfter.IsZero() || got.Digest == (Digest{}) {
-		t.Fatalf("from the fields: %+v", got)
+	for _, i := range []int{1, 3, 4} {
+		if got := b.Certs[i]; !got.Logged.IsZero() || len(got.Names) == 0 || got.Digest == (Digest{}) {
+			t.Errorf("%d from the fields: %+v", i, got)
+		}
+	}
+	// A certificate that can be read decides, whatever Cert Spotter's digests say.
+	own0, _ := ParseCert(mustBase64(t, all[0]["cert_der"].(string)))
+	own2, _ := ParseCert(mustBase64(t, all[2]["cert_der"].(string)))
+	if b.Certs[0].Digest != own0.Digest || b.Certs[0].PublicKey != own0.PublicKey || b.Certs[2].PublicKey != own2.PublicKey {
+		t.Error("the certificate's own digests were not used")
+	}
+	if b.Certs[1].PublicKey == (Digest{}) || !b.Certs[3].NotAfter.Equal(farFuture) {
+		t.Errorf("without a certificate, Cert Spotter's key and an unknown end: %+v %+v", b.Certs[1], b.Certs[3])
+	}
+	if b.Certs[4].Names[0] != "example.com" || b.Certs[4].Digest != Digest(sha256.Sum256([]byte("certspotter:"+noNames["id"].(string)))) {
+		t.Errorf("no names, no digest: %+v", b.Certs[4])
 	}
 	badID := maps.Clone(all[0])
 	badID["id"] = "../x"
@@ -190,11 +220,21 @@ func TestSourceFailures(t *testing.T) {
 	}
 }
 
+func mustBase64(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 // fakeCrtSh serves a list per query and certificates by ID.
 type fakeCrtSh struct {
 	lists     map[string][]crtshEntry
 	pems      map[int64]string
-	failFrom  int64 // downloads from this ID on fail with 502
+	failFrom  int64          // downloads from this ID on fail with 502
+	missing   map[int64]bool // downloads that crt.sh answers with 404
 	downloads atomic.Int32
 }
 
@@ -207,6 +247,10 @@ func (f *fakeCrtSh) source(t *testing.T) *CrtSh {
 			id, _ := strconv.ParseInt(d, 10, 64)
 			if f.failFrom != 0 && id >= f.failFrom {
 				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			if f.missing[id] {
+				http.NotFound(w, r)
 				return
 			}
 			_, _ = w.Write([]byte(f.pems[id]))
@@ -244,12 +288,37 @@ func TestCrtShQueriesNameAndWildcardAndDownloadsAfterTheCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 3 is before the cursor; 7 is downloaded once; 9 cannot be read and is skipped.
-	if len(b.Certs) != 2 || b.Skipped != 1 || b.Cursor != "9" || f.downloads.Load() != 3 {
-		t.Fatalf("%d certificates, %d skipped, cursor %s, %d downloads", len(b.Certs), b.Skipped, b.Cursor, f.downloads.Load())
+	// 3 is before the cursor; 7 is downloaded once; 9 answers no PEM (an error page): asked
+	// again next round.
+	if len(b.Certs) != 2 || b.Unread != 0 || b.Cursor != "7" || f.downloads.Load() != 3 {
+		t.Fatalf("%d certificates, %d unread, cursor %s, %d downloads", len(b.Certs), b.Unread, b.Cursor, f.downloads.Load())
 	}
 	if b.Certs[0].Digest != b.Certs[1].Digest {
 		t.Fatal("precertificate and certificate are one")
+	}
+}
+
+// TestCrtShKeepsWhatItCannotRead: a certificate crt.sh does not have any more (404), one
+// too large or not a certificate is kept from the listing: its names, issuer and validity,
+// no key, crt.sh's ID as its identity; unknown times count as valid.
+func TestCrtShKeepsWhatItCannotRead(t *testing.T) {
+	f := &fakeCrtSh{lists: map[string][]crtshEntry{"a.example.org": {
+		{ID: 4, NameValue: "A.example.org\n*.example.org", Issuer: "C=US, O=Evil", NotBefore: "2026-03-01T00:00:00", NotAfter: "2026-06-01T00:00:00"},
+		{ID: 5, NotAfter: "soon"},
+		{ID: 6},
+	}}, pems: map[int64]string{6: strings.Repeat("x", 2*MaxCertBytes+1)}, missing: map[int64]bool{4: true, 5: true}}
+	b, err := f.source(t).Fetch(context.Background(), "a.example.org", "")
+	if err != nil || len(b.Certs) != 3 || b.Unread != 3 || b.Cursor != "6" {
+		t.Fatalf("%+v %v", b, err)
+	}
+	first := b.Certs[0]
+	if !slices.Equal(first.Names, []string{"a.example.org", "*.example.org"}) || first.Issuer != "C=US, O=Evil" ||
+		!first.NotBefore.Equal(time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)) || !first.NotAfter.Equal(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)) ||
+		first.PublicKey != (Digest{}) || first.Digest != Digest(sha256.Sum256([]byte("crtsh:4"))) {
+		t.Fatalf("from the listing: %+v", first)
+	}
+	if !b.Certs[1].NotAfter.Equal(farFuture) || !slices.Equal(b.Certs[1].Names, []string{"a.example.org"}) {
+		t.Fatalf("unknown end and names: %+v", b.Certs[1])
 	}
 }
 

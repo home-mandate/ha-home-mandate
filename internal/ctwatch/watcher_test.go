@@ -52,7 +52,7 @@ func (f *fakeSource) Fetch(_ context.Context, _, cursor string) (Batch, error) {
 	}
 	out := f.certs
 	f.certs = nil
-	return Batch{Certs: out, Cursor: cursor + "x", Skipped: 1}, nil
+	return Batch{Certs: out, Cursor: cursor + "x", Unread: 1}, nil
 }
 
 func (f *fakeSource) add(p ...Parsed) {
@@ -172,7 +172,25 @@ type harness struct {
 	appr    *fakeApprovers
 	admins  map[string]bool
 	changes int
-	logs    *bytes.Buffer
+	logs    *syncBuffer
+}
+
+// syncBuffer is a log buffer the background settling may write while a test reads it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // Approvers: anna (iPhone, critical; UI with critical), ben (Android not critical; UI
@@ -182,7 +200,7 @@ func newHarness(t *testing.T) *harness {
 	s, _ := newStore(t)
 	h := &harness{t: t, store: s, clock: &clock{t: t0}, spotter: &fakeSource{name: SourceCertSpotter},
 		crtsh: &fakeSource{name: SourceCrtSh}, ha: &fakeHA{bell: map[string]ha.Notification{}},
-		key: &fakeKey{key: digestOf("own-key")}, admins: map[string]bool{"anna": true, "ben": true}, logs: &bytes.Buffer{}}
+		key: &fakeKey{key: digestOf("own-key")}, admins: map[string]bool{"anna": true, "ben": true}, logs: &syncBuffer{}}
 	h.appr = &fakeApprovers{list: []approval.Approver{
 		{UserID: "anna", Devices: []approval.Device{{Service: "mobile_app_iphone", Critical: true}}, UI: true, UICritical: true, Language: "de"},
 		{UserID: "ben", Devices: []approval.Device{{Service: "mobile_app_pixel"}}, UI: true},
@@ -245,14 +263,18 @@ func TestFirstRoundIsOneInventory(t *testing.T) {
 	if p := h.ha.takePushes(); len(p) != 0 {
 		t.Fatalf("repeated: %+v", p)
 	}
-	if !strings.Contains(h.logs.String(), "skipped") || h.changes < 2 {
-		t.Error("skipped entries not logged or no change announced")
+	if !strings.Contains(h.logs.String(), "could not be read") || h.changes < 2 {
+		t.Error("unread entries not logged or no change announced")
 	}
 }
 
 func TestLaterAlarmNamesTheCertificate(t *testing.T) {
 	h := newHarness(t)
+	h.spotter.add(foreign("first", t0, t0.Add(90*24*time.Hour)))
 	h.round()
+	if p := h.ha.takePushes(); len(p) != 2 || !strings.Contains(p[1].n.Title, "inventory") {
+		t.Fatalf("the first notice is the inventory: %+v", p)
+	}
 	h.clock.advance(Interval)
 	soon := foreign("later", t0.Add(24*time.Hour), t0.Add(90*24*time.Hour))
 	past := foreign("past", t0.Add(-10*24*time.Hour), t0.Add(time.Minute))
@@ -761,5 +783,144 @@ func TestAcknowledgementThatCannotBeStored(t *testing.T) {
 	}
 	if !strings.Contains(h.logs.String(), "acknowledgement not stored") || !strings.Contains(h.logs.String(), "notification not removed") {
 		t.Fatalf("not logged:\n%s", h.logs)
+	}
+}
+
+// TestInventoryWhenTheFirstRoundsFindNothing: the first notice ever is the inventory, even
+// when the sources failed or were empty at first.
+func TestInventoryWhenTheFirstRoundsFindNothing(t *testing.T) {
+	h := newHarness(t)
+	h.spotter.fail(errors.New("down"))
+	h.round()
+	h.spotter.fail(nil)
+	h.spotter.add(foreign("a", t0, t0.Add(90*24*time.Hour)))
+	h.clock.advance(Interval)
+	h.round()
+	if p := h.ha.takePushes(); len(p) != 2 || !strings.Contains(p[1].n.Title, "inventory") {
+		t.Fatalf("%+v", p)
+	}
+}
+
+// TestNoticeThatReachedNobodyIsSentAgain: a certificate is marked as told only once a
+// device was reached.
+func TestNoticeThatReachedNobodyIsSentAgain(t *testing.T) {
+	h := newHarness(t)
+	h.ha.failAll = true
+	h.spotter.add(foreign("a", t0, t0.Add(90*24*time.Hour)))
+	h.round()
+	certs, _ := h.store.Certs(context.Background())
+	if !certs[0].NotifiedAt.IsZero() {
+		t.Fatal("marked as told though nobody was reached")
+	}
+	h.ha.failAll = false
+	h.clock.advance(Interval)
+	h.round()
+	if p := h.ha.takePushes(); len(p) != 2 {
+		t.Fatalf("not sent again: %+v", p)
+	}
+	certs, _ = h.store.Certs(context.Background())
+	if certs[0].NotifiedAt.IsZero() {
+		t.Fatal("not marked once told")
+	}
+	// Approvers without any device: there is nobody to try, so it counts as told.
+	h2 := newHarness(t)
+	h2.appr.list = []approval.Approver{{UserID: "anna", UI: true}}
+	h2.spotter.add(foreign("b", t0, t0.Add(90*24*time.Hour)))
+	h2.round()
+	if certs, _ := h2.store.Certs(context.Background()); certs[0].NotifiedAt.IsZero() {
+		t.Fatal("waiting for a device that does not exist")
+	}
+	// Approvers unreadable: told again later.
+	h3 := newHarness(t)
+	h3.appr.err = errors.New("db")
+	h3.spotter.add(foreign("c", t0, t0.Add(90*24*time.Hour)))
+	h3.round()
+	if certs, _ := h3.store.Certs(context.Background()); !certs[0].NotifiedAt.IsZero() {
+		t.Fatal("marked as told with the approvers unreadable")
+	}
+}
+
+// TestBellsAfterARestart: a new watcher on the store of an old one takes back a "not
+// possible" notification left from before and rings the alarm bell anew.
+func TestBellsAfterARestart(t *testing.T) {
+	h := newHarness(t)
+	h.spotter.add(foreign("a", t0, t0.Add(90*24*time.Hour)))
+	h.round()
+	h.ha.bell[bellUnavailable] = ha.Notification{Message: "left from before"}
+	restarted := New(h.w.cfg)
+	restarted.Round(context.Background())
+	if _, ok := h.ha.bellShows(bellUnavailable); ok {
+		t.Fatal("old notification left")
+	}
+	if _, ok := h.ha.bellShows(bellAlarm); !ok {
+		t.Fatal("alarm bell not rung after the restart")
+	}
+}
+
+// TestBellRingsOnlyWhenTheCountChanges: dismissed, it comes back with a change only.
+func TestBellRingsOnlyWhenTheCountChanges(t *testing.T) {
+	h := newHarness(t)
+	h.spotter.add(foreign("a", t0, t0.Add(90*24*time.Hour)))
+	h.round()
+	_ = h.ha.Clear(context.Background(), bellAlarm)
+	h.clock.advance(Interval)
+	h.round()
+	if _, ok := h.ha.bellShows(bellAlarm); ok {
+		t.Fatal("rung again without a change")
+	}
+	h.spotter.add(foreign("b", t0, t0.Add(90*24*time.Hour)))
+	h.clock.advance(Interval)
+	h.round()
+	if n, ok := h.ha.bellShows(bellAlarm); !ok || !strings.Contains(n.Message, ": 2") {
+		t.Fatalf("not rung with the new count: %+v", n)
+	}
+}
+
+// TestPushAnswerOfAnApproverRemovedMeanwhile: the button counts only for someone who is
+// still an approver with a device for critical requests.
+func TestPushAnswerOfAnApproverRemovedMeanwhile(t *testing.T) {
+	h := newHarness(t)
+	_, _ = ackFor(t, h)
+	pushes := h.ha.takePushes()
+	h.appr.list = h.appr.list[1:] // anna is no approver any more
+	h.w.HandleEvent(pressed("anna", action(t, pushes[0], actionYes)))
+	waitFor(t, func() bool { return strings.Contains(h.logs.String(), "may no longer confirm") })
+	if acks, _ := h.store.Acks(context.Background()); len(acks) != 0 {
+		t.Fatal("acknowledged")
+	}
+}
+
+// TestConcurrentRequestsSendOneConfirmation: two "This is mine" at once, one request.
+func TestConcurrentRequestsSendOneConfirmation(t *testing.T) {
+	h := newHarness(t)
+	p := foreign("a", t0, t0.Add(90*24*time.Hour))
+	h.spotter.add(p)
+	h.round()
+	h.ha.takePushes()
+	var wg sync.WaitGroup
+	ids := make([]string, 2)
+	for i := range ids {
+		wg.Go(func() {
+			got, err := h.w.RequestAck(context.Background(), p.Digest, "anna")
+			if err != nil {
+				t.Error(err)
+			}
+			ids[i] = got.ID
+		})
+	}
+	wg.Wait()
+	if ids[0] != ids[1] || len(h.ha.takePushes()) != 1 {
+		t.Fatalf("two confirmations: %v", ids)
+	}
+}
+
+func TestEventsAfterTheStopAreIgnored(t *testing.T) {
+	h := newHarness(t)
+	_, _ = ackFor(t, h)
+	pushes := h.ha.takePushes()
+	h.w.stop()
+	h.w.HandleEvent(pressed("anna", action(t, pushes[0], actionYes)))
+	if st, _ := h.w.Status(context.Background()); len(st.Pending) != 1 {
+		t.Fatal("taken after the stop")
 	}
 }

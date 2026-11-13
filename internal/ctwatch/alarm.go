@@ -65,8 +65,9 @@ func (w *Watcher) alarmNotice(lang i18n.Lang, news []decided, first bool, now ti
 }
 
 // tellAlarm sends the notice to every device of every approver. Alarms come first in the
-// notice, then past exposures.
-func (w *Watcher) tellAlarm(ctx context.Context, news []decided, first bool) {
+// notice, then past exposures. It tells whether the notice is done with: delivered, or
+// there was nobody to deliver it to.
+func (w *Watcher) tellAlarm(ctx context.Context, news []decided, first bool) bool {
 	ordered := make([]decided, 0, len(news))
 	for _, r := range []Result{Alarm, PastExposure} {
 		for _, d := range news {
@@ -76,22 +77,23 @@ func (w *Watcher) tellAlarm(ctx context.Context, news []decided, first bool) {
 		}
 	}
 	now := w.cfg.Now()
-	w.tellApprovers(ctx, func(lang i18n.Lang) ha.Notification { return w.alarmNotice(lang, ordered, first, now) })
+	return w.tellApprovers(ctx, func(lang i18n.Lang) ha.Notification { return w.alarmNotice(lang, ordered, first, now) })
 }
 
 // tellApprovers sends a notice to every device of every approver, each in their
-// language; failures are logged.
-func (w *Watcher) tellApprovers(ctx context.Context, notice func(i18n.Lang) ha.Notification) {
+// language; failures are logged. It tells whether the notice reached a device or there
+// was none to try; false means it should be sent again.
+func (w *Watcher) tellApprovers(ctx context.Context, notice func(i18n.Lang) ha.Notification) bool {
 	if w.cfg.Approvers == nil || w.cfg.Notifier == nil {
-		return
+		return true
 	}
 	approvers, err := w.cfg.Approvers.List(ctx)
 	if err != nil {
 		w.cfg.Logger.Error("certificate monitoring: approvers unreadable, nobody told", "error", err)
-		return
+		return false
 	}
 	link := w.link()
-	reached := 0
+	reached, tried := 0, 0
 	for _, a := range approvers {
 		if a.UserID == w.serviceUser() {
 			continue
@@ -99,6 +101,7 @@ func (w *Watcher) tellApprovers(ctx context.Context, notice func(i18n.Lang) ha.N
 		n := notice(w.language(a))
 		n.URL = link
 		for _, d := range a.Devices {
+			tried++
 			if err := w.cfg.Notifier.Notify(ctx, d.Service, n); err != nil {
 				w.cfg.Logger.Warn("certificate monitoring: notification not delivered", "approver", a.UserID, "notify_service", d.Service, "error", err)
 				continue
@@ -109,6 +112,7 @@ func (w *Watcher) tellApprovers(ctx context.Context, notice func(i18n.Lang) ha.N
 	if reached == 0 {
 		w.cfg.Logger.Warn("certificate monitoring: no approver's device reached; the bell and the UI show it")
 	}
+	return reached > 0 || tried == 0
 }
 
 func (w *Watcher) language(a approval.Approver) i18n.Lang {
@@ -136,21 +140,21 @@ func (w *Watcher) link() string {
 	return link
 }
 
-// ringAlarm keeps Home Assistant's bell in step with the alarms: shown (and its count
-// updated) while there is one, taken back once when there is none.
+// ringAlarm keeps Home Assistant's bell in step with the alarms: shown with their count
+// while there is one, taken back when there is none; nothing is sent while the count
+// stays, so a bell someone dismissed comes back only with a change.
 func (w *Watcher) ringAlarm(ctx context.Context, alarms int) {
 	if w.cfg.Bell == nil {
 		return
 	}
-	on := alarms > 0
 	w.mu.Lock()
-	known := w.bellAlarmOn
+	shown := w.bellAlarms
 	w.mu.Unlock()
-	if !on && known != nil && !*known {
+	if shown == alarms {
 		return
 	}
 	var err error
-	if on {
+	if alarms > 0 {
 		lang := w.cfg.Language()
 		args := i18n.Args{"name": w.cfg.Name, "count": strconv.Itoa(alarms)}
 		err = w.cfg.Bell.Ring(ctx, bellAlarm, ha.Notification{Title: i18n.T(lang, i18n.CTBellTitle, nil), Message: i18n.T(lang, i18n.CTBellMessage, args)})
@@ -162,6 +166,6 @@ func (w *Watcher) ringAlarm(ctx context.Context, alarms int) {
 		return
 	}
 	w.mu.Lock()
-	w.bellAlarmOn = &on
+	w.bellAlarms = alarms
 	w.mu.Unlock()
 }

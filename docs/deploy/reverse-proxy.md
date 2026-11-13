@@ -42,9 +42,10 @@ Take A unless you want TLS to end inside Home-Mandate.
   must be exactly the address agents use.
 - For **certificate monitoring** (option `ct_watch`, on by default) Home-Mandate needs the
   key of the certificate your proxy serves: it connects to the proxy at `HM_PROXY`, on the
-  port of the public URL (443 without one), with the public name as SNI. Let the proxy
-  answer there, also from Home-Mandate's side; otherwise every certificate for the name
-  needs an acknowledgement in Settings › Certificates. If your ACME client can keep the
+  port of the public URL (443 without one), with the public name as SNI, and takes the key
+  only from a publicly trusted certificate for that name. Let the proxy answer there, also
+  from Home-Mandate's side; otherwise every certificate for the name needs an
+  acknowledgement in Settings › Certificates. If your ACME client can keep the
   key on renewal (Certbot `--reuse-key`, lego `--reuse-key`, Caddy `reuse_private_keys`),
   let it, so that a renewal is recognised as yours even before the proxy serves it, and set a CAA record with
   `accounturi` for your ACME account, so that only you can get certificates for the name.

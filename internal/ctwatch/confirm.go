@@ -125,6 +125,8 @@ func (w *Watcher) recipients(ctx context.Context) ([]recipient, error) {
 // RequestAck asks the approvers to confirm that the certificate with digest is the
 // household's. A confirmation already waiting for it is returned as it is.
 func (w *Watcher) RequestAck(ctx context.Context, digest Digest, user string) (Pending, error) {
+	w.asking.Lock()
+	defer w.asking.Unlock()
 	cert, err := w.alarming(ctx, digest)
 	if err != nil {
 		return Pending{}, err
@@ -245,7 +247,10 @@ func (w *Watcher) AnswerAck(ctx context.Context, id, user string, approve bool) 
 	if !ok {
 		return ErrNotPending
 	}
-	w.settle(ctx, p, user, ViaUI, approve)
+	// The answer counts once taken: it is settled even if the browser goes away.
+	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
+	defer cancel()
+	w.settle(settleCtx, p, user, ViaUI, approve)
 	return nil
 }
 
@@ -297,6 +302,10 @@ func (w *Watcher) HandleEvent(e ha.Event) {
 	}
 	user := e.Context.UserID
 	w.mu.Lock()
+	if w.stopped {
+		w.mu.Unlock()
+		return
+	}
 	id := ""
 	for _, p := range w.pending {
 		if p.nonce == nonce && w.cfg.Now().Before(p.expires) {
@@ -317,8 +326,24 @@ func (w *Watcher) HandleEvent(e ha.Event) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), settleTimeout)
 		defer cancel()
+		if approve && !w.mayConfirmByPush(ctx, user) {
+			w.cfg.Logger.Warn("certificate acknowledgement answered by someone who may no longer confirm; not acknowledged", "user_id", user)
+			approve = false
+		}
 		w.settle(ctx, p, user, ViaPush, approve)
 	}()
+}
+
+// mayConfirmByPush checks with the current approvers that user still has a device for
+// critical requests; the request's own list is from when it was sent.
+func (w *Watcher) mayConfirmByPush(ctx context.Context, user string) bool {
+	recipients, err := w.recipients(ctx)
+	if err != nil {
+		w.cfg.Logger.Error("certificate monitoring: approvers unreadable, answer refused", "error", err)
+		return false
+	}
+	i := slices.IndexFunc(recipients, func(r recipient) bool { return r.UserID == user })
+	return i >= 0 && len(recipients[i].channels.Devices) > 0
 }
 
 // settle ends a confirmation: the notifications go, and an approval is stored, the
@@ -360,16 +385,19 @@ func (w *Watcher) clearDelivered(ctx context.Context, p *pendingAck) {
 	}
 }
 
-// reevaluate brings the bell in step after an acknowledgement, without querying.
+// reevaluate brings the bell in step after an acknowledgement, without querying. A round
+// under way is waited for; the time limit starts after it.
 func (w *Watcher) reevaluate(ctx context.Context) {
 	w.round.Lock()
 	defer w.round.Unlock()
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
+	defer cancel()
 	since, _, err := w.cfg.Store.WatchSince(ctx, w.cfg.Name, w.cfg.Now())
 	if err != nil {
 		w.cfg.Logger.Error("certificate monitoring: store unavailable", "error", err)
 		return
 	}
-	w.evaluate(ctx, since, false)
+	w.evaluate(ctx, since)
 }
 
 // expire ends the confirmations whose time ran out.

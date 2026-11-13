@@ -93,10 +93,17 @@ type Watcher struct {
 	backoff         map[string]time.Time // source → no query before
 	keyErr          error
 	keyErrLogged    bool
-	bellAlarmOn     *bool // nil: not known yet (a restart), so the first round sets it either way
-	unavailableRung bool
+	// bellAlarms is the count the alarm bell shows, -1 while not known (after a start), so
+	// that the first round sets the bell either way.
+	bellAlarms int
+	// unavailableRung is whether the bell says that monitoring is not possible; nil while
+	// not known (after a start), so that a notification left from before is taken back.
+	unavailableRung *bool
 	pending         map[string]*pendingAck // by ID
 	stopped         bool
+	// asking serialises requests for acknowledgements, so that two at once for one
+	// certificate send one confirmation.
+	asking sync.Mutex
 }
 
 // New returns a watcher.
@@ -113,7 +120,7 @@ func New(cfg Config) *Watcher {
 	if cfg.OnChange == nil {
 		cfg.OnChange = func() {}
 	}
-	return &Watcher{cfg: cfg, backoff: map[string]time.Time{}, pending: map[string]*pendingAck{}}
+	return &Watcher{cfg: cfg, backoff: map[string]time.Time{}, pending: map[string]*pendingAck{}, bellAlarms: -1}
 }
 
 // Run does a round shortly after the start and then every Interval with a jitter, until
@@ -140,11 +147,14 @@ func (w *Watcher) stop() {
 
 // Round queries every source, decides, tells the household of what is new and of a
 // monitoring that is not possible, and ends confirmations that waited too long.
+//
+// OnChange runs while the round lock is held: it must not start a round or call back into
+// anything that takes it.
 func (w *Watcher) Round(ctx context.Context) {
-	ctx, cancel := context.WithTimeout(ctx, roundTimeout)
-	defer cancel()
 	w.round.Lock()
 	defer w.round.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, roundTimeout)
+	defer cancel()
 	defer w.cfg.OnChange()
 	now := w.cfg.Now()
 	since, first, err := w.cfg.Store.WatchSince(ctx, w.cfg.Name, now)
@@ -159,7 +169,7 @@ func (w *Watcher) Round(ctx context.Context) {
 	for _, src := range w.cfg.Sources {
 		w.query(ctx, src, now)
 	}
-	w.evaluate(ctx, since, first)
+	w.evaluate(ctx, since)
 	w.availability(ctx, since, now)
 	w.expire(ctx, now)
 }
@@ -217,8 +227,9 @@ func (w *Watcher) query(ctx context.Context, src Source, now time.Time) {
 		}
 		return
 	}
-	if batch.Skipped > 0 {
-		w.cfg.Logger.Warn("certificate monitoring: entries that could not be read were skipped", "source", src.Name(), "skipped", batch.Skipped)
+	if batch.Unread > 0 {
+		w.cfg.Logger.Warn("certificate monitoring: certificates that could not be read are kept from the listing and count as foreign",
+			"source", src.Name(), "unread", batch.Unread)
 	}
 	watched := Situation{PublicNames: []string{w.cfg.Name}}
 	for _, p := range batch.Certs {
@@ -259,6 +270,10 @@ func (w *Watcher) decideAll(ctx context.Context, since, now time.Time) ([]decide
 	for _, a := range acks {
 		s.Acknowledged[a.Digest] = true
 	}
+	if len(certs) >= maxStoredCerts {
+		w.cfg.Logger.Error("certificate monitoring: more certificates for the name than are read; only the newest are decided",
+			"limit", maxStoredCerts)
+	}
 	out := make([]decided, len(certs))
 	for i, c := range certs {
 		out[i] = decided{Stored: c, Result: Decide(s, c.Cert)}
@@ -278,9 +293,21 @@ func unnotified(all []decided) []decided {
 	return out
 }
 
+// anyNotified tells whether the household was ever told of a certificate.
+func anyNotified(all []decided) bool {
+	for _, d := range all {
+		if !d.NotifiedAt.IsZero() {
+			return true
+		}
+	}
+	return false
+}
+
 // evaluate tells the household of what is new and keeps the bell in step. Before
-// telling, the own key is read again: a renewal not yet taken over raises no alarm.
-func (w *Watcher) evaluate(ctx context.Context, since time.Time, first bool) {
+// telling, the own key is read again: a renewal not yet taken over raises no alarm. The
+// first notice ever about the name is one inventory. What reached nobody is told again
+// next round.
+func (w *Watcher) evaluate(ctx context.Context, since time.Time) {
 	now := w.cfg.Now()
 	all, err := w.decideAll(ctx, since, now)
 	if err != nil {
@@ -302,13 +329,14 @@ func (w *Watcher) evaluate(ctx context.Context, since time.Time, first bool) {
 				"digest", d.Digest.String(), "issuer", d.Issuer, "serial", d.Serial, "names", strings.Join(d.Names, ","),
 				"not_before", d.NotBefore.Format(time.RFC3339), "not_after", d.NotAfter.Format(time.RFC3339))
 		}
-		w.tellAlarm(ctx, news, first)
-		digests := make([]Digest, len(news))
-		for i, d := range news {
-			digests[i] = d.Digest
-		}
-		if err := w.cfg.Store.MarkNotified(ctx, digests, now); err != nil {
-			w.cfg.Logger.Error("certificate monitoring: store unavailable", "error", err)
+		if w.tellAlarm(ctx, news, !anyNotified(all)) {
+			digests := make([]Digest, len(news))
+			for i, d := range news {
+				digests[i] = d.Digest
+			}
+			if err := w.cfg.Store.MarkNotified(ctx, digests, now); err != nil {
+				w.cfg.Logger.Error("certificate monitoring: store unavailable", "error", err)
+			}
 		}
 	}
 	alarms := 0
@@ -330,8 +358,9 @@ func (w *Watcher) availability(ctx context.Context, since, now time.Time) {
 	}
 	down := now.Sub(last) >= Unavailable
 	w.mu.Lock()
-	rung := w.unavailableRung
+	known := w.unavailableRung
 	w.mu.Unlock()
+	rung := known != nil && *known
 	switch {
 	case down && !rung:
 		w.cfg.Logger.Error("certificate monitoring not possible: no query succeeded for 24 hours", "since", last.Format(time.RFC3339))
@@ -341,7 +370,7 @@ func (w *Watcher) availability(ctx context.Context, since, now time.Time) {
 		if w.cfg.Bell != nil && w.cfg.Bell.Ring(ctx, bellUnavailable, n) == nil {
 			w.setUnavailableRung(true)
 		}
-	case !down && rung:
+	case !down && (rung || known == nil):
 		if w.cfg.Bell != nil && w.cfg.Bell.Clear(ctx, bellUnavailable) == nil {
 			w.setUnavailableRung(false)
 		}
@@ -351,7 +380,7 @@ func (w *Watcher) availability(ctx context.Context, since, now time.Time) {
 func (w *Watcher) setUnavailableRung(v bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.unavailableRung = v
+	w.unavailableRung = &v
 }
 
 // lastSuccess is the latest successful query of any source, or since if later.

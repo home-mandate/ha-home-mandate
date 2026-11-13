@@ -22,7 +22,7 @@ type Status struct {
 	LastSuccess time.Time
 	Unavailable bool
 	// Certs are the certificates that raise an alarm, are a past exposure or were
-	// acknowledged, newest first.
+	// acknowledged, newest first (as the store gives them).
 	Certs   []CertStatus
 	Pending []Pending
 }
@@ -105,7 +105,6 @@ func (w *Watcher) certStatus(ctx context.Context, since, now time.Time) ([]CertS
 			out = append(out, c)
 		}
 	}
-	slices.Reverse(out)
 	return out, nil
 }
 

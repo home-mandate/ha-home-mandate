@@ -181,10 +181,11 @@ func (s *Store) PutCert(ctx context.Context, p Parsed, now time.Time) (isNew boo
 	return false, storeErr(err)
 }
 
-// Certs returns the certificates kept, oldest first.
+// Certs returns the certificates kept, newest first; beyond maxStoredCerts the oldest are
+// left out (the caller says so), never a new one.
 func (s *Store) Certs(ctx context.Context) ([]Stored, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT digest, names, issuer, serial, not_before, not_after, public_key, logged,
-		first_seen, notified_at FROM ct_certs ORDER BY first_seen, digest LIMIT ?`, maxStoredCerts)
+		first_seen, notified_at FROM ct_certs ORDER BY first_seen DESC, digest LIMIT ?`, maxStoredCerts)
 	if err != nil {
 		return nil, storeErr(err)
 	}
