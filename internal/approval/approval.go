@@ -38,8 +38,8 @@ import (
 
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
-	"github.com/home-mandate/ha-home-mandate/internal/untrusted"
 	"github.com/home-mandate/ha-home-mandate/internal/i18n"
+	"github.com/home-mandate/ha-home-mandate/internal/untrusted"
 )
 
 // Outcomes of an approval request (SPEC-v0 section 9.1).

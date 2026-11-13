@@ -89,10 +89,10 @@ type Watcher struct {
 
 	round sync.Mutex // one round, or one re-evaluation after an acknowledgement, at a time
 
-	mu              sync.Mutex
-	backoff         map[string]time.Time // source → no query before
-	keyErr          error
-	keyErrLogged    bool
+	mu           sync.Mutex
+	backoff      map[string]time.Time // source → no query before
+	keyErr       error
+	keyErrLogged bool
 	// bellAlarms is the count the alarm bell shows, -1 while not known (after a start), so
 	// that the first round sets the bell either way.
 	bellAlarms int
