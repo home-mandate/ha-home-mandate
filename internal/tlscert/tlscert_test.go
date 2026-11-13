@@ -5,6 +5,7 @@ package tlscert
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"crypto/sha256"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
@@ -418,5 +419,36 @@ func TestOversizedFilesAreRefused(t *testing.T) {
 	}
 	if got := serving(t, l); got != 1 {
 		t.Errorf("serial %d", got)
+	}
+}
+
+func spkiDigest(t *testing.T, certPEM []byte) [sha256.Size]byte {
+	t.Helper()
+	block, _ := pem.Decode(certPEM)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+}
+
+// TestPublicKeyRecheckSeesARenewalAtOnce: before an alarm the CT monitoring asks with
+// recheck, and a renewal written a moment ago counts; without recheck the files are
+// looked at once a minute as for handshakes.
+func TestPublicKeyRecheckSeesARenewalAtOnce(t *testing.T) {
+	f := newFiles(t)
+	first := newPair(t, 1, start.Add(30*24*time.Hour), "hm.example.org")
+	f.write(first.cert, first.key)
+	l, _, _ := newLoader(t, f, "hm.example.org")
+	if got := l.PublicKeySHA256(false); got != spkiDigest(t, first.cert) {
+		t.Fatal("not the key of the pair in use")
+	}
+	second := newPair(t, 2, start.Add(90*24*time.Hour), "hm.example.org")
+	f.write(second.cert, second.key)
+	if got := l.PublicKeySHA256(false); got != spkiDigest(t, first.cert) {
+		t.Fatal("files looked at before a minute passed")
+	}
+	if got := l.PublicKeySHA256(true); got != spkiDigest(t, second.cert) {
+		t.Fatal("recheck did not take the renewal over")
 	}
 }
