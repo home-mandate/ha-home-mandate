@@ -215,7 +215,8 @@ func TestCTMonitoring(t *testing.T) {
 	if len(sys.CT.Certificates) != 1 || sys.CT.Certificates[0].Digest != g.foreignDigest.String() || sys.CT.Certificates[0].Result != "alarm" {
 		t.Fatalf("certificates %+v; the gateway's own is %s", sys.CT.Certificates, g.ownDigest)
 	}
-	inventory := nextNotification(t, notes)
+	// The gateway also tells its new approver the state of its audit log; that is skipped.
+	inventory := nextNotificationWhere(t, notes, func(n notification) bool { return strings.Contains(n.Title, ctName) })
 	if inventory.Service != approverDevice || !strings.Contains(inventory.Title, ctName) || len(inventory.Actions) != 0 {
 		t.Fatalf("inventory %+v", inventory)
 	}
@@ -223,7 +224,9 @@ func TestCTMonitoring(t *testing.T) {
 
 	// "This is mine": confirmed on the phone, like a critical request.
 	ui.ok(http.MethodPost, "api/ct/acknowledge", map[string]any{"digest": g.foreignDigest.String()}, nil)
-	request := nextNotification(t, notes)
+	request := nextNotificationWhere(t, notes, func(n notification) bool {
+		return len(n.Actions) > 0 && strings.HasPrefix(n.Actions[0], "HM_CT_")
+	})
 	if request.Service != approverDevice || len(request.Actions) != 2 || !strings.HasPrefix(request.Actions[0], "HM_CT_YES_") {
 		t.Fatalf("confirmation %+v", request)
 	}

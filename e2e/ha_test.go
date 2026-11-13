@@ -283,6 +283,24 @@ func nextNotification(t *testing.T, ch <-chan notification) notification {
 	}
 }
 
+// nextNotificationWhere returns the next notification that matches, skipping others
+// (such as the checkpoint a gateway sends its approvers on its own).
+func nextNotificationWhere(t *testing.T, ch <-chan notification, match func(notification) bool) notification {
+	t.Helper()
+	deadline := time.After(30 * time.Second)
+	for {
+		select {
+		case n := <-ch:
+			if match(n) {
+				return n
+			}
+		case <-deadline:
+			t.Fatal("no matching notification")
+			return notification{}
+		}
+	}
+}
+
 // answer fires mobile_app_notification_action as user, the way the companion app does:
 // Home Assistant sets context.user_id to the user of the token.
 func answer(t *testing.T, user, action string) {

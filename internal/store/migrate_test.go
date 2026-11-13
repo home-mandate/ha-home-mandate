@@ -469,6 +469,11 @@ var releasedMigrations = map[string]string{
 	"0016_approval_journal.sql":       "7ea14b40c83a5ef5d7024ecf52f773be6ca5c4d12360af83b8d50f0849f1eeda",
 	"0017_approval_agent_ref.sql":     "ef535ca0ef741595ffe3d8106ec82a5283ede1c9911b4330ebacc0c7c0bb1954",
 	"0018_approval_dedup.sql":         "7a011b6d3563d79826b61128a20eacb198978ecae041d1539c604e784e941d19",
+	"0019_area_sets.sql":              "cabf57a3787ac85599c94340c0f120fe662d5a87c55a2738d18fbe3c9cd63ea8",
+	"0020_audit_mode.sql":             "28151e29cd8b90605768033cd510b99b1c93c29b303d9b54a155e2a70a438690",
+	"0021_execution_intents.sql":      "e0e9a2d3f1993452804ec7374a7490ce308f530512d46a34400d98e473b89b05",
+	"0022_dpop_binding.sql":           "5e6055a4e828355c95499f6f8727703535b6bb3b0d61f272b0f15d506b80ba15",
+	"0023_ct_watch.sql":               "ab7c9bb70d7cd6222593b18f6576dbd86a97e1976de7087358b2287b28cdbc5c",
 }
 
 func TestReleasedMigrationsAreFrozen(t *testing.T) {
