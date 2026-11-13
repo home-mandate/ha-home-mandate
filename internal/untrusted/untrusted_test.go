@@ -99,3 +99,26 @@ func TestFoldOnlyWidens(t *testing.T) {
 		t.Error("Fold merges different letters")
 	}
 }
+
+// Negative catalog: manipulated text (control characters, Markdown, links) → cleaned
+// and cut for a notification.
+func TestForNotification(t *testing.T) {
+	const limit = 40
+	for in, want := range map[string]string{
+		"plain text":                     "plain text",
+		"  spaced \t\n out  ":            "spaced out",
+		"bidi‮override":                  "bidi override",
+		"zero​width":                     "zero width",
+		"line sep":                       "line sep",
+		"**bold** _it_ `code` [x](y)":    "bold _it_ code x y",
+		"see https://evil.example.org/a": "see https evil.example.org/a",
+		"<script>alert(1)</script>":      "script alert 1 /script",
+		"{device}":                       "device",
+		"":                               "",
+		strings.Repeat("a", limit+2):     strings.Repeat("a", limit-1) + "…",
+	} {
+		if got := ForNotification(in, limit); got != want {
+			t.Errorf("ForNotification(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

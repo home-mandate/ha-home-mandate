@@ -35,10 +35,10 @@ import (
 	"sync"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
+	"github.com/home-mandate/ha-home-mandate/internal/untrusted"
 	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
 
@@ -953,28 +953,9 @@ func formatParams(params map[string]any) string {
 	return sanitize(strings.Join(parts, ", "), maxReason)
 }
 
-// markup are characters that format text or build links in Markdown or HTML. The
-// underscore stays: it is part of identifiers such as hvac_mode, and notifications are
-// not rendered as Markdown.
-const markup = "*~`[]()<>#|\\{}"
-
-// sanitize makes untrusted text safe to show to a human: control, format and separator
-// characters and markup become spaces, "://" is broken so no link can be clicked,
-// whitespace is collapsed and the text is cut to limit runes.
+// sanitize makes untrusted text safe to show to a human (untrusted.ForNotification).
 func sanitize(s string, limit int) string {
-	var b strings.Builder
-	for _, r := range s {
-		if unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp, unicode.Co, unicode.Cs) || r == utf8.RuneError ||
-			strings.ContainsRune(markup, r) {
-			r = ' '
-		}
-		b.WriteRune(r)
-	}
-	out := strings.Join(strings.Fields(strings.ReplaceAll(b.String(), "://", " ")), " ")
-	if utf8.RuneCountInString(out) > limit {
-		out = string([]rune(out)[:limit-1]) + "…"
-	}
-	return out
+	return untrusted.ForNotification(s, limit)
 }
 
 // loggable is a user ID from Home Assistant as it may appear in the log.
