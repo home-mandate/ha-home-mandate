@@ -386,7 +386,8 @@ func (g *Gateway) readConfirmed(ctx context.Context, a agent.Agent, d pdp.Decisi
 	if err := g.recordApproval(ctx, a, d, audit.Result{Status: audit.StatusExecuted}, appr); err != nil {
 		return nil, actionOut{}, errors.New(codeUnavailable)
 	}
-	return nil, actionOut{Status: statusExecuted, Read: &readOut{EntityID: dev.EntityID, State: dev.State, Attributes: sanitize(dev.Attributes),
+	state, attrs := readView(dev)
+	return nil, actionOut{Status: statusExecuted, Read: &readOut{EntityID: dev.EntityID, State: state, Attributes: attrs,
 		TemperatureUnit: g.temperatureUnitOf(dev.Category)}}, nil
 }
 
