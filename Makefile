@@ -40,7 +40,7 @@ VERSION ?= dev
 COMMIT  ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
 GOARCHES := amd64 arm64
 
-.PHONY: check test cover vet staticcheck vulncheck actionlint conformance fuzz fuzz-targets build image webui web-install web-check web-conformance web-e2e e2e e2e-ui
+.PHONY: check test cover vet staticcheck vulncheck actionlint conformance fuzz fuzz-targets build image webui web-install web-check web-conformance web-e2e e2e e2e-ui e2e-update
 
 ## check: everything that must be green before a commit
 check: vet staticcheck cover vulncheck actionlint conformance
@@ -143,3 +143,9 @@ e2e:
 ## and Playwright's Chromium)
 e2e-ui:
 	cd e2e && E2E_PLAYWRIGHT=1 go test -tags e2e -count=1 -timeout 30m -v .
+
+## e2e-update: an update with existing data, from the image FROM (the previous version) to the
+## image TO, against Home Assistant (RELEASING.md "How a version is tested")
+e2e-update:
+	@test -n "$(FROM)" && test -n "$(TO)" || { echo "usage: make e2e-update FROM=<image> TO=<image>" >&2; exit 2; }
+	cd e2e && E2E_IMAGE='$(FROM)' E2E_UPDATE_IMAGE='$(TO)' go test -tags e2e -count=1 -timeout 15m -v -run '^TestUpdate' .
