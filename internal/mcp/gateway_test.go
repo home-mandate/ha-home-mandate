@@ -981,20 +981,6 @@ func TestAgentsWithoutMandateAreRateLimited(t *testing.T) {
 	}
 }
 
-func TestSanitizeRemovesTokenCarryingAttributes(t *testing.T) {
-	got := sanitize(map[string]any{
-		"friendly_name":        "TV",
-		"entity_picture":       "/api/media_player_proxy/media_player.tv?token=abc",
-		"entity_picture_local": "/api/media_player_proxy/media_player.tv?token=abc",
-		"access_token":         "abc",
-		"stream_url":           "rtsp://host/x?Token=abc",
-		"volume_level":         0.4,
-	})
-	if len(got) != 2 || got["friendly_name"] != "TV" || got["volume_level"] != 0.4 {
-		t.Errorf("sanitize = %v", got)
-	}
-}
-
 // The UI offers per category exactly the actions of the vocabulary the PEP enforces.
 func TestActionsOfTheVocabulary(t *testing.T) {
 	if got := Actions("light"); !slices.Equal(got, []string{"read", "set", "turn_off", "turn_on"}) {

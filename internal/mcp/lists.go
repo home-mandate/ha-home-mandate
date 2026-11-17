@@ -176,7 +176,8 @@ func (g *Gateway) listDevices(ctx context.Context, req *sdk.CallToolRequest, in 
 	readable := g.readableDevices(snap, true)
 	page, total, next := in.page(readable, size)
 	for _, dev := range page {
-		out.Devices = append(out.Devices, deviceOut{EntityID: dev.EntityID, Name: dev.Name(), Category: dev.Category, Areas: dev.Areas, State: dev.State})
+		state, _ := readView(dev)
+		out.Devices = append(out.Devices, deviceOut{EntityID: dev.EntityID, Name: dev.Name(), Category: dev.Category, Areas: dev.Areas, State: state})
 	}
 	out.Total, out.NextCursor = total, next
 	if in.Cursor == "" && in.Area == "" && in.Category == "" && in.Search == "" {

@@ -624,24 +624,8 @@ func (g *Gateway) getState(ctx context.Context, req *sdk.CallToolRequest, in ent
 	if err := g.record(ctx, a, d, true, audit.Result{Status: audit.StatusExecuted}); err != nil {
 		return nil, stateOut{}, errors.New(codeUnavailable)
 	}
-	return nil, stateOut{EntityID: dev.EntityID, State: dev.State, Attributes: sanitize(dev.Attributes), TemperatureUnit: g.temperatureUnitOf(dev.Category)}, nil
-}
-
-// sanitize removes attributes that can carry access tokens, such as entity_picture of
-// cameras and media players with a ?token= URL.
-func sanitize(attrs map[string]any) map[string]any {
-	out := make(map[string]any, len(attrs))
-	for k, v := range attrs {
-		key := strings.ToLower(k)
-		if strings.Contains(key, "token") || strings.Contains(key, "picture") {
-			continue
-		}
-		if s, ok := v.(string); ok && strings.Contains(strings.ToLower(s), "token=") {
-			continue
-		}
-		out[k] = v
-	}
-	return out
+	state, attrs := readView(dev)
+	return nil, stateOut{EntityID: dev.EntityID, State: state, Attributes: attrs, TemperatureUnit: g.temperatureUnitOf(dev.Category)}, nil
 }
 
 // temperatureUnit is the unit of temperatures in service calls; empty if unknown.
