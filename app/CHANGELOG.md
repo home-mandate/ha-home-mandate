@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.2
+
+Patch of 0.1.1. Implements the Home-Mandate Specification v0.1.1. Changes since 0.1.1:
+
+Security
+- `read` (`get_state`, a read after approval, `list_devices`) returned more than the Home
+  Assistant profile lists: every attribute an integration sets, such as the access token in a
+  camera's picture address, a lock's code format and who changed it, or a person's location,
+  and states that carry an address or credentials. It now returns only the state values the
+  profile lists for each category, and leaves out states and values that look like an address,
+  credentials or a key (GHSA-68qr-ffg3-m4fp, #184)
+
+Maintenance
+- A release is created as a draft and published only with its signed conformance reports and
+  the SBOM of the sources attached; published releases can't be changed anymore (#153)
+
 ## 0.1.1
 
 Patch of 0.1.0. Implements the Home-Mandate Specification v0.1.1. Changes since 0.1.0:
