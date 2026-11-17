@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2-rc.2
+
+Second release candidate of the patch 0.1.2. Experimental. Changes since 0.1.2-rc.1:
+
+Fixed
+- `read` (`get_state`, a read after approval, `list_devices`) returns only the state values the
+  Home Assistant profile lists for each category. Other attributes, the states of other domains,
+  and states or values that look like an address, credentials or a key are left out (#184)
+
 ## 0.1.2-rc.1
 
 Release candidate to try the new way releases are published. Experimental. The app is the same
