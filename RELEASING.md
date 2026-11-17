@@ -33,6 +33,9 @@ that version exists already.
 - Before the merge, a change runs on a test installation built from the branch.
 - A release candidate is tested as a user would install it. For a patch: a fresh installation,
   and an update from the previous version of `X.Y`.
+  Both run against the release candidate's signed image: `make e2e-ui` with
+  `E2E_IMAGE=<image>` for the fresh installation, and `make e2e-update FROM=<previous image>
+  TO=<image>` for the update, which starts the new version on the data of the previous one.
 
 ## A patch and the Home Assistant app
 

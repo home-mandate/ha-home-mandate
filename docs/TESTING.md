@@ -151,6 +151,11 @@ protection class, expired, not yet valid) needs its own named test.
 13. Two agents ask to open the garage door (demo cover), both confirmed → it opens once, the
     request shows "(closed)", the second confirmation is `failed: already_in_state` (SPEC-v0
     11.1 item 10, `TestScenarioGarageDoorOpensOnce`).
+14. Update with existing data (`make e2e-update FROM=<image> TO=<image>`, for every release
+    candidate, skipped otherwise): the previous version pairs an agent, stores its mandate and
+    logs a read; the new version starts on the same data → agents, mandates and the agent's
+    token unchanged, every mandate still parses, audit log valid and keeps all entries, the
+    agent reads again (`TestUpdateKeepsAgentsMandatesAndLog`).
 
 ## 4. Negative test catalog
 
