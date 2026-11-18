@@ -20,7 +20,13 @@ overrides:
 # @typescript-eslint/typescript-estree use it, at lint time, with the patterns of our own
 # ESLint config; no untrusted input reaches it. The fix exists only in 11.x, which the
 # parents do not accept yet (they require ^10); remove once they require >= 11.0.1.
+# picomatch <= 4.0.7: GHSA-fc5q-39xc-vjpf, high: denial of service through a crafted glob
+# pattern (repeated extglobs such as +(*)). Only vite, vitest, tinyglobby, fdir and unplugin
+# use it, at build and test time, with the patterns of our own configuration; no untrusted
+# pattern reaches it, and it is not part of what we ship. No fixed version exists yet;
+# remove once one is published.
 auditConfig:
   ignoreGhsas:
     - GHSA-gcqx-w48m-w2h4
     - GHSA-g3hv-75wg-m249
+    - GHSA-fc5q-39xc-vjpf
