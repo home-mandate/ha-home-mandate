@@ -7,21 +7,31 @@ This page says only what is particular to this repository.
 
 ## What is published
 
-A tag runs `.github/workflows/release.yml`, in the version of the tagged commit. It checks
-where the tag stands (`.github/scripts/release-base.sh`, tested by `tools/releasebase`), and
-that it matches `version` in `app/config.yaml`, which the Supervisor uses as the image tag. It
-then builds `ghcr.io/home-mandate/ha-home-mandate:<version>` for `linux/amd64` and
-`linux/arm64`, signs it with cosign (keyless), attaches provenance and SBOMs, verifies all of
-that, tags the image and creates the GitHub release as a draft (a pre-release for `-rc.N`)
-with the SBOM of the sources. `conformance-report.yml` attaches both conformance reports to
-the draft, and the draft is published only with the attested reports and the SBOM attached.
+A tag runs `.github/workflows/release.yml`, in the version of the tagged commit. It checks the
+tag with the organization's guard (`home-mandate/.github/actions/release-verify`), and that
+it matches `version` in `app/config.yaml`, that `app/CHANGELOG.md` has the entry and that a
+version requires a version of the specification. It then builds
+`ghcr.io/home-mandate/ha-home-mandate:<version>` for `linux/amd64` and `linux/arm64`, signs it
+with cosign (keyless), attaches provenance and SBOMs, verifies all of that, tags the image and
+creates the GitHub release as a draft (a pre-release for `-rc.N`) with the SBOM of the sources.
+`conformance-report.yml` attaches both conformance reports to the draft, and the draft is
+published only with the attested reports and the SBOM attached.
 
-Before tagging: update `app/config.yaml` (`version`) and `app/CHANGELOG.md`.
+`app/config.yaml` carries the version without a suffix. The image of a release candidate gets
+`X.Y.Z-rc.N` from the tag, so a release candidate needs no pull request, and the version is
+tagged on the commit of a release candidate.
 
 ```sh
-git switch main && git pull   # for a patch: release/X.Y
-git tag -a v0.1.0-rc.3 -m "Home-Mandate 0.1.0-rc.3"
-git push origin v0.1.0-rc.3
+# the release candidate, on the release branch
+gh workflow run release.yml --ref release/1.0 -f tag=v1.0.0-rc.1   # dry run, publishes nothing
+git switch release/1.0 && git pull
+git tag -a v1.0.0-rc.1 -m "Home-Mandate 1.0.0-rc.1"
+git push origin v1.0.0-rc.1
+
+# the version, on the commit of the release candidate, after its gate and the test
+gh workflow run release.yml --ref release/1.0 -f tag=v1.0.0
+git tag -a v1.0.0 -m "Home-Mandate 1.0.0" v1.0.0-rc.1^{commit}
+git push origin v1.0.0
 ```
 
 Tags and published releases are immutable, so a failed release needs a new version
@@ -30,18 +40,36 @@ that version exists already.
 
 ## How a version is tested
 
-- Before the merge, a change runs on a test installation built from the branch.
-- A release candidate is tested as a user would install it. For a patch: a fresh installation,
-  and an update from the previous version of `X.Y`.
-  Both run against the release candidate's signed image: `make e2e-ui` with
-  `E2E_IMAGE=<image>` for the fresh installation, and `make e2e-update FROM=<previous image>
-  TO=<image>` for the update, which starts the new version on the data of the previous one.
+- Before the merge, a pull request runs the jobs of what it changes (`.github/scope.rules`):
+  a change to the gateway runs the Go checks, conformance, fuzzing and every E2E scenario, a
+  change to the UI its checks and the browser tests, a change to text nothing. Every night
+  every job runs on `main` if `main` changed.
+- After a release candidate is published, `release.yml` runs the release gate on its commit:
+  - every job of `ci.yml` and `integration.yml`, whatever the last pull request changed;
+  - every fuzz target for 20 minutes, on top of the corpus the scheduled runs have collected;
+  - the E2E scenarios with the browser (`make e2e-ui`) against the signed image of the release
+    candidate, not against a build of the sources;
+  - an update: the release candidate starts on the data of the previous version
+    (`make e2e-update`).
 
-## A patch and the Home Assistant app
+  The job `Release gate` succeeds only if all of it passed, and a version can only be tagged
+  on a commit whose release candidate has it green.
+- What the gate can't know is tested by hand on a test installation with the release
+  candidate's image.
 
-Home Assistant reads the app's version from the default branch. So the pull request to `main`
-that adds a patch's changelog entry also sets `version` in `app/config.yaml` to the patch: until
-it is merged, the app does not offer the patch.
+## Where the version is set
+
+Home Assistant reads the app's version, its documentation and its changelog from the default
+branch, and offers that version as an update. So `main` must not name a version before its
+image exists, and this repository differs from the organization's steps in one place:
+
+- For a minor version, `release/X.Y` is created from `main` first. A pull request into
+  `release/X.Y` then sets `version` in `app/config.yaml` and writes the entry in
+  `app/CHANGELOG.md`. It changes text and the version line only, so it runs no test; the
+  release candidate's gate runs everything on its commit.
+- For a patch, the first fix into `release/X.Y` sets the version and starts the entry.
+- When the version is published, a pull request to `main` sets `version` there and adds the
+  changelog entry. Until it is merged, the app does not offer the version.
 
 ## Milestones and labels
 
