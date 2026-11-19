@@ -63,6 +63,8 @@ Home Assistant reads the app's version, its documentation and its changelog from
 branch, and offers that version as an update. So `main` must not name a version before its
 image exists, and this repository differs from the organization's steps in one place:
 
+- An alpha is tagged on `main` without touching `app/config.yaml`: its image gets the version
+  from the tag, and the app keeps offering the last published version.
 - For a minor version, `release/X.Y` is created from `main` first. A pull request into
   `release/X.Y` then sets `version` in `app/config.yaml` and writes the entry in
   `app/CHANGELOG.md`. It changes text and the version line only, so it runs no test; the
