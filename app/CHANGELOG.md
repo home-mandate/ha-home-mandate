@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.3-rc.1
+
+Release candidate of the patch 0.1.3. Experimental. Changes since 0.1.2:
+
+Security
+- A mandate in audit mode no longer tells its agent its limits, neither in
+  `list_my_permissions` nor in a refusal: an agent that succeeded outside them would have
+  learned that its mandate does not enforce (#170)
+- The consent and pairing forms refuse a post without `Origin`, as they already
+  refused one from another origin or with `null` (#163)
+
+Fixed
+- Proposals to switch audit mode on are recorded in the audit log (`mandate.proposed`, and
+  `mandate.discarded` with why one ended), expire after 24 hours, and need the confirmation of
+  another administrator where there is one (#171)
+
 ## 0.1.2
 
 Patch of 0.1.1. Implements the Home-Mandate Specification v0.1.1. Changes since 0.1.1:
