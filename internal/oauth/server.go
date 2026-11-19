@@ -358,10 +358,12 @@ func (s *Server) sessionID(r *http.Request) string {
 	return c.Value
 }
 
-// sameOrigin rejects form posts from other origins; browsers send Origin on POST.
+// sameOrigin rejects form posts from other origins. Browsers send Origin with every form
+// post, so a post without one counts as coming from another origin (SPEC-v0 section 11.7
+// item 5), as does "null".
 func (s *Server) sameOrigin(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	return origin == "" || origin == s.cfg.PublicURL
+	origins := r.Header.Values("Origin")
+	return len(origins) == 1 && origins[0] == s.cfg.PublicURL
 }
 
 // rejectUser logs a refused sign-in or pairing attempt of a human.

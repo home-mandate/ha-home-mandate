@@ -23,7 +23,7 @@ const (
 
 var (
 	auditEvents = []string{audit.EventDecision, audit.EventMandateCreated, audit.EventMandateUpdated, audit.EventMandateRevoked,
-		audit.EventMandateRemoved, audit.EventAgentRegistered, audit.EventAgentRevoked, audit.EventAgentReconnected,
+		audit.EventMandateRemoved, audit.EventMandateProposed, audit.EventMandateDiscarded, audit.EventAgentRegistered, audit.EventAgentRevoked, audit.EventAgentReconnected,
 		audit.EventAgentRemoved, audit.EventEmergencyStopActivated, audit.EventEmergencyStopReleased,
 		audit.EventAuthRejected, audit.EventLogTruncated, audit.EventLogCheckpoint, audit.EventDirectoryChanged,
 		audit.EventTemplateChanged, audit.EventApproverChanged}

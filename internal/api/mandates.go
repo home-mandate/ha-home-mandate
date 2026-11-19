@@ -267,6 +267,8 @@ func mandateError(err error, prefix string, draft json.RawMessage) error {
 		return fail(codeCriticalConfirm)
 	case errors.Is(err, mandate.ErrNoApprovers):
 		return fail(codeNoApprovers)
+	case errors.Is(err, mandate.ErrOwnProposal):
+		return fail(codeOwnProposal)
 	case errors.Is(err, mandate.ErrAuditModeNeedsConfirmation):
 		return failField(codeAuditModeNotHere, prefix+"/enforce")
 	case errors.Is(err, mandate.ErrInvalid):

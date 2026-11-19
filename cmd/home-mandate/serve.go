@@ -823,6 +823,7 @@ func (g *gateway) run(ctx context.Context) int {
 	var serveFailed atomic.Bool
 	wg.Go(func() { g.catalog.Run(ctx, catalogDebounce) })
 	wg.Go(func() { g.retention(ctx) })
+	wg.Go(func() { g.expireProposals(ctx) })
 	// Checkpoints anchor the audit log; once a day their position goes to the approvers.
 	wg.Go(func() {
 		checkpointer{log: g.state.log, settings: g.state.store, now: time.Now, logger: g.logger,
@@ -937,6 +938,27 @@ func (g *gateway) retention(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-time.After(retentionEvery):
+		}
+	}
+}
+
+// proposalsEvery is how often proposals of audit mode are checked for their end, so that
+// one that expired is recorded close to its end even when nobody opens the UI.
+const proposalsEvery = 5 * time.Minute
+
+// expireProposals ends proposals of audit mode that waited 24 hours (mandate.ProposalLifetime),
+// at start and then every proposalsEvery.
+func (g *gateway) expireProposals(ctx context.Context) {
+	for {
+		if n, err := g.state.mandates.ExpireProposals(ctx, time.Now()); err != nil {
+			g.logger.Error("ending expired audit mode proposals failed", "error", err)
+		} else if n > 0 {
+			g.logger.Info("audit mode proposals expired", "proposals", n)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(proposalsEvery):
 		}
 	}
 }

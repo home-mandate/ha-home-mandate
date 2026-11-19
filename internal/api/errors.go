@@ -24,13 +24,16 @@ const (
 	codeAuditModeNotHere = "audit_mode_not_here"
 	codeBuiltinTemplate  = "builtin_template" // a base template cannot be changed or removed
 	codeNoApprovers      = "no_approvers"     // a template's placeholder has nobody to stand for
-	codePairingInvalid   = "pairing_code_invalid"
-	codePairingExpired   = "pairing_code_expired"
-	codePairingLocked    = "pairing_locked"
-	codeTooLarge         = "too_large"
-	codeRateLimited      = "rate_limited"
-	codeUnavailable      = "unavailable"
-	codeInternal         = "internal"
+	// codeOwnProposal: the human who proposed audit mode cannot confirm it while another
+	// administrator exists (SPEC-v0 section 11.6 item 4).
+	codeOwnProposal    = "own_proposal"
+	codePairingInvalid = "pairing_code_invalid"
+	codePairingExpired = "pairing_code_expired"
+	codePairingLocked  = "pairing_locked"
+	codeTooLarge       = "too_large"
+	codeRateLimited    = "rate_limited"
+	codeUnavailable    = "unavailable"
+	codeInternal       = "internal"
 )
 
 // statusOf is the HTTP status of every code (types.ts, header comment).
@@ -45,6 +48,7 @@ var statusOf = map[string]int{
 	codeCriticalConfirm: http.StatusUnprocessableEntity,
 	codeBuiltinTemplate: http.StatusConflict,
 	codeNoApprovers:     http.StatusUnprocessableEntity,
+	codeOwnProposal:     http.StatusForbidden,
 	codePairingInvalid:  http.StatusBadRequest,
 	codePairingExpired:  http.StatusGone,
 	codePairingLocked:   http.StatusTooManyRequests,

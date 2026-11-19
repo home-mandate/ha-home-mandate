@@ -56,7 +56,15 @@ func TestAuditModeIsProposedConfirmedAndTold(t *testing.T) {
 	if r := h.do(http.MethodPost, "/api/mandates/"+m.ID+"/audit-mode/confirm", map[string]any{"digest": "x"}); r.errCode() != codeInvalidInput || r.field() != "/digest" {
 		t.Errorf("confirm without a digest = %d %s", r.code, r.body)
 	}
-	h.ok(http.MethodPost, "/api/mandates/"+m.ID+"/audit-mode/confirm", map[string]any{"digest": pending}, &detail)
+	// The proposer does not confirm while another administrator (Anna) exists (SPEC-v0
+	// section 11.6 item 4, issue #171); Home-Mandate's own user does not count as one.
+	if r := h.do(http.MethodPost, "/api/mandates/"+m.ID+"/audit-mode/confirm", map[string]any{"digest": pending}); r.code != http.StatusForbidden || r.errCode() != codeOwnProposal {
+		t.Errorf("the proposer confirms = %d %s", r.code, r.body)
+	}
+	if detail.Pending == nil || detail.Pending.ExpiresAt == "" {
+		t.Errorf("the proposal names no end: %+v", detail.Pending)
+	}
+	h.ok(http.MethodPost, "/api/mandates/"+m.ID+"/audit-mode/confirm", map[string]any{"digest": pending}, &detail, as(annaID))
 	if detail.Summary.Digest != pending || !detail.Summary.AuditMode || detail.Summary.AuditModePending || detail.Pending != nil {
 		t.Fatalf("after confirming: %+v", detail.Summary)
 	}
@@ -150,5 +158,32 @@ func TestAuditModeNoticeEdges(t *testing.T) {
 	h.srv.tellApprovers(context.Background(), info, []byte(`{}`), i18n.AuditModeActiveTitle, i18n.AuditModeActiveMessage, adminID)
 	if sent := h.ha.sent(); len(sent) != 0 {
 		t.Errorf("notifications = %v", sent)
+	}
+}
+
+// The only administrator confirms their own proposal: neither an inactive administrator, nor
+// Home-Mandate's own user, nor a user Home Assistant generated for itself counts as another
+// (SPEC-v0 section 11.6 item 4, issue #171).
+func TestTheOnlyAdministratorConfirmsTheirOwnProposal(t *testing.T) {
+	h := newHarness(t)
+	h.ha.mu.Lock()
+	for i := range h.ha.users {
+		if h.ha.users[i].ID == annaID {
+			h.ha.users[i].IsActive = false
+		}
+	}
+	h.ha.mu.Unlock()
+	voice := h.admit("Voice")
+	m := h.mandateOf(voice.ClientID)
+	trial := draft(t)
+	trial["enforce"] = false
+	var detail wireMandateDetail
+	h.ok(http.MethodPut, "/api/mandates/"+m.ID, update("Voice", trial, m.Digest, true), &detail)
+	if detail.Pending == nil {
+		t.Fatalf("nothing proposed: %+v", detail.Summary)
+	}
+	h.ok(http.MethodPost, "/api/mandates/"+m.ID+"/audit-mode/confirm", map[string]any{"digest": detail.Pending.Digest}, &detail)
+	if !detail.Summary.AuditMode || detail.Pending != nil {
+		t.Errorf("after confirming: %+v", detail.Summary)
 	}
 }
