@@ -28,6 +28,8 @@ const EVENTS: Record<AuditEvent, () => string> = {
   'mandate.updated': () => m.event_mandate_changed(),
   'mandate.revoked': () => m.event_mandate_revoked(),
   'mandate.removed': () => m.event_mandate_removed(),
+  'mandate.proposed': () => m.event_mandate_proposed(),
+  'mandate.discarded': () => m.event_mandate_discarded(),
   'emergency_stop.activated': () => m.event_estop_on(),
   'emergency_stop.released': () => m.event_estop_off(),
   'auth.rejected': () => m.event_login_rejected(),

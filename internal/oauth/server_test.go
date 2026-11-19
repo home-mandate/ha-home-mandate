@@ -185,8 +185,14 @@ func (b *browser) post(path string, form url.Values, header ...string) response 
 	b.h.t.Helper()
 	req, _ := http.NewRequest(http.MethodPost, b.h.srv.URL+path, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// A browser sends the origin of the page with every form post; a header given here
+	// replaces it, and an empty value leaves it out.
+	req.Header.Set("Origin", testPublicURL)
 	for i := 0; i+1 < len(header); i += 2 {
 		req.Header.Set(header[i], header[i+1])
+		if header[i+1] == "" {
+			req.Header.Del(header[i])
+		}
 	}
 	return b.do(req)
 }
@@ -652,6 +658,28 @@ func TestCallbackRejects(t *testing.T) {
 	}
 }
 
+// Under an https public origin only the cookie with the __Host- prefix counts; the same
+// session under the name without it is ignored (SPEC-v0 section 11.7 item 5, issue #163).
+func TestOnlyTheHostPrefixedCookieCounts(t *testing.T) {
+	h := newHarness(t)
+	b := h.browser()
+	_, challenge := pkce()
+	b.consentAs(challenge, "admin-code")
+	srvURL, _ := url.Parse(h.srv.URL)
+	cookies := b.c.Jar.Cookies(srvURL)
+	if len(cookies) != 1 || cookies[0].Name != "__Host-hm_session" {
+		t.Fatalf("cookies = %v", cookies)
+	}
+	for _, name := range []string{"__Host-hm_session", "hm_session"} {
+		req, _ := http.NewRequest(http.MethodGet, h.srv.URL+ConsentPath, nil)
+		req.AddCookie(&http.Cookie{Name: name, Value: cookies[0].Value})
+		res := h.browser().do(req)
+		if ok := res.status == http.StatusOK; ok != (name == "__Host-hm_session") {
+			t.Errorf("%s: %d", name, res.status)
+		}
+	}
+}
+
 // The session cookie changes at sign-in; a cookie planted before is worth nothing.
 func TestSessionFixation(t *testing.T) {
 	h := newHarness(t)
@@ -715,6 +743,22 @@ func TestConsentRejects(t *testing.T) {
 	res := b.post(ConsentPath, url.Values{"csrf": {csrfOf(t, page.body)}, "action": {"deny"}})
 	if u, _ := url.Parse(res.location); res.status != http.StatusSeeOther || u.Query().Get("error") != "access_denied" {
 		t.Errorf("deny = %d %q", res.status, res.location)
+	}
+	if n := countAgents(t, h); n != 0 {
+		t.Errorf("%d agents", n)
+	}
+}
+
+// A consent post without Origin counts as coming from another origin (SPEC-v0 section 11.7
+// item 5, issue #163): browsers send it with every form post.
+func TestConsentNeedsTheOrigin(t *testing.T) {
+	h := newHarness(t)
+	_, challenge := pkce()
+	b := h.browser()
+	page := b.consentAs(challenge, "admin-code")
+	form := url.Values{"csrf": {csrfOf(t, page.body)}, "name": {"x"}, "template": {voiceChoice}, "action": {"approve"}}
+	if res := b.post(ConsentPath, form, "Origin", ""); res.status != http.StatusForbidden || res.location != "" {
+		t.Errorf("no origin: %d %q", res.status, res.location)
 	}
 	if n := countAgents(t, h); n != 0 {
 		t.Errorf("%d agents", n)

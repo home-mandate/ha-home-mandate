@@ -40,6 +40,8 @@ const (
 	EventMandateUpdated         = "mandate.updated"
 	EventMandateRevoked         = "mandate.revoked"
 	EventMandateRemoved         = "mandate.removed"
+	EventMandateProposed        = "mandate.proposed"
+	EventMandateDiscarded       = "mandate.discarded"
 	EventAgentRegistered        = "agent.registered"
 	EventAgentRevoked           = "agent.revoked"
 	EventAgentReconnected       = "agent.reconnected"
@@ -227,7 +229,17 @@ type Mandate struct {
 	ID             string `json:"id"`
 	Digest         string `json:"digest"`
 	PreviousDigest string `json:"previous_digest,omitempty"`
+	// Cause tells why a proposal did not take effect; only with mandate.discarded.
+	Cause string `json:"cause,omitempty"`
 }
+
+// Causes of mandate.discarded (SPEC-v0 sections 9.1 and 11.6 item 4).
+const (
+	DiscardRejected   = "rejected"
+	DiscardSuperseded = "superseded"
+	DiscardRevoked    = "revoked"
+	DiscardExpired    = "expired"
+)
 
 // Evaluation is the result of SPEC-v0 section 4.1.
 type Evaluation struct {
