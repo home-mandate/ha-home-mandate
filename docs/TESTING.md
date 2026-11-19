@@ -411,7 +411,7 @@ Every line is at least one test. New attack ideas are added here before they are
 
 **Test interface (SPEC-v0 section 10.1)**
 - The release binary depends on `tools/conformance` or the harness of the specification → a test fails (`go list -deps ./cmd/home-mandate`)
-- A tag on the wrong branch: a minor version off `main`, a patch off its own release branch (`main` included), or no version at all → `release.yml` refuses before anything is built (`tools/releasebase`, a table of tag, branch and result against a real git history). The first real run from a release branch is the first patch's release candidate
+- A tag in the wrong place: an alpha off `main`, a release candidate or a version off its release branch, a version without a release candidate that passed its gate on the same commit, a release behind a version that is out, or no version at all → `release.yml` refuses before anything is built (`home-mandate/.github/actions/release-verify`; its tests, a table of tags, branches and what GitHub answers, are kept with it)
 - A vulnerability on the newest release branch → the nightly check (`scheduled.yml`) opens an issue, as for `main`
 - HTTP binding without or with a wrong bearer token → 401; a token shorter than 32 characters or an address other than loopback → refused at start
 
