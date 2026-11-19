@@ -22,10 +22,10 @@ name: Release
 # Guards: only admins may create tags and tags are immutable (repository rulesets). Before
 # anything is built, home-mandate/.github/actions/release-verify checks where the tag stands,
 # that the commit came from a merged pull request whose checks passed, that a version is a
-# release candidate that passed, and that the release doesn't exist. Here: the tag matches the
-# version in app/config.yaml (Home Assistant's Supervisor uses it as the image tag), a release
-# candidate and a version have their entry in app/CHANGELOG.md, a version requires a version
-# of the specification, and the image tag doesn't exist. The image is pushed by digest, signed
+# release candidate that passed, and that the release doesn't exist. Here: a release candidate
+# and a version match the version in app/config.yaml (Home Assistant's Supervisor uses it as
+# the image tag) and have their entry in app/CHANGELOG.md, a version requires a version of
+# the specification, and the image tag doesn't exist. The image is pushed by digest, signed
 # and verified first; the version tag comes last, so no version tag ever points to an unsigned
 # image.
 #
@@ -94,8 +94,10 @@ jobs:
           KIND: ${{ steps.verify.outputs.kind }}
         run: |
           set -euo pipefail
+          # An alpha stands on main, where app/config.yaml names the last published version:
+          # Home Assistant offers what main names. Its image gets the version from the tag.
           app=$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' app/config.yaml)
-          if [ "$app" != "$BASE" ]; then
+          if [ "$KIND" != alpha ] && [ "$app" != "$BASE" ]; then
             echo "::error::app/config.yaml has version '$app', the tag $BASE"; exit 1
           fi
           # The entry is written before the first release candidate: the version is its commit.
