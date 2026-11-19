@@ -6,11 +6,16 @@ name: CI
 # Playwright, E2E). Everything is checked before the merge: main and the release branches take
 # squash-merged pull requests only, up to date and with every required check green, so
 # nothing runs after the merge.
-# scheduled.yml scans for vulnerabilities every night and fuzzes twice a month.
+#
+# A job runs only if the change touches its scope (.github/scope.rules): a change to the
+# changelog doesn't wait for the Go tests. A skipped job counts as passed. Once a night
+# scheduled.yml calls this workflow for main and runs every job, and it scans for
+# vulnerabilities; twice a week it fuzzes.
 on:
   push:
     branches-ignore: [main, "release/[0-9]+.[0-9]+"]
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -24,8 +29,26 @@ env:
   GOWORK: "off"
 
 jobs:
+  # Required, like the jobs that depend on it: if it fails, they are skipped, and a skipped
+  # job alone would let the pull request through.
+  scope:
+    name: Scope (push)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      scopes: ${{ steps.scope.outputs.scopes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the branch is compared with main or the release branch it started from
+          persist-credentials: false
+      - id: scope
+        uses: home-mandate/.github/actions/scope@024f848d5c7a8e25de1930e007e321ffc863aa36
+
   go:
     name: Go (vet, staticcheck, race tests, coverage, actionlint)
+    needs: scope
+    if: contains(fromJSON(needs.scope.outputs.scopes), 'go')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -38,6 +61,8 @@ jobs:
       - run: make vet staticcheck cover actionlint
 
   govulncheck:
+    needs: scope
+    if: contains(fromJSON(needs.scope.outputs.scopes), 'go')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -49,24 +74,34 @@ jobs:
           go-version-file: go.mod
       - run: make vulncheck
 
+  # The condition is on the steps, not on the job: a skipped job with a matrix reports one
+  # check without the architecture in its name, and "Build (amd64)" would never report.
   build:
     name: Build (${{ matrix.goarch }})
+    needs: scope
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
       matrix:
         goarch: [amd64, arm64]
+    env:
+      WANTED: ${{ contains(fromJSON(needs.scope.outputs.scopes), 'go') }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: env.WANTED == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - if: env.WANTED == 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - run: make build GOARCHES=${{ matrix.goarch }} VERSION=${{ github.sha }}
+      - if: env.WANTED == 'true'
+        run: make build GOARCHES=${{ matrix.goarch }} VERSION=${{ github.sha }}
 
   web:
     name: Web (lint, types, unit tests, i18n, build, audit)
+    needs: scope
+    if: contains(fromJSON(needs.scope.outputs.scopes), 'web')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

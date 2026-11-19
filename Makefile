@@ -12,7 +12,8 @@ GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.8.0
 ACTIONLINT  := github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
 # Fuzz targets as package:target, one for every parser of input from outside (docs/TESTING.md
-# section 1); FUZZTIME each (short in pull requests, long twice a month, one job per target).
+# section 1); FUZZTIME each (15 s in pull requests, 10 min twice a week for the corpus, longer
+# for a release candidate).
 FUZZTIME     ?= 10m
 FUZZ_TARGETS := \
 	internal/ha:FuzzDecodeMessage \
@@ -127,9 +128,10 @@ web-check:
 web-conformance:
 	go run ./tools/webconformance
 
-## web-e2e: Playwright in de, en and pseudo under a random Ingress path
+## web-e2e: Playwright in de, en and pseudo under a random Ingress path; E2E_ARGS are passed
+## to Playwright, e.g. make web-e2e E2E_ARGS=--shard=1/3
 web-e2e:
-	cd web && pnpm e2e
+	cd web && pnpm e2e $(E2E_ARGS)
 
 ## e2e: scenarios of docs/TESTING.md section 3 against Home Assistant and the release
 ## image (podman, or docker with E2E_RUNTIME=docker)
@@ -138,6 +140,8 @@ e2e:
 
 ## e2e-ui: the E2E scenarios plus Playwright (de, en) against the release image behind the
 ## Ingress stand-in, and on the sign-in, consent and pairing pages (needs make web-install
-## and Playwright's Chromium)
+## and Playwright's Chromium); E2E_RUN picks scenarios by name, e.g. the two that drive a
+## browser: make e2e-ui E2E_RUN=InTheBrowser
+E2E_RUN ?= .
 e2e-ui:
-	cd e2e && E2E_PLAYWRIGHT=1 go test -tags e2e -count=1 -timeout 30m -v .
+	cd e2e && E2E_PLAYWRIGHT=1 go test -tags e2e -count=1 -timeout 30m -v -run '$(E2E_RUN)' .
