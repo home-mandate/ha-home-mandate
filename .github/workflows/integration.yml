@@ -15,7 +15,13 @@ on:
     branches: [main, "release/[0-9]+.[0-9]+"]
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
+  # Called by scheduled.yml (the nightly full run) and release.yml (the release gate).
   workflow_call:
+    inputs:
+      full:
+        description: Run every job, whatever changed.
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -43,7 +49,9 @@ jobs:
           fetch-depth: 0 # the merge commit is compared with the base branch
           persist-credentials: false
       - id: scope
-        uses: home-mandate/.github/actions/scope@024f848d5c7a8e25de1930e007e321ffc863aa36
+        uses: home-mandate/.github/actions/scope@f73af670bc516d6556a0203315b90c0c6554852f
+        with:
+          full: ${{ inputs.full == true }}
 
   conformance:
     name: Conformance (mandate-conformance, process and HTTP binding)
