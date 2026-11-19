@@ -319,7 +319,8 @@ func (s *Store) put(ctx context.Context, tx *sql.Tx, info Info, document []byte,
 	if evaluator.EntersAuditMode(current, evaluator.StatusActive, time.Now(), next) && confirmed != info.Digest {
 		return &proposal{document: document, info: info, base: existing.digest}
 	}
-	if _, err := dropPendingTx(ctx, tx, info.ID); err != nil {
+	// The waiting version itself taking effect is its confirmation, not its end.
+	if _, err := s.endPendingTx(ctx, tx, info.ID, info.Digest, audit.DiscardSuperseded, by); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE mandates SET current_digest = ?, max_actions_per_hour = ?, updated_at = ?,
@@ -384,7 +385,7 @@ func (s *Store) revokeTx(ctx context.Context, tx *sql.Tx, where, key string, by 
 	if status == StatusRevoked {
 		return nil
 	}
-	if _, err := dropPendingTx(ctx, tx, id); err != nil {
+	if _, err := s.dropPendingTx(ctx, tx, id, audit.DiscardRevoked, by); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE mandates SET status = ?, updated_at = ? WHERE id = ?`,

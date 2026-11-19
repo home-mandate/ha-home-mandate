@@ -12,7 +12,7 @@ export type Language = 'de' | 'en';
 
 // HTTP status per error code (see ApiErrorCode at the end):
 // 400 invalid_input, pairing_code_invalid · 401 unauthenticated · 403 forbidden,
-// csrf_invalid · 404 not_found · 409 conflict, builtin_template · 410 pairing_code_expired ·
+// csrf_invalid, own_proposal · 404 not_found · 409 conflict, builtin_template · 410 pairing_code_expired ·
 // 413 too_large · 422 invalid_mandate, critical_confirmation_required, no_approvers ·
 // 429 rate_limited, pairing_locked ·
 // 500 internal · 503 unavailable (Home Assistant not reachable).
@@ -551,6 +551,8 @@ export interface PendingAuditMode {
   proposed_by: string;
   proposed_by_name: string | null;
   proposed_at: string;
+  /** When the proposal ends unconfirmed, 24 hours after proposed_at (SPEC-v0 section 11.6 item 4). */
+  expires_at: string;
 }
 
 /**
@@ -882,6 +884,8 @@ export type AuditEvent =
   | 'mandate.updated'
   | 'mandate.revoked'
   | 'mandate.removed'
+  | 'mandate.proposed'
+  | 'mandate.discarded'
   | 'agent.registered'
   | 'agent.revoked'
   | 'agent.reconnected'
@@ -1089,6 +1093,7 @@ export type ApiErrorCode =
   | 'critical_confirmation_required'
   | 'builtin_template'
   | 'no_approvers'
+  | 'own_proposal'
   | 'pairing_code_invalid'
   | 'pairing_code_expired'
   | 'pairing_locked'

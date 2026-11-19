@@ -260,7 +260,8 @@
       toasts.show({ kind: 'success', text: digest === null ? m.audit_pending_discarded() : m.audit_pending_confirmed() });
     } catch (err) {
       const changed = err instanceof ApiError && (err.code === 'conflict' || err.code === 'not_found');
-      toasts.show({ kind: 'error', text: changed ? m.audit_pending_changed() : m.audit_pending_failed() });
+      const own = err instanceof ApiError && err.code === 'own_proposal';
+      toasts.show({ kind: 'error', text: own ? m.audit_pending_own() : changed ? m.audit_pending_changed() : m.audit_pending_failed() });
       if (changed) await reload();
     } finally {
       auditBusy = false;

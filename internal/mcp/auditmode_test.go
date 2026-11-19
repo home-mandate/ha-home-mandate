@@ -52,7 +52,7 @@ func (h *harness) auditModeWith(rules func(map[string]any)) {
 		h.t.Fatalf("Update = %v", err)
 	}
 	p, _, _ := h.mandates.Pending(ctx, info.ID)
-	if _, err := h.mandates.ConfirmAuditMode(ctx, info.ID, p.Digest, audit.Actor{Kind: audit.ActorUser, ID: "user-2"}); err != nil {
+	if _, err := h.mandates.ConfirmAuditMode(ctx, info.ID, p.Digest, audit.Actor{Kind: audit.ActorUser, ID: "user-2"}, false); err != nil {
 		h.t.Fatal(err)
 	}
 }
@@ -300,5 +300,27 @@ func TestExecutableAfterTheConfirmation(t *testing.T) {
 		if got := executableAfterConfirmation(tc.confirmed, tc.now); got != tc.want {
 			t.Errorf("confirmed %+v, now %+v: %t, want %t", tc.confirmed, tc.now, got, tc.want)
 		}
+	}
+}
+
+// A mandate in audit mode names no limits (SPEC-v0 section 11.5, issue #170): an agent that
+// succeeds with a value outside the limits it was told would learn that its mandate does not
+// enforce. The refusal text names none either.
+func TestAuditModeNamesNoLimits(t *testing.T) {
+	h := newHarness(t, limitsMandate)
+	h.auditModeWith(limitsMandate)
+	s := h.session()
+
+	perms, errText := h.call(s, "list_my_permissions", map[string]any{"category": "climate"})
+	if errText != "" {
+		t.Fatal(errText)
+	}
+	if got := mustJSON(perms["groups"]); strings.Contains(got, "limits") || strings.Contains(got, "23") {
+		t.Errorf("permissions in audit mode = %s; no limits may be named", got)
+	}
+	out, errText := h.call(s, "perform_action", map[string]any{"entity_id": "climate.living_room", "action": "set_temperature",
+		"params": map[string]any{"temperature": 25.0}})
+	if strings.Contains(mustJSON(out)+errText, "16") || strings.Contains(mustJSON(out)+errText, "23") {
+		t.Errorf("perform_action in audit mode = %v %q; no limits may be named", out, errText)
 	}
 }
