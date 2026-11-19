@@ -88,6 +88,7 @@ var env struct {
 	haToken  string // long-lived token of the onboarding admin
 	mcpURL   string // https://localhost:<port>/mcp
 	public   string // https://localhost:<port>, HM_PUBLIC_URL
+	port     string // host port of the MCP endpoint
 	users    map[string]*haUser
 	ha, hm   string // container names
 	ingress  string // the Ingress stand-in (tools/ingressproxy) at ingressIP
@@ -412,6 +413,15 @@ func startGateway() error {
 		return err
 	}
 	env.public = "https://localhost:" + port
+	env.port = port
+	return runGateway(env.image)
+}
+
+// runGateway starts the gateway container env.hm from image on the data directory env.data,
+// with the MCP endpoint on env.port. The update test (update_test.go) calls it a second time
+// with the new image after it removed the container.
+func runGateway(image string) error {
+	port := env.port
 	args := append([]string{"run", "-d", "--name", env.hm}, gatewayUser()...)
 	if _, err := run(append(args, "--network", env.network, "--network", env.cimdNet,
 		"--add-host", cimdHost+":"+cimdIP, "-p", "127.0.0.1:"+port+":8765", "-p", "127.0.0.1::8099",
@@ -429,7 +439,7 @@ func startGateway() error {
 		// Shorter than the mandates' approval timeout (10 s), so that a request without an
 		// answer gives the pending result (issue #27).
 		"-e", "HM_APPROVAL_WAIT=5",
-		env.image)...); err != nil {
+		image)...); err != nil {
 		return err
 	}
 	env.teardown = append(env.teardown, func() { _, _ = run("rm", "-f", env.hm) })

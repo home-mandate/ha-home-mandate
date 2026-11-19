@@ -157,6 +157,11 @@ protection class, expired, not yet valid) needs its own named test.
 13. Two agents ask to open the garage door (demo cover), both confirmed → it opens once, the
     request shows "(closed)", the second confirmation is `failed: already_in_state` (SPEC-v0
     11.1 item 10, `TestScenarioGarageDoorOpensOnce`).
+14. Update with existing data (`make e2e-update FROM=<image> TO=<image>`, for every release
+    candidate, skipped otherwise): the previous version pairs an agent, stores its mandate and
+    logs a read; the new version starts on the same data → agents, mandates and the agent's
+    token unchanged, every mandate still parses, audit log valid and keeps all entries, the
+    agent reads again (`TestUpdateKeepsAgentsMandatesAndLog`).
 
 ## 4. Negative test catalog
 
@@ -399,7 +404,7 @@ Every line is at least one test. New attack ideas are added here before they are
 
 **Test interface (SPEC-v0 section 10.1)**
 - The release binary depends on `tools/conformance` or the harness of the specification → a test fails (`go list -deps ./cmd/home-mandate`)
-- A tag on the wrong branch: a minor version off `main`, a patch off its own release branch (`main` included), or no version at all → `release.yml` refuses before anything is built (`tools/releasebase`, a table of tag, branch and result against a real git history). The first real run from a release branch is the first patch's release candidate
+- A tag in the wrong place: an alpha off `main`, a release candidate or a version off its release branch, a version without a release candidate that passed its gate on the same commit, a release behind a version that is out, or no version at all → `release.yml` refuses before anything is built (`home-mandate/.github/actions/release-verify`; its tests, a table of tags, branches and what GitHub answers, are kept with it)
 - A vulnerability on the newest release branch → the nightly check (`scheduled.yml`) opens an issue, as for `main`
 - HTTP binding without or with a wrong bearer token → 401; a token shorter than 32 characters or an address other than loopback → refused at start
 
