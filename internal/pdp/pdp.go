@@ -190,6 +190,11 @@ func (s *Snapshot) Limits(entityID, action string) []map[string]evaluator.Limit 
 	}
 	req.Resource.Category, req.Resource.Areas, req.Resource.Critical = dev.Category, dev.Areas, dev.Critical
 	m, _ := evaluator.SelectAndEvaluate(s.stored, s.clientID, s.p.cfg.Principal, req)
+	// A mandate in audit mode names no limits (SPEC-v0 section 11.5): an agent that succeeds
+	// outside the limits it was told would learn that its mandate does not enforce.
+	if m == nil || !m.Enforce() {
+		return nil
+	}
 	req.Status = evaluator.StatusActive // a selected mandate is never revoked
 	return m.Limits(req)
 }

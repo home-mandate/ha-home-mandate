@@ -42,6 +42,7 @@
     <h2 id="{id}-pending"><Icon name="warning" />{m.audit_pending_title()}</h2>
     <p>
       {m.audit_pending_body({ name: isolate(proposer), time: formatDateTime(new Date(pending.proposed_at), ctx), digest: short(pending.digest) })}
+      {m.audit_pending_expires({ time: formatDateTime(new Date(pending.expires_at), ctx) })}
     </p>
     {#if changes.length > 0}
       <p>{m.audit_pending_more()}</p>

@@ -21,6 +21,7 @@ type wirePending struct {
 	ProposedBy     string          `json:"proposed_by"`
 	ProposedByName *string         `json:"proposed_by_name"`
 	ProposedAt     string          `json:"proposed_at"`
+	ExpiresAt      string          `json:"expires_at"`
 }
 
 // enforced tells whether a stored document enforces its denials: false only for
@@ -39,7 +40,7 @@ func (s *Server) pendingOf(ctx context.Context, id string) (*wirePending, error)
 		return nil, err
 	}
 	return &wirePending{Digest: p.Digest, Document: p.Document, ProposedBy: p.ProposedBy,
-		ProposedByName: s.users.name(ctx, p.ProposedBy), ProposedAt: *formatTime(p.ProposedAt)}, nil
+		ProposedByName: s.users.name(ctx, p.ProposedBy), ProposedAt: *formatTime(p.ProposedAt), ExpiresAt: *formatTime(p.ExpiresAt)}, nil
 }
 
 // confirmAuditMode lets the waiting version take effect after a human confirmed exactly
@@ -58,7 +59,10 @@ func (s *Server) confirmAuditMode(r *request) (any, error) {
 	if !digestPattern.MatchString(in.Digest) {
 		return nil, failField(codeInvalidInput, "/digest")
 	}
-	info, err := s.cfg.Mandates.ConfirmAuditMode(r.Context(), id, in.Digest, s.actor(r))
+	// The proposer confirms only when no other administrator could (SPEC-v0 section 11.6
+	// item 4); if that cannot be checked, another administrator has to.
+	other, otherErr := s.users.otherAdmin(r.Context(), r.user, s.cfg.Status().ServiceUser)
+	info, err := s.cfg.Mandates.ConfirmAuditMode(r.Context(), id, in.Digest, s.actor(r), otherErr == nil && !other)
 	if err != nil {
 		return nil, mandateError(err, "", nil)
 	}
@@ -76,7 +80,7 @@ func (s *Server) discardAuditMode(r *request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := s.cfg.Mandates.DiscardAuditMode(r.Context(), id); err != nil {
+	if err := s.cfg.Mandates.DiscardAuditMode(r.Context(), id, s.actor(r)); err != nil {
 		return nil, mandateError(err, "", nil)
 	}
 	s.cfg.Logger.Info("audit mode proposal discarded", "mandate", id, "by", r.user)

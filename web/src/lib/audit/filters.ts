@@ -42,6 +42,8 @@ export const EVENTS: readonly AuditEvent[] = [
   'mandate.updated',
   'mandate.revoked',
   'mandate.removed',
+  'mandate.proposed',
+  'mandate.discarded',
   'emergency_stop.activated',
   'emergency_stop.released',
   'auth.rejected',

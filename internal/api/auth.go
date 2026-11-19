@@ -116,6 +116,21 @@ func (u *users) IsAdmin(ctx context.Context, user string) (bool, error) {
 	return ok && found.IsAdmin(), nil
 }
 
+// otherAdmin tells whether an administrator other than user exists: an active person,
+// neither one Home Assistant generated for itself nor Home-Mandate's own user (service).
+func (u *users) otherAdmin(ctx context.Context, user, service string) (bool, error) {
+	all, err := u.all(ctx)
+	if err != nil {
+		return false, err
+	}
+	for id, found := range all {
+		if id != user && id != service && !found.SystemGenerated && found.IsAdmin() {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // name returns the name of a Home Assistant user, nil if unknown or not available.
 func (u *users) name(ctx context.Context, id string) *string {
 	if id == "" {

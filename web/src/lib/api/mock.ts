@@ -84,6 +84,7 @@ const STATUS: Record<ApiErrorCode, number> = {
   critical_confirmation_required: 422,
   builtin_template: 409,
   no_approvers: 422,
+  own_proposal: 403,
   pairing_code_invalid: 400,
   pairing_code_expired: 410,
   pairing_locked: 429,
@@ -538,7 +539,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
     const document: MandateDocument = { ...kept, ...draft, created_by: user().id, created_at: createdAt };
     // As the server: switching audit mode on waits for a human's confirmation of exactly this version.
     if (current.document.enforce !== false && document.enforce === false && confirmedDigest === undefined) {
-      const pending = { digest: `sha256:mock-${++counter}`, proposed_by: user().id, proposed_by_name: user().name, proposed_at: createdAt };
+      const pending = { digest: `sha256:mock-${++counter}`, proposed_by: user().id, proposed_by_name: user().name, proposed_at: createdAt, expires_at: new Date(Date.parse(createdAt) + 86_400_000).toISOString() };
       putStored(id, { ...m, name: name ?? m.name, pending: { meta: pending, document } });
       return detail(id);
     }

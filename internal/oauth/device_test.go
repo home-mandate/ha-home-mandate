@@ -234,8 +234,10 @@ func TestPairRejects(t *testing.T) {
 	if res := b.post(PairPath, url.Values{"code": {"BBBB-BBBB"}}); res.status != http.StatusForbidden {
 		t.Errorf("no csrf = %d", res.status)
 	}
-	if res := b.post(PairPath, url.Values{"csrf": {csrfOf(t, page.body)}, "code": {"x"}}, "Origin", "https://evil.example.org"); res.status != http.StatusForbidden {
-		t.Errorf("cross origin = %d", res.status)
+	for _, origin := range []string{"https://evil.example.org", "null", ""} {
+		if res := b.post(PairPath, url.Values{"csrf": {csrfOf(t, page.body)}, "code": {"x"}}, "Origin", origin); res.status != http.StatusForbidden {
+			t.Errorf("origin %q = %d", origin, res.status)
+		}
 	}
 	// A session started for an authorization request cannot enter codes.
 	other := h.browser()

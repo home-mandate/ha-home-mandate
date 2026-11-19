@@ -229,9 +229,15 @@ was missed.
   possible only in the editor of an existing mandate: the new version waits in
   `mandate_pending` and the version in force stays until a human of the household confirms
   it with its digest (`POST api/mandates/{id}/audit-mode/confirm`); every other version
-  that takes effect, a revocation or `…/discard` ends the proposal. A new mandate, a
+  that takes effect, a revocation or `…/discard` ends the proposal, and so does its end
+  24 hours after it was proposed (`mandate.ProposalLifetime`, checked every 5 minutes and
+  before every read). Each proposal is recorded with `mandate.proposed` and each end other
+  than its confirmation with `mandate.discarded` and its cause (`superseded`, `revoked`,
+  `rejected`, `expired`). Where another administrator exists, the one who proposed it cannot
+  confirm it (`own_proposal`); Home-Mandate's own user does not count. A new mandate, a
   template (which never carries `enforce`) or any other path that would switch it on is
-  refused. Every approver the mandate names gets a notification when it is proposed and
+  refused. A mandate in audit mode tells its agent no limits (`pdp.Snapshot.Limits`): an
+  agent that succeeds outside them would learn that the mandate does not enforce. Every approver the mandate names gets a notification when it is proposed and
   when it takes effect. Switching it off takes effect at once. The mandate list marks
   mandates in audit mode and waiting proposals, the editor says what audit mode does and
   that reading is never protected by it, and the log filters the requests that were not
