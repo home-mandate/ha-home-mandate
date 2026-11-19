@@ -6,11 +6,16 @@ name: Integration
 # branch and manual runs. Never on a plain branch push and never after the merge (see ci.yml).
 # Both are protected: squash-merged pull requests only, with the checks of both workflows
 # required.
+#
+# A job runs only if the pull request touches its scope (.github/scope.rules), and a skipped
+# job counts as passed. Once a night scheduled.yml calls this workflow for main and runs
+# every job.
 on:
   pull_request:
     branches: [main, "release/[0-9]+.[0-9]+"]
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -24,8 +29,26 @@ env:
   GOWORK: "off"
 
 jobs:
+  # Required, like the jobs that depend on it: if it fails, they are skipped, and a skipped
+  # job alone would let the pull request through.
+  scope:
+    name: Scope (pull request)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      scopes: ${{ steps.scope.outputs.scopes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the merge commit is compared with the base branch
+          persist-credentials: false
+      - id: scope
+        uses: home-mandate/.github/actions/scope@024f848d5c7a8e25de1930e007e321ffc863aa36
+
   conformance:
     name: Conformance (mandate-conformance, process and HTTP binding)
+    needs: scope
+    if: contains(fromJSON(needs.scope.outputs.scopes), 'go')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -37,11 +60,15 @@ jobs:
           go-version-file: go.mod
       - run: make conformance
 
+  # Starts from what the fuzzing of scheduled.yml has found so far (the corpus, kept in the
+  # Actions cache): those inputs run first, as a regression test, then every target gets 15
+  # seconds of new inputs. Without a corpus it starts from the seeds in the tests.
   fuzz:
     name: Fuzz (short)
+    needs: scope
+    if: contains(fromJSON(needs.scope.outputs.scopes), 'go')
     runs-on: ubuntu-24.04
-    # 60 s per target (Makefile FUZZ_TARGETS) plus building each package for fuzzing.
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -49,13 +76,28 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - run: make fuzz FUZZTIME=60s
+      - name: Where Go keeps the corpus
+        id: corpus
+        run: echo "dir=$(go env GOCACHE)/fuzz" >> "$GITHUB_OUTPUT"
+      # The key never matches: the newest corpus with the prefix is restored.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.corpus.outputs.dir }}
+          key: fuzz-corpus-v1-${{ github.run_id }}
+          restore-keys: fuzz-corpus-v1-
+      - run: make fuzz FUZZTIME=15s
 
-  e2e-web:
-    name: Web E2E (Playwright, de + en)
+  # 497 tests on two workers took ten minutes in one job; three jobs share them.
+  e2e-web-shards:
+    name: Web E2E, part ${{ matrix.shard }} of 3
+    needs: scope
+    if: contains(fromJSON(needs.scope.outputs.scopes), 'web')
     runs-on: ubuntu-24.04
-    # Runs 11 to 15 minutes on GitHub's runners (November 2026).
-    timeout-minutes: 25
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -66,11 +108,37 @@ jobs:
           package-manager-cache: false
       - run: corepack enable pnpm
       - run: make web-install
+      - name: Playwright's version
+        id: playwright
+        run: echo "version=$(jq -r '.devDependencies["@playwright/test"]' web/package.json)" >> "$GITHUB_OUTPUT"
+      # The browser comes from the cache; the download took up to ten minutes at times.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       - run: cd web && pnpm exec playwright install --with-deps chromium
-      - run: make web-e2e
+      - run: make web-e2e E2E_ARGS=--shard=${{ matrix.shard }}/3
+
+  # The required check: it passes if every part passed, or if the change doesn't touch the UI.
+  e2e-web:
+    name: Web E2E (Playwright, de + en)
+    needs: [scope, e2e-web-shards]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          SCOPE: ${{ needs.scope.result }}
+          SHARDS: ${{ needs.e2e-web-shards.result }}
+        run: |
+          echo "scope: $SCOPE, parts: $SHARDS"
+          [ "$SCOPE" = success ] || exit 1
+          [ "$SHARDS" = success ] || [ "$SHARDS" = skipped ] || exit 1
 
   image:
     name: Container image
+    needs: scope
+    if: contains(fromJSON(needs.scope.outputs.scopes), 'go') || contains(fromJSON(needs.scope.outputs.scopes), 'web')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -80,8 +148,12 @@ jobs:
       - run: docker build --build-arg VERSION=${{ github.sha }} -t home-mandate:ci .
       - run: docker run --rm home-mandate:ci --version
 
+  # A change to the gateway runs every scenario. A change to the UI alone runs the two that
+  # drive a browser against the real gateway: the others don't load the UI.
   e2e:
     name: E2E (Home Assistant + release image, UI behind Ingress)
+    needs: scope
+    if: contains(fromJSON(needs.scope.outputs.scopes), 'go') || contains(fromJSON(needs.scope.outputs.scopes), 'web')
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -97,7 +169,15 @@ jobs:
           package-manager-cache: false
       - run: corepack enable pnpm
       - run: make web-install
+      - name: Playwright's version
+        id: playwright
+        run: echo "version=$(jq -r '.devDependencies["@playwright/test"]' web/package.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       - run: cd web && pnpm exec playwright install --with-deps chromium
-      - run: make e2e-ui
+      - run: make e2e-ui E2E_RUN="$SCENARIOS"
         env:
           E2E_RUNTIME: docker
+          SCENARIOS: ${{ contains(fromJSON(needs.scope.outputs.scopes), 'go') && '.' || 'InTheBrowser' }}

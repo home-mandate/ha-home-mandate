@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Which jobs a change needs (home-mandate/.github, actions/scope; the format is described in
+# its scope.sh). The first rule that matches a file counts, and a file without a rule runs
+# everything: workflows, the Makefile, anything new.
+#
+#   go    the gateway: Go checks, build, conformance, fuzzing, image, E2E against Home Assistant
+#   web   the UI: its checks, the browser tests, image, the browser part of E2E
+#
+# Once a night scheduled.yml runs everything on main, so a rule that is too generous shows
+# the next morning.
+scopes: go web
+
+# Text for people. No test reads it.
+*.md                                     -
+
+# The app's version alone. The Go tests read the options and the schema of this file, so any
+# other line is checked.
+app/config.yaml                          -     only ^version:
+
+# Read by the tests of both sides.
+web/src/lib/audit/search-vectors.json    go web
+web/src/lib/engine/conformance/*         go web
+web/scripts/serve-ingress.ts             go web
+
+web/*                                    web
+
+*.go                                     go
+go.mod                                   go
+go.sum                                   go
+cmd/*                                    go
+internal/*                               go
+tools/*                                  go
+e2e/*                                    go
+# Options, translations and the AppArmor profile are compared with the code.
+app/*                                    go
+# docs/deploy/compose.yaml is checked against the image.
+docs/*                                   go

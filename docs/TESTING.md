@@ -10,7 +10,7 @@ a negative test, no release without green end-to-end tests.**
 | Unit | `go test`, table-driven | every push to a branch | Every function, every branch |
 | Conformance | Cases from `home-mandate/spec` (embedded in the Go module) against our own PDP; `mandate-conformance` against `tools/conformance` (process binding: classes evaluator, selection, audit, audit-anchored; HTTP binding: class pdp), `make conformance` | every pull request (Go cases: every push); every release attaches both reports with build provenance (`conformance-report.yml`) | Evaluation and selection exactly per specification, through Home-Mandate's own decision path |
 | Negative | Own test cases per package, catalog in section 4 | every push to a branch | Attacks and invalid input are rejected |
-| Fuzzing | `go test -fuzz`, `make fuzz`, one target per parser of input from outside (below) | every pull request 60 s per target; 1st and 15th of every month 60 min per target, one job each | No panic, no 5xx, unknown input becomes `deny`, a refusal changes nothing |
+| Fuzzing | `go test -fuzz`, `make fuzz`, one target per parser of input from outside (below) | every pull request 15 s per target, after the inputs earlier runs found (the corpus); Wednesday and Saturday 10 min per target, which grows the corpus | No panic, no 5xx, unknown input becomes `deny`, a refusal changes nothing |
 | Integration | Real HA instance in a container | every pull request | HA client, catalog, service calls |
 | End to end | MCP client + OAuth + HA container, UI with Playwright | every pull request | Complete flows from the perspective of agent and human |
 | UI unit | Vitest + Svelte Testing Library | every push to a branch | Components, form logic, formatting |
@@ -22,9 +22,17 @@ All Go tests run with `-race`.
 Everything is checked before the merge: a push to a branch runs the unit stage, a pull
 request against main additionally the conformance run, short fuzzing, the image, E2E and
 Playwright. main takes squash-merged pull requests only, up to date and with every required
-check green, so nothing runs after the merge; every merge is tagged. Independent of changes,
-`govulncheck` and `pnpm audit` run every night and long fuzzing twice a month; a failure opens
-an issue.
+check green, so nothing runs after the merge.
+
+A job runs only if the change touches its scope: `.github/scope.rules` says which files belong
+to the gateway (`go`), to the UI (`web`), to both or to neither. A change to the changelog
+runs no test, a change to the UI alone runs the UI's checks, the browser tests and the two
+E2E scenarios that drive a browser. A file without a rule runs everything. A skipped job
+counts as passed.
+
+Independent of changes, `govulncheck` and `pnpm audit` run every night, and every job runs
+on main if main changed, so a rule that skips too much shows the next morning. Fuzzing for
+the corpus runs twice a week. A failure opens an issue.
 
 Fuzz targets (`FUZZ_TARGETS` in the Makefile; a new parser of input from outside gets one):
 
