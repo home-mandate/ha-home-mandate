@@ -197,28 +197,29 @@ pass all its conformance cases.
   <img src="https://raw.githubusercontent.com/home-mandate/.github/main/marks/compatible-light.svg" alt="Home-Mandate compatible" width="96" align="left">
 </picture>
 
-Home-Mandate conforms to the Home-Mandate Specification `v0.1.1` (manifest
+Home-Mandate conforms to the Home-Mandate Specification `v0.2.0` (manifest
 `conformance/manifest.json`, SHA-256
-`07f0f0ecbf9bc52a8e8a53e92b31952099edc4c9d1c56b1366b3ae9abb36ea33`) in these classes
+`acdcf7154a94dfd83c0ebec4657a59908c261fab70cc4463ea28f13b3a22bc94`) in these classes
 (SPEC-v0 section 8.1), tested with the specification's test tool `mandate-conformance` on
-every pull request and with `make conformance`. The v0 formats are frozen since `v0.1.0`
-(SPEC-v0 section 14). The reports are attached to the release; 0.1.3, 0.1.2, 0.1.1 and 0.1.0 conform to `v0.1.1`,
+every pull request and with `make conformance`. That is the state of `main`, which becomes
+1.0. The v0 formats are frozen since `v0.1.0` (SPEC-v0 section 14). The reports are attached
+to the release; 0.1.3, 0.1.2, 0.1.1 and 0.1.0 conform to `v0.1.1`,
 0.1.0-rc.11 conforms to `v0.1.0`, 0.1.0-rc.10 conforms to `v0.1.0-rc.5`, 0.1.0-rc.9 was tested with `v0.1.0-rc.4`, which has the same
 cases, and 0.1.0-rc.8 conforms to `v0.1.0-rc.3`.
 <br clear="left">
 
 | Class | Cases | Binding |
 |---|---|---|
-| `evaluator` | 449 | process (the evaluation Home-Mandate uses) |
-| `selection` | 28 | process |
-| `audit` | 316 | process |
-| `audit-anchored` | 15 | process |
-| `pdp` | 257 | HTTP (its AuthZEN endpoint) |
+| `evaluator` | 1044 | process (the evaluation Home-Mandate uses) |
+| `selection` | 37 | process |
+| `audit` | 486 | process |
+| `audit-anchored` | 48 | process |
+| `pdp` | 339 | HTTP (its AuthZEN endpoint) |
 
-It does not claim the class `signatures`. It passes the 23 succession cases of that class
+It does not claim the class `signatures`. It passes the 32 succession cases of that class
 (SPEC-v0 section 3.5), but it does not accept signed mandates (section 7.1): it issues every
 mandate itself and refuses mandates of another issuer, signed ones included. Its test
-adapter therefore offers no `verify_signed`, and the test tool skips those 23 cases. The
+adapter therefore offers no `verify_signed`, and the test tool skips the other 97 cases. The
 class follows once signed mandates can be imported.
 
 ## License

@@ -31,14 +31,25 @@ const unlockAllowed: Rule = {
 };
 
 describe('vocabulary', () => {
-  it('lists the 13 categories of SPEC-v0 section 5', () => {
-    expect(CATEGORIES).toHaveLength(13);
+  it('lists the 19 categories of SPEC-v0 section 5 (vocabulary v0.2)', () => {
+    expect(CATEGORIES).toHaveLength(19);
   });
 
   it('marks exactly the critical actions of SPEC-v0 section 5', () => {
     const critical = CATEGORIES.flatMap((c) => criticalActionsOf(c).map((a) => `${c}.${a}`));
     expect(critical.sort()).toEqual(
-      ['alarm.disarm', 'camera.snapshot', 'gate.open', 'lock.open', 'lock.unlock', 'other.set', 'scene.activate', 'script.run'].sort(),
+      [
+        'alarm.disarm',
+        'camera.snapshot',
+        'gate.open',
+        'lock.open',
+        'lock.unlock',
+        'other.set',
+        'scene.activate',
+        'script.run',
+        'siren.turn_on',
+        'valve.open',
+      ].sort(),
     );
   });
 

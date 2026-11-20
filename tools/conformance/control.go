@@ -92,29 +92,31 @@ func (b *binding) evaluate(w http.ResponseWriter, r *http.Request, body []byte) 
 	b.mu.Lock()
 	s, at, clockless := b.state, b.at, b.clockless
 	b.mu.Unlock()
-	p := newPDP(s, peek.Subject.Properties.Principal, at)
 	if clockless {
-		evaluateClockless(w, r, p, body)
+		evaluateClockless(w, s, body)
 		return
 	}
+	p := newPDP(s, peek.Subject.Properties.Principal, at)
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	p.Handler().ServeHTTP(w, r)
 }
 
-// evaluateClockless answers without a point in time: what comes before the request in the
-// order of the reasons stays (SPEC-v0 section 4.1), everything else is invalid_request. The
-// mandate is selected at the zero time; the time plays no part in the answer. Several
-// candidates without a clock are open (home-mandate/spec#112), and no case asks for them.
-func evaluateClockless(w http.ResponseWriter, r *http.Request, p *pdp.PDP, body []byte) {
+// evaluateClockless answers without a point in time: the selection comes first, then
+// invalid_request (SPEC-v0 sections 4.1, 4.3 and 10.2), as the process binding answers it.
+func evaluateClockless(w http.ResponseWriter, s state, body []byte) {
 	var req pdp.Request
 	if err := json.Unmarshal(body, &req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	resp := p.Evaluate(r.Context(), req)
-	if resp.Context.MandateDigest != "" && resp.Context.Reason != string(evaluator.ReasonRevoked) {
-		resp = pdp.Response{Context: pdp.ResponseContext{Outcome: string(evaluator.Deny), Reason: string(evaluator.ReasonInvalidRequest),
-			MandateID: resp.Context.MandateID, MandateDigest: resp.Context.MandateDigest}}
+	out := outcome{Decision: string(evaluator.Deny), Reason: string(evaluator.ReasonInvalidRequest)}
+	if req.Subject.Type == "agent" {
+		out = selectWithoutTime(s.Mandates, req.Subject.ID, req.Subject.Properties.Principal)
+	}
+	resp := pdp.Response{Decision: out.Decision == string(evaluator.Allow), Context: pdp.ResponseContext{Outcome: out.Decision,
+		Reason: out.Reason, MandateDigest: out.MandateDigest}}
+	if out.Selected != nil {
+		resp.Context.MandateID = *out.Selected
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)

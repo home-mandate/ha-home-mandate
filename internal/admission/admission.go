@@ -196,6 +196,9 @@ func (s *Store) checkTemplate(document []byte, by audit.Actor) error {
 	if _, err := evaluator.Parse(instance); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidTemplate, err)
 	}
+	if err := mandate.Supported(instance); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidTemplate, err)
+	}
 	return nil
 }
 

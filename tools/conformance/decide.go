@@ -101,6 +101,9 @@ type outcome struct {
 	// Confirm is present, and true, only for such a deny that requires a confirmation.
 	Confirm  bool    `json:"confirm,omitempty"`
 	Selected *string `json:"selected,omitempty"`
+	// LimitedRules are, for an allow, the matching rules with limits of their own (SPEC-v0
+	// section 4.1); absent if there are none.
+	LimitedRules []string `json:"limited_rules,omitempty"`
 }
 
 // decide sends the request of an agent through the AuthZEN path of the PDP, as another
@@ -113,7 +116,7 @@ func decide(ctx context.Context, p *pdp.PDP, clientID, principal string, r resou
 	})
 	out := outcome{Decision: resp.Context.Outcome, Reason: resp.Context.Reason, ApprovalTimeout: resp.Context.ApprovalTimeout,
 		Approvers: resp.Context.Approvers, MandateDigest: resp.Context.MandateDigest, Enforced: resp.Context.Enforced,
-		Confirm: resp.Context.Confirm}
+		Confirm: resp.Context.Confirm, LimitedRules: resp.Context.LimitedRules}
 	if resp.Context.RuleID != "" {
 		out.RuleID = &resp.Context.RuleID
 	}

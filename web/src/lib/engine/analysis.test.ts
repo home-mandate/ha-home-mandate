@@ -165,17 +165,18 @@ describe('rule hints', () => {
     expect(demotedIn({ ...locksAsk, decision: 'allow' })).toEqual([['lock', 'unlock'], ['lock', 'open']]);
     expect(demotedIn({ ...locksAsk, decision: 'allow', allow_critical: true })).toEqual([]);
     expect(demotedIn(locksAsk)).toEqual([]);
-    // Without a category the rule can hit any category with a critical "open".
+    // Without a category the rule can hit any category with a critical "open" (vocabulary v0.2: a valve too).
     expect(demotedIn({ id: 'g', resource: { entity_id: 'cover.garage' }, actions: ['open'], decision: 'allow' })).toEqual([
       ['gate', 'open'],
       ['lock', 'open'],
+      ['valve', 'open'],
     ]);
   });
 
   it('lists critical actions included by "*"', () => {
     expect(criticalIncluded(locksAsk)).toEqual([['lock', 'unlock'], ['lock', 'open']]);
     expect(criticalIncluded(lights)).toEqual([]);
-    expect(criticalIncluded({ id: 'a', resource: { any: true }, actions: ['*'], decision: 'deny' })).toHaveLength(8);
+    expect(criticalIncluded({ id: 'a', resource: { any: true }, actions: ['*'], decision: 'deny' })).toHaveLength(10);
   });
 
   it('ignores the garage in light rules', () => {

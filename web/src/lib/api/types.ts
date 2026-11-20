@@ -353,7 +353,13 @@ export type Category =
   | 'sensor'
   | 'scene'
   | 'script'
-  | 'other';
+  | 'other'
+  | 'fan'
+  | 'valve'
+  | 'vacuum'
+  | 'siren'
+  | 'number'
+  | 'select';
 
 /**
  * Namespaced extension category such as "paperless:document" (schema pattern). Allowed in
@@ -415,6 +421,16 @@ export interface Conditions {
   /** "HH:MM-HH:MM" in household local time; may cross midnight. */
   time_window?: string;
   weekdays?: Weekday[];
+  /** Ranges of calendar dates in household local time, both ends inclusive (SPEC-v0 section 4.2). */
+  dates?: { from: string; to: string }[];
+}
+
+/** Limits of a rule of its own, only with decision "allow" (SPEC-v0 sections 3.1 item 12 and 11.2). */
+export interface RuleLimits {
+  max_actions_per_hour?: number;
+  max_actions_per_day?: number;
+  /** "PT…H…M…S", 1 second to 24 hours. */
+  min_interval?: string;
 }
 
 export interface Approval {
@@ -435,11 +451,17 @@ export interface Rule {
    * Only with decision "allow" and listed actions: per parameter of the action, limits
    * of an integer or the permitted values (one_of, SPEC-v0 section 4.5).
    */
-  constraints?: Record<string, { min?: number; max?: number } | { one_of: (number | string)[] }>;
+  constraints?: Record<string, { min?: number; max?: number } | { one_of: (number | string)[] } | { none_of: (number | string)[] }>;
   /** Only with decision "ask". */
   approval?: Approval;
   /** Only with decision "allow"; needs the separate confirmation (confirm_critical). */
   allow_critical?: true;
+  /** The rule matches only from this point in time on (SPEC-v0 section 4, step 2). */
+  valid_from?: string;
+  /** The rule matches only before this point in time; after its valid_from. */
+  expires?: string;
+  /** Only with decision "allow". */
+  limits?: RuleLimits;
 }
 
 /**

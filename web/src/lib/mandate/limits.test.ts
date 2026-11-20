@@ -105,6 +105,12 @@ describe('limits as text', () => {
     setLocale('de', { reload: false });
     expect(limitsText(rule({ constraints: { temperature: { max: 2350 } } }), 'de')).toBe('Temperatur bis 23,5 °C');
   });
+
+  it('names excluded values (none_of, spec v0.2), so that a mandate from outside shows what it leaves out', () => {
+    setLocale('en', { reload: false });
+    expect(limitsText(rule({ constraints: { volume: { none_of: [100] } } }), 'en')).toMatch(/^Volume: except 100\s?%$/);
+    expect(limitsText(rule({ constraints: { volume: { none_of: [90, 100] } } }), 'en')).toMatch(/^Volume: except 90\s?% and 100\s?%$/);
+  });
 });
 
 describe('permitted modes', () => {

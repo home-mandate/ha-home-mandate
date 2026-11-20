@@ -319,6 +319,9 @@ type (
 		// Confirm is present, and true, only for such a deny that requires a confirmation:
 		// the PEP executes it only after a human confirmed it, as an ask (SPEC-v0 section 6).
 		Confirm bool `json:"confirm,omitempty"`
+		// LimitedRules are, for an allow, the matching rules with limits of their own, in
+		// document order (SPEC-v0 section 4.1); absent if there are none.
+		LimitedRules []string `json:"limited_rules,omitempty"`
 	}
 )
 
@@ -369,6 +372,7 @@ func values(raw map[string]json.RawMessage) (map[string]evaluator.Value, bool) {
 func response(r evaluator.Result, mandateID string) Response {
 	out := Response{Decision: r.Decision == evaluator.Allow, Context: ResponseContext{
 		Outcome: string(r.Decision), Reason: string(r.Reason), RuleID: r.RuleID, MandateDigest: r.MandateDigest,
+		LimitedRules: r.LimitedRules,
 	}}
 	if r.MandateDigest != "" {
 		out.Context.MandateID = mandateID

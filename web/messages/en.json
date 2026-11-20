@@ -1119,5 +1119,15 @@
   "banner_ct_body": "{count, plural, one {{count, number} certificate that Home-Mandate did not obtain itself. If it is not yours, someone could intercept your agents' connections.} other {{count, number} certificates that Home-Mandate did not obtain itself. If they are not yours, someone could intercept your agents' connections.}}",
   "banner_ct_action": "Check",
   "banner_ct_unavailable_title": "Certificate monitoring not possible",
-  "banner_ct_unavailable_body": "No query of the Certificate Transparency logs has succeeded since {time}."
+  "banner_ct_unavailable_body": "No query of the Certificate Transparency logs has succeeded since {time}.",
+  "cat_fan": "Fan",
+  "cat_valve": "Valve",
+  "cat_vacuum": "Vacuum",
+  "cat_siren": "Siren",
+  "cat_number": "Number",
+  "cat_select": "Selection",
+  "action_set_speed": "set speed",
+  "action_start": "start",
+  "action_return_home": "return to dock",
+  "limits_none_of": "{name}: except {values}"
 }

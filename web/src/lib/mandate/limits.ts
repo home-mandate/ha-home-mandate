@@ -130,7 +130,7 @@ type Constraint = NonNullable<Rule['constraints']>[string];
 
 /** rangeOf returns the limits of a constraint on an integer; an empty range for a list of values. */
 export function rangeOf(c: Constraint | undefined): { min?: number; max?: number } {
-  return c === undefined || 'one_of' in c ? {} : c;
+  return c === undefined || 'one_of' in c || 'none_of' in c ? {} : c;
 }
 
 export function unitOf(name: string): Unit {
@@ -238,12 +238,14 @@ export function valuesText(parameters: Readonly<Record<string, number | string>>
 export function limitsText(rule: Rule, locale: string): string {
   return Object.entries(rule.constraints ?? {})
     .map(([name, c]) => {
-      if ('one_of' in c) {
+      if ('one_of' in c || 'none_of' in c) {
         const unit = unitOf(name);
         const number = new Intl.NumberFormat(locale, { style: 'unit', unit: unit.unit, maximumFractionDigits: 2 });
-        const shown = c.one_of.map((v) => (typeof v === 'number' ? number.format(v / unit.scale) : choiceLabel(v)));
-        const values = new Intl.ListFormat(locale, { type: 'disjunction' }).format(shown);
-        return m.limits_one_of({ name: parameterLabel(name), values });
+        const list = 'one_of' in c ? c.one_of : c.none_of;
+        const shown = list.map((v) => (typeof v === 'number' ? number.format(v / unit.scale) : choiceLabel(v)));
+        // Permitted values read "or", excluded ones are all left out: "and".
+        const values = new Intl.ListFormat(locale, { type: 'one_of' in c ? 'disjunction' : 'conjunction' }).format(shown);
+        return 'one_of' in c ? m.limits_one_of({ name: parameterLabel(name), values }) : m.limits_none_of({ name: parameterLabel(name), values });
       }
       const limit = rangeOf(c);
       // An invalid limit (typed, not yet a number) is reported by the form, not described.

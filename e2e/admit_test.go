@@ -194,6 +194,15 @@ func newAgent(t *testing.T, name string, edit func(map[string]any)) string {
 // approved by admin-approver within 10 seconds, as a new template and returns its name.
 func voiceTemplate(t *testing.T, edit func(map[string]any)) string {
 	t.Helper()
+	template := "t-" + randomHex(4)
+	cli(t, string(voiceDocument(t, edit)), "mandate", "template", "import", template, "-")
+	return template
+}
+
+// voiceDocument is the voice assistant mandate of the specification, approved by
+// admin-approver within 10 seconds and edited by edit.
+func voiceDocument(t *testing.T, edit func(map[string]any)) []byte {
+	t.Helper()
 	approver := env.users[adminApprover].id
 	approverOnce.Do(func() { cli(t, "", "approver", "add", approver, approverDevice) })
 	data, err := fs.ReadFile(spec.FS(), "examples/voice-assistant.json")
@@ -212,10 +221,8 @@ func voiceTemplate(t *testing.T, edit func(map[string]any)) string {
 	if edit != nil {
 		edit(doc)
 	}
-	template := "t-" + randomHex(4)
 	mandate, _ := json.Marshal(doc)
-	cli(t, string(mandate), "mandate", "template", "import", template, "-")
-	return template
+	return mandate
 }
 
 // clientIDOf returns the client ID of the agent with display name from agent list.

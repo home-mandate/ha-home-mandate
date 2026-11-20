@@ -164,8 +164,11 @@ export function knownAction(action: string): boolean {
   return CATEGORIES.some((c) => VOCABULARY[c].actions.includes(action));
 }
 
-/** A constraint as the editor and the evaluation see it: limits or a list of values. */
-export type ConstraintSpec = { min?: number; max?: number } | { one_of: readonly ParameterValue[] };
+/** A constraint as the editor and the evaluation see it: limits, or permitted or excluded values. */
+export type ConstraintSpec =
+  | { min?: number; max?: number }
+  | { one_of: readonly ParameterValue[] }
+  | { none_of: readonly ParameterValue[] };
 
 /**
  * parameterFits tells whether the constraint fits a parameter of the action (SPEC-v0
@@ -178,7 +181,9 @@ export function parameterFits(category: string | undefined, action: string, para
     if (category !== undefined && name !== category) return false;
     const p = parameterSpec(name, action, parameter);
     if (!p) return false;
-    return 'one_of' in c ? c.one_of.every((v) => declares(p, v)) : p.type === 'integer';
+    if ('one_of' in c) return c.one_of.every((v) => declares(p, v));
+    if ('none_of' in c) return c.none_of.every((v) => declares(p, v));
+    return p.type === 'integer';
   });
 }
 

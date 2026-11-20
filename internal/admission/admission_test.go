@@ -146,8 +146,12 @@ func TestPutTemplateRejects(t *testing.T) {
 		"action not in cat.": {"x", template(t, func(d map[string]any) { d["rules"].([]any)[1].(map[string]any)["actions"] = []any{"unlock"} })},
 		"default allow":      {"x", template(t, func(d map[string]any) { d["default"] = "allow" })},
 		"unknown field":      {"x", template(t, func(d map[string]any) { d["extra"] = true })},
-		"reserved prefix":    {"hm-mine", template(t, nil)},
-		"oversized":          {"x", append(template(t, nil)[:1], append(bytes.Repeat([]byte(" "), 300<<10), template(t, nil)[1:]...)...)},
+		// Not enforced yet (issue #205), as in the mandate store.
+		"rule with limits": {"x", template(t, func(d map[string]any) {
+			d["rules"].([]any)[0].(map[string]any)["limits"] = map[string]any{"max_actions_per_day": 3}
+		})},
+		"reserved prefix": {"hm-mine", template(t, nil)},
+		"oversized":       {"x", append(template(t, nil)[:1], append(bytes.Repeat([]byte(" "), 300<<10), template(t, nil)[1:]...)...)},
 	} {
 		if err := e.adm.PutTemplate(ctx, tc.name, tc.doc, admin); !errors.Is(err, admission.ErrInvalidTemplate) {
 			t.Errorf("%s: %v, want ErrInvalidTemplate", name, err)

@@ -60,6 +60,11 @@ const (
 	catalogPoll = 500 * time.Millisecond
 )
 
+// maxActionsPerHour is the highest rate limit a mandate can set (limits.max_actions_per_hour,
+// SPEC-v0 section 3.1). A restore keeps that many requests for each key: enough for any
+// limit, and still bounded.
+const maxActionsPerHour = 1000
+
 // registryEvents keep the catalog current (ARCHITECTURE section 11.2).
 var registryEvents = []string{"entity_registry_updated", "device_registry_updated", "area_registry_updated", "floor_registry_updated"}
 
@@ -74,7 +79,7 @@ func restoredLimiter(ctx context.Context, log *audit.Log, now func() time.Time, 
 		return limiter
 	}
 	for key, times := range requests {
-		limiter.Restore(key, times)
+		limiter.Restore(key, times, maxActionsPerHour)
 	}
 	return limiter
 }
