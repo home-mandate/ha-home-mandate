@@ -26,7 +26,8 @@ var (
 		audit.EventMandateRemoved, audit.EventMandateProposed, audit.EventMandateDiscarded, audit.EventAgentRegistered, audit.EventAgentRevoked, audit.EventAgentReconnected,
 		audit.EventAgentRemoved, audit.EventEmergencyStopActivated, audit.EventEmergencyStopReleased,
 		audit.EventAuthRejected, audit.EventLogTruncated, audit.EventLogCheckpoint, audit.EventDirectoryChanged,
-		audit.EventTemplateChanged, audit.EventApproverChanged}
+		audit.EventTemplateChanged, audit.EventApproverChanged, audit.EventConfigChanged, audit.EventLogExported,
+		audit.EventAgentBound, audit.EventCredentialsWithdrawn, audit.EventCertUnexpected, audit.EventCertAcknowledged, audit.EventCTStatus}
 	// not_enforced: a deny of a mandate in audit mode that was executed (SPEC-v0 section 4.6).
 	auditDecisions = []string{"allow", "ask", "deny", "default", audit.DecisionNotEnforced}
 	// queryKeys are the parameters of GET api/audit; every one but decision at most once.

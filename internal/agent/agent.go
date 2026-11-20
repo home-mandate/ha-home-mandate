@@ -37,6 +37,25 @@ var (
 	ErrUnauthorized = errors.New("agent: unauthorized")
 )
 
+// unauthorizedError is ErrUnauthorized with the reason the audit log records for it
+// (auth.rejected, audit/v1). The client learns none of it.
+type unauthorizedError struct{ reason string }
+
+func (e unauthorizedError) Error() string        { return ErrUnauthorized.Error() }
+func (e unauthorizedError) Is(target error) bool { return target == ErrUnauthorized }
+
+func unauthorized(reason string) error { return unauthorizedError{reason} }
+
+// ReasonOf is the reason of auth.rejected for err: why a token was refused, or
+// audit.AuthOther for any other error.
+func ReasonOf(err error) string {
+	var u unauthorizedError
+	if errors.As(err, &u) {
+		return u.reason
+	}
+	return audit.AuthOther
+}
+
 // Agent statuses.
 const (
 	StatusActive  = "active"

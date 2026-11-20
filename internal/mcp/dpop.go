@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/dpop"
 )
 
@@ -58,7 +59,7 @@ func (g *Gateway) withDPoP(next http.Handler) http.Handler {
 		case usedDPoP && token != "":
 			p, err := g.cfg.DPoP.Check(r.Header, dpop.Expect{Method: r.Method, URL: g.cfg.Resource, AccessToken: token})
 			if err != nil {
-				g.recordRejectedCode(r.Context(), errInvalidDPoPProof)
+				g.recordRejectedCode(r.Context(), errInvalidDPoPProof, audit.AuthProof)
 				cw.dpopError = errInvalidDPoPProof
 				g.unauthorized(cw)
 				return
@@ -68,7 +69,7 @@ func (g *Gateway) withDPoP(next http.Handler) http.Handler {
 			r.Header.Set("Authorization", "Bearer "+token)
 		case strings.EqualFold(scheme, "Bearer") &&
 			(g.cfg.DPoPMode == dpop.ModeRequired || dpopRequiredProtocols[r.Header.Get("MCP-Protocol-Version")]):
-			g.recordRejectedCode(r.Context(), errDPoPRequired)
+			g.recordRejectedCode(r.Context(), errDPoPRequired, audit.AuthUnboundRefused)
 			g.unauthorized(cw)
 			return
 		}

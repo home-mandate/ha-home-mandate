@@ -98,6 +98,11 @@ func TestAuditQuery(t *testing.T) {
 		{"?group=decision", "4,3", 2},
 		{"?group=admin", "5,2,1", 3},
 		{"?event=mandate.created", "2", 1},
+		// Events of audit/v1 and the v0 events config.changed and log.exported can be chosen.
+		{"?event=agent.bound", "", 0},
+		{"?event=ct.status", "", 0},
+		{"?event=config.changed", "", 0},
+		{"?event=log.exported", "", 0},
 		{"?decision=default&decision=default", "4,3", 2},
 		{"?decision=allow", "", 0},
 		{"?q=K%C3%BCchen", "3", 1},       // catalog name: Küchenlicht

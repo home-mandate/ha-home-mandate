@@ -242,6 +242,27 @@ Every request, decision, approval, admission, mandate change and setting that ma
 written to the audit log, together with who did it. Entries are kept for 30 days; the
 daily cleanup is itself an entry.
 
+The log is written in the format `audit/v1` of the Home-Mandate Specification v0.2. Besides
+requests and changes it records:
+
+- why a sign-in, a token or a pairing code was refused (expired, withdrawn, without the
+  proof of its key, …);
+- the key an agent's tokens are bound to (DPoP), and tokens withdrawn together: with the
+  emergency stop, after a refresh token was used twice, or when binding ends an agent's
+  unbound tokens;
+- certificates for the public name that Home-Mandate did not obtain, their
+  acknowledgement, and whether Certificate Transparency monitoring works (two sources,
+  one, or none);
+- changes of the household time zone, the checkpoint key, the public URL, access from
+  outside, whether unbound tokens are refused and the trusted proxy, compared with the
+  last start (the first start with this version only takes them as they are);
+- every `audit export`, with the entries it contained.
+
+A log an earlier version wrote in `audit/v0` is not rewritten: it continues in `audit/v1`,
+after a checkpoint in `audit/v0` that lets tools which know only `audit/v0` verify the part
+before. Going back to 0.1 on such a log is not supported: restore the backup made before the
+update instead.
+
 The log is tamper-evident:
 
 - Every entry contains the hash of the previous one (a hash chain). Changing or deleting
@@ -491,7 +512,7 @@ Where to run them:
 | `home-mandate mandate template list` | Lists templates (built-in ones as `base template`, hidden ones marked). |
 | `home-mandate mandate template remove NAME` | Removes a template of your own. |
 | `home-mandate audit verify` | Verifies the hash chain and checkpoints. Prints `audit log valid` with `entries`, `anchored_up_to`, `first_seq`, `truncation` and `log_id`, or where the log is broken; exits with status 1 if it is broken. |
-| `home-mandate audit export` | Writes the audit log as JSON Lines to standard output. |
+| `home-mandate audit export` | Writes the audit log as JSON Lines to standard output and records the export (`log.exported`) with the entries it contained. |
 | `home-mandate audit key` | Prints the log ID and the public key of the checkpoints (JWKS). Keep them outside this device, so that anyone can verify an exported log later. Works only after the first start of `serve`, which creates the key. |
 | `home-mandate audit accept-clock` | After the host clock ran ahead by mistake and was corrected: sets the entries with future times aside for the clock check, so that requests are decided again. See [troubleshooting.md](troubleshooting.md#the-clock-is-behind). |
 

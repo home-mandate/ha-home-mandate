@@ -54,6 +54,65 @@ const (
 	EventDirectoryChanged       = "directory.changed"
 	EventTemplateChanged        = "template.changed"
 	EventApproverChanged        = "approver.changed"
+	EventConfigChanged          = "config.changed"
+	EventLogExported            = "log.exported"
+	// Events of audit/v1 (SPEC-v0 sections 9.2 and 11.7).
+	EventAgentBound           = "agent.bound"
+	EventCredentialsWithdrawn = "credentials.withdrawn"
+	EventCertUnexpected       = "cert.unexpected"
+	EventCertAcknowledged     = "cert.acknowledged"
+	EventCTStatus             = "ct.status"
+)
+
+// Reasons of auth.rejected (SPEC-v0 section 9.1, audit/v1).
+const (
+	AuthUnknown        = "unknown"
+	AuthExpired        = "expired"
+	AuthWithdrawn      = "withdrawn"
+	AuthRevoked        = "revoked"
+	AuthAudience       = "audience"
+	AuthClient         = "client"
+	AuthProof          = "proof"
+	AuthReplay         = "replay"
+	AuthUnboundRefused = "unbound_refused"
+	AuthSecondKey      = "second_key"
+	AuthNotApprover    = "not_approver"
+	AuthOther          = "other"
+)
+
+// Scopes and causes of credentials.withdrawn (SPEC-v0 section 9.1).
+const (
+	CredentialsAll   = "all"
+	CredentialsAgent = "agent"
+
+	WithdrawnEmergencyStop = "emergency_stop"
+	WithdrawnPublicOrigin  = "public_origin"
+	WithdrawnUser          = "user"
+	WithdrawnRefreshReuse  = "refresh_reuse"
+	WithdrawnBound         = "bound"
+)
+
+// Statuses of cert.unexpected and of ct.status (SPEC-v0 section 11.7 item 7).
+const (
+	CertAlarm        = "alarm"
+	CertNotYetValid  = "not_yet_valid"
+	CertPastExposure = "past_exposure"
+
+	CTOK          = "ok"
+	CTLimited     = "limited"
+	CTUnavailable = "unavailable"
+)
+
+// Settings of config.changed (SPEC-v0 section 9.1).
+const (
+	SettingTimezone      = "timezone"
+	SettingClockCheck    = "clock_check"
+	SettingCheckpointKey = "checkpoint_key"
+	SettingPublicOrigin  = "public_origin"
+	SettingRemoteAccess  = "remote_access"
+	SettingUnboundTokens = "unbound_tokens"
+	SettingServerKey     = "server_key"
+	SettingTrustedProxy  = "trusted_proxy"
 )
 
 // Changes of the resource directory (SPEC-v0 sections 9.1 and 11.4).
@@ -80,8 +139,11 @@ const (
 )
 
 const (
-	entryType  = "https://home-mandate.org/audit/v0"
-	timeFormat = "2006-01-02T15:04:05.000Z07:00"
+	// entryType is the version Home-Mandate writes (SPEC-v0 section 14); entryTypeV0 the one
+	// it wrote up to 0.1, which an existing log still holds.
+	entryType   = "https://home-mandate.org/audit/v1"
+	entryTypeV0 = "https://home-mandate.org/audit/v0"
+	timeFormat  = "2006-01-02T15:04:05.000Z07:00"
 )
 
 // Actor kinds.
@@ -133,6 +195,14 @@ type Entry struct {
 	Directory  *Directory
 	Template   *Template
 	Approver   *Approver
+	// Auth is why a sign-in, a token or an answer was rejected; required with auth.rejected.
+	Auth        *Auth
+	Binding     *Binding
+	Credentials *Credentials
+	Certificate *Certificate
+	CT          *CT
+	Config      *Config
+	Exported    *Exported
 	// checkpoint marks an entry of Checkpoint; its signature is made when the entry
 	// gets its place in the chain.
 	checkpoint bool
@@ -348,6 +418,82 @@ type Approver struct {
 	ID     string `json:"id"`
 }
 
+// Auth is why a sign-in, a token or an answer was rejected (audit/v1).
+type Auth struct {
+	Reason string `json:"reason"`
+}
+
+// Binding is the key an agent's tokens are bound to (agent.bound), or the key refused for
+// a second binding (auth.rejected, second_key); audit/v1.
+type Binding struct {
+	Method string `json:"method"`
+	JKT    string `json:"jkt"`
+}
+
+// BindingDPoP is the only method of a Binding.
+const BindingDPoP = "dpop"
+
+// Credentials are the tokens that lost their validity together (credentials.withdrawn).
+type Credentials struct {
+	Scope string `json:"scope"`
+	Cause string `json:"cause"`
+}
+
+// Certificate is a certificate for the host of the public origin (cert.unexpected): all
+// members; for cert.acknowledged only Digest or only PublicKey. Names and Issuer come
+// from the certificate and are recorded unchanged.
+type Certificate struct {
+	Digest    string    `json:"-"`
+	Status    string    `json:"-"`
+	Names     []string  `json:"-"`
+	Issuer    string    `json:"-"`
+	PublicKey string    `json:"-"`
+	NotBefore time.Time `json:"-"`
+	NotAfter  time.Time `json:"-"`
+	Logged    time.Time `json:"-"`
+}
+
+// MarshalJSON writes the times in RFC 3339 with milliseconds and leaves out what is not set.
+func (c Certificate) MarshalJSON() ([]byte, error) {
+	at := func(t time.Time) string {
+		if t.IsZero() {
+			return ""
+		}
+		return t.UTC().Format(timeFormat)
+	}
+	return json.Marshal(struct {
+		Digest    string   `json:"digest,omitempty"`
+		Status    string   `json:"status,omitempty"`
+		Names     []string `json:"names,omitempty"`
+		Issuer    string   `json:"issuer,omitempty"`
+		PublicKey string   `json:"public_key,omitempty"`
+		NotBefore string   `json:"not_before,omitempty"`
+		NotAfter  string   `json:"not_after,omitempty"`
+		Logged    string   `json:"logged,omitempty"`
+	}{c.Digest, c.Status, c.Names, c.Issuer, c.PublicKey, at(c.NotBefore), at(c.NotAfter), at(c.Logged)})
+}
+
+// CT is the state of Certificate Transparency monitoring (ct.status); PreviousStatus is
+// empty for the first entry.
+type CT struct {
+	Status         string `json:"status"`
+	PreviousStatus string `json:"previous_status,omitempty"`
+}
+
+// Config is a change of a setting (config.changed): Value empty if the setting was removed,
+// PreviousValue empty if it had none.
+type Config struct {
+	Setting       string `json:"setting"`
+	Value         string `json:"value,omitempty"`
+	PreviousValue string `json:"previous_value,omitempty"`
+}
+
+// Exported is the range of entries an export contained (log.exported).
+type Exported struct {
+	FromSeq int64 `json:"from_seq"`
+	ToSeq   int64 `json:"to_seq"`
+}
+
 // Truncated marks deleted entries (SPEC-v0 section 9.4).
 type Truncated struct {
 	UpToSeq    int64  `json:"up_to_seq"`
@@ -355,25 +501,32 @@ type Truncated struct {
 }
 
 type wire struct {
-	Type       string      `json:"type"`
-	ID         string      `json:"id"`
-	Seq        int64       `json:"seq"`
-	RecordedAt string      `json:"recorded_at"`
-	Event      string      `json:"event"`
-	Principal  string      `json:"principal"`
-	Actor      *Actor      `json:"actor,omitempty"`
-	Agent      *Agent      `json:"agent,omitempty"`
-	Request    *Request    `json:"request,omitempty"`
-	Mandate    *Mandate    `json:"mandate,omitempty"`
-	Evaluation *Evaluation `json:"evaluation,omitempty"`
-	Approval   *Approval   `json:"approval,omitempty"`
-	Result     *Result     `json:"result,omitempty"`
-	Truncated  *Truncated  `json:"truncated,omitempty"`
-	Directory  *Directory  `json:"directory,omitempty"`
-	Template   *Template   `json:"template,omitempty"`
-	Approver   *Approver   `json:"approver,omitempty"`
-	Checkpoint *checkpoint `json:"checkpoint,omitempty"`
-	Prev       *string     `json:"prev"`
+	Type        string       `json:"type"`
+	ID          string       `json:"id"`
+	Seq         int64        `json:"seq"`
+	RecordedAt  string       `json:"recorded_at"`
+	Event       string       `json:"event"`
+	Principal   string       `json:"principal"`
+	Actor       *Actor       `json:"actor,omitempty"`
+	Agent       *Agent       `json:"agent,omitempty"`
+	Request     *Request     `json:"request,omitempty"`
+	Mandate     *Mandate     `json:"mandate,omitempty"`
+	Evaluation  *Evaluation  `json:"evaluation,omitempty"`
+	Approval    *Approval    `json:"approval,omitempty"`
+	Result      *Result      `json:"result,omitempty"`
+	Truncated   *Truncated   `json:"truncated,omitempty"`
+	Directory   *Directory   `json:"directory,omitempty"`
+	Template    *Template    `json:"template,omitempty"`
+	Approver    *Approver    `json:"approver,omitempty"`
+	Auth        *Auth        `json:"auth,omitempty"`
+	Binding     *Binding     `json:"binding,omitempty"`
+	Credentials *Credentials `json:"credentials,omitempty"`
+	Certificate *Certificate `json:"certificate,omitempty"`
+	CT          *CT          `json:"ct,omitempty"`
+	Config      *Config      `json:"config,omitempty"`
+	Exported    *Exported    `json:"exported,omitempty"`
+	Checkpoint  *checkpoint  `json:"checkpoint,omitempty"`
+	Prev        *string      `json:"prev"`
 }
 
 // Log is the audit log of one household.
@@ -388,6 +541,9 @@ type Log struct {
 	// checkpointSigner signs checkpoints; nil: the log writes none.
 	signerMu         sync.Mutex
 	checkpointSigner *Signer
+
+	// version0 makes the log write audit/v0, for tests of a log that moves to version 1.
+	version0 bool
 }
 
 // New returns the log for principal on db (opened by internal/store).
@@ -538,44 +694,78 @@ func (l *Log) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
 // transaction must hold the write lock (the store opens all transactions IMMEDIATE),
 // which serializes the chain.
 func (l *Log) AppendTx(ctx context.Context, tx *sql.Tx, e Entry) (int64, error) {
-	var lastSeq int64
-	var lastDigest string
-	err := tx.QueryRowContext(ctx, `SELECT seq, digest FROM audit_log ORDER BY seq DESC LIMIT 1`).Scan(&lastSeq, &lastDigest)
+	var head chainHead
+	err := tx.QueryRowContext(ctx, `SELECT seq, digest, event, coalesce(json_extract(entry, '$.type'), '') FROM audit_log ORDER BY seq DESC LIMIT 1`).
+		Scan(&head.seq, &head.digest, &head.event, &head.typ)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("audit: read chain head: %w", err)
 	}
+	typ := entryType
+	if l.version0 {
+		typ = entryTypeV0
+	}
+	// The move of an existing log to version 1 (SPEC-v0 section 14): with a signing key, a
+	// checkpoint of version 0 is the last entry before the first of version 1. A checkpoint
+	// due now is that one.
+	if head.typ == entryTypeV0 && typ != entryTypeV0 && l.signer() != nil {
+		switch {
+		case e.checkpoint:
+			typ = entryTypeV0
+		case head.event != EventLogCheckpoint:
+			seq, digest, err := l.appendTx(ctx, tx, Entry{Event: EventLogCheckpoint, checkpoint: true}, entryTypeV0, head.seq, head.digest)
+			if err != nil {
+				return 0, err
+			}
+			head.seq, head.digest = seq, digest
+		}
+	}
+	seq, _, err := l.appendTx(ctx, tx, e, typ, head.seq, head.digest)
+	return seq, err
+}
+
+// chainHead is the last entry of the log; the zero value for an empty log.
+type chainHead struct {
+	seq                int64
+	digest, event, typ string
+}
+
+// appendTx writes e as an entry of type typ after the entry lastSeq with lastDigest and
+// returns its seq and digest.
+func (l *Log) appendTx(ctx context.Context, tx *sql.Tx, e Entry, typ string, lastSeq int64, lastDigest string) (int64, string, error) {
+	var err error
 	now := l.clock()
 	w := wire{
-		Type: entryType, ID: newUUIDv7(now), Seq: lastSeq + 1, RecordedAt: now.UTC().Format(timeFormat),
+		Type: typ, ID: newUUIDv7(now), Seq: lastSeq + 1, RecordedAt: now.UTC().Format(timeFormat),
 		Event: e.Event, Principal: l.principal, Actor: e.Actor, Agent: e.Agent, Request: e.Request,
 		Mandate: e.Mandate, Evaluation: e.Evaluation, Approval: e.Approval, Result: e.Result, Truncated: e.Truncated, Directory: e.Directory,
-		Template: e.Template, Approver: e.Approver,
+		Template: e.Template, Approver: e.Approver, Auth: e.Auth, Binding: e.Binding, Credentials: e.Credentials,
+		Certificate: e.Certificate, CT: e.CT, Config: e.Config, Exported: e.Exported,
 	}
 	if lastSeq > 0 {
 		w.Prev = &lastDigest
 	}
 	if e.checkpoint {
 		if w.Checkpoint, err = l.sign(lastSeq, lastDigest, w.RecordedAt); err != nil {
-			return 0, err
+			return 0, "", err
 		}
 	}
 	canonical, digest, err := encode(w)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log (seq, recorded_at, event, entry, digest) VALUES (?, ?, ?, ?, ?)`,
 		w.Seq, w.RecordedAt, w.Event, string(canonical), digest); err != nil {
-		return 0, fmt.Errorf("audit: insert: %w", err)
+		return 0, "", fmt.Errorf("audit: insert: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_search (seq, text) VALUES (?, ?)`, w.Seq, searchText(e.Agent, e.Request)); err != nil {
-		return 0, fmt.Errorf("audit: insert search text: %w", err)
+		return 0, "", fmt.Errorf("audit: insert search text: %w", err)
 	}
 	if e.Also != nil {
 		if err := e.Also(ctx, tx); err != nil {
-			return 0, err
+			return 0, "", err
 		}
 	}
-	return w.Seq, nil
+	return w.Seq, digest, nil
 }
 
 // searchText is what the search of the UI matches in an entry (decision B2): its
@@ -639,10 +829,15 @@ func validate(w wire) error {
 		// placeholder instead of the real one.
 		w.Truncated = &Truncated{UpToSeq: 1, LastDigest: w.Truncated.LastDigest}
 	}
-	if w.Checkpoint != nil || w.Truncated != nil {
-		// A checkpoint is never the first entry, a truncation covers nothing as the first:
-		// check them behind a placeholder.
-		first := wire{Type: entryType, ID: w.ID, Seq: 1, RecordedAt: w.RecordedAt, Event: EventEmergencyStopActivated,
+	if w.Exported != nil {
+		// The range lies before the entry's own seq; Log.ExportRecorded guarantees that, so
+		// the check runs with the smallest range behind a placeholder.
+		w.Exported = &Exported{FromSeq: 1, ToSeq: 1}
+	}
+	if w.Checkpoint != nil || w.Truncated != nil || w.Exported != nil {
+		// A checkpoint is never the first entry, a truncation or an export covers nothing
+		// as the first: check them behind a placeholder.
+		first := wire{Type: w.Type, ID: w.ID, Seq: 1, RecordedAt: w.RecordedAt, Event: EventEmergencyStopActivated,
 			Principal: w.Principal, Actor: &Actor{Kind: ActorSystem, ID: "placeholder"}}
 		data, err := canonicalJSON(first)
 		digest, digestErr := specaudit.Digest(data)
@@ -697,7 +892,7 @@ func (l *Log) Verify(ctx context.Context) (Verification, error) {
 // Check is Verify that also returns how many entries it checked.
 func (l *Log) Check(ctx context.Context) (Verification, int, error) {
 	var entries [][]byte
-	err := l.each(ctx, func(entry []byte) error {
+	err := l.each(ctx, func(_ int64, entry []byte) error {
 		entries = append(entries, entry)
 		return nil
 	})
@@ -742,26 +937,56 @@ func (l *Log) truncation(ctx context.Context, r specaudit.Result) (Verification,
 
 // Export writes the log as JSON Lines, the exchange format of SPEC-v0 section 9.4.
 func (l *Log) Export(ctx context.Context, w io.Writer) error {
-	return l.each(ctx, func(entry []byte) error {
+	_, err := l.export(ctx, w)
+	return err
+}
+
+// ExportRecorded writes the log as Export does and records the export with log.exported
+// and the range it contained, by the human by (SPEC-v0 sections 9.2 and 13). Entries
+// written meanwhile are not in the range.
+func (l *Log) ExportRecorded(ctx context.Context, w io.Writer, by Actor) error {
+	r, err := l.export(ctx, w)
+	if err != nil {
+		return err
+	}
+	e := Entry{Event: EventLogExported, Actor: &by}
+	if r.ToSeq > 0 {
+		e.Exported = &r
+	}
+	_, err = l.Append(ctx, e)
+	return err
+}
+
+// export writes every entry and returns the range it wrote; zero for an empty log.
+func (l *Log) export(ctx context.Context, w io.Writer) (Exported, error) {
+	var r Exported
+	err := l.each(ctx, func(seq int64, entry []byte) error {
+		if r.FromSeq == 0 {
+			r.FromSeq = seq
+		}
+		r.ToSeq = seq
 		if _, err := w.Write(append(entry, '\n')); err != nil {
 			return fmt.Errorf("audit: export: %w", err)
 		}
 		return nil
 	})
+	return r, err
 }
 
-func (l *Log) each(ctx context.Context, fn func([]byte) error) error {
-	rows, err := l.db.QueryContext(ctx, `SELECT entry FROM audit_log ORDER BY seq`)
+// each calls fn for every entry in order; one query, so that it reads one state of the log.
+func (l *Log) each(ctx context.Context, fn func(int64, []byte) error) error {
+	rows, err := l.db.QueryContext(ctx, `SELECT seq, entry FROM audit_log ORDER BY seq`)
 	if err != nil {
 		return fmt.Errorf("audit: read: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
+		var seq int64
 		var entry string
-		if err := rows.Scan(&entry); err != nil {
+		if err := rows.Scan(&seq, &entry); err != nil {
 			return fmt.Errorf("audit: read: %w", err)
 		}
-		if err := fn([]byte(entry)); err != nil {
+		if err := fn(seq, []byte(entry)); err != nil {
 			return err
 		}
 	}

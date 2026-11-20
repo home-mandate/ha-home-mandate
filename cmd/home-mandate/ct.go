@@ -56,7 +56,7 @@ func (g *gateway) newCTWatch(ctx context.Context, client *ha.Client, uiAPI *atom
 	httpClient := netx.NewClient(netx.Config{Timeout: ctTimeout})
 	w := ctwatch.New(ctwatch.Config{Name: name, Store: ctwatch.NewStore(g.state.store.DB()),
 		Sources: []ctwatch.Source{ctwatch.NewCertSpotter(httpClient, string(cfg.CTKey)), ctwatch.NewCrtSh(httpClient)},
-		Key:     key, Approvers: g.state.approvers, ServiceUser: g.serviceUser,
+		Key:     key, Approvers: g.state.approvers, ServiceUser: g.serviceUser, Audit: g.state.log,
 		IsAdmin: func(ctx context.Context, user string) (bool, error) {
 			if a := uiAPI.Load(); a != nil {
 				return a.IsAdmin(ctx, user)

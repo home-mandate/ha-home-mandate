@@ -58,7 +58,11 @@ func TestAppendKeepsTheCharactersNextToNoncharacters(t *testing.T) {
 // A log that already holds a noncharacter stays valid and can be written on.
 func TestExistingNoncharacterStaysValid(t *testing.T) {
 	l, db := newLog(t)
+	// An entry an earlier version wrote: the correction applies to audit/v0, the version it
+	// names, never to a later one (SPEC-v0 section 14).
+	audit.WriteVersion0(l)
 	appendAll(t, l, []audit.Entry{withEntity("light.existing")})
+	l = audit.New(db, principal)
 	var entry string
 	if err := db.QueryRow(`SELECT entry FROM audit_log WHERE seq = 1`).Scan(&entry); err != nil {
 		t.Fatal(err)

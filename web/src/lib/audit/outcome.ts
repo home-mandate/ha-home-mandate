@@ -38,6 +38,13 @@ const EVENTS: Record<AuditEvent, () => string> = {
   'directory.changed': () => m.event_directory_changed(),
   'template.changed': () => m.event_template_changed(),
   'approver.changed': () => m.event_approver_changed(),
+  'config.changed': () => m.event_config_changed(),
+  'log.exported': () => m.event_log_exported(),
+  'agent.bound': () => m.event_agent_bound(),
+  'credentials.withdrawn': () => m.event_credentials_withdrawn(),
+  'cert.unexpected': () => m.event_cert_unexpected(),
+  'cert.acknowledged': () => m.event_cert_acknowledged(),
+  'ct.status': () => m.event_ct_status(),
 };
 
 const REASONS: Record<Reason, () => string> = {
@@ -56,8 +63,9 @@ const REASONS: Record<Reason, () => string> = {
   rule: () => m.code_rule(),
 };
 
+/** eventLabel names an event; one the UI does not know (of a later audit version) is shown cleaned. */
 export function eventLabel(event: AuditEvent): string {
-  return EVENTS[event]();
+  return Object.hasOwn(EVENTS, event) ? EVENTS[event]() : cleanUntrusted(event);
 }
 
 /** reasonText explains a reason code; a code the UI does not know is shown cleaned. */

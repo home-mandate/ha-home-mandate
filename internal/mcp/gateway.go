@@ -373,7 +373,7 @@ func (g *Gateway) verify(ctx context.Context, token string, r *http.Request) (*s
 	if err == nil && st != nil {
 		if err := g.cfg.DPoP.Accept(st.proof); err != nil {
 			st.replayed = true
-			g.recordRejectedCode(ctx, errInvalidDPoPProof)
+			g.recordRejectedCode(ctx, errInvalidDPoPProof, audit.AuthReplay)
 			return nil, sdkauth.ErrInvalidToken
 		}
 	}
@@ -381,7 +381,7 @@ func (g *Gateway) verify(ctx context.Context, token string, r *http.Request) (*s
 		if !errors.Is(err, agent.ErrUnauthorized) {
 			g.cfg.Logger.Error("token check failed", "error", err)
 		}
-		g.recordRejectedCode(ctx, errInvalidToken)
+		g.recordRejectedCode(ctx, errInvalidToken, agent.ReasonOf(err))
 		return nil, sdkauth.ErrInvalidToken
 	}
 	// The token stays with the request so that it can be checked again after a human
@@ -397,21 +397,23 @@ func tokenOf(req *sdk.CallToolRequest) string {
 	return token
 }
 
-// recordRejectedCode logs at most one auth.rejected entry per interval and code: an
-// invalid token or proof names no agent, and anyone on the network could otherwise fill
-// the audit log; per code, so that a flood of one kind hides no other. code is
-// errInvalidToken, errInvalidDPoPProof or errDPoPRequired.
-func (g *Gateway) recordRejectedCode(ctx context.Context, code string) {
+// recordRejectedCode logs at most one auth.rejected entry per interval, code and reason:
+// an invalid token or proof names no agent, and anyone on the network could otherwise fill
+// the audit log; per kind, so that a flood of one kind hides no other. code is
+// errInvalidToken, errInvalidDPoPProof or errDPoPRequired; reason is that of audit/v1.
+func (g *Gateway) recordRejectedCode(ctx context.Context, code, reason string) {
 	now := g.cfg.Now()
+	kind := code + "/" + reason
 	g.mu.Lock()
-	if last, ok := g.rejectedLog[code]; ok && now.Sub(last) < rateLimitLogInterval {
+	if last, ok := g.rejectedLog[kind]; ok && now.Sub(last) < rateLimitLogInterval {
 		g.mu.Unlock()
 		return
 	}
-	g.rejectedLog[code] = now
+	g.rejectedLog[kind] = now
 	g.mu.Unlock()
 	if _, err := g.cfg.Audit.Append(context.WithoutCancel(ctx), audit.Entry{Event: audit.EventAuthRejected,
-		Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication, Error: code}}); err != nil {
+		Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication, Error: code},
+		Auth:   &audit.Auth{Reason: reason}}); err != nil {
 		g.cfg.Logger.Error("audit log write failed", "error", err)
 	}
 }

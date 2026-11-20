@@ -240,4 +240,23 @@ func TestCTMonitoring(t *testing.T) {
 	if !strings.Contains(logsOf(g.name), "certificate acknowledged as the household's") {
 		t.Error("acknowledgement not logged")
 	}
+	// audit/v1: the alarm once, the acknowledgement by the administrator, and the state of
+	// monitoring with both stand-in sources answering.
+	log, err := run("exec", g.name, "/home-mandate", "audit", "export")
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := `"digest":"` + g.foreignDigest.String() + `"`
+	if strings.Count(log, `"event":"cert.unexpected"`) != 1 || !hasLine(log, `"event":"cert.unexpected"`, foreign, `"status":"alarm"`, `"names":["`+ctName+`"]`) {
+		t.Errorf("cert.unexpected:\n%s", log)
+	}
+	if !hasLine(log, `"event":"cert.acknowledged"`, `"certificate":{`+foreign+`}`, `"id":"`+env.users[adminApprover].id+`"`) {
+		t.Errorf("cert.acknowledged:\n%s", log)
+	}
+	if !hasLine(log, `"event":"ct.status"`, `"ct":{"status":"ok"}`) {
+		t.Errorf("ct.status:\n%s", log)
+	}
+	if out, err := run("exec", g.name, "/home-mandate", "audit", "verify"); err != nil || !strings.Contains(out, "audit log valid") {
+		t.Errorf("audit verify = %q, %v", out, err)
+	}
 }

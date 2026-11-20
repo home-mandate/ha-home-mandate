@@ -166,6 +166,13 @@ func TestAgentAndMandateLifecycle(t *testing.T) {
 	if strings.Count(export, "\n") != 4 {
 		t.Errorf("audit export (agent.registered, mandate.created, mandate.revoked, agent.revoked):\n%s", export)
 	}
+	// Every export is recorded with what it contained, by the local administrator (SPEC-v0
+	// section 13); the next export has that entry too.
+	again := c.mustRun("", "audit", "export")
+	if strings.Count(again, "\n") != 5 || !strings.Contains(again, `"event":"log.exported"`) ||
+		!strings.Contains(again, `"exported":{"from_seq":1,"to_seq":4}`) || !strings.Contains(again, `"id":"local-admin"`) {
+		t.Errorf("second audit export:\n%s", again)
+	}
 }
 
 func TestAuditVerifyReportsABrokenChain(t *testing.T) {

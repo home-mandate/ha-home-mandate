@@ -78,25 +78,27 @@ func (r dpopRefusal) Unwrap() error { return r.err }
 //     is bound already;
 //   - otherwise the tokens stay Bearer tokens, unless the agent is bound or the request
 //     requires binding (ErrDPoPRequired).
-func (s *Store) decideKey(ctx context.Context, tx *sql.Tx, family, binding string, h Holder, handOut bool) (string, error) {
+//
+// fresh is true if the family becomes bound now, false if it was bound before or stays unbound.
+func (s *Store) decideKey(ctx context.Context, tx *sql.Tx, family, binding string, h Holder, handOut bool) (jkt string, fresh bool, err error) {
 	var bound sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT dpop_jkt FROM tokens WHERE family_id = ? AND dpop_jkt IS NOT NULL LIMIT 1`, family).Scan(&bound)
+	err = tx.QueryRowContext(ctx, `SELECT dpop_jkt FROM tokens WHERE family_id = ? AND dpop_jkt IS NOT NULL LIMIT 1`, family).Scan(&bound)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("agent: read token binding: %w", err)
+		return "", false, fmt.Errorf("agent: read token binding: %w", err)
 	}
 	switch {
 	case bound.Valid && h.JKT != bound.String:
-		return "", dpopRefusal{ErrDPoPKey, errInvalidDPoPProof}
+		return "", false, dpopRefusal{ErrDPoPKey, errInvalidDPoPProof}
 	case bound.Valid:
-		return bound.String, nil
+		return bound.String, false, nil
 	case binding == BindingDPoP && !handOut:
-		return "", dpopRefusal{ErrDPoPRequired, errDPoPRequired}
+		return "", false, dpopRefusal{ErrDPoPRequired, errDPoPRequired}
 	case h.JKT != "" && (h.Bind || binding == BindingDPoP):
-		return h.JKT, nil
+		return h.JKT, true, nil
 	case binding == BindingDPoP || h.Require:
-		return "", dpopRefusal{ErrDPoPRequired, errDPoPRequired}
+		return "", false, dpopRefusal{ErrDPoPRequired, errDPoPRequired}
 	}
-	return "", nil
+	return "", false, nil
 }
 
 // keyFits reports whether a request that proved jkt (empty for Bearer) may use a token
@@ -112,20 +114,46 @@ func keyFits(binding, tokenJKT, jkt string) bool {
 // other unbound families: they could only ever be refused (decideKey, keyFits). The family
 // that was just bound keeps its earlier rows, so that a retry within the grace period of a
 // refresh (#71) still finds them.
-func (s *Store) markBound(ctx context.Context, tx *sql.Tx, clientID, family, jkt string) error {
+//
+// fresh is true if r's family became bound to jkt just now: if no valid token of another
+// family carries jkt, the key is new for the agent (its first, or the first after a
+// reconnection, which leaves no valid token) and is recorded with agent.bound. Withdrawn
+// unbound families are recorded with credentials.withdrawn (audit/v1, SPEC-v0 section 11.7
+// item 6).
+func (s *Store) markBound(ctx context.Context, tx *sql.Tx, r refreshRow, jkt string, fresh bool) error {
 	if jkt == "" {
 		return nil
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE agents SET binding = ? WHERE client_id = ? AND binding <> ?`,
-		BindingDPoP, clientID, BindingDPoP); err != nil {
+		BindingDPoP, r.clientID, BindingDPoP); err != nil {
 		return fmt.Errorf("agent: bind agent: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE tokens SET revoked_at = ?
-		WHERE client_id = ? AND family_id <> ? AND dpop_jkt IS NULL AND revoked_at IS NULL`,
-		s.clock().Format(timeFormat), clientID, family); err != nil {
+	now := s.clock().Format(timeFormat)
+	agent := &audit.Agent{ClientID: r.clientID, DisplayName: r.name}
+	if fresh {
+		var known bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM tokens WHERE client_id = ? AND family_id <> ?
+			AND dpop_jkt = ? AND revoked_at IS NULL AND expires_at > ?)`, r.clientID, r.family, jkt, now).Scan(&known); err != nil {
+			return fmt.Errorf("agent: read token binding: %w", err)
+		}
+		if !known {
+			if _, err := s.log.AppendTx(ctx, tx, audit.Entry{Event: audit.EventAgentBound, Actor: &tokenSystem, Agent: agent,
+				Binding: &audit.Binding{Method: audit.BindingDPoP, JKT: jkt}}); err != nil {
+				return err
+			}
+		}
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE tokens SET revoked_at = ?
+		WHERE client_id = ? AND family_id <> ? AND dpop_jkt IS NULL AND revoked_at IS NULL`, now, r.clientID, r.family)
+	if err != nil {
 		return fmt.Errorf("agent: withdraw unbound tokens: %w", err)
 	}
-	return nil
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return err
+	}
+	_, err = s.log.AppendTx(ctx, tx, audit.Entry{Event: audit.EventCredentialsWithdrawn, Actor: &tokenSystem, Agent: agent,
+		Credentials: &audit.Credentials{Scope: audit.CredentialsAgent, Cause: audit.WithdrawnBound}})
+	return err
 }
 
 // Bind decides the binding of a pair just issued by an admission or a reconnect, at the
@@ -149,7 +177,7 @@ func (s *Store) Bind(ctx context.Context, p TokenPair, h Holder) (TokenPair, err
 		if err != nil {
 			return fmt.Errorf("agent: bind: %w", err)
 		}
-		jkt, err := s.decideKey(ctx, tx, r.family, r.binding, h, true)
+		jkt, fresh, err := s.decideKey(ctx, tx, r.family, r.binding, h, true)
 		var refusal dpopRefusal
 		switch {
 		case errors.As(err, &refusal) && errors.Is(err, ErrDPoPRequired):
@@ -165,7 +193,7 @@ func (s *Store) Bind(ctx context.Context, p TokenPair, h Holder) (TokenPair, err
 			return fmt.Errorf("agent: bind tokens: %w", err)
 		}
 		p.JKT = jkt
-		return s.markBound(ctx, tx, r.clientID, r.family, jkt)
+		return s.markBound(ctx, tx, r, jkt, fresh)
 	})
 	if err == nil && rejected != nil {
 		return TokenPair{}, rejected
@@ -182,9 +210,7 @@ func (s *Store) revokeRefused(ctx context.Context, tx *sql.Tx, r refreshRow) err
 		s.clock().Format(timeFormat), r.family); err != nil {
 		return fmt.Errorf("agent: revoke refused tokens: %w", err)
 	}
-	_, err := s.log.AppendTx(ctx, tx, audit.Entry{Event: audit.EventAuthRejected,
-		Agent:  &audit.Agent{ClientID: r.clientID, DisplayName: r.name},
-		Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication, Error: errDPoPRequired}})
+	_, err := s.log.AppendTx(ctx, tx, rejected(r, errDPoPRequired))
 	return err
 }
 

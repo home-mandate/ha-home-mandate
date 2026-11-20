@@ -124,7 +124,9 @@ func TestBoundTokensNeedAProofOfTheirKey(t *testing.T) {
 	} {
 		challenges(t, name, h.postWith(tc.authorization, tc.proof, ""), tc.dpopError)
 	}
-	if out := h.auditLog(); !strings.Contains(out, `"error":"invalid_dpop_proof"`) {
+	// audit/v1: a replayed proof and a proof that does not fit are told apart.
+	if out := h.auditLog(); !strings.Contains(out, `"error":"invalid_dpop_proof"`) ||
+		!strings.Contains(out, `"auth":{"reason":"replay"}`) || !strings.Contains(out, `"auth":{"reason":"proof"}`) {
 		t.Errorf("audit log:\n%s", out)
 	}
 }
@@ -154,6 +156,9 @@ func TestExpiredBoundTokenGetsTheDPoPChallenge(t *testing.T) {
 func TestModeRequiredRefusesBearerAtTheEndpoint(t *testing.T) {
 	h := dpopHarness(t, dpop.ModeRequired)
 	challenges(t, "Bearer in mode required", h.postWith("Bearer "+h.token, "", ""), "")
+	if out := h.auditLog(); !strings.Contains(out, `"auth":{"reason":"unbound_refused"}`) {
+		t.Errorf("audit log:\n%s", out)
+	}
 	key := newKey(t)
 	token := h.boundToken(key)
 	if resp := h.postWith("DPoP "+token, h.proof(key, token), ""); resp.StatusCode != http.StatusOK {

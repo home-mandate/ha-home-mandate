@@ -61,7 +61,7 @@ const checkpointType = "https://home-mandate.org/audit-checkpoint/v0"
 // archived entries.
 func (l *Log) ArchiveLegacy(ctx context.Context, archive func() (io.WriteCloser, error), actor Actor) (int, error) {
 	var entries [][]byte
-	if err := l.each(ctx, func(entry []byte) error {
+	if err := l.each(ctx, func(_ int64, entry []byte) error {
 		entries = append(entries, entry)
 		return nil
 	}); err != nil {
