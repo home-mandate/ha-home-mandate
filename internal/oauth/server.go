@@ -366,10 +366,23 @@ func (s *Server) sameOrigin(r *http.Request) bool {
 	return len(origins) == 1 && origins[0] == s.cfg.PublicURL
 }
 
+// userRejections are the reasons of auth.rejected (audit/v1) for a refused human: a
+// pairing code nobody issued is unknown, a sign-in of someone who may not admit agents is
+// none of the reasons of a token.
+var userRejections = map[string]string{
+	"pairing_code_invalid": audit.AuthUnknown,
+	"not_admin":            audit.AuthOther,
+}
+
 // rejectUser logs a refused sign-in or pairing attempt of a human.
 func (s *Server) rejectUser(ctx context.Context, userID, code string) {
+	reason, ok := userRejections[code]
+	if !ok {
+		reason = audit.AuthOther
+	}
 	e := audit.Entry{Event: audit.EventAuthRejected,
-		Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication, Error: code}}
+		Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication, Error: code},
+		Auth:   &audit.Auth{Reason: reason}}
 	if userID != "" {
 		e.Actor = &audit.Actor{Kind: audit.ActorUser, ID: userID}
 	}

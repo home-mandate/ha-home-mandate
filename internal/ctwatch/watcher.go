@@ -4,6 +4,7 @@ package ctwatch
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"math/rand/v2"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
@@ -81,6 +83,15 @@ type Config struct {
 	OnChange func()
 	Now      func() time.Time
 	Logger   *slog.Logger
+	// Audit records unexpected certificates, acknowledgements and the state of monitoring
+	// (audit/v1); nil records nothing.
+	Audit Recorder
+}
+
+// Recorder is the audit log as the monitoring writes it.
+type Recorder interface {
+	AppendTx(ctx context.Context, tx *sql.Tx, e audit.Entry) (int64, error)
+	RecordCTStatus(ctx context.Context, status string) error
 }
 
 // Watcher runs the monitoring of one name. It is safe for concurrent use.
@@ -314,6 +325,7 @@ func (w *Watcher) evaluate(ctx context.Context, since time.Time) {
 		w.cfg.Logger.Error("certificate monitoring: store unavailable", "error", err)
 		return
 	}
+	w.recordUnexpected(ctx, all, now)
 	news := unnotified(all)
 	if len(news) > 0 && w.cfg.Key != nil {
 		w.observeKey(ctx, true, now)
@@ -356,6 +368,7 @@ func (w *Watcher) availability(ctx context.Context, since, now time.Time) {
 		w.cfg.Logger.Error("certificate monitoring: store unavailable", "error", err)
 		return
 	}
+	w.recordStatus(ctx, since, now)
 	down := now.Sub(last) >= Unavailable
 	w.mu.Lock()
 	known := w.unavailableRung

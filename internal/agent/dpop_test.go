@@ -15,7 +15,8 @@ import (
 // Thumbprints of two DPoP keys (43 characters of base64url).
 var (
 	keyA = strings.Repeat("A", 43)
-	keyB = strings.Repeat("B", 43)
+	// A thumbprint ends in a character whose low bits are zero (32 bytes in base64url).
+	keyB = strings.Repeat("B", 42) + "A"
 )
 
 func bind(t *testing.T, s *agent.Store, p agent.TokenPair, h agent.Holder) agent.TokenPair {
@@ -81,8 +82,13 @@ func TestBindBindsTheFamilyAndTheAgent(t *testing.T) {
 	if again, err := s.Refresh(ctx, p.RefreshToken, resource, "", agent.Holder{JKT: keyA}); err != nil || !again.Repeated || again.JKT != keyA {
 		t.Errorf("repeated refresh with the key: %+v, %v", again, err)
 	}
-	if out := exported(t, log); strings.Count(out, `"error":"invalid_dpop_proof"`) != 3 {
+	out := exported(t, log)
+	if strings.Count(out, `"error":"invalid_dpop_proof"`) != 3 || strings.Count(out, `"auth":{"reason":"proof"}`) != 3 {
 		t.Errorf("audit log:\n%s", out)
+	}
+	// The key is recorded once, when the agent's tokens become bound to it (audit/v1).
+	if strings.Count(out, `"event":"agent.bound"`) != 1 || !strings.Contains(out, `"binding":{"jkt":"`+keyA+`","method":"dpop"}`) {
+		t.Errorf("agent.bound:\n%s", out)
 	}
 }
 
@@ -157,7 +163,7 @@ func TestABearerAgentBecomesBoundAtRefresh(t *testing.T) {
 // reconnect, while DPoP is switched off, or at a refresh of a family from before; a new
 // key is fine (the client lost its key).
 func TestABoundAgentGetsNoBearerTokens(t *testing.T) {
-	s, _, _ := newStore(t)
+	s, log, _ := newStore(t)
 	ctx := context.Background()
 	a := register(t, s, "A")
 	before := bind(t, s, issue(t, s, a.ClientID), agent.Holder{})
@@ -171,6 +177,13 @@ func TestABoundAgentGetsNoBearerTokens(t *testing.T) {
 	// With DPoP off (Bind false) a bound agent still binds, to any key it proves.
 	if p := bind(t, s, issue(t, s, a.ClientID), agent.Holder{JKT: keyB}); p.JKT != keyB {
 		t.Errorf("new key while DPoP is off: %+v", p)
+	}
+	// audit/v1: binding ended the Bearer family of before (withdrawn by the system), each
+	// new key is recorded, and a refused pair is rejected as unbound.
+	out := exported(t, log)
+	if strings.Count(out, `"credentials":{"cause":"bound","scope":"agent"}`) != 1 || strings.Count(out, `"event":"agent.bound"`) != 2 ||
+		strings.Count(out, `"auth":{"reason":"unbound_refused"}`) != 2 {
+		t.Errorf("audit log:\n%s", out)
 	}
 }
 

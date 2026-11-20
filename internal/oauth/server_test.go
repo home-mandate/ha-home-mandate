@@ -605,7 +605,7 @@ func TestNonAdminCannotAdmit(t *testing.T) {
 		t.Errorf("consent after refusal = %d", res.status)
 	}
 	if out := h.auditLog(); !strings.Contains(out, `"event":"auth.rejected"`) || !strings.Contains(out, `"error":"not_admin"`) ||
-		!strings.Contains(out, `"id":"u-plain"`) {
+		!strings.Contains(out, `"id":"u-plain"`) || !strings.Contains(out, `"auth":{"reason":"other"}`) {
 		t.Errorf("audit log:\n%s", out)
 	}
 	if n := countAgents(t, h); n != 0 {

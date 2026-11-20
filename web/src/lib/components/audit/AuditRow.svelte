@@ -7,6 +7,7 @@
 <script lang="ts">
   import type { AuditEntry, DeviceCatalog } from '../../api/types.ts';
   import { approverText, decisionOf, deviceName, directoryText, templateText } from '../../audit/describe.ts';
+  import { v1Text } from '../../audit/v1.ts';
   import { eventLabel, outcomeOf } from '../../audit/outcome.ts';
   import { formatTime, type FormatContext } from '../../format.ts';
   import { m } from '../../i18n.ts';
@@ -38,6 +39,8 @@
     if (entry.directory) return directoryText(entry, catalog);
     if (entry.template) return templateText(entry);
     if (entry.approver) return approverText(entry);
+    const v1 = v1Text(entry);
+    if (v1) return v1;
     if (entry.actor?.name) return cleanUntrusted(entry.actor.name);
     return entry.agent ? cleanUntrusted(entry.agent.display_name ?? entry.agent.client_id) : '';
   });

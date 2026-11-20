@@ -139,10 +139,10 @@ func TestAcknowledgementsStayAsTheyWere(t *testing.T) {
 	s, db := newStore(t)
 	ctx := context.Background()
 	d := digestOf("tbs-x")
-	if err := s.Acknowledge(ctx, Ack{Digest: d, By: "u1", Via: ViaPush, At: t0}); err != nil {
+	if err := s.Acknowledge(ctx, Ack{Digest: d, By: "u1", Via: ViaPush, At: t0}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Acknowledge(ctx, Ack{Digest: d, By: "u2", Via: ViaUI, At: t0.Add(time.Hour)}); err != nil {
+	if err := s.Acknowledge(ctx, Ack{Digest: d, By: "u2", Via: ViaUI, At: t0.Add(time.Hour)}, nil); err != nil {
 		t.Fatal(err)
 	}
 	acks, err := s.Acks(ctx)
@@ -227,7 +227,8 @@ func TestStoreFailsClosed(t *testing.T) {
 		"observe":  func() error { _, err := s.ObserveKey(ctx, digestOf("k"), t0); return err },
 		"put":      func() error { _, err := s.PutCert(ctx, parsedCert("b.example", t0), t0); return err },
 		"notified": func() error { return s.MarkNotified(ctx, nil, t0) },
-		"ack":      func() error { return s.Acknowledge(ctx, Ack{Digest: digestOf("x"), By: "u", Via: ViaUI, At: t0}) },
+		"ack":      func() error { return s.Acknowledge(ctx, Ack{Digest: digestOf("x"), By: "u", Via: ViaUI, At: t0}, nil) },
+		"record":   func() error { return s.RecordOnce(ctx, digestOf("x"), "alarm", func(*sql.Tx) error { return nil }) },
 		"source":   func() error { _, err := s.Source(ctx, "crtsh", "a.example"); return err },
 	} {
 		if err := call(); !errors.Is(err, ErrStore) {

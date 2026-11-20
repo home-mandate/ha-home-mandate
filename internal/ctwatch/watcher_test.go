@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/home-mandate/ha-home-mandate/internal/approval"
+	"github.com/home-mandate/ha-home-mandate/internal/audit"
 	"github.com/home-mandate/ha-home-mandate/internal/ha"
 	"github.com/home-mandate/ha-home-mandate/internal/i18n"
 )
@@ -173,6 +174,7 @@ type harness struct {
 	admins  map[string]bool
 	changes int
 	logs    *syncBuffer
+	audit   *audit.Log
 }
 
 // syncBuffer is a log buffer the background settling may write while a test reads it.
@@ -197,8 +199,8 @@ func (b *syncBuffer) String() string {
 // without critical), and Home-Mandate's own user.
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	s, _ := newStore(t)
-	h := &harness{t: t, store: s, clock: &clock{t: t0}, spotter: &fakeSource{name: SourceCertSpotter},
+	s, db := newStore(t)
+	h := &harness{t: t, store: s, audit: audit.New(db, "household:t"), clock: &clock{t: t0}, spotter: &fakeSource{name: SourceCertSpotter},
 		crtsh: &fakeSource{name: SourceCrtSh}, ha: &fakeHA{bell: map[string]ha.Notification{}},
 		key: &fakeKey{key: digestOf("own-key")}, admins: map[string]bool{"anna": true, "ben": true}, logs: &syncBuffer{}}
 	h.appr = &fakeApprovers{list: []approval.Approver{
@@ -212,7 +214,7 @@ func newHarness(t *testing.T) *harness {
 		UserName:    func(_ context.Context, u string) string { return map[string]string{"anna": "Anna"}[u] },
 		Notifier:    h.ha, Bell: h.ha, Language: func() i18n.Lang { return i18n.EN },
 		ConfirmTimeout: func() time.Duration { return 5 * time.Minute }, Link: func() string { return "/hm/system" },
-		OnChange: func() { h.changes++ }, Now: h.clock.now,
+		OnChange: func() { h.changes++ }, Now: h.clock.now, Audit: h.audit,
 		Logger: slog.New(slog.NewTextHandler(h.logs, nil))})
 	return h
 }
@@ -644,7 +646,7 @@ func TestStatusListsAlarmsAndAcknowledgementsNewestFirst(t *testing.T) {
 	b := foreign("b", t0, t0.Add(90*24*time.Hour))
 	h.spotter.add(b)
 	h.round()
-	if err := h.store.Acknowledge(context.Background(), Ack{Digest: a.Digest, By: "anna", Via: ViaUI, At: t0}); err != nil {
+	if err := h.store.Acknowledge(context.Background(), Ack{Digest: a.Digest, By: "anna", Via: ViaUI, At: t0}, nil); err != nil {
 		t.Fatal(err)
 	}
 	st, err := h.w.Status(context.Background())

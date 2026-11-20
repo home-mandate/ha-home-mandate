@@ -52,6 +52,13 @@ export const EVENTS: readonly AuditEvent[] = [
   'directory.changed',
   'template.changed',
   'approver.changed',
+  'config.changed',
+  'log.exported',
+  'agent.bound',
+  'credentials.withdrawn',
+  'cert.unexpected',
+  'cert.acknowledged',
+  'ct.status',
 ];
 
 const HOUR_MS = 3_600_000;

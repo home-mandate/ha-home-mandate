@@ -63,3 +63,38 @@ describe('AuditDetail', () => {
     expect(screen.queryByText(CONFIRM_WHY)).toBeNull();
   });
 });
+
+describe('AuditDetail: entries of audit/v1', () => {
+  const v1 = (e: Partial<AuditEntry>): AuditEntry => ({ ...entry(), agent: undefined, request: undefined, evaluation: undefined, result: undefined, ...e });
+
+  it('says what happened under a neutral label, with the certificate and its validity', () => {
+    render(
+      AuditDetail,
+      props(
+        v1({
+          event: 'cert.unexpected',
+          certificate: {
+            digest: 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs',
+            status: 'alarm',
+            names: ['hm.example.org'],
+            issuer: 'CN=Evil‮ CA',
+            public_key: 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs',
+            not_before: '2026-11-01T00:00:00.000Z',
+            not_after: '2027-01-30T00:00:00.000Z',
+            logged: '2026-11-01T00:05:00.000Z',
+          },
+        }),
+      ),
+    );
+    expect(screen.getByText('Details')).toBeTruthy();
+    expect(screen.queryByText('Change')).toBeNull();
+    expect(screen.getByText('CN=Evil CA')).toBeTruthy();
+    expect(screen.getByText('Valid')).toBeTruthy();
+  });
+
+  it('shows an entry with a date it cannot read instead of failing', () => {
+    render(AuditDetail, props(v1({ event: 'cert.unexpected', certificate: { status: 'alarm', names: ['x.example'], not_before: 'soon', not_after: 'later' } })));
+    expect(screen.getByText('Details')).toBeTruthy();
+    expect(screen.queryByText('Valid')).toBeNull();
+  });
+});

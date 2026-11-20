@@ -355,7 +355,7 @@ func (w *Watcher) settle(ctx context.Context, p *pendingAck, user string, via Vi
 		w.cfg.Logger.Info("certificate acknowledgement not confirmed", "digest", p.digest.String(), "by", user, "via", string(via))
 		return
 	}
-	if err := w.cfg.Store.Acknowledge(ctx, Ack{Digest: p.digest, By: user, Via: via, At: w.cfg.Now()}); err != nil {
+	if err := w.cfg.Store.Acknowledge(ctx, Ack{Digest: p.digest, By: user, Via: via, At: w.cfg.Now()}, w.recordAck(ctx, p.digest, user)); err != nil {
 		w.cfg.Logger.Error("certificate acknowledgement not stored", "error", err)
 		return
 	}

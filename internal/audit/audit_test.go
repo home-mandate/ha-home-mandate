@@ -67,9 +67,30 @@ func samples() []audit.Entry {
 		{Event: audit.EventMandateUpdated, Actor: user, Mandate: &audit.Mandate{ID: "m-voice", Digest: mandate.Digest, PreviousDigest: "sha256:" + strings.Repeat("b", 64)}},
 		{Event: audit.EventMandateRevoked, Actor: user, Mandate: mandate},
 		{Event: audit.EventAgentRevoked, Actor: user, Agent: agent},
-		{Event: audit.EventAuthRejected, Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication}},
+		{Event: audit.EventAuthRejected, Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication},
+			Auth: &audit.Auth{Reason: audit.AuthExpired}},
+		// audit/v1 (SPEC-v0 sections 9.1 and 11.7).
+		{Event: audit.EventAgentBound, Actor: &audit.Actor{Kind: audit.ActorSystem, ID: "home-mandate"}, Agent: agent,
+			Binding: &audit.Binding{Method: audit.BindingDPoP, JKT: jkt}},
+		{Event: audit.EventCredentialsWithdrawn, Actor: user, Credentials: &audit.Credentials{Scope: audit.CredentialsAll, Cause: audit.WithdrawnEmergencyStop}},
+		{Event: audit.EventCredentialsWithdrawn, Actor: &audit.Actor{Kind: audit.ActorSystem, ID: "home-mandate"}, Agent: agent,
+			Credentials: &audit.Credentials{Scope: audit.CredentialsAgent, Cause: audit.WithdrawnRefreshReuse}},
+		{Event: audit.EventCertUnexpected, Certificate: &audit.Certificate{Digest: jkt, Status: audit.CertAlarm, Names: []string{"hm.example.org"},
+			Issuer: "CN=Example CA,O=Example", PublicKey: jkt, NotBefore: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+			NotAfter: time.Date(2026, 12, 30, 0, 0, 0, 0, time.UTC), Logged: time.Date(2026, 10, 1, 0, 5, 0, 0, time.UTC)}},
+		{Event: audit.EventCertAcknowledged, Actor: user, Certificate: &audit.Certificate{Digest: jkt}},
+		{Event: audit.EventCTStatus, CT: &audit.CT{Status: audit.CTLimited}},
+		{Event: audit.EventCTStatus, CT: &audit.CT{Status: audit.CTUnavailable, PreviousStatus: audit.CTLimited}},
+		{Event: audit.EventConfigChanged, Actor: &audit.Actor{Kind: audit.ActorSystem, ID: "home-mandate"},
+			Config: &audit.Config{Setting: audit.SettingTimezone, Value: "Europe/Berlin", PreviousValue: "Europe/Vienna"}},
+		{Event: audit.EventConfigChanged, Actor: &audit.Actor{Kind: audit.ActorSystem, ID: "home-mandate"},
+			Config: &audit.Config{Setting: audit.SettingPublicOrigin, PreviousValue: "https://hm.example.org"}},
+		{Event: audit.EventLogExported, Actor: user},
 	}
 }
+
+// jkt is a SHA-256 in base64url without padding, as a thumbprint, a digest or a key hash.
+const jkt = "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs"
 
 func appendAll(t *testing.T, l *audit.Log, entries []audit.Entry) {
 	t.Helper()

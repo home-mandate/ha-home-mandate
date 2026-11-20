@@ -66,7 +66,8 @@ func TestRejectedTokensAreLoggedThrottled(t *testing.T) {
 	if n := strings.Count(out, `"event":"auth.rejected"`); n != 1 {
 		t.Errorf("auth.rejected entries = %d, want 1:\n%s", n, out)
 	}
-	if !strings.Contains(out, `"error":"invalid_token"`) || strings.Contains(out, strings.Repeat("A", 43)) {
+	if !strings.Contains(out, `"error":"invalid_token"`) || !strings.Contains(out, `"auth":{"reason":"unknown"}`) ||
+		strings.Contains(out, strings.Repeat("A", 43)) {
 		t.Errorf("audit log:\n%s", out)
 	}
 }

@@ -157,8 +157,8 @@ func (s *Store) StillAuthorized(ctx context.Context, token, resource string) (Ag
 // authenticate checks token; for an answer it ignores the expiry, the DPoP key and counts
 // the stop.
 func (s *Store) authenticate(ctx context.Context, token, resource, jkt string, answer bool) (Agent, error) {
-	if resource == "" || !wellFormed(token, accessPrefix) {
-		return Agent{}, ErrUnauthorized
+	if !wellFormed(token, accessPrefix) {
+		return Agent{}, unauthorized(audit.AuthUnknown)
 	}
 	var a Agent
 	var createdAt, kind, tokenResource, expiresAt, stop string
@@ -171,15 +171,31 @@ func (s *Store) authenticate(ctx context.Context, token, resource, jkt string, a
 		Scan(&a.ClientID, &a.DisplayName, &a.Status, &createdAt, &a.CreatedBy, &a.OAuthClient, &a.ClientVerified, &a.Binding,
 			&kind, &tokenResource, &expiresAt, &revokedAt, &tokenJKT, &stop)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Agent{}, ErrUnauthorized
+		return Agent{}, unauthorized(audit.AuthUnknown)
 	}
 	if err != nil {
 		return Agent{}, fmt.Errorf("agent: authenticate: %w", err)
 	}
 	expires, err := time.Parse(timeFormat, expiresAt)
-	if err != nil || kind != kindAccess || tokenResource != resource || revokedAt.Valid || a.Status != StatusActive ||
-		answer && stop != stopOff || !answer && !s.clock().Before(expires) || !answer && !keyFits(a.Binding, tokenJKT.String, jkt) {
-		return Agent{}, ErrUnauthorized
+	switch {
+	case err != nil || kind != kindAccess:
+		return Agent{}, unauthorized(audit.AuthUnknown)
+	case resource == "" || tokenResource != resource:
+		return Agent{}, unauthorized(audit.AuthAudience)
+	case a.Status != StatusActive:
+		return Agent{}, unauthorized(audit.AuthRevoked)
+	case revokedAt.Valid:
+		return Agent{}, unauthorized(audit.AuthWithdrawn)
+	case answer && stop != stopOff:
+		return Agent{}, unauthorized(audit.AuthOther)
+	case !answer && !s.clock().Before(expires):
+		return Agent{}, unauthorized(audit.AuthExpired)
+	case !answer && !keyFits(a.Binding, tokenJKT.String, jkt):
+		// A bound token without the proof of its key, or an unbound one of a bound agent.
+		if tokenJKT.Valid {
+			return Agent{}, unauthorized(audit.AuthProof)
+		}
+		return Agent{}, unauthorized(audit.AuthUnboundRefused)
 	}
 	a.CreatedAt, _ = time.Parse(timeFormat, createdAt)
 	return a, nil
@@ -211,7 +227,7 @@ func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string
 		return TokenPair{}, ErrInvalidGrant
 	}
 	var p TokenPair
-	var rejected error // ErrRefreshReused or ErrRefreshWrongClient, after the commit
+	var refused error // ErrRefreshReused or ErrRefreshWrongClient, after the commit
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		var r refreshRow
 		err := tx.QueryRowContext(ctx, `SELECT t.kind, t.client_id, a.display_name, t.family_id, t.resource, t.expires_at,
@@ -229,21 +245,21 @@ func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string
 			return ErrInvalidGrant
 		}
 		if r.oauthClient != oauthClient {
-			rejected = ErrRefreshWrongClient
+			refused = ErrRefreshWrongClient
 			return s.rejectRefresh(ctx, tx, r, errRefreshWrongClient)
 		}
-		jkt, err := s.decideKey(ctx, tx, r.family, r.binding, h, false)
+		jkt, fresh, err := s.decideKey(ctx, tx, r.family, r.binding, h, false)
 		if err != nil {
 			var dpopErr dpopRefusal
 			if !errors.As(err, &dpopErr) {
 				return err
 			}
-			rejected = dpopErr.err
+			refused = dpopErr.err
 			return s.rejectRefresh(ctx, tx, r, dpopErr.code)
 		}
 		if r.usedAt.Valid {
 			if !s.withinGrace(r.usedAt.String) {
-				rejected = ErrRefreshReused
+				refused = ErrRefreshReused
 				return s.revokeFamily(ctx, tx, r)
 			}
 			if err := s.checkRefresh(r, resource); err != nil {
@@ -253,7 +269,7 @@ func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string
 				return err
 			}
 			p.Repeated = true
-			return s.markBound(ctx, tx, r.clientID, r.family, jkt)
+			return s.markBound(ctx, tx, r, jkt, fresh)
 		}
 		if err := s.checkRefresh(r, resource); err != nil {
 			return err
@@ -269,10 +285,10 @@ func (s *Store) Refresh(ctx context.Context, token, resource, oauthClient string
 		if p, err = s.insertPair(ctx, tx, r.clientID, r.family, r.resource, jkt); err != nil {
 			return err
 		}
-		return s.markBound(ctx, tx, r.clientID, r.family, jkt)
+		return s.markBound(ctx, tx, r, jkt, fresh)
 	})
-	if err == nil && rejected != nil {
-		return TokenPair{}, rejected
+	if err == nil && refused != nil {
+		return TokenPair{}, refused
 	}
 	return p, err
 }
@@ -296,18 +312,52 @@ func (s *Store) checkRefresh(r refreshRow, resource string) error {
 
 // revokeFamily revokes every token of a family after a refresh token was reused.
 func (s *Store) revokeFamily(ctx context.Context, tx *sql.Tx, r refreshRow) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE tokens SET revoked_at = ? WHERE family_id = ? AND revoked_at IS NULL`,
-		s.clock().Format(timeFormat), r.family); err != nil {
+	res, err := tx.ExecContext(ctx, `UPDATE tokens SET revoked_at = ? WHERE family_id = ? AND revoked_at IS NULL`,
+		s.clock().Format(timeFormat), r.family)
+	if err != nil {
 		return fmt.Errorf("agent: revoke token family: %w", err)
 	}
-	return s.rejectRefresh(ctx, tx, r, errRefreshReused)
+	if err := s.rejectRefresh(ctx, tx, r, errRefreshReused); err != nil {
+		return err
+	}
+	// The reuse ends every token of the grant (SPEC-v0 section 11.7 item 6); a family that
+	// was ended before has nothing left to withdraw.
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return err
+	}
+	_, err = s.log.AppendTx(ctx, tx, audit.Entry{Event: audit.EventCredentialsWithdrawn, Actor: &tokenSystem,
+		Agent:       &audit.Agent{ClientID: r.clientID, DisplayName: r.name},
+		Credentials: &audit.Credentials{Scope: audit.CredentialsAgent, Cause: audit.WithdrawnRefreshReuse}})
+	return err
+}
+
+// tokenSystem is the actor of what the token rules do without a human: withdrawing tokens
+// after a reuse or a binding, binding an agent to its key.
+var tokenSystem = audit.Actor{Kind: audit.ActorSystem, ID: "tokens"}
+
+// authReasons are the reasons of auth.rejected (audit/v1) for the codes of a refused
+// refresh or hand-out.
+var authReasons = map[string]string{
+	errRefreshWrongClient: audit.AuthClient,
+	errRefreshReused:      audit.AuthWithdrawn,
+	errInvalidDPoPProof:   audit.AuthProof,
+	errDPoPRequired:       audit.AuthUnboundRefused,
+}
+
+// rejected is the auth.rejected entry of a refused token of r's agent with code.
+func rejected(r refreshRow, code string) audit.Entry {
+	reason, ok := authReasons[code]
+	if !ok {
+		reason = audit.AuthOther
+	}
+	return audit.Entry{Event: audit.EventAuthRejected, Agent: &audit.Agent{ClientID: r.clientID, DisplayName: r.name},
+		Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication, Error: code},
+		Auth:   &audit.Auth{Reason: reason}}
 }
 
 // rejectRefresh logs a refused refresh token of r's agent as auth.rejected.
 func (s *Store) rejectRefresh(ctx context.Context, tx *sql.Tx, r refreshRow, code string) error {
-	_, err := s.log.AppendTx(ctx, tx, audit.Entry{Event: audit.EventAuthRejected,
-		Agent:  &audit.Agent{ClientID: r.clientID, DisplayName: r.name},
-		Result: &audit.Result{Status: audit.StatusDenied, DeniedBy: audit.DeniedByAuthentication, Error: code}})
+	_, err := s.log.AppendTx(ctx, tx, rejected(r, code))
 	return err
 }
 
@@ -342,32 +392,51 @@ func (s *Store) setEmergencyStop(ctx context.Context, on, withdraw bool, by audi
 	changed := false
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		now := s.clock().Format(timeFormat)
+		var withdrawn int64
 		if withdraw {
-			if _, err := tx.ExecContext(ctx, `UPDATE tokens SET revoked_at = ? WHERE revoked_at IS NULL`, now); err != nil {
+			res, err := tx.ExecContext(ctx, `UPDATE tokens SET revoked_at = ? WHERE revoked_at IS NULL`, now)
+			if err != nil {
+				return fmt.Errorf("agent: revoke all tokens: %w", err)
+			}
+			if withdrawn, err = res.RowsAffected(); err != nil {
 				return fmt.Errorf("agent: revoke all tokens: %w", err)
 			}
 		}
 		stopped, err := emergencyStop(ctx, tx)
-		if err != nil || stopped == on {
+		if err != nil {
 			return err
 		}
-		value, event := stopOff, audit.EventEmergencyStopReleased
-		if on {
-			value, event = stopOn, audit.EventEmergencyStopActivated
-		}
-		for key, v := range map[string]string{settingEmergencyStop: value, settingEmergencyStopBy: by.ID} {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
-				ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, key, v, now); err != nil {
-				return fmt.Errorf("agent: write emergency stop: %w", err)
+		if stopped != on {
+			if err := s.switchStop(ctx, tx, on, now, by); err != nil {
+				return err
 			}
+			changed = true
 		}
-		if _, err := s.log.AppendTx(ctx, tx, audit.Entry{Event: event, Actor: &by}); err != nil {
-			return err
+		if withdrawn == 0 {
+			return nil
 		}
-		changed = true
-		return nil
+		// The tokens of every agent lost their validity with the stop (audit/v1).
+		_, err = s.log.AppendTx(ctx, tx, audit.Entry{Event: audit.EventCredentialsWithdrawn, Actor: &by,
+			Credentials: &audit.Credentials{Scope: audit.CredentialsAll, Cause: audit.WithdrawnEmergencyStop}})
+		return err
 	})
 	return changed, err
+}
+
+// switchStop switches the emergency stop on or off and records it.
+func (s *Store) switchStop(ctx context.Context, tx *sql.Tx, on bool, now string, by audit.Actor) error {
+	value, event := stopOff, audit.EventEmergencyStopReleased
+	if on {
+		value, event = stopOn, audit.EventEmergencyStopActivated
+	}
+	for key, v := range map[string]string{settingEmergencyStop: value, settingEmergencyStopBy: by.ID} {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+			ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, key, v, now); err != nil {
+			return fmt.Errorf("agent: write emergency stop: %w", err)
+		}
+	}
+	_, err := s.log.AppendTx(ctx, tx, audit.Entry{Event: event, Actor: &by})
+	return err
 }
 
 // StopState is the emergency stop as the UI shows it.

@@ -978,7 +978,15 @@ export type AuditEvent =
   | 'log.checkpoint'
   | 'directory.changed'
   | 'template.changed'
-  | 'approver.changed';
+  | 'approver.changed'
+  | 'config.changed'
+  | 'log.exported'
+  // audit/v1 (SPEC-v0 sections 9.2 and 11.7)
+  | 'agent.bound'
+  | 'credentials.withdrawn'
+  | 'cert.unexpected'
+  | 'cert.acknowledged'
+  | 'ct.status';
 
 /** A change of the resource directory (SPEC-v0 section 11.4). */
 export type DirectoryChange = 'critical_marked' | 'critical_unmarked' | 'renamed' | 'rename_applied' | 'rename_dismissed';
@@ -990,7 +998,35 @@ export type TemplateChange = 'stored' | 'removed' | 'hidden' | 'shown';
 export type ApproverChange = 'added' | 'removed';
 
 export type ResultStatus = 'executed' | 'denied' | 'failed';
-export type DeniedBy = 'mandate' | 'approval' | 'rate_limit' | 'emergency_stop' | 'authentication';
+export type DeniedBy = 'mandate' | 'approval' | 'rate_limit' | 'emergency_stop' | 'authentication' | 'audit';
+
+/** Why a sign-in, a token or an answer was rejected (auth.rejected, audit/v1). */
+export type AuthReason =
+  | 'unknown'
+  | 'expired'
+  | 'withdrawn'
+  | 'revoked'
+  | 'audience'
+  | 'client'
+  | 'proof'
+  | 'replay'
+  | 'unbound_refused'
+  | 'second_key'
+  | 'not_approver'
+  | 'other';
+
+export type ConfigSetting =
+  | 'timezone'
+  | 'clock_check'
+  | 'checkpoint_key'
+  | 'public_origin'
+  | 'remote_access'
+  | 'unbound_tokens'
+  | 'server_key'
+  | 'trusted_proxy';
+
+/** The state of Certificate Transparency monitoring an audit entry records (ct.status). */
+export type CTMonitoring = 'ok' | 'limited' | 'unavailable';
 
 export interface AuditEntry {
   id: string;
@@ -1029,6 +1065,29 @@ export interface AuditEntry {
   template?: { change: TemplateChange; name: string; digest?: string; previous_digest?: string };
   /** approver.changed: the person's user ID; name added by the API, not part of the chain. */
   approver?: { change: ApproverChange; id: string; name?: string };
+  /** auth.rejected (audit/v1): why. */
+  auth?: { reason: AuthReason };
+  /** agent.bound, or auth.rejected for second_key: the key (JWK thumbprint). */
+  binding?: { method: 'dpop'; jkt: string };
+  /** credentials.withdrawn: whose tokens and why. */
+  credentials?: { scope: 'all' | 'agent'; cause: 'emergency_stop' | 'public_origin' | 'user' | 'refresh_reuse' | 'bound' };
+  /** cert.unexpected (all members) and cert.acknowledged (digest or public_key alone); names and issuer are untrusted. */
+  certificate?: {
+    digest?: string;
+    status?: 'alarm' | 'not_yet_valid' | 'past_exposure';
+    names?: string[];
+    issuer?: string;
+    public_key?: string;
+    not_before?: string;
+    not_after?: string;
+    logged?: string;
+  };
+  /** ct.status: the state of monitoring. */
+  ct?: { status: CTMonitoring; previous_status?: CTMonitoring };
+  /** config.changed: without value the setting was removed. */
+  config?: { setting: ConfigSetting; value?: string; previous_value?: string };
+  /** log.exported: the range of the export; absent, it contained every earlier entry. */
+  exported?: { from_seq: number; to_seq: number };
   /** Digest of this entry and of the one before (technical details). */
   digest: string;
   prev: string | null;

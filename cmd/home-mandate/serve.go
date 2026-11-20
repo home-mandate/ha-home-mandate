@@ -151,6 +151,7 @@ func serve(ctx context.Context, e env) int {
 		logger.Error("audit log is broken, not starting", "broken_at", r.BrokenAt, "truncation", r.Truncation, "error", err)
 		return exitFailure
 	}
+	recordSettings(ctx, s.log, cfg, s.signer, logger)
 	if r.Truncation == audit.TruncationUnanchored {
 		// Without any checkpoint it cannot be told from a truncation of an old version; the
 		// UI shows it as a broken chain.
@@ -768,6 +769,13 @@ func (g *gateway) readConfig(ctx context.Context) error {
 	g.mu.Unlock()
 	g.timeZone.Store(cfg.TimeZone)
 	g.language.Store(cfg.Language)
+	// The household time zone decides every time condition: a change is recorded (SPEC-v0
+	// section 9.2). It cannot stop the gateway; a failed write is logged.
+	if cfg.TimeZone != "" && g.state.log != nil {
+		if err := g.state.log.RecordSetting(ctx, audit.SettingTimezone, cfg.TimeZone); err != nil {
+			g.logger.Warn("cannot record a change of the time zone in the audit log", "error", err)
+		}
+	}
 	return nil
 }
 

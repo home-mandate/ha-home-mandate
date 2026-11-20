@@ -8,6 +8,7 @@
   import type { AuditEntry, DeviceCatalog } from '../../api/types.ts';
   import { approverText, decisionOf, deviceName, directoryText, templateText } from '../../audit/describe.ts';
   import { answeredAfter, approvalText, eventLabel, outcomeOf, reasonText } from '../../audit/outcome.ts';
+  import { certValidity, ctText, v1Text } from '../../audit/v1.ts';
   import { formatDateTime, formatNumber, type FormatContext } from '../../format.ts';
   import { m } from '../../i18n.ts';
   import { actionLabel } from '../../mandate/labels.ts';
@@ -35,6 +36,8 @@
   const MS_PER_S = 1000;
 
   const decision = $derived(decisionOf(entry));
+  const v1 = $derived(v1Text(entry));
+  const validity = $derived(entry.certificate ? certValidity(entry.certificate) : null);
   const outcome = $derived(outcomeOf(entry));
   const approval = $derived.by(() => {
     const text = approvalText(entry);
@@ -90,6 +93,36 @@
     <dd><bdi>{approverText(entry)}</bdi></dd>
     <dt>{m.audit_field_person()}</dt>
     <dd>{#if entry.approver.name}<bdi>{cleanUntrusted(entry.approver.name)}</bdi>{/if}<code>{cleanUntrusted(entry.approver.id)}</code></dd>
+  {/if}
+  {#if v1}
+    <dt>{m.audit_field_details()}</dt>
+    <dd><bdi>{v1}</bdi></dd>
+  {/if}
+  {#if entry.ct?.previous_status}
+    <dt>{m.audit_field_before()}</dt>
+    <dd>{ctText(entry.ct.previous_status)}</dd>
+  {/if}
+  {#if entry.binding}
+    <dt>{m.audit_field_key()}</dt>
+    <dd><code>{cleanUntrusted(entry.binding.jkt)}</code></dd>
+  {/if}
+  {#if entry.certificate}
+    {#if entry.certificate.digest}
+      <dt>{m.audit_field_certificate()}</dt>
+      <dd><code>{cleanUntrusted(String(entry.certificate.digest))}</code></dd>
+    {/if}
+    {#if entry.certificate.issuer}
+      <dt>{m.audit_field_issuer()}</dt>
+      <dd><bdi>{cleanUntrusted(String(entry.certificate.issuer))}</bdi></dd>
+    {/if}
+    {#if validity}
+      <dt>{m.audit_field_validity()}</dt>
+      <dd>{formatDateTime(validity.from, ctx)} – {formatDateTime(validity.to, ctx)}</dd>
+    {/if}
+    {#if entry.certificate.public_key}
+      <dt>{m.audit_field_public_key()}</dt>
+      <dd><code>{cleanUntrusted(String(entry.certificate.public_key))}</code></dd>
+    {/if}
   {/if}
   {#if entry.request}
     <dt>{m.audit_field_device()}</dt>

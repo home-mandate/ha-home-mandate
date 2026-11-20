@@ -521,7 +521,7 @@ func auditCommand(ctx context.Context, e env, args []string) int {
 			return nil
 		})
 	case "export":
-		return withState(ctx, e, func(s *state) error { return s.log.Export(ctx, e.stdout) })
+		return withState(ctx, e, func(s *state) error { return s.log.ExportRecorded(ctx, e.stdout, localAdmin) })
 	case "accept-clock":
 		// After the clock ran ahead by mistake and was corrected, the entries with future
 		// times would stop every decision (SPEC-v0 section 11.4) until that time.

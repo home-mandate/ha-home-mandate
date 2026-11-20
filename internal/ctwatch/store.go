@@ -251,6 +251,34 @@ func (s *Store) MarkNotified(ctx context.Context, digests []Digest, now time.Tim
 	return storeErr(tx.Commit())
 }
 
+// RecordOnce runs record in a transaction if the certificate digest was not recorded with
+// status yet, and marks it recorded: both commit or neither (cert.unexpected, once for each
+// certificate and status).
+func (s *Store) RecordOnce(ctx context.Context, digest Digest, status string, record func(*sql.Tx) error) error {
+	// Recorded already, the common case: no write lock.
+	var recorded bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM ct_recorded WHERE digest = ? AND status = ?)`,
+		digest.String(), status).Scan(&recorded); err == nil && recorded {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return storeErr(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, `INSERT INTO ct_recorded (digest, status) VALUES (?, ?) ON CONFLICT DO NOTHING`, digest.String(), status)
+	if err != nil {
+		return storeErr(err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return storeErr(err)
+	}
+	if err := record(tx); err != nil {
+		return err
+	}
+	return storeErr(tx.Commit())
+}
+
 // Ack is an acknowledgement.
 type Ack struct {
 	Digest Digest
@@ -260,10 +288,28 @@ type Ack struct {
 }
 
 // Acknowledge records an acknowledgement; one that exists already stays as it was.
-func (s *Store) Acknowledge(ctx context.Context, a Ack) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO ct_acks (digest, by, via, at) VALUES (?, ?, ?, ?) ON CONFLICT (digest) DO NOTHING`,
+//
+// also, if not nil, runs in the same transaction when the acknowledgement is new, so that
+// it and its audit entry commit together.
+func (s *Store) Acknowledge(ctx context.Context, a Ack, also func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return storeErr(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, `INSERT INTO ct_acks (digest, by, via, at) VALUES (?, ?, ?, ?) ON CONFLICT (digest) DO NOTHING`,
 		a.Digest.String(), a.By, string(a.Via), formatTime(a.At))
-	return storeErr(err)
+	if err != nil {
+		return storeErr(err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return storeErr(err)
+	} else if n > 0 && also != nil {
+		if err := also(tx); err != nil {
+			return err
+		}
+	}
+	return storeErr(tx.Commit())
 }
 
 // Acks returns every acknowledgement.

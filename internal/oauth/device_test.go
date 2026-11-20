@@ -207,7 +207,8 @@ func TestPairingBruteForce(t *testing.T) {
 	if res := b.get(PairPath); res.status != http.StatusTooManyRequests {
 		t.Errorf("pair page of a locked session = %d", res.status)
 	}
-	if out := h.auditLog(); strings.Count(out, `"error":"pairing_code_invalid"`) != pairSessionMax {
+	if out := h.auditLog(); strings.Count(out, `"error":"pairing_code_invalid"`) != pairSessionMax ||
+		strings.Count(out, `"auth":{"reason":"unknown"}`) != pairSessionMax {
 		t.Errorf("audit entries = %d", strings.Count(out, `"error":"pairing_code_invalid"`))
 	}
 	// Across sessions: after pairGlobalMax failures nobody can pair for a while.

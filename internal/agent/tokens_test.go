@@ -175,24 +175,77 @@ func TestAuthenticateRejects(t *testing.T) {
 	a := register(t, s, "Voice assistant")
 	p := issue(t, s, a.ClientID)
 	valid := p.AccessToken
-	for name, tc := range map[string]struct{ token, resource string }{
-		"empty":               {"", resource},
-		"no prefix":           {valid[4:], resource},
-		"wrong prefix":        {"hmx_" + valid[4:], resource},
-		"refresh as access":   {p.RefreshToken, resource},
-		"access as refresh":   {"hmr_" + valid[4:], resource},
-		"unknown":             {"hma_" + strings.Repeat("A", 43), resource},
-		"truncated":           {valid[:len(valid)-1], resource},
-		"too long":            {valid + strings.Repeat("A", 4096), resource},
-		"other alphabet":      {"hma_" + strings.Repeat("+", 43), resource},
-		"with whitespace":     {valid + " ", resource},
-		"other resource":      {valid, "https://other.example.org/mcp"},
-		"resource with slash": {valid, resource + "/"},
-		"no resource":         {valid, ""},
+	// Each with the reason auth.rejected records (audit/v1, SPEC-v0 section 9.1).
+	for name, tc := range map[string]struct{ token, resource, reason string }{
+		"empty":               {"", resource, audit.AuthUnknown},
+		"no prefix":           {valid[4:], resource, audit.AuthUnknown},
+		"wrong prefix":        {"hmx_" + valid[4:], resource, audit.AuthUnknown},
+		"refresh as access":   {p.RefreshToken, resource, audit.AuthUnknown},
+		"access as refresh":   {"hmr_" + valid[4:], resource, audit.AuthUnknown},
+		"unknown":             {"hma_" + strings.Repeat("A", 43), resource, audit.AuthUnknown},
+		"truncated":           {valid[:len(valid)-1], resource, audit.AuthUnknown},
+		"too long":            {valid + strings.Repeat("A", 4096), resource, audit.AuthUnknown},
+		"other alphabet":      {"hma_" + strings.Repeat("+", 43), resource, audit.AuthUnknown},
+		"with whitespace":     {valid + " ", resource, audit.AuthUnknown},
+		"other resource":      {valid, "https://other.example.org/mcp", audit.AuthAudience},
+		"resource with slash": {valid, resource + "/", audit.AuthAudience},
+		"no resource":         {valid, "", audit.AuthAudience},
 	} {
-		if _, err := s.Authenticate(ctx, tc.token, tc.resource, ""); !errors.Is(err, agent.ErrUnauthorized) {
-			t.Errorf("%s: Authenticate = %v, want ErrUnauthorized", name, err)
+		_, err := s.Authenticate(ctx, tc.token, tc.resource, "")
+		if !errors.Is(err, agent.ErrUnauthorized) || agent.ReasonOf(err) != tc.reason {
+			t.Errorf("%s: Authenticate = %v (%s), want ErrUnauthorized (%s)", name, err, agent.ReasonOf(err), tc.reason)
 		}
+	}
+}
+
+// Why a token that was valid once is refused: expired, withdrawn, its agent revoked, or
+// presented without the proof of its key.
+func TestAuthenticateNamesTheReason(t *testing.T) {
+	s, _, _ := newStore(t)
+	c := withClock(s)
+	ctx := context.Background()
+	reason := func(token, jkt string) string {
+		t.Helper()
+		_, err := s.Authenticate(ctx, token, resource, jkt)
+		if !errors.Is(err, agent.ErrUnauthorized) {
+			t.Fatalf("Authenticate = %v, want ErrUnauthorized", err)
+		}
+		return agent.ReasonOf(err)
+	}
+	expired := issue(t, s, register(t, s, "Expired").ClientID)
+	c.Set(t0.Add(10 * time.Minute))
+	if got := reason(expired.AccessToken, ""); got != audit.AuthExpired {
+		t.Errorf("expired: %s", got)
+	}
+	c.Set(t0)
+	withdrawn := issue(t, s, register(t, s, "Withdrawn").ClientID)
+	if _, err := s.WithdrawAllTokens(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetEmergencyStop(ctx, false, admin); err != nil {
+		t.Fatal(err)
+	}
+	if got := reason(withdrawn.AccessToken, ""); got != audit.AuthWithdrawn {
+		t.Errorf("withdrawn: %s", got)
+	}
+	revoked := register(t, s, "Revoked")
+	revokedToken := issue(t, s, revoked.ClientID)
+	if err := s.Revoke(ctx, revoked.ClientID, admin); err != nil {
+		t.Fatal(err)
+	}
+	if got := reason(revokedToken.AccessToken, ""); got != audit.AuthRevoked {
+		t.Errorf("agent revoked: %s", got)
+	}
+	bound := register(t, s, "Bound")
+	pair := bind(t, s, issue(t, s, bound.ClientID), agent.Holder{JKT: keyA, Bind: true})
+	if got := reason(pair.AccessToken, ""); got != audit.AuthProof {
+		t.Errorf("bound token as a Bearer token: %s", got)
+	}
+	if got := reason(pair.AccessToken, keyB); got != audit.AuthProof {
+		t.Errorf("bound token with another key: %s", got)
+	}
+	if got := agent.ReasonOf(errors.New("database gone")); got != audit.AuthOther {
+		t.Errorf("another error: %s", got)
 	}
 }
 
@@ -287,6 +340,19 @@ func TestRefreshTokenReuseRevokesTheWholeChain(t *testing.T) {
 	if !strings.Contains(out, `"event":"auth.rejected"`) || !strings.Contains(out, `"error":"refresh_token_reused"`) ||
 		!strings.Contains(out, `"client_id":"`+a.ClientID+`"`) {
 		t.Errorf("audit log:\n%s", out)
+	}
+	// audit/v1: the replayed token had lost its validity, and the reuse ends the grant's
+	// tokens, which the log records as withdrawn by the system (SPEC-v0 section 11.7 item 6).
+	if !strings.Contains(out, `"auth":{"reason":"withdrawn"}`) ||
+		strings.Count(out, `"credentials":{"cause":"refresh_reuse","scope":"agent"}`) != 1 {
+		t.Errorf("audit/v1 entries of the reuse missing:\n%s", out)
+	}
+	// Presented once more, the token is refused again, but nothing is left to withdraw.
+	if _, err := s.Refresh(ctx, first.RefreshToken, resource, "", agent.Holder{}); !errors.Is(err, agent.ErrRefreshReused) {
+		t.Fatalf("second reuse = %v", err)
+	}
+	if out := exported(t, log); strings.Count(out, `"cause":"refresh_reuse"`) != 1 || strings.Count(out, `"error":"refresh_token_reused"`) != 2 {
+		t.Errorf("after the second reuse:\n%s", out)
 	}
 	if strings.Contains(out, first.RefreshToken[4:]) {
 		t.Error("audit log contains the token")
@@ -561,7 +627,23 @@ func TestWithdrawAllTokens(t *testing.T) {
 			if strings.Count(out, `"event":"emergency_stop.activated"`) != 1 {
 				t.Errorf("audit log:\n%s", out)
 			}
+			// audit/v1: the tokens of every agent were withdrawn with the stop, by the human
+			// who withdrew them, also during a stop that was active already.
+			withdrawn := `"actor":{"id":"` + admin.ID + `","kind":"user"},"credentials":{"cause":"emergency_stop","scope":"all"}`
+			if strings.Count(out, withdrawn) != 1 {
+				t.Errorf("credentials.withdrawn:\n%s", out)
+			}
 		})
+	}
+}
+
+func TestWithdrawingNoTokensRecordsNothing(t *testing.T) {
+	s, log, _ := newStore(t)
+	if _, err := s.WithdrawAllTokens(context.Background(), admin); err != nil {
+		t.Fatal(err)
+	}
+	if out := exported(t, log); strings.Contains(out, `"event":"credentials.withdrawn"`) {
+		t.Errorf("withdrawn without tokens:\n%s", out)
 	}
 }
 

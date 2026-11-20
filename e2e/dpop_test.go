@@ -205,4 +205,18 @@ func TestDPoPBoundAgent(t *testing.T) {
 	if !strings.Contains(log, `"error":"invalid_dpop_proof"`) || !strings.Contains(log, `"error":"dpop_required"`) {
 		t.Error("DPoP refusals not in the audit log")
 	}
+	// audit/v1: the key the agent was bound to, the first and the first after the
+	// reconnection; the tokens withdrawn with the stop; the refusal with its reason.
+	agent := `"client_id":"` + clientID + `"`
+	if n := strings.Count(log, `"event":"agent.bound"`); n < 2 ||
+		!hasLine(log, `"event":"agent.bound"`, agent, `"binding":{"jkt":"`+key.JKT()+`","method":"dpop"}`) ||
+		!hasLine(log, `"event":"agent.bound"`, agent, `"binding":{"jkt":"`+newKey.JKT()+`","method":"dpop"}`) {
+		t.Errorf("agent.bound entries (%d) do not name both keys", n)
+	}
+	if !hasLine(log, `"credentials":{"cause":"emergency_stop","scope":"all"}`, `"id":"local-admin"`) {
+		t.Error("tokens withdrawn with the emergency stop not recorded")
+	}
+	if !hasLine(log, `"event":"auth.rejected"`, `"auth":{"reason":"proof"}`) {
+		t.Error("refusal without a proof not recorded with its reason")
+	}
 }

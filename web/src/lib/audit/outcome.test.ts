@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { AuditEntry, AuditEvent, Reason } from '../api/types.ts';
 import { auditFixture } from '../api/fixtures.ts';
 import { setLocale } from '../paraglide/runtime.js';
+import { EVENTS as FILTER_EVENTS } from './filters.ts';
 import { answeredAfter, approvalText, eventLabel, outcomeOf, reasonText } from './outcome.ts';
 
 beforeEach(() => setLocale('en', { reload: false }));
@@ -94,6 +95,17 @@ describe('eventLabel', () => {
     expect(labels).toContain('Emergency stop triggered');
     expect(labels).toContain('Agent approved');
     expect(labels).toEqual(expect.arrayContaining(['Mandate removed', 'Agent removed', 'Agent reconnected']));
+  });
+
+  it('names every event the filter offers, those of audit/v1 too, each differently', () => {
+    const labels = FILTER_EVENTS.map(eventLabel);
+    expect(new Set(labels).size).toBe(FILTER_EVENTS.length);
+    expect(labels).toEqual(expect.arrayContaining(['Setting changed', 'Log exported', 'Agent bound to a key', 'Certificate monitoring']));
+  });
+
+  it('shows an event it does not know as it is, cleaned, instead of failing', () => {
+    expect(eventLabel('relay.paired' as AuditEvent)).toBe('relay.paired');
+    expect(eventLabel('evil\u202e.event' as AuditEvent)).toBe('evil.event');
   });
 });
 
