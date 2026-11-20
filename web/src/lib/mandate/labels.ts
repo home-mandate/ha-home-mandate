@@ -36,6 +36,9 @@ const ACTIONS: Texts = {
   set_volume: () => m.action_volume(),
   activate: () => m.action_activate(),
   run: () => m.action_run(),
+  set_speed: () => m.action_set_speed(),
+  start: () => m.action_start(),
+  return_home: () => m.action_return_home(),
 };
 
 /** Labels that depend on the category, keyed "category.action". */
@@ -60,6 +63,12 @@ const CATEGORIES: Texts = {
   scene: () => m.cat_scene(),
   script: () => m.cat_script(),
   other: () => m.cat_other(),
+  fan: () => m.cat_fan(),
+  valve: () => m.cat_valve(),
+  vacuum: () => m.cat_vacuum(),
+  siren: () => m.cat_siren(),
+  number: () => m.cat_number(),
+  select: () => m.cat_select(),
 };
 
 const DECISIONS: Readonly<Record<CellDecision, () => string>> = {

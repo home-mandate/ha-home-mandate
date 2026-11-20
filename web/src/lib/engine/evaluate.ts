@@ -38,12 +38,19 @@ export interface EvalResult {
    * after a confirmation, as an ask (SPEC-v0 sections 4.1 and 4.6).
    */
   confirm?: true;
+  /**
+   * For an allow only: the matching rules with limits of their own, in document order
+   * (SPEC-v0 section 4.1); absent if there are none.
+   */
+  limited_rules?: string[];
 }
 
-/** Household local time: weekday and minute since midnight. */
+/** Household local time: weekday, minute since midnight and the calendar date. */
 export interface LocalTime {
   weekday: Weekday;
   minute: number;
+  /** The local date as year * 10000 + month * 100 + day, so that dates compare as numbers. */
+  day: number;
 }
 
 const MAX_AREAS = 16;
@@ -77,6 +84,10 @@ function zoneFormatter(zone: string): Intl.DateTimeFormat | null {
     const f = new Intl.DateTimeFormat('en-US', {
       timeZone: zone,
       weekday: 'short',
+      era: 'short',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
       hourCycle: 'h23',
@@ -101,7 +112,11 @@ export function localTime(time: string, zone?: string): LocalTime | null {
     const sign = match?.[2] === '-' ? -1 : 1;
     const offset = match?.[1] === 'Z' ? 0 : sign * (Number(match?.[3]) * 60 + Number(match?.[4]));
     const shifted = new Date(at + offset * MINUTE_MS);
-    return { weekday: WEEKDAYS[shifted.getUTCDay()] ?? 'sun', minute: shifted.getUTCHours() * 60 + shifted.getUTCMinutes() };
+    return {
+      weekday: WEEKDAYS[shifted.getUTCDay()] ?? 'sun',
+      minute: shifted.getUTCHours() * 60 + shifted.getUTCMinutes(),
+      day: dayNumber(shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, shifted.getUTCDate()),
+    };
   }
   const f = zoneFormatter(zone);
   if (!f) return null;
@@ -109,7 +124,29 @@ export function localTime(time: string, zone?: string): LocalTime | null {
   const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? '';
   const weekday = WEEKDAYS.find((d) => d === part('weekday').toLowerCase());
   if (!weekday) return null;
-  return { weekday, minute: Number(part('hour')) * 60 + Number(part('minute')) };
+  return {
+    weekday,
+    minute: Number(part('hour')) * 60 + Number(part('minute')),
+    day: dayNumber(astronomicalYear(Number(part('year')), part('era')), Number(part('month')), Number(part('day'))),
+  };
+}
+
+/**
+ * astronomicalYear counts the years before the year 1 as 0, -1, …, as Go does: a local date
+ * before the year 1 lies in no range of dates of a mandate (SPEC-v0 section 4.2).
+ */
+function astronomicalYear(year: number, era: string): number {
+  return era === 'BC' ? 1 - year : year;
+}
+
+function dayNumber(year: number, month: number, day: number): number {
+  return year * 10000 + month * 100 + day;
+}
+
+/** dateNumber reads a calendar date "YYYY-MM-DD" as dayNumber does; NaN if malformed. */
+export function dateNumber(date: string): number {
+  const match = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(date);
+  return match ? dayNumber(Number(match[1]), Number(match[2]), Number(match[3])) : NaN;
 }
 
 /** conditionsMet checks a rule's conditions at a household local time. */
@@ -122,7 +159,14 @@ export function conditionsMet(rule: Rule, local: LocalTime): boolean {
     const inside = w.start < w.end ? local.minute >= w.start && local.minute < w.end : local.minute >= w.start || local.minute < w.end;
     if (!inside) return false;
   }
-  return c.weekdays === undefined || c.weekdays.includes(local.weekday);
+  if (c.weekdays !== undefined && !c.weekdays.includes(local.weekday)) return false;
+  // Both ends of a range of dates are inclusive (SPEC-v0 section 4.2).
+  return c.dates === undefined || c.dates.some((d) => dateNumber(d.from) <= local.day && local.day <= dateNumber(d.to));
+}
+
+/** inPeriod: the point in time lies in the rule's own validity, from valid_from to before expires (step 2). */
+export function inPeriod(rule: Rule, at: number): boolean {
+  return (rule.valid_from === undefined || at >= parseDateTime(rule.valid_from)) && (rule.expires === undefined || at < parseDateTime(rule.expires));
 }
 
 /** resourceMatches implements step 2: every given field matches exactly. */
@@ -145,6 +189,8 @@ export function constraintsMet(rule: Rule, parameters: EvalRequest['parameters']
     const value = parameters !== undefined && Object.hasOwn(parameters, name) ? parameters[name] : undefined;
     if (value === undefined) return false;
     if ('one_of' in c) return c.one_of.includes(value);
+    // Only a value of the type of the excluded values that is none of them.
+    if ('none_of' in c) return typeof value === typeof c.none_of[0] && !c.none_of.includes(value);
     const { min = -Infinity, max = Infinity } = c;
     return typeof value === 'number' && value >= min && value <= max;
   });
@@ -213,8 +259,14 @@ export function decide(mandate: MandateDraft, matched: Rule[], critical: boolean
 
 /** matchingRules implements step 2 in document order at a given local time. */
 export function matchingRules(mandate: MandateDraft, req: EvalRequest, local: LocalTime): Rule[] {
+  const at = parseDateTime(req.time);
   return mandate.rules.filter(
-    (r) => resourceMatches(r, req.resource) && coversAction(r, req.action) && conditionsMet(r, local) && constraintsMet(r, req.parameters),
+    (r) =>
+      resourceMatches(r, req.resource) &&
+      coversAction(r, req.action) &&
+      inPeriod(r, at) &&
+      conditionsMet(r, local) &&
+      constraintsMet(r, req.parameters),
   );
 }
 
@@ -225,6 +277,10 @@ export function evaluate(mandate: MandateDraft, req: EvalRequest): EvalResult {
   if ('decision' in pre) return pre;
   const matched = matchingRules(mandate, req, pre.local);
   const result = matched.length === 0 ? deny('no_match') : decide(mandate, matched, pre.critical);
+  if (result.decision === 'allow') {
+    const limited = matched.filter((r) => r.limits !== undefined).map((r) => r.id);
+    if (limited.length > 0) return { ...result, limited_rules: limited };
+  }
   // Audit mode (section 4.6, step 6): only a deny by the rules, never one of a critical
   // action; it still requires a confirmation if a matching rule decides ask.
   if (mandate.enforce !== false || result.decision !== 'deny' || pre.critical) return result;

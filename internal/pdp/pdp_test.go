@@ -17,10 +17,10 @@ import (
 
 	"github.com/home-mandate/spec"
 	"github.com/home-mandate/spec/evaluator"
+	"github.com/home-mandate/spec/rfc3339"
 
 	"github.com/home-mandate/ha-home-mandate/internal/catalog"
 	"github.com/home-mandate/ha-home-mandate/internal/mandate"
-	"github.com/home-mandate/ha-home-mandate/internal/rfc3339"
 )
 
 // fakeMandates returns the same candidates for every agent.
@@ -59,6 +59,9 @@ type conformanceCase struct {
 	ID            string          `json:"id"`
 	Mandate       string          `json:"mandate"`
 	MandateInline json.RawMessage `json:"mandate_inline"`
+	// MandateBase64 carries the bytes of the document (SPEC-v0 section 10.2); encoding/json
+	// decodes it.
+	MandateBase64 []byte `json:"mandate_base64"`
 	RawResource   struct {
 		EntityID string   `json:"entity_id"`
 		Category string   `json:"category"`
@@ -77,6 +80,7 @@ type conformanceCase struct {
 	ApprovalTimeout string                     `json:"approval_timeout"`
 	Enforced        *bool                      `json:"enforced"`
 	Confirm         bool                       `json:"confirm"`
+	LimitedRules    []string                   `json:"limited_rules"`
 	Why             string                     `json:"why"`
 }
 
@@ -104,6 +108,9 @@ func loadCases(t *testing.T) []conformanceCase {
 func pdpFor(t *testing.T, c conformanceCase) (*PDP, string) {
 	t.Helper()
 	doc := []byte(c.MandateInline)
+	if c.MandateBase64 != nil {
+		doc = c.MandateBase64
+	}
 	if c.Mandate != "" {
 		var err error
 		if doc, err = fs.ReadFile(spec.FS(), c.Mandate); err != nil {
@@ -191,6 +198,9 @@ func TestConformanceCasesOverHTTP(t *testing.T) {
 				t.Errorf("%s: enforced %v, want not enforced %t", c.ID, got.Context.Enforced, notEnforced)
 			}
 			checkConfirm(t, c.ID, c.Confirm, got.Context)
+			if !slices.Equal(got.Context.LimitedRules, c.LimitedRules) {
+				t.Errorf("%s: limited_rules %v, want %v", c.ID, got.Context.LimitedRules, c.LimitedRules)
+			}
 			if c.Reason != "invalid_mandate" && (!strings.HasPrefix(got.Context.MandateDigest, "sha256:") || got.Context.MandateID == "") {
 				t.Errorf("%s: mandate_digest or mandate_id missing: %+v", c.ID, got.Context)
 			}
@@ -456,6 +466,11 @@ func TestSelectionCasesOverHTTP(t *testing.T) {
 		t.Fatalf("selection cases: %v", err)
 	}
 	for _, c := range file.Cases {
+		// As above: a time that is none cannot come from a clock; tools/conformance runs
+		// those cases through the test interface.
+		if _, err := rfc3339.Parse(c.Time); err != nil {
+			continue
+		}
 		t.Run(c.ID, func(t *testing.T) {
 			var candidates []mandate.Candidate
 			for _, m := range c.Mandates {
@@ -466,7 +481,7 @@ func TestSelectionCasesOverHTTP(t *testing.T) {
 				}
 				candidates = append(candidates, cand)
 			}
-			at, err := time.Parse(time.RFC3339, c.Time)
+			at, err := rfc3339.Parse(c.Time)
 			if err != nil {
 				t.Fatal(err)
 			}

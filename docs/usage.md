@@ -482,7 +482,7 @@ Where to run them:
 | `home-mandate approver add USER_ID SERVICE[:no-critical][,SERVICE…] [de\|en]` | Adds or replaces an approver: their Home Assistant user ID, up to 5 Companion app notify services such as `mobile_app_pixel_9` (without `notify.`), `:no-critical` for devices that should not get critical requests, and optionally the language. Keeps the "answer in the UI" settings, which only the UI changes. |
 | `home-mandate approver list` | Lists approvers: user ID, devices, language, UI channel. |
 | `home-mandate approver remove USER_ID` | Removes an approver. |
-| `home-mandate mandate import FILE` (or `-` for standard input) | Stores a mandate (JSON, validated against the Home-Mandate specification); prints `id`, `client_id` and `digest`. |
+| `home-mandate mandate import FILE` (or `-` for standard input) | Stores a mandate (JSON, validated against the Home-Mandate specification); prints `id`, `client_id` and `digest`. A rule with `limits` of its own is refused for now: Home-Mandate does not enforce them yet. |
 | `home-mandate mandate list` | Lists mandates: ID, status (`active`, `revoked` or `removed`), client ID, digest. |
 | `home-mandate mandate revoke ID` | Revokes a mandate. |
 | `home-mandate mandate remove ID` | Removes a revoked mandate from the lists; refused for an active one. |

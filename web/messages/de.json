@@ -1119,5 +1119,15 @@
   "banner_ct_body": "{count, plural, one {{count, number} Zertifikat, das Home-Mandate nicht selbst bezogen hat. Ist es nicht deines, könnte jemand die Verbindungen deiner Agenten abfangen.} other {{count, number} Zertifikate, die Home-Mandate nicht selbst bezogen hat. Sind es nicht deine, könnte jemand die Verbindungen deiner Agenten abfangen.}}",
   "banner_ct_action": "Prüfen",
   "banner_ct_unavailable_title": "Zertifikatsüberwachung nicht möglich",
-  "banner_ct_unavailable_body": "Seit {time} hat keine Abfrage der Certificate-Transparency-Logs geklappt."
+  "banner_ct_unavailable_body": "Seit {time} hat keine Abfrage der Certificate-Transparency-Logs geklappt.",
+  "cat_fan": "Ventilator",
+  "cat_valve": "Ventil",
+  "cat_vacuum": "Saugroboter",
+  "cat_siren": "Sirene",
+  "cat_number": "Zahlenwert",
+  "cat_select": "Auswahl",
+  "action_set_speed": "Stufe setzen",
+  "action_start": "starten",
+  "action_return_home": "zur Station",
+  "limits_none_of": "{name}: außer {values}"
 }

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import type { MandateDraft } from '../api/types.ts';
-import { evaluate, type EvalRequest } from './evaluate.ts';
+import type { MandateDraft, Rule } from '../api/types.ts';
+import { conditionsMet, dateNumber, evaluate, inPeriod, localTime, type EvalRequest } from './evaluate.ts';
 import casesText from './conformance/conformance/cases-v0.json?raw';
 
 // The cases of the pinned version of the specification, copied by tools/webconformance (a Go test
@@ -36,6 +36,8 @@ interface ConformanceCase {
   id: string;
   mandate?: string;
   mandate_inline?: MandateDraft;
+  /** The bytes of the document in base64 (SPEC-v0 section 10.2). */
+  mandate_base64?: string;
   resource: EvalRequest['resource'];
   action: string;
   parameters?: Record<string, number | string>;
@@ -48,12 +50,17 @@ interface ConformanceCase {
   approval_timeout?: string;
   enforced?: boolean;
   confirm?: boolean;
+  limited_rules?: string[];
 }
 
 const casesFile = exactCases;
 
 function mandateOf(c: ConformanceCase): MandateDraft {
   if (c.mandate_inline) return c.mandate_inline;
+  if (c.mandate_base64 !== undefined) {
+    const bytes = Uint8Array.from(atob(c.mandate_base64), (ch) => ch.charCodeAt(0));
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as MandateDraft;
+  }
   const m = files[`./conformance/${c.mandate}`];
   if (!m) throw new Error(`case ${c.id}: mandate ${c.mandate} not copied`);
   return m as MandateDraft;
@@ -79,6 +86,7 @@ describe('evaluate: conformance cases of the specification', () => {
     if (c.approval_timeout !== undefined) expect(result.approval?.timeout).toBe(c.approval_timeout);
     expect(result.enforced).toBe(c.enforced === false ? false : undefined);
     expect(result.confirm).toBe(c.confirm === true ? true : undefined);
+    expect(result.limited_rules ?? []).toEqual(c.limited_rules ?? []);
   });
 });
 
@@ -224,5 +232,43 @@ describe('evaluate: audit mode and ask (SPEC-v0 sections 4.1 and 4.6)', () => {
     const enforcing: MandateDraft = { ...trial };
     delete enforcing.enforce;
     expect(evaluate(enforcing, at('light.kitchen', 'turn_on'))).toEqual({ decision: 'deny', reason: 'rule', rule_id: 'no-kitchen' });
+  });
+});
+
+describe('local dates and the validity of a rule (spec v0.2, SPEC-v0 sections 4 and 4.2)', () => {
+  it('gives the local calendar date in the household zone and from the offset', () => {
+    // 23:30Z on 31 December is already the new year in Berlin; 03:00 on 1 January is still the old year in New York.
+    expect(localTime('2026-12-31T23:30:00Z', 'Europe/Berlin')?.day).toBe(20270101);
+    expect(localTime('2027-01-01T03:00:00-05:00')?.day).toBe(20270101);
+    expect(localTime('2027-01-01T03:00:00Z', 'America/New_York')?.day).toBe(20261231);
+  });
+
+  it('keeps the date across a change to summer time', () => {
+    expect(localTime('2026-03-29T00:59:59Z', 'Europe/Berlin')).toEqual({ weekday: 'sun', minute: 119, day: 20260329 });
+    expect(localTime('2026-03-29T01:00:00Z', 'Europe/Berlin')).toEqual({ weekday: 'sun', minute: 180, day: 20260329 });
+  });
+
+  it('counts a local date before the year 1 below every date of a mandate, and the year 10000 above', () => {
+    expect(localTime('0001-01-01T00:00:00Z', 'America/New_York')?.day ?? NaN).toBeLessThan(dateNumber('0001-01-01'));
+    expect(localTime('9999-12-31T23:30:00Z', 'Asia/Tokyo')?.day).toBe(100000101);
+  });
+
+  it('matches ranges of dates with both ends inclusive, and nothing for a malformed one', () => {
+    const rule = (dates: { from: string; to: string }[]): Rule => ({ id: 'r', resource: { any: true }, actions: ['read'], decision: 'allow', conditions: { dates } });
+    const at = (day: number) => ({ weekday: 'mon' as const, minute: 600, day });
+    const holidays = rule([{ from: '2026-12-24', to: '2026-12-26' }]);
+    expect([20261223, 20261224, 20261226, 20261227].map((d) => conditionsMet(holidays, at(d)))).toEqual([false, true, true, false]);
+    expect(conditionsMet(rule([{ from: '24.12.2026', to: '2026-12-26' }]), at(20261225))).toBe(false);
+  });
+
+  it('applies a rule from its valid_from on and before its expires, and never with a malformed one', () => {
+    const rule = (period: { valid_from?: string; expires?: string }): Rule => ({ id: 'r', resource: { any: true }, actions: ['read'], decision: 'allow', ...period });
+    const t = (s: string) => Date.parse(s);
+    const december = rule({ valid_from: '2026-12-01T00:00:00+01:00', expires: '2027-01-01T00:00:00+01:00' });
+    expect(inPeriod(december, t('2026-11-30T23:00:00Z'))).toBe(true);
+    expect(inPeriod(december, t('2026-11-30T22:59:59Z'))).toBe(false);
+    expect(inPeriod(december, t('2026-12-31T23:00:00Z'))).toBe(false);
+    expect(inPeriod(rule({}), t('2026-12-31T23:00:00Z'))).toBe(true);
+    expect(inPeriod(rule({ valid_from: 'tomorrow' }), t('2026-12-31T23:00:00Z'))).toBe(false);
   });
 });

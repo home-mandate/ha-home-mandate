@@ -18,8 +18,11 @@ type limitOut struct {
 	Min *float64 `json:"min,omitempty"`
 	Max *float64 `json:"max,omitempty"`
 	// OneOf are the only values allowed, in the agent's terms (numbers or strings).
-	OneOf []any  `json:"one_of,omitempty"`
-	Unit  string `json:"unit,omitempty"`
+	OneOf []any `json:"one_of,omitempty"`
+	// NoneOf are the values excluded, in the agent's terms (spec v0.2): every other value of
+	// the parameter is allowed.
+	NoneOf []any  `json:"none_of,omitempty"`
+	Unit   string `json:"unit,omitempty"`
 }
 
 // agentLimits turns the limits of the allow rules that could allow an action (one map per
@@ -47,6 +50,13 @@ func agentLimits(rules []map[string]evaluator.Limit, category, action, unit stri
 				if lim.OneOf = agentValues(p, l.OneOf); len(lim.OneOf) == 0 {
 					usable = false
 					break
+				}
+			}
+			if l.NoneOf != nil {
+				// Only values the agent can give are excluded; if none is, the agent may give
+				// any value of the parameter.
+				if lim.NoneOf = agentValues(p, l.NoneOf); len(lim.NoneOf) == 0 {
+					continue
 				}
 			}
 			limits[callName] = lim
@@ -142,14 +152,9 @@ func limitsText(limits []map[string]limitOut) string {
 			}
 			switch {
 			case l.OneOf != nil:
-				items := make([]string, len(l.OneOf))
-				for i, v := range l.OneOf {
-					items[i] = fmt.Sprint(v)
-					if f, ok := v.(float64); ok {
-						items[i] = formatNumber(f)
-					}
-				}
-				parts = append(parts, name+" one of "+strings.Join(items, ", ")+unit)
+				parts = append(parts, name+" one of "+valuesText(l.OneOf)+unit)
+			case l.NoneOf != nil:
+				parts = append(parts, name+" except "+valuesText(l.NoneOf)+unit)
 			case l.Min != nil && l.Max != nil:
 				parts = append(parts, name+" "+formatNumber(*l.Min)+" to "+formatNumber(*l.Max)+unit)
 			case l.Min != nil:
@@ -163,6 +168,18 @@ func limitsText(limits []map[string]limitOut) string {
 		}
 	}
 	return strings.Join(alternatives, " or ")
+}
+
+// valuesText lists values of a limit, numbers as formatNumber writes them.
+func valuesText(values []any) string {
+	items := make([]string, len(values))
+	for i, v := range values {
+		items[i] = fmt.Sprint(v)
+		if f, ok := v.(float64); ok {
+			items[i] = formatNumber(f)
+		}
+	}
+	return strings.Join(items, ", ")
 }
 
 func formatNumber(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) }

@@ -117,6 +117,26 @@ type meta struct {
 	Limits struct {
 		MaxActionsPerHour int `json:"max_actions_per_hour"`
 	} `json:"limits"`
+	Rules []struct {
+		ID     string          `json:"id"`
+		Limits json.RawMessage `json:"limits"`
+	} `json:"rules"`
+}
+
+// Supported refuses, with ErrInvalid, a valid mandate that needs what Home-Mandate does not
+// do yet: limits of a rule of its own (SPEC-v0 section 11.2, issue #205). Such a mandate is
+// refused rather than stored with limits nobody keeps. Templates are checked the same way.
+func Supported(document []byte) error {
+	var md meta
+	if err := json.Unmarshal(document, &md); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalid, err)
+	}
+	for _, r := range md.Rules {
+		if r.Limits != nil {
+			return fmt.Errorf("%w: rule %q has limits of its own, which this version does not enforce yet", ErrInvalid, r.ID)
+		}
+	}
+	return nil
 }
 
 // Put stores document as a new mandate or as a new version of an existing one.
@@ -167,6 +187,9 @@ func (s *Store) check(document []byte) (Info, error) {
 		return Info{}, fmt.Errorf("%w: principal is not this household", ErrInvalid)
 	}
 	if err := placeholderApprover(document); err != nil {
+		return Info{}, err
+	}
+	if err := Supported(document); err != nil {
 		return Info{}, err
 	}
 	// Mandates issued elsewhere (signed ones, SPEC-v0 section 7) cannot be imported yet.

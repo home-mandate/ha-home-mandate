@@ -195,3 +195,55 @@ describe('checkDraft: rules of the next specification version', () => {
     }
   });
 });
+
+describe('checkDraft: members of spec v0.2 (SPEC-v0 sections 3.1 and 4.5)', () => {
+  const ruleProblems = (patch: Record<string, unknown>) => fields(checkDraft(withRule(patch)));
+
+  it('checks the validity of a rule of its own', () => {
+    const p = (valid_from?: string, expires?: string) =>
+      ruleProblems({ ...(valid_from === undefined ? {} : { valid_from }), ...(expires === undefined ? {} : { expires }) });
+    expect(p('2026-12-01T00:00:00Z', '2026-12-24T00:00:00+01:00')).toEqual([]);
+    expect(p(undefined, '2026-12-24T00:00:00Z')).toEqual([]);
+    expect(p('2026-12-24T00:00:00Z', '2026-12-24T00:00:00Z')).toEqual(['/rules/0/expires order']);
+    expect(p('24.12.2026', undefined)).toEqual(['/rules/0/valid_from format']);
+    expect(p(undefined, '2026-12-24T00:00:00-00:00')).toEqual(['/rules/0/expires format']);
+  });
+
+  it('checks ranges of dates: dates that exist, from not after to, at most 16, no repeats', () => {
+    const d = (dates: unknown) => ruleProblems({ conditions: { dates } });
+    expect(d([{ from: '2026-12-24', to: '2026-12-26' }, { from: '2027-02-28', to: '2027-02-28' }])).toEqual([]);
+    expect(d([{ from: '2026-12-26', to: '2026-12-24' }])).toEqual(['/rules/0/conditions/dates/0 order']);
+    for (const bad of ['2026-02-29', '0000-01-01', '2026-1-01', '2026-12-24T00:00:00Z']) {
+      expect(d([{ from: bad, to: '2026-12-31' }])).toEqual(['/rules/0/conditions/dates/0 format']);
+    }
+    expect(d([{ from: '2026-12-24', to: '2026-12-26', extra: 1 }])).toEqual(['/rules/0/conditions/dates/0 format']);
+    expect(d([{ from: '2026-12-24', to: '2026-12-26' }, { from: '2026-12-24', to: '2026-12-26' }])).toEqual(['/rules/0/conditions/dates/1 duplicate']);
+    expect(d([])).toEqual(['/rules/0/conditions/dates required']);
+    expect(d(Array.from({ length: 17 }, (_, i) => ({ from: `2026-01-${String(i + 1).padStart(2, '0')}`, to: '2026-12-31' })))).toEqual([
+      '/rules/0/conditions/dates too_many',
+    ]);
+  });
+
+  it('checks excluded values like permitted ones', () => {
+    const c = (none_of: unknown) =>
+      ruleProblems({ resource: { category: 'alarm' }, actions: ['arm'], decision: 'allow', constraints: { mode: { none_of } } });
+    expect(c(['away', 'vacation'])).toEqual([]);
+    expect(c([])).toEqual(['/rules/0/constraints/mode/none_of required']);
+    expect(c(['away', 'away'])).toEqual(['/rules/0/constraints/mode/none_of/1 duplicate']);
+    expect(c(['away', 1])).toEqual(['/rules/0/constraints/mode/none_of/1 format']);
+    expect(ruleProblems({ constraints: { brightness: { none_of: [10], max: 50 } }, actions: ['set'] })).toEqual(['/rules/0/constraints/brightness format']);
+  });
+
+  it('checks limits of a rule: only on allow, at least one, within their bounds', () => {
+    const l = (limits: unknown, decision = 'allow') => ruleProblems({ limits, decision });
+    expect(l({ max_actions_per_hour: 5, max_actions_per_day: 24000, min_interval: 'PT24H' })).toEqual([]);
+    expect(l({ min_interval: 'PT1S' })).toEqual([]);
+    expect(l({ max_actions_per_hour: 5 }, 'ask')).toEqual(['/rules/0/limits allow_only']);
+    expect(l({})).toEqual(['/rules/0/limits required']);
+    expect(l({ max_actions_per_hour: 1001 })).toEqual(['/rules/0/limits/max_actions_per_hour range']);
+    expect(l({ max_actions_per_day: 0 })).toEqual(['/rules/0/limits/max_actions_per_day range']);
+    expect(l({ min_interval: 'PT24H1S' })).toEqual(['/rules/0/limits/min_interval range']);
+    expect(l({ min_interval: 'P1D' })).toEqual(['/rules/0/limits/min_interval format']);
+    expect(l({ per_week: 3 })).toEqual(['/rules/0/limits format']);
+  });
+});

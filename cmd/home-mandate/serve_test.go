@@ -513,6 +513,35 @@ func TestRestoredLimiterCountsTheLastHour(t *testing.T) {
 	}
 }
 
+// The restore keeps as many requests as the highest limit a mandate can set, so that a
+// restart cannot raise a limit of up to 1000 an hour by dropping requests it counted.
+func TestRestoredLimiterKeepsTheHighestLimit(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "hm.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	log := audit.New(st.DB(), "household:t")
+	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	log.SetClock(func() time.Time { return now.Add(-10 * time.Minute) })
+	rule := "r-lights"
+	for range maxActionsPerHour {
+		if _, err := log.Append(ctx, audit.Entry{Event: audit.EventDecision, Agent: &audit.Agent{ClientID: "hm-client:a"},
+			Mandate: &audit.Mandate{ID: "m-lights", Digest: "sha256:" + strings.Repeat("a", 64)},
+			Request: &audit.Request{Time: now.Add(-10 * time.Minute), Timezone: "Europe/Berlin",
+				Resource: audit.Resource{EntityID: "light.x", Category: "light"}, Action: "turn_on"},
+			Evaluation: &audit.Evaluation{Decision: "allow", Reason: "rule", RuleID: &rule},
+			Result:     &audit.Result{Status: audit.StatusExecuted}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	limiter := restoredLimiter(ctx, log, func() time.Time { return now }, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if limiter.Allow(pdp.RateKey("hm-client:a", "m-lights"), maxActionsPerHour) {
+		t.Errorf("request %d within the hour allowed after a restart", maxActionsPerHour+1)
+	}
+}
+
 // In app mode with a public URL, the addresses of Home Assistant for signing humans in come
 // from the Supervisor: port and TLS are settings of the household. With TLS, the
 // certificate is checked against the name the browser uses.

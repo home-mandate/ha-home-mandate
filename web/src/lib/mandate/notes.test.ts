@@ -51,7 +51,8 @@ describe('ruleNotes', () => {
 describe('critical actions of a rule', () => {
   it('names them once, whatever the confirmation says', () => {
     const devices = catalog.devices;
-    expect(demotedNames(rule({ resource: { any: true } }), devices, 'en')).toBe('open, unlock, disarm, get snapshot, activate, run, set');
+    // Vocabulary v0.2: turning on a siren is critical too.
+    expect(demotedNames(rule({ resource: { any: true } }), devices, 'en')).toBe('open, unlock, disarm, get snapshot, activate, run, set, turn on');
     expect(demotedNames(rule({ allow_critical: true }), devices, 'en')).toBe('unlock, open');
     expect(demotedNames(rule({ actions: ['read'] }), devices, 'en')).toBe('');
     expect(demotedNames(rule({ decision: 'ask' }), devices, 'en')).toBe('');
@@ -71,7 +72,7 @@ describe('critical actions of a rule', () => {
     expect(demotedNames(door, devices, 'en')).toBe('unlock, open');
     expect(notes(draftOf(door), 0)).toEqual([['critical', 'Becomes an approval request because the action is critical. (unlock, open)']]);
     // A device the catalog does not know could be anything.
-    expect(includedNames(rule({ resource: { entity_id: 'lock.gone' } }), devices, 'en')).toBe('open, unlock, disarm, get snapshot, activate, run, set');
+    expect(includedNames(rule({ resource: { entity_id: 'lock.gone' } }), devices, 'en')).toBe('open, unlock, disarm, get snapshot, activate, run, set, turn on');
   });
 
   it('counts the devices on which the rule covers a critical action', () => {
@@ -99,7 +100,8 @@ describe('rules on devices and areas Home Assistant does not have', () => {
   });
 
   it('says that an allow rule on a missing device applies to nothing', () => {
-    const allow = rule({ resource: { entity_id: 'light.gone' }, actions: ['turn_on'] });
+    // turn_off: an action that is critical nowhere, so that only the missing device is reported.
+    const allow = rule({ resource: { entity_id: 'light.gone' }, actions: ['turn_off'] });
     expect(unknown(draftOf(allow), 0)).toEqual([['info', '“light.gone” no longer exists in Home Assistant. This rule applies to nothing until you choose the device again.']]);
   });
 

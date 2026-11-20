@@ -49,6 +49,13 @@ const WEEKDAYS = new Set(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']);
 const DECISIONS = new Set(['allow', 'ask', 'deny']);
 const MIN_TIMEOUT_S = 10;
 const MAX_TIMEOUT_S = 3600;
+const DATE = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/;
+/** Largest number of ranges of dates of a rule (SPEC-v0 section 3.1 item 3). */
+export const MAX_DATE_RANGES = 16;
+/** Bounds of the limits of a rule of its own (SPEC-v0 section 3.1 item 12). */
+const MAX_RULE_PER_DAY = 24_000;
+const MIN_INTERVAL_S = 1;
+const MAX_INTERVAL_S = 86_400;
 
 function daysInMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
@@ -78,6 +85,14 @@ export function parseDateTime(value: unknown): number {
     offsetHour <= 23 &&
     offsetMinute <= 59;
   return valid ? Date.parse(value as string) : NaN;
+}
+
+/** validDate: a calendar date "YYYY-MM-DD" that exists, not in year 0000 (SPEC-v0 section 3.1 item 0). */
+export function validDate(value: unknown): value is string {
+  const match = typeof value === 'string' ? DATE.exec(value) : null;
+  if (!match) return false;
+  const [year, month, day] = match.slice(1, 4).map(Number) as [number, number, number];
+  return year !== 0 && month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth(year, month);
 }
 
 /** timeoutSeconds returns the seconds of "PT[nH][nM][nS]" with at least one component, or NaN. */
@@ -175,7 +190,8 @@ function checkConstraints(rule: Rule, at: string): Problem[] {
   return Object.entries(constraints as Record<string, unknown>).flatMap(([name, given]): Problem[] => {
     const field = `${at}/${name}`;
     if (!PARAMETER.test(name) || given === null || typeof given !== 'object') return [{ field, code: 'format' }];
-    const parsed = 'one_of' in given ? checkOneOf(given as Record<string, unknown>, field) : checkLimits(given as Record<string, unknown>, field);
+    const list = 'one_of' in given ? 'one_of' : 'none_of' in given ? 'none_of' : undefined;
+    const parsed = list ? checkValueList(given as Record<string, unknown>, list, field) : checkLimits(given as Record<string, unknown>, field);
     if (Array.isArray(parsed)) return parsed;
     const fits = actions.every((a) => typeof a === 'string' && parameterFits(core ? category : undefined, a, name, parsed));
     return checked && !fits ? [{ field, code: 'unknown' }] : [];
@@ -193,26 +209,30 @@ function checkLimits(given: Record<string, unknown>, field: string): ConstraintS
   return given as ConstraintSpec;
 }
 
-/** checkOneOf reads a list of permitted values: 1 to 32 distinct values of one type, without min and max. */
-function checkOneOf(given: Record<string, unknown>, field: string): ConstraintSpec | Problem[] {
-  const { one_of: values, ...rest } = given;
+/**
+ * checkValueList reads a list of permitted (one_of) or excluded (none_of) values: 1 to 32
+ * distinct values of one type, alone (SPEC-v0 section 4.5).
+ */
+function checkValueList(given: Record<string, unknown>, member: 'one_of' | 'none_of', field: string): ConstraintSpec | Problem[] {
+  const { [member]: values, ...rest } = given;
   if (Object.keys(rest).length > 0 || !Array.isArray(values)) return [{ field, code: 'format' }];
-  if (values.length === 0) return [{ field: `${field}/one_of`, code: 'required' }];
-  if (values.length > MAX_ONE_OF) return [{ field: `${field}/one_of`, code: 'too_many' }];
+  if (values.length === 0) return [{ field: `${field}/${member}`, code: 'required' }];
+  if (values.length > MAX_ONE_OF) return [{ field: `${field}/${member}`, code: 'too_many' }];
   const seen = new Set<unknown>();
   for (const [i, v] of values.entries()) {
-    if (!validValue(v) || typeof v !== typeof values[0]) return [{ field: `${field}/one_of/${i}`, code: 'format' }];
-    if (seen.has(v)) return [{ field: `${field}/one_of/${i}`, code: 'duplicate' }];
+    if (!validValue(v) || typeof v !== typeof values[0]) return [{ field: `${field}/${member}/${i}`, code: 'format' }];
+    if (seen.has(v)) return [{ field: `${field}/${member}/${i}`, code: 'duplicate' }];
     seen.add(v);
   }
-  return { one_of: values as (number | string)[] };
+  const list = values as (number | string)[];
+  return member === 'one_of' ? { one_of: list } : { none_of: list };
 }
 
 function checkConditions(rule: Rule, at: string): Problem[] {
   const c = rule.conditions;
   if (c === undefined) return [];
   const problems: Problem[] = [];
-  if (c.time_window === undefined && c.weekdays === undefined) return [{ field: at, code: 'required' }];
+  if (c.time_window === undefined && c.weekdays === undefined && c.dates === undefined) return [{ field: at, code: 'required' }];
   if (c.time_window !== undefined) {
     const w = windowMinutes(c.time_window);
     if (!w) problems.push({ field: `${at}/time_window`, code: 'format' });
@@ -224,6 +244,56 @@ function checkConditions(rule: Rule, at: string): Problem[] {
     problems.push(
       ...eachUnique(days, `${at}/weekdays`, (day, field) => (WEEKDAYS.has(day) ? [] : [{ field, code: 'unknown' }])),
     );
+  }
+  if (c.dates !== undefined) problems.push(...checkDates(c.dates as unknown, `${at}/dates`));
+  return problems;
+}
+
+/** checkDates: 1 to 16 distinct ranges of dates that exist, from not after to (SPEC-v0 section 3.1 item 3). */
+function checkDates(dates: unknown, at: string): Problem[] {
+  if (!Array.isArray(dates) || dates.length === 0) return [{ field: at, code: 'required' }];
+  if (dates.length > MAX_DATE_RANGES) return [{ field: at, code: 'too_many' }];
+  const seen = new Set<string>();
+  return dates.flatMap((range: unknown, i): Problem[] => {
+    const field = `${at}/${i}`;
+    if (range === null || typeof range !== 'object') return [{ field, code: 'format' }];
+    const { from, to, ...rest } = range as Record<string, unknown>;
+    if (Object.keys(rest).length > 0 || !validDate(from) || !validDate(to)) return [{ field, code: 'format' }];
+    if (from > to) return [{ field, code: 'order' }];
+    const key = `${from}/${to}`;
+    if (seen.has(key)) return [{ field, code: 'duplicate' }];
+    seen.add(key);
+    return [];
+  });
+}
+
+/** checkPeriod: the rule's own valid_from and expires, expires after valid_from (SPEC-v0 section 3.1 items 0 and 6). */
+function checkPeriod(rule: Rule, at: string): Problem[] {
+  const problems: Problem[] = [];
+  const from = rule.valid_from === undefined ? undefined : parseDateTime(rule.valid_from);
+  const until = rule.expires === undefined ? undefined : parseDateTime(rule.expires);
+  if (from !== undefined && Number.isNaN(from)) problems.push({ field: `${at}/valid_from`, code: 'format' });
+  if (until !== undefined && Number.isNaN(until)) problems.push({ field: `${at}/expires`, code: 'format' });
+  else if (until !== undefined && from !== undefined && !Number.isNaN(from) && until <= from) problems.push({ field: `${at}/expires`, code: 'order' });
+  return problems;
+}
+
+/** checkRuleLimits: only on an allow rule, at least one known member, each within its bounds (SPEC-v0 section 3.1 item 12). */
+function checkRuleLimits(rule: Rule, at: string): Problem[] {
+  const limits = rule.limits as unknown;
+  if (limits === undefined) return [];
+  if (rule.decision !== 'allow') return [{ field: at, code: 'allow_only' }];
+  if (limits === null || typeof limits !== 'object' || Object.keys(limits).length === 0) return [{ field: at, code: 'required' }];
+  const { max_actions_per_hour: perHour, max_actions_per_day: perDay, min_interval: interval, ...rest } = limits as Record<string, unknown>;
+  if (Object.keys(rest).length > 0) return [{ field: at, code: 'format' }];
+  const count = (v: unknown, max: number) => v === undefined || (Number.isInteger(v) && (v as number) >= 1 && (v as number) <= max);
+  const problems: Problem[] = [];
+  if (!count(perHour, MAX_RATE)) problems.push({ field: `${at}/max_actions_per_hour`, code: 'range' });
+  if (!count(perDay, MAX_RULE_PER_DAY)) problems.push({ field: `${at}/max_actions_per_day`, code: 'range' });
+  if (interval !== undefined) {
+    const seconds = timeoutSeconds(interval);
+    if (Number.isNaN(seconds)) problems.push({ field: `${at}/min_interval`, code: 'format' });
+    else if (seconds < MIN_INTERVAL_S || seconds > MAX_INTERVAL_S) problems.push({ field: `${at}/min_interval`, code: 'range' });
   }
   return problems;
 }
@@ -243,7 +313,12 @@ function checkRule(rule: Rule, at: string, ids: Set<string>): Problem[] {
     if (rule.decision !== 'ask') problems.push({ field: `${at}/approval`, code: 'ask_only' });
     else problems.push(...checkApproval(rule.approval, `${at}/approval`));
   }
-  problems.push(...checkConditions(rule, `${at}/conditions`), ...checkConstraints(rule, `${at}/constraints`));
+  problems.push(
+    ...checkConditions(rule, `${at}/conditions`),
+    ...checkConstraints(rule, `${at}/constraints`),
+    ...checkPeriod(rule, at),
+    ...checkRuleLimits(rule, `${at}/limits`),
+  );
   return problems;
 }
 

@@ -85,7 +85,10 @@ func TestApproversForWhatTheRulesCanAsk(t *testing.T) {
 		{"ask on everything of a category with critical actions", rule("ask", lock, "*"), true, true},
 		{"ask on everything of a category without critical actions", rule("ask", light, "*"), true, false},
 		{"ask on reading", rule("ask", every, "read"), true, false},
-		{"ask without a category on an ordinary action", rule("ask", every, "turn_on"), true, false},
+		{"ask without a category on an ordinary action", rule("ask", every, "turn_off"), true, false},
+		// Vocabulary v0.2: turn_on of a siren is critical, so an ask on turn_on without a
+		// category can reach a critical action.
+		{"ask without a category on turn_on, critical for a siren", rule("ask", every, "turn_on"), true, true},
 		{"ask without a category on an action critical somewhere", rule("ask", every, "open"), true, true},
 		{"ask on one device", rule("ask", map[string]any{"entity_id": "lock.front"}, "unlock"), false, true},
 		{"ask on everything of every device", rule("ask", every, "*"), true, true},

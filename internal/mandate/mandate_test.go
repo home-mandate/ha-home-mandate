@@ -135,6 +135,27 @@ func TestPutRejectsEveryInvalidConformanceCase(t *testing.T) {
 	}
 }
 
+// Limits of a rule of its own (SPEC-v0 sections 3.1 item 12 and 11.2) are not enforced yet:
+// such a mandate is refused instead of being stored with limits nobody keeps (issue #205).
+// The other members of spec v0.2 (rule validity, dates, none_of) are the evaluation's and
+// stored like any other.
+func TestPutRefusesRuleLimitsUntilTheyAreEnforced(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a := e.agent(t, "Voice assistant")
+	limited := voiceAssistant(t, a.ClientID, withRule(map[string]any{"id": "r-fan", "resource": map[string]any{"category": "fan"},
+		"actions": []any{"turn_on"}, "decision": "allow", "limits": map[string]any{"max_actions_per_hour": 2}}))
+	if _, err := e.mandates.Put(ctx, limited, admin); !errors.Is(err, mandate.ErrInvalid) {
+		t.Errorf("rule with limits: err = %v, want ErrInvalid", err)
+	}
+	evaluated := voiceAssistant(t, a.ClientID, withRule(map[string]any{"id": "r-valve", "resource": map[string]any{"category": "valve"},
+		"actions": []any{"open"}, "decision": "allow", "expires": "2027-01-01T00:00:00+01:00",
+		"conditions": map[string]any{"dates": []any{map[string]any{"from": "2026-12-24", "to": "2026-12-26"}}}}))
+	if _, err := e.mandates.Put(ctx, evaluated, admin); err != nil {
+		t.Errorf("rule with expires and dates: %v", err)
+	}
+}
+
 func TestPutRejectsMandatesForOtherPrincipalsOrAgents(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()

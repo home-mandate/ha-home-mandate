@@ -104,3 +104,60 @@ func TestAgentLearnsItsModes(t *testing.T) {
 		}
 	}
 }
+
+// Excluded values (none_of, spec v0.2) are told as such: in list_my_permissions and in a
+// refusal, never as a parameter without a limit.
+func TestAgentLearnsItsExcludedValues(t *testing.T) {
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+			map[string]any{"id": "r-heating", "resource": map[string]any{"category": "climate"}, "actions": []any{"set_temperature"}, "decision": "allow",
+				"constraints": map[string]any{"temperature": map[string]any{"none_of": []any{2500, 2600}}}},
+			map[string]any{"id": "r-modes", "resource": map[string]any{"category": "climate"}, "actions": []any{"set_mode"}, "decision": "allow",
+				"constraints": map[string]any{"mode": map[string]any{"none_of": []any{"off"}}}},
+		}
+	})
+	s := h.session()
+	perms, errText := h.call(s, "list_my_permissions", map[string]any{"category": "climate"})
+	if errText != "" {
+		t.Fatal(errText)
+	}
+	if got := mustJSON(perms["groups"]); got != `[{"actions":{"read":"allow","set_mode":"allow","set_temperature":"allow"},"category":"climate","entity_ids":["climate.living_room"],`+
+		`"limits":{"set_mode":[{"hvac_mode":{"none_of":["off"]}}],"set_temperature":[{"temperature":{"none_of":[25,26],"unit":"°C"}}]}}]` {
+		t.Errorf("groups = %s", got)
+	}
+	for _, c := range []struct {
+		action string
+		params map[string]any
+		want   string
+	}{
+		{"set_temperature", map[string]any{"temperature": 25.0}, "denied: no_match: allowed only with temperature except 25, 26 °C"},
+		{"set_temperature", map[string]any{"temperature": 21.0}, ""},
+		{"set_mode", map[string]any{"hvac_mode": "off"}, "denied: no_match: allowed only with hvac_mode except off"},
+		{"set_mode", map[string]any{"hvac_mode": "heat"}, ""},
+	} {
+		if _, errText := h.call(s, "perform_action", map[string]any{"entity_id": "climate.living_room", "action": c.action, "params": c.params}); errText != c.want {
+			t.Errorf("%s %v: %q, want %q", c.action, c.params, errText, c.want)
+		}
+	}
+}
+
+// Excluding only values the agent cannot give (no mode of Home Assistant maps to sleep)
+// leaves the parameter without a limit for the agent.
+func TestExcludedValuesTheAgentCannotGiveLimitNothing(t *testing.T) {
+	h := newHarness(t, func(d map[string]any) {
+		d["rules"] = []any{
+			map[string]any{"id": "r-read", "resource": map[string]any{"any": true}, "actions": []any{"read"}, "decision": "allow"},
+			map[string]any{"id": "r-modes", "resource": map[string]any{"category": "climate"}, "actions": []any{"set_mode"}, "decision": "allow",
+				"constraints": map[string]any{"mode": map[string]any{"none_of": []any{"sleep"}}}},
+		}
+	})
+	s := h.session()
+	perms, errText := h.call(s, "list_my_permissions", map[string]any{"category": "climate"})
+	if errText != "" {
+		t.Fatal(errText)
+	}
+	if got := mustJSON(perms["groups"]); got != `[{"actions":{"read":"allow","set_mode":"allow"},"category":"climate","entity_ids":["climate.living_room"]}]` {
+		t.Errorf("groups = %s", got)
+	}
+}
